@@ -383,6 +383,14 @@ own instead of replacing another in place."))
     :documentation "The participant or channel identifier involved, when known."))
   (:documentation "The world of channels and participants could not be validated, read, or changed."))
 
+(define-condition world-channel-ambiguous (world-error)
+  ((channels
+    :initarg       :channels
+    :reader        world-channel-ambiguous-channels
+    :type          list
+    :documentation "The channels the designator matches, newest change first."))
+  (:documentation "A channel designator matches several channels, so a person or agent must say which."))
+
 (define-condition agenda-error (autolith-error)
   ((pathname
     :initarg       :pathname

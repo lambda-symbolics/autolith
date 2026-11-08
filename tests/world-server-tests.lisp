@@ -449,11 +449,9 @@ run once the wake has."
                                       (search id-b packet)))
                                packets)
                          "the controller is sent the switch request naming the channel"))
-          (test-assert (handler-case
-                           (progn (application--builtin-switch-command application "zzzzzzz") nil)
-                         (world-error (condition)
-                           (search "No channel matches" (autolith-error-message condition))))
-                       "an unknown channel is refused"))))))
+          (test-assert (and (eq (application--builtin-switch-command application "zzzzzzz") ':continue)
+                            (search "no channel matches" (terminal--spans-text (first presented))))
+                       "an unknown channel is said in a line, not signaled"))))))
   nil)
 
 (-> test-world-server-starting-host () null)

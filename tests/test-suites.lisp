@@ -648,6 +648,7 @@
   test-world-agent-children
   test-world-channel-designation-and-list
   test-world-tell-prefill
+  test-world-ambiguous-channel
   test-world-prune-empty-conversations
   test-world-inbox-modeline
   test-world-child-lifecycle

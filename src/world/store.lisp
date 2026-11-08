@@ -624,10 +624,11 @@ nothing; so does no match."
               :operation  ':resolve
               :identifier fragment))
       ((rest matches)
-       (error 'world-error
+       (error 'world-channel-ambiguous
               :message    (format nil "Channel ID ~S is ambiguous. Matching channels:~%~{  ~A~^~%~}"
                                   fragment
                                   (mapcar #'world--channel-label matches))
+              :channels   matches
               :pathname   nil
               :operation  ':resolve
               :identifier fragment))
