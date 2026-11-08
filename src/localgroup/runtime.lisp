@@ -563,41 +563,16 @@ relay; a terminal that already disconnected costs nothing."
         request (image-daemon:daemon-runtime-token session))
        t))
 
-(-> localgroup--tell (localgroup-session list) list)
-(defun localgroup--tell (session arguments)
-  "Submit ARGUMENTS' message through the ordinary responsive input path."
-  (let* ((application (localgroup-session-application session))
-         (controller  (application-input-controller application))
-         (message     (getf arguments :message)))
-    (unless (and controller (stringp message))
-      (error 'localgroup-error :message "localgroup tell requires one string message."
-             :operation ':tell :session-id
-             (image-daemon:daemon-runtime-identifier session)))
-    (when (application-localgroup-handoff-pending-p application)
-      (error 'localgroup-error :message
-             "The localgroup session is detaching and no longer accepts input."
-             :operation ':tell :session-id
-             (image-daemon:daemon-runtime-identifier session)))
-    (application-localgroup-resume application)
-    (application-input-controller--handle-submission controller message :steer-p
-                                                     (application-input-controller-turn-active-p
-                                                      controller))
-    (list :ok :operation :tell :session-id
-          (image-daemon:daemon-runtime-identifier session))))
-
 (-> localgroup--dispatch-request (localgroup-session list) list)
 (defun localgroup--dispatch-request (session request)
   "Return SESSION's response to one authenticated REQUEST."
   (unless (localgroup--valid-request-p request session)
     (return-from localgroup--dispatch-request
       (list :error :message "The localgroup request was rejected.")))
-  (let ((operation (localgroup--request-field request :operation))
-        (arguments (localgroup--request-field request :arguments)))
+  (let ((operation (localgroup--request-field request :operation)))
     (case operation
       (:status
        (list :ok :status (localgroup-status-snapshot session)))
-      (:tell
-       (localgroup--tell session arguments))
       (:pause
        (if (application-localgroup-pause (localgroup-session-application session))
            (list :ok :operation :pause :session-id

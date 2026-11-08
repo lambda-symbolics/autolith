@@ -196,6 +196,31 @@
                       "the terminal is sent to the new channel")))))
   nil)
 
+(-> test-world-server-tell () null)
+(defun test-world-server-tell ()
+  "Test lg tell's server operation sends a channel a message from the person, by a fragment of its identifier."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (declare (ignore root))
+     (world-tests--persisted-conversation configuration "btell11" 1000)
+     (world-server--reconcile configuration)
+     (test-call-with-function-replacements
+      (list (list 'world-server-wake-channel
+                  (lambda (candidate identifier)
+                    (declare (ignore candidate identifier))
+                    nil)))
+      (lambda ()
+        (let ((answer (world-server--dispatch server ':tell (list :channel "btell" :text "from outside"))))
+          (test-assert (and (eq (first answer) ':ok)
+                            (equal (getf (rest answer) :channel) "btell11"))
+                       "a fragment names the channel told")
+          (let ((delivery (first (world-inbox-deliveries configuration "btell11"))))
+            (test-assert (and delivery
+                              (string= (world-delivery-text delivery) "from outside")
+                              (eq (world-delivery-sender-kind delivery) ':human))
+                         "the channel's inbox holds the message from the person")))))))
+  nil)
+
 (-> test-world-server-hosting () null)
 (defun test-world-server-hosting ()
   "Test opening, sharing, closing and resuming channels through a world server."

@@ -467,8 +467,7 @@
 
                (check-targets (alias selector)
                  "Exercise every targeted command with an omitted or explicit selector."
-                 (dolist (case '(("tell" ("two words") :tell (:message "two words"))
-                                 ("pause" nil :pause nil)
+                 (dolist (case '(("pause" nil :pause nil)
                                  ("detach" nil :detach nil)
                                  ("kill" nil :kill nil)
                                  ("attach" nil :attach :control)
@@ -530,8 +529,7 @@
                                   ("status" "extra") ("unknown")))
                (reject (cons alias arguments) ':arguments nil)))
            ;; No registered endpoints, then only a stale endpoint.
-           (dolist (arguments '(("tell" "message") ("pause") ("detach")
-                                ("kill") ("attach")))
+           (dolist (arguments '(("pause") ("detach") ("kill") ("attach")))
              (reject (cons "lg" arguments) ':discover nil))
            (publish "d6uouHJ" 3)
            (reject '("lg" "pause") ':discover nil)
@@ -550,15 +548,12 @@
            ;; Multiple reachable endpoints require a selector for every operation.
            (publish "c6uouHJ" 2)
            (setf live-ports '(1 2))
-           (dolist (arguments '(("tell" "message") ("pause") ("detach")
+           (dolist (arguments '(("pause") ("detach")
                                 ("kill") ("attach") ("attach" "--read-only")
                                 ("attach" "--take-over")))
              (reject (cons "lg" arguments) ':discover '("b6uouHJ" "c6uouHJ")))
            (dolist (alias '("localgroup" "lg"))
              (check-targets alias "b"))
-           (test-assert (equal (invoke '("lg" "tell" "c" ""))
-                               '((2 :tell (:message ""))))
-                        "an explicit target preserves an empty quoted message")
            ;; Explicit unavailable targets fail rather than falling back to a live one.
            (publish "d6uouHJ" 3)
            (reject '("lg" "pause" "d") ':pause '("d6uouHJ"))
@@ -596,18 +591,18 @@
                  (first calls))
 
                (select (selector session-id)
-                 "Verify SELECTOR routes a tell request to SESSION-ID."
+                 "Verify SELECTOR routes a pause request to SESSION-ID."
                  (test-assert
-                  (equal (invoke (list "tell" selector "message"))
-                         (list session-id ':tell '(:message "message")))
-                  "a unique selector routes the message to its session"))
+                  (equal (invoke (list "pause" selector))
+                         (list session-id ':pause nil))
+                  "a unique selector routes the request to its session"))
 
                (reject (selector candidates)
                  "Verify SELECTOR fails before an endpoint call, naming CANDIDATES."
                  (let ((condition
                          (handler-case
                              (progn
-                               (invoke (list "tell" selector "message"))
+                               (invoke (list "pause" selector))
                                nil)
                            (localgroup-error (condition)
                              condition))))
@@ -664,9 +659,7 @@
                            ("ABCDEF123456" "abcdef123456")))
              (select (first case) (second case)))
            (reject "c" '("c6uouHJ" "abcdef1" "abcdef123456" "abcdef234567"))
-           (dolist (case '((("tell" "c6" "message")
-                            ("c6uouHJ" :tell (:message "message")))
-                           (("pause" "c-6") ("c6uouHJ" :pause nil))
+           (dolist (case '((("pause" "c-6") ("c6uouHJ" :pause nil))
                            (("detach" "C6") ("c6uouHJ" :detach nil))
                            (("kill" "c6uouhj") ("c6uouHJ" :kill nil))
                            (("attach" "c-6uouHJ") ("c6uouHJ" :attach :control))
@@ -853,32 +846,9 @@
                  (= (image-daemon:daemon-runtime-created-at session) created-at))
             "checkpoint quiescence preserves the active conversation identity"))
          (daemon-call (image-daemon:daemon-runtime-port session)
-                      (image-daemon:daemon-runtime-token session) ':tell
-                      :arguments (list :message "remote input"))
-         (with-lock-held ((application-input-controller-lock controller))
-           (test-assert
-            (equal (application-input-controller--state controller :work-items)
-                   (list (list ':message "remote input")))
-            "localgroup tell uses the ordinary submitted-message queue"))
-         (let ((status
-                (getf
-                 (rest
-                  (daemon-call (image-daemon:daemon-runtime-port session)
-                               (image-daemon:daemon-runtime-token session) ':status))
-                 :status)))
-           (test-assert
-            (and (not (getf (rest status) :idle-p))
-                 (= (getf (rest status) :queued-input-count) 1))
-            "queued remote input makes strict idle false"))
-         (daemon-call (image-daemon:daemon-runtime-port session)
                       (image-daemon:daemon-runtime-token session) ':pause)
          (test-assert (application-localgroup-paused-p application)
           "localgroup pause holds queued primary work")
-         (daemon-call (image-daemon:daemon-runtime-port session)
-                      (image-daemon:daemon-runtime-token session) ':tell
-                      :arguments (list :message "resume input"))
-         (test-assert (not (application-localgroup-paused-p application))
-          "new localgroup input resumes a paused session")
          (let ((kill-response-state nil)
                (write-packet        (symbol-function 'daemon-write-packet)))
            (test-call-with-function-replacements
