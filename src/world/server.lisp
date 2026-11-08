@@ -247,6 +247,13 @@ Conversations without a single message are deleted first, so they never
 become channels. Afterwards each channel keeps its own conversation in step
 as it changes. A world that cannot be reconciled only warns: the world never
 blocks the server."
+  ;; Recovery can do filesystem work. Run it at server start, never in a
+  ;; presentation-locked reconciliation or picker refresh.
+  (handler-case (channel-remove-recover configuration)
+    (error (cause)
+      (warn 'world-session-warning
+            :pathname (task-child--removal-root configuration)
+            :cause    cause)))
   (handler-case (progn
                   (world-prune-empty-conversations configuration)
                   (world-reconcile-sessions configuration))

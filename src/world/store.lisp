@@ -153,7 +153,12 @@ A world the follower returns again unchanged needs no second check.")
     :initform      (make-hash-table :test #'equal)
     :reader        world--channel-table
     :type          hash-table
-    :documentation "Channels by identifier."))
+    :documentation "Channels by identifier.")
+   (deleted-channels
+    :initform      (make-hash-table :test #'equal)
+    :reader        world--deleted-channel-table
+    :type          hash-table
+    :documentation "Storage-deleted channel identities and times, retained against stale discovery."))
   (:documentation "The folded state of every participant and channel."))
 
 
@@ -389,6 +394,9 @@ records stays plain, portable text."
     (maphash (lambda (identifier channel)
                (setf (gethash identifier (world--channel-table copy)) channel))
              (world--channel-table world))
+    (maphash (lambda (identifier deleted-p)
+               (setf (gethash identifier (world--deleted-channel-table copy)) deleted-p))
+             (world--deleted-channel-table world))
     copy))
 
 (-> world--reduce-record (pathname world list) world)
@@ -405,10 +413,13 @@ records stays plain, portable text."
               (world--participant-table world)))
     (:channel
      (let ((channel (world--record->channel pathname record)))
+       (remhash (channel-identifier channel) (world--deleted-channel-table world))
        (setf (gethash (channel-identifier channel) (world--channel-table world))
              channel)))
     (:channel-deleted
      (let ((identifier (world--tombstone-identifier pathname record)))
+       (when (getf (rest record) :storage-cleanup-p)
+         (setf (gethash identifier (world--deleted-channel-table world)) (getf (rest record) :time)))
        (remhash identifier (world--channel-table world))
        (maphash (lambda (key participant)
                   (when (member identifier (participant-subscriptions participant)
@@ -498,8 +509,12 @@ records stays plain, portable text."
 
 (-> world--records (world) list)
 (defun world--records (world)
-  "Return the fewest records that fold to WORLD: each channel, then each participant."
-  (append (loop for channel being the hash-values of (world--channel-table world)
+  "Return the records that fold to WORLD, including storage-deletion tombstones."
+  (append (loop for identifier being the hash-keys of (world--deleted-channel-table world)
+                  using (hash-value time)
+                collect (list :channel-deleted :version *world-format-version*
+                              :id identifier :time time :storage-cleanup-p t))
+          (loop for channel being the hash-values of (world--channel-table world)
                 collect (world--channel-record channel))
           (loop for participant being the hash-values of (world--participant-table world)
                 collect (world--participant-record participant))))
@@ -518,7 +533,8 @@ whether it was compacted."
       (handler-case
           (let* ((world   (world-load configuration))
                  (live    (+ (hash-table-count (world--participant-table world))
-                             (hash-table-count (world--channel-table world))))
+                             (hash-table-count (world--channel-table world))
+                             (hash-table-count (world--deleted-channel-table world))))
                  (records (nth-value 2 (sexp-store:log-map (constantly nil) pathname))))
             (when (> records (1+ (* *world-compaction-ratio* (max 1 live))))
               (sexp-store:store-compact (world--store configuration))
@@ -994,6 +1010,12 @@ names the caller in refusals."
                          :timestamp now)))
         (parent     (getf home :parent))
         (title      (getf home :title)))
+    (when (gethash identifier (world--deleted-channel-table world))
+      (error 'world-error
+             :message    (format nil "Channel ~A was removed; use a new channel identity." identifier)
+             :pathname   nil
+             :operation  operation
+             :identifier identifier))
     (when (world-channel-find world identifier)
       (error 'world-error
              :message    (format nil "Channel ~A already exists." identifier)
@@ -1343,58 +1365,89 @@ remove; this store holds only identities and relationships."
     (configuration string &key (:participants list) (:now timestamp))
     list)
 (defun world-channel-delete (configuration identifier &key participants (now (get-universal-time)))
-  "Delete channel IDENTIFIER and return the deleted participant identifiers.
+  "Delete IDENTIFIER and its listed resident PARTICIPANTS, after deleting nested channels."
+  (world-channels-delete configuration (list identifier) :participants participants :now now))
 
-Move each resident away first or list it in PARTICIPANTS for deletion with
-the channel. Also list every descendant of a resident being deleted,
-wherever it lives: participant deletion includes all descendants. Delete
-nested channels first. The caller must check for jobs bound to the channel."
+(-> world-channels-delete
+    (configuration list &key (:participants list) (:now timestamp)
+                             (:prepare-function (option function)))
+    list)
+(defun world-channels-delete (configuration identifiers &key participants (now (get-universal-time))
+                                                           prepare-function)
+  "Delete IDENTIFIERS deepest first in one transaction, returning deleted participants.
+
+Every resident and its descendants must occur in PARTICIPANTS. Validate the
+complete batch before publication. PREPARE-FUNCTION, when supplied, receives
+the actual deleted participant IDs under the store lock after validation and
+before publication. It must not destructively modify storage."
   (world--transact
    configuration
    (lambda (world)
-     (world--require-channel world identifier ':delete-channel)
-     (when (world-channel-children world identifier)
-       (error 'world-error
-              :message    (format nil "Channel ~A has nested channels; delete them first."
-                                  identifier)
-              :pathname   nil
-              :operation  ':delete-channel
-              :identifier identifier))
-     (let ((residents (sort (world-channel-residents world identifier) #'<
-                            :key #'participant-created-at)))
-       (dolist (resident residents)
-         (unless (member (participant-identifier resident) participants :test #'string=)
-           (error 'world-error
-                  :message    (format nil "Channel ~A still has resident ~A; move it or include it in the deletion."
-                                      identifier (participant-identifier resident))
-                  :pathname   nil
-                  :operation  ':delete-channel
-                  :identifier identifier))
-         (dolist (descendant (world-participant-descendants world (participant-identifier resident)))
-           (unless (member (participant-identifier descendant) participants :test #'string=)
-             (error 'world-error
-                    :message    (format nil "Deleting ~A would delete its descendant ~A ~:[parked in no channel~;in channel ~:*~A~]; include it in the deletion."
-                                        (participant-identifier resident)
-                                        (participant-identifier descendant)
-                                        (participant-residence descendant))
-                    :pathname   nil
-                    :operation  ':delete-channel
-                    :identifier identifier))))
-       (let ((records nil) (deleted nil))
-         (dolist (resident residents)
-           (unless (member (participant-identifier resident) deleted :test #'string=)
-             (let ((deletion (world--participant-deletion-records
-                              world resident now
-                              :except  identifier
-                              :deleted deleted
-                              :pending (mapcar #'participant-identifier residents))))
-               (setf records (append records deletion))
-               (dolist (record deletion)
-                 (when (eq (first record) ':participant-deleted)
-                   (push (getf (rest record) :id) deleted))))))
-         (values (append records
-                         (list (list :channel-deleted
-                                     :version *world-format-version*
-                                     :id   identifier
-                                     :time now)))
-                 (nreverse deleted)))))))
+     (let ((preview (world--copy world))
+           (records nil)
+           (deleted nil))
+       (dolist (identifier identifiers)
+         (multiple-value-bind (batch doomed)
+             (world--channel-deletion-records preview identifier :participants participants :now now)
+           (dolist (record batch)
+             (when (and prepare-function (eq (first record) ':channel-deleted))
+               (setf (getf (rest record) :storage-cleanup-p) t))
+             (world--reduce-record (configuration-world-path configuration) preview record))
+           (setf records (nconc records batch)
+                 deleted (nconc deleted doomed))))
+       (world--check-integrity (configuration-world-path configuration) preview :operation ':write)
+       (when prepare-function
+         (funcall prepare-function deleted))
+       (values records deleted)))))
+
+(-> world--channel-deletion-records
+    (world string &key (:participants list) (:now timestamp))
+    (values list list))
+(defun world--channel-deletion-records (world identifier &key participants now)
+  "Return deletion records and deleted participants for one leaf IDENTIFIER in WORLD."
+  (world--require-channel world identifier ':delete-channel)
+  (when (world-channel-children world identifier)
+    (error 'world-error
+           :message    (format nil "Channel ~A has nested channels; delete them first."
+                               identifier)
+           :pathname   nil
+           :operation  ':delete-channel
+           :identifier identifier))
+  (let ((residents (sort (world-channel-residents world identifier) #'<
+                         :key #'participant-created-at)))
+    (dolist (resident residents)
+      (unless (member (participant-identifier resident) participants :test #'string=)
+        (error 'world-error
+               :message    (format nil "Channel ~A still has resident ~A; move it or include it in the deletion."
+                                   identifier (participant-identifier resident))
+               :pathname   nil
+               :operation  ':delete-channel
+               :identifier identifier))
+      (dolist (descendant (world-participant-descendants world (participant-identifier resident)))
+        (unless (member (participant-identifier descendant) participants :test #'string=)
+          (error 'world-error
+                 :message    (format nil "Deleting ~A would delete its descendant ~A ~:[parked in no channel~;in channel ~:*~A~]; include it in the deletion."
+                                     (participant-identifier resident)
+                                     (participant-identifier descendant)
+                                     (participant-residence descendant))
+                 :pathname   nil
+                 :operation  ':delete-channel
+                 :identifier identifier))))
+    (let ((records nil) (deleted nil))
+      (dolist (resident residents)
+        (unless (member (participant-identifier resident) deleted :test #'string=)
+          (let ((deletion (world--participant-deletion-records
+                           world resident now
+                           :except  identifier
+                           :deleted deleted
+                           :pending (mapcar #'participant-identifier residents))))
+            (setf records (append records deletion))
+            (dolist (record deletion)
+              (when (eq (first record) ':participant-deleted)
+                (push (getf (rest record) :id) deleted))))))
+      (values (append records
+                      (list (list :channel-deleted
+                                  :version *world-format-version*
+                                  :id   identifier
+                                  :time now)))
+              (nreverse deleted)))))

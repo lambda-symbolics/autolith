@@ -882,8 +882,8 @@ ordinary append protocol. Failed scans or checkpoint writes can be retried."
     (conversation-in-use ()
       t)))
 
-(-> conversation-lease-acquire (configuration string) conversation-lease)
-(defun conversation-lease-acquire (configuration identifier)
+(-> conversation-lease-acquire (configuration string &key (:pathname (option pathname))) conversation-lease)
+(defun conversation-lease-acquire (configuration identifier &key pathname)
   "Acquire the primary process lease for IDENTIFIER without waiting.
 
 The kernel lock is authoritative. Normal release removes its empty per-ID file;
@@ -892,7 +892,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
            (conversation-identifier-migration-resolve
             configuration identifier))
          (conversation-pathname
-           (conversation-pathname-for-id configuration normalized))
+            (or pathname (conversation-pathname-for-id configuration normalized)))
          (lease-pathname
            (conversation--lease-pathname configuration normalized))
          (guard-pathname
@@ -3850,8 +3850,8 @@ The caller holds IDENTIFIER's lease and has deleted, or is deleting, its history
                :sequence nil))))
   nil)
 
-(-> conversation-delete-history (configuration string) pathname)
-(defun conversation-delete-history (configuration identifier)
+(-> conversation-delete-history (configuration string &key (:pathname (option pathname))) pathname)
+(defun conversation-delete-history (configuration identifier &key pathname)
   "Delete IDENTIFIER's conversation segments and sidecars, and return its identity pathname.
 
 The caller holds IDENTIFIER's lease. Private artifacts, such as the
@@ -3859,7 +3859,7 @@ conversations of its children, stay. Signals CONVERSATION-ERROR when storage
 is missing."
   (let* ((normalized
            (conversation-identifier-migration-resolve configuration identifier))
-         (pathname (conversation-pathname-for-id configuration normalized)))
+         (pathname (or pathname (conversation-pathname-for-id configuration normalized))))
     (unless (conversation-storage-active-pathname pathname)
       (error 'conversation-error
              :message
