@@ -1860,4 +1860,28 @@
   test-compaction-recovery-tools-and-transcript
   test-compaction-recovery-mission-accounting
   test-compaction-recovery-selected-route
-  test-compaction-recovery-exhaustion)
+  test-compaction-recovery-exhaustion
+  test-expanded-native-unavailable-negative-controls
+  test-expanded-native-unavailable-representations
+  test-expanded-native-unavailable-ordinary
+  test-expanded-native-unavailable-manual
+  test-expanded-native-unavailable-reactive
+  test-expanded-native-unavailable-schedule
+  test-expanded-native-unavailable-terminal-idle
+  test-expanded-native-unavailable-acp-idle
+  test-expanded-native-no-fit-product-boundaries
+  test-expanded-native-no-fit-acp
+  test-expanded-native-no-fit-acp-prompt
+  test-expanded-native-no-fit-acp-queue
+  test-expanded-native-no-fit-acp-completion
+  test-expanded-native-stream-fixture
+  test-expanded-native-paid-arrival-fixture
+  test-expanded-native-paid-owner-refusals
+  test-expanded-native-terminal-message-owners
+  test-expanded-native-acp-owner-matrix
+  test-expanded-native-idle-owner-matrix
+  test-expanded-native-image-owner-and-reuse
+  test-expanded-native-owner-return-values
+  test-expanded-native-idle-cancellation-refusal
+  test-expanded-native-owner-finalization-errors
+  test-expanded-native-scheduled-controller)

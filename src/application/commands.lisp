@@ -1445,9 +1445,11 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
               :message "No connected agent can compact the conversation."))
       (t
        (unwind-protect
-            (agent-compact-conversation
-             agent
-             (application-agent-observer application))
+            (handler-case
+                (agent-compact-conversation
+                 agent (application-agent-observer application))
+              (provider-context-budget-error (condition)
+                (application-present-context-refusal application condition)))
          (terminal-ui-set-compacting (application-ui application) nil)
          (application-set-activity application nil)))))
   nil)

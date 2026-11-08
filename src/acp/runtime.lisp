@@ -282,18 +282,30 @@
                                   (setf start-sequence (conversation-next-sequence conversation)
                                         observer (acp-observer-create session))
                                   (acp-extension-notify session "state")
-                                  (agent-run-user-turn
-                                   (application-agent application) (if queued-p prepared text)
-                                   :observer observer :automatic-p automatic-p
-                                   :pending-input-identifier
-                                   (and queued-p controller
-                                        (application-input-controller-active-work-identifier controller)))
-                                  (acp-session--call-with-finalization
-                                   session
-                                   (lambda ()
-                                     (acp-session-check-cancelled session)
-                                     (acp-observer-flush observer)
-                                     ':end-turn))))))))
+                                  (handler-case
+                                      (agent-run-user-turn
+                                       (application-agent application) (if queued-p prepared text)
+                                       :observer observer :automatic-p automatic-p
+                                       :pending-input-identifier
+                                       (and queued-p controller
+                                            (application-input-controller-active-work-identifier controller)))
+                                    (provider-context-budget-error (condition)
+                                      (acp-session--call-with-finalization
+                                       session
+                                       (lambda ()
+                                         (acp-session-check-cancelled session)
+                                         (application-present-context-refusal application condition)
+                                         (agent-observer-text observer (format nil "Context admission refused: ~A" condition))
+                                         (acp-observer-flush observer)
+                                         ':refusal)))
+                                    (:no-error (&rest results)
+                                      (declare (ignore results))
+                                      (acp-session--call-with-finalization
+                                       session
+                                       (lambda ()
+                                         (acp-session-check-cancelled session)
+                                         (acp-observer-flush observer)
+                                         ':end-turn))))))))))
               (application-turn-cancelled (condition)
                 (setf outcome ':cancelled)
                 (acp-session--call-with-finalization

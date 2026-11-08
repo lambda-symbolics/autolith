@@ -936,3 +936,1537 @@
                 provider (provider-request-object provider (compaction-recovery-view state candidate) #() :compaction-p t))))
             (test-assert (equal notes (compaction-recovery-notes state)) "Readmission does not duplicate omission audit entries."))))))
   nil)
+
+
+;;;; -- Production Streaming Native Fallback --
+
+(defclass expanded-native-test-provider (codex-subscription-provider)
+  ((results :initarg :results :accessor expanded-native-results
+            :documentation "Response data encoded into real completed SSE streams.")
+   (input-snapshots :initform nil :accessor expanded-native-input-snapshots
+                    :documentation "Input identities seen only at admitted opening I/O.")
+   (compaction-flags :initform nil :accessor expanded-native-compaction-flags
+                     :documentation "Summary role observed at admitted opening I/O.")
+   (native-views :initform nil :accessor expanded-native-test-views
+                 :documentation "Actual native opening conversation and mission context.")
+   (after-summary :initform nil :accessor expanded-native-test-after-summary
+                  :documentation "Canonical arrival delivered when the summary stream closes."))
+  (:documentation "Retain production Codex streaming and replace only inert response I/O."))
+
+(defmethod provider-compaction-recovery-window ((provider expanded-native-test-provider))
+  "Keep the fixture's metadata ceiling equal to its configured window."
+  (config :context-window (provider-configuration provider)))
+
+(defclass expanded-native-input-stream (trivial-gray-streams:fundamental-character-input-stream)
+  ((source :initarg :source :reader expanded-native-input-source
+           :documentation "A standard completed synthetic SSE response.")
+   (on-close :initarg :on-close :initform nil :accessor expanded-native-input-on-close
+             :documentation "Optional synthetic concurrent arrival at transport completion."))
+  (:documentation "Character transport with an independently observable completion boundary."))
+
+(defmethod trivial-gray-streams:stream-read-char ((stream expanded-native-input-stream))
+  "Read the inert transport without bypassing the production event decoder."
+  (read-char (expanded-native-input-source stream) nil :eof))
+
+(defmethod trivial-gray-streams:stream-unread-char ((stream expanded-native-input-stream) character)
+  "Return CHARACTER to the inert transport."
+  (unread-char character (expanded-native-input-source stream)))
+
+(defmethod close :after ((stream expanded-native-input-stream) &key abort)
+  "Deliver one canonical concurrent arrival after a normally consumed summary stream."
+  (unless abort
+    (let ((callback (shiftf (expanded-native-input-on-close stream) nil)))
+      (when callback (funcall callback)))))
+
+(-> expanded-native-test--sse (provider-result) string)
+(defun expanded-native-test--sse (result)
+  "Encode fixture data as standard created, output-item and completed response events."
+  (with-output-to-string (stream)
+    (write-string (test-sse-event-string
+                   (json-object "type" "response.created"
+                                "response" (json-object "id" (provider-result-response-id result))))
+                  stream)
+    (dolist (item (provider-result-output-items result))
+      (write-string (test-sse-event-string (json-object "type" "response.output_item.done" "item" item)) stream))
+    (write-string (test-sse-event-string
+                   (json-object "type" "response.completed"
+                                "response" (json-object "id" (provider-result-response-id result)
+                                                        "usage" (provider-result-usage result))))
+                  stream)))
+
+(defmethod provider-open-native-compaction :before
+    ((provider expanded-native-test-provider) (request hash-table) &key credentials conversation)
+  "Observe actual native opening while retaining production POST and final admission."
+  (declare (ignore request credentials))
+  (push (list conversation (mission-context-find conversation)) (expanded-native-test-views provider)))
+
+(defmethod provider-open-response-stream
+    ((provider expanded-native-test-provider) (request hash-table) &key credentials conversation)
+  "Return inert SSE I/O after production projection, attempt, encoder and final admission."
+  (declare (ignore request credentials))
+  (let* ((summary-p (eq *telemetry-request-role* :compaction))
+         (result    (pop (expanded-native-results provider)))
+         (callback  (and summary-p (shiftf (expanded-native-test-after-summary provider) nil))))
+    (assert result)
+    (push (conversation-input-items conversation) (expanded-native-input-snapshots provider))
+    (push summary-p (expanded-native-compaction-flags provider))
+    (format t "~&EXPANDED-STREAM role=~S sequence=~D~%" (if summary-p :summary :answer)
+            (length (expanded-native-input-snapshots provider)))
+    (values (make-instance 'expanded-native-input-stream
+                           :source   (make-string-input-stream (expanded-native-test--sse result))
+                           :on-close callback)
+            200 nil)))
+
+;; Couple small histories to an earlier soft threshold and a bounded hard window.
+;; Keep the actual system instructions and encoded request admission in every cell.
+(-> expanded-native-test--soft-pressure (application) null)
+(defun expanded-native-test--soft-pressure (application)
+  "Configure the smaller fixture's soft limit and check actual input pressure."
+  (setf (config :compaction-threshold-percent (application-configuration application)) 35)
+  (let* ((agent         (application-agent application))
+         (configuration (application-configuration application))
+         (input         (context-estimate-known-tokens
+                         configuration (application-conversation application)
+                         :tool-registry (agent-tool-registry agent)
+                         :hurry-up-p    (agent-hurry-up-p agent)
+                         :family        (provider-family (agent-provider agent))))
+         (threshold     (configuration-compaction-token-limit configuration)))
+    (test-assert (>= input threshold) "The reduced history still crosses the real soft compaction threshold.")
+    (format t "~&SOFT-PRESSURE input=~D threshold=~D window=~D~%"
+            input threshold (config :context-window configuration)))
+  nil)
+
+(-> expanded-native-test--refusal-budget (provider-context-budget-error) null)
+(defun expanded-native-test--refusal-budget (condition)
+  "Require a measured hard overflow from the original final-request guard."
+  (let ((input   (provider-context-budget-error-estimated-input-tokens condition))
+        (reserve (provider-context-budget-error-output-reserve condition))
+        (window  (provider-context-budget-error-context-window condition)))
+    (test-assert (> (+ input reserve) window)
+                 "The reduced arrival still exceeds actual encoded request admission.")
+    (format t "~&FINAL-REFUSAL input=~D reserve=~D window=~D~%" input reserve window))
+  nil)
+
+(-> expanded-native-test--fixture (function &key (:owned-p boolean) (:large-p boolean)) null)
+(defun expanded-native-test--fixture (function &key owned-p large-p)
+  "Call FUNCTION with a real application, optional mission, and inert Codex transport."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "144000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "8192"))
+    (with-test-configuration (configuration)
+      (let* ((provider     (make-instance 'expanded-native-test-provider
+                                         :configuration      configuration
+                                         :credential-manager (provider-credential-manager (provider-create configuration))
+                                         :results            (list (agent-test-result
+                                                                    "summary" (list (agent-test-compaction-message))
+                                                                    :usage (json-object "input_tokens" 100 "output_tokens" 50))
+                                                                   (agent-test-result
+                                                                    "answer" (list (agent-test-message "Resumed answer."))
+                                                                    :usage (json-object "input_tokens" 20 "output_tokens" 10)))))
+             (application  (mission-inference-test--application configuration provider))
+             (conversation (application-conversation application))
+             (agent        (agent-create :configuration configuration :conversation conversation
+                                         :provider provider :tool-registry (make-instance 'tool-registry))))
+        (setf (application-agent application) agent
+              (config :session-title-generation-p configuration) nil)
+        (conversation-append-user-message conversation "An earlier text-only exchange.")
+        (conversation-append-provider-item
+         conversation (agent-test-message (if large-p (make-string 190000 :initial-element #\h) "Earlier answer.")))
+        (conversation-append-user-message conversation "Continue the actual work.")
+        (when large-p (expanded-native-test--soft-pressure application))
+        (when owned-p
+          (application-mission-start application (mission-test--specification :tokens 2000000 :turns 32)))
+        (unwind-protect
+             (funcall function application provider)
+          (when owned-p (mission-detach application))
+          (remhash application *mission-schedule-services*)
+          (terminal-ui-stop (application-ui application))))))
+  nil)
+
+(-> expanded-native-test--transport
+    (application &key (:status integer) (:signaled-p boolean) (:function function)
+                      (:failure (option condition)) (:expected-posts (integer 0))) null)
+(defun expanded-native-test--transport
+    (application &key status signaled-p function failure (expected-posts 1))
+  "Invoke FUNCTION with a true Dexador condition or its returned-status control at POST."
+  (let ((calls         0)
+        (configuration (application-configuration application)))
+    (test-call-with-function-replacements
+     (list (list 'credential-manager-credentials
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   (provider-tests--credentials configuration)))
+           (list 'dexador:post
+                 (lambda (endpoint &rest arguments)
+                   (declare (ignore arguments))
+                   (incf calls)
+                   (test-assert (search "/responses/compact" endpoint) "The actual native POST boundary is reached.")
+                   (when failure (error failure))
+                   (if signaled-p
+                       (error 'http-request-failed :status status :body "Native endpoint unavailable."
+                                                  :headers nil :uri endpoint :method ':post)
+                       (values "Native endpoint unavailable." status nil)))))
+     function)
+    (test-assert (= expected-posts calls) "Only admitted native requests reach the actual POST boundary.")
+    (format t "~&NATIVE-HTTP status=~D signaled=~S POST=~D~%" status signaled-p calls))
+  nil)
+
+(-> test-expanded-native-unavailable-negative-controls () null)
+(defun test-expanded-native-unavailable-negative-controls ()
+  "Keep authentication, transient HTTP, and uncertain transport failures outside fallback."
+  (dolist (status '(401 429 500 503 0))
+    (dolist (owned-p '(nil t))
+      (expanded-native-test--fixture
+       (lambda (application provider)
+         (let ((*provider-maximum-transient-retries* 0)
+               (failure                              nil))
+           (test-call-with-function-replacements
+            (list (list 'credential-manager-refreshable-p
+                        (lambda (manager) (declare (ignore manager)) nil)))
+            (lambda ()
+              (expanded-native-test--transport
+               application :status status :signaled-p t
+               :failure (when (zerop status)
+                          (make-condition 'end-of-file :stream (make-string-input-stream "")))
+               :function
+               (lambda ()
+                 (handler-case (application-compact application)
+                   (error (condition) (setf failure condition)))))))
+           (format t "~&NATIVE-NEGATIVE status=~D owned=~S failure=~S~%" status owned-p (type-of failure))
+           (test-assert failure "An unrelated native failure must propagate to its existing owner.")
+           (test-assert (not (typep failure 'provider-context-budget-error))
+                        "An unrelated native failure is not a local context refusal.")
+           (test-assert (null (expanded-native-input-snapshots provider))
+                        "No portable summary or ordinary request follows an unrelated failure.")
+           (test-assert (not (find :summary
+                                  (conversation-records-newest (application-conversation application) 30)
+                                  :key #'first))
+                        "An unrelated failure cannot publish a portable checkpoint.")
+           (when owned-p
+             (test-assert (plusp (getf (application-goal application) :unknown-usage 0))
+                          "Uncertain request usage is never settled as known zero."))))
+       :owned-p owned-p :large-p t)))
+  nil)
+
+(-> test-expanded-native-unavailable-representations () null)
+(defun test-expanded-native-unavailable-representations ()
+  "Classify both wire representations before bound and detached mission supervision."
+  (dolist (status '(404 405 501))
+    (dolist (signaled-p '(nil t))
+      (dolist (ownership '(:unowned :bound :detached))
+        (expanded-native-test--fixture
+         (lambda (application provider)
+           (let* ((source  (application-conversation application))
+                  (view    (if (eq ownership ':detached) (conversation-compaction-view (conversation-compaction-capture source)) source))
+                  (context (mission-request-view-context source))
+                  (failure nil) (results nil))
+             (expanded-native-test--transport
+              application :status status :signaled-p signaled-p :function
+              (lambda ()
+                (handler-case
+                    (setf results
+                          (multiple-value-list
+                           (if (eq ownership ':detached)
+                               (mission-call-with-native-compaction-view
+                                context view
+                                (lambda ()
+                                  (provider-native-compact-conversation provider view :tool-namespaces #()
+                                                                               :event-callback         #'identity)))
+                               (provider-native-compact-conversation provider view :tool-namespaces #()
+                                                                                  :event-callback   #'identity))))
+                  (error (condition) (setf failure condition)))))
+             (format t "~&NATIVE-REPRESENTATION owner=~S failure=~S values=~S~%"
+                     ownership (and failure (type-of failure)) results)
+             (test-assert (null failure) "An unavailable endpoint returns normally before mission supervision.")
+             (test-assert (null (first results)) "No opaque native checkpoint is fabricated.")
+             (when context
+               (let ((ledger (mission-context-goal context)))
+                 (test-assert (zerop (getf ledger :requests-outstanding 0)) "Every native request settles.")
+                 (test-assert (zerop (getf ledger :tokens-reserved 0)) "Every native reservation settles.")
+                 (test-assert (zerop (getf ledger :unknown-usage 0)) "A definitive unavailable endpoint has known usage.")
+                 (test-assert (zerop (getf ledger :tokens-used 0)) "A definitive unavailable endpoint charges no inference.")))
+             (when (eq ownership ':detached)
+               (test-assert (null (mission-context-find view)) "Detached request ownership is released."))))
+         :owned-p (not (eq ownership ':unowned))))))
+  nil)
+
+(-> test-expanded-native-unavailable-ordinary () null)
+(defun test-expanded-native-unavailable-ordinary ()
+  "Continue real large text-only proactive turns after every native unavailable status."
+  (dolist (status '(404 405 501))
+    (dolist (owned-p '(nil t))
+      (expanded-native-test--fixture
+       (lambda (application provider)
+         (let* ((agent        (application-agent application))
+                (conversation (application-conversation application))
+                (failure nil) (result nil))
+           (test-assert (agent-should-compact-p agent) "The real large-text estimate selects proactive compaction.")
+           (expanded-native-test--transport
+            application :status status :signaled-p t :function
+            (lambda ()
+              (handler-case
+                  (setf result (agent--run-provider-loop agent (make-instance 'agent-observer) :tools-p nil))
+                (error (condition) (setf failure condition)))))
+           (format t "~&NATIVE-ORDINARY owner=~S status=~D failure=~S flags=~S~%"
+                   owned-p status (and failure (type-of failure)) (expanded-native-compaction-flags provider))
+           (test-assert (null failure) "Unavailable native compaction must not abort the ordinary turn.")
+           (test-assert (and result (equal "Resumed answer." (provider-result-assistant-text result)))
+                        "The ordinary answer really continues after the portable summary.")
+           (test-assert (equal '(nil t) (expanded-native-compaction-flags provider))
+                        "One admitted summary and one admitted ordinary answer complete.")
+           (test-assert (find :summary (conversation-records-newest conversation 30) :key #'first)
+                        "The portable checkpoint is durably published.")
+           (let ((loaded (conversation-load-by-id (application-configuration application)
+                                                  (conversation-identifier conversation))))
+             (test-assert (equal (mapcar #'json-encode (conversation-input-items conversation))
+                                 (mapcar #'json-encode (conversation-input-items loaded)))
+                          "Reload preserves the actual published projection."))
+           (when owned-p
+             (let ((ledger (application-goal application)))
+               (test-assert (= 180 (getf ledger :tokens-used 0)) "Positive summary and answer usage settle once.")
+               (test-assert (zerop (getf ledger :unknown-usage 0)) "Unavailable native usage is not quarantined.")
+               (test-assert (zerop (getf ledger :requests-outstanding 0)) "No request remains outstanding.")
+               (test-assert (zerop (getf ledger :tokens-reserved 0)) "No allocation remains reserved.")))))
+       :owned-p owned-p :large-p t)))
+  nil)
+
+
+;;;; -- Native HTTP Sibling Lifecycles --
+
+(-> expanded-native-test--settled (application integer) null)
+(defun expanded-native-test--settled (application tokens)
+  "Check the actual owner ledger after all admitted work has settled."
+  (let ((goal (application-goal application)))
+    (test-assert (= tokens (getf goal :tokens-used 0)) "Only completed positive paid usage is charged.")
+    (test-assert (eq :active (getf goal :status)) "A definitive unavailable endpoint preserves the active mission.")
+    (dolist (key '(:requests-outstanding :tokens-reserved :unknown-usage))
+      (test-assert (zerop (getf goal key 0)) (format nil "No residual ~A." key))))
+  nil)
+
+(-> expanded-native-test--checkpoint (application) null)
+(defun expanded-native-test--checkpoint (application)
+  "Verify publication from authoritative disk, independently of the active projection."
+  (let ((loaded (conversation-load
+                 (conversation-pathname (application-conversation application)))))
+    (test-assert (find :summary (conversation-records-newest loaded 30) :key #'first)
+                 "The portable summary survives canonical reload."))
+  nil)
+
+(-> test-expanded-native-unavailable-manual () null)
+(defun test-expanded-native-unavailable-manual ()
+  "Use manual application compaction with and without a mission owner."
+  (dolist (status '(404 405 501))
+    (dolist (owned-p '(nil t))
+      (expanded-native-test--fixture
+       (lambda (application provider)
+         (let ((failure nil))
+           (expanded-native-test--transport
+            application :status status :signaled-p t :function
+            (lambda ()
+              (handler-case (application-compact application)
+                (error (condition) (setf failure condition)))))
+           (format t "~&NATIVE-MANUAL status=~D owned=~S failure=~S~%" status owned-p (type-of failure))
+           (test-assert (null failure) "Manual compaction returns normally after portable fallback.")
+           (test-assert (equal '(t) (expanded-native-compaction-flags provider)) "Manual compaction admits one paid summary.")
+           (expanded-native-test--checkpoint application)
+           (when owned-p (expanded-native-test--settled application 150))))
+       :owned-p owned-p :large-p t)))
+  nil)
+
+(defclass expanded-native-output-observer (agent-observer)
+  ((output-limit :initform 200000 :accessor expanded-native-output-limit
+                 :documentation "One initial ordinary output allowance, consumed at request start."))
+  (:documentation "A legitimate initial output allowance that unwinds before reactive compaction."))
+
+(defmethod agent-observer-status
+    ((observer expanded-native-output-observer) (status symbol) details)
+  "Request a large output allowance once, using the ordinary observer protocol."
+  (declare (ignore details))
+  (when (eq status :provider-request-started)
+    (shiftf (expanded-native-output-limit observer) nil)))
+
+(-> test-expanded-native-unavailable-reactive () null)
+(defun test-expanded-native-unavailable-reactive ()
+  "Reject the initial wire envelope with a genuine output allowance, then recover."
+  (dolist (status '(404 405 501))
+    (expanded-native-test--fixture
+     (lambda (application provider)
+       (let* ((conversation (application-conversation application))
+              (agent (application-agent application)) (failure nil)
+              (observer     (make-instance 'expanded-native-output-observer)))
+         (conversation-append-provider-item conversation (agent-test-message (make-string 400000 :initial-element #\h)))
+         (conversation-append-user-message conversation "Continue the real text work.")
+         (test-assert (not (agent-should-compact-p agent)) "The text conversation is below the real soft threshold.")
+         (expanded-native-test--transport
+          application :status status :signaled-p t :function
+          (lambda ()
+            (handler-case (agent--run-provider-loop agent observer :tools-p nil)
+              (error (condition) (setf failure condition)))))
+         (format t "~&NATIVE-REACTIVE status=~D failure=~S flags=~S~%" status (type-of failure)
+                 (expanded-native-compaction-flags provider))
+         (test-assert (null failure) "Final admission recovery reaches portable summary and resumed answer.")
+         (test-assert (equal '(nil t) (expanded-native-compaction-flags provider)) "The rejected ordinary wire request is never paid.")
+         (expanded-native-test--checkpoint application)
+         (expanded-native-test--settled application 180)))
+     :owned-p t))
+  nil)
+
+(-> test-expanded-native-unavailable-schedule () null)
+(defun test-expanded-native-unavailable-schedule ()
+  "Consume a genuine claimed occurrence through the default mission runner."
+  (dolist (status '(404 405 501))
+    (expanded-native-test--fixture
+     (lambda (application provider)
+       (let* ((now     100)
+              (service (mission-schedule-service-create application :clock (lambda () now)
+                         :enqueue                                          (lambda (owner command) (declare (ignore owner command)) t))))
+         (setf (gethash application *mission-schedule-services*) service)
+         (application-mission-schedule-add application :id "native" :content "Inspect scheduled work."
+                                          :at 100 :interval 10)
+         (let* ((occurrence (first (application-mission-schedules-wake application)))
+                (ticket (mission-schedule-tests--ticket occurrence)) (failure nil))
+           (test-assert (eq :claimed (getf occurrence :state)) "The real scheduler persists a claimed ticket before execution.")
+           (expanded-native-test--transport application :status status :signaled-p t :function
+            (lambda ()
+              (handler-case (application-operation-call application "mission-wakeup" ticket)
+                (error (condition) (setf failure condition)))))
+           (format t "~&NATIVE-SCHEDULE status=~D failure=~S~%" status (type-of failure))
+           (test-assert (null failure) "The default scheduled runner continues past unavailable native compaction.")
+           (let ((wakeups (getf (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler service)) :wakeups)))
+             (test-assert (eq :completed (getf (first wakeups) :state)) "Only the completed answer marks the occurrence completed."))
+           (let ((count (length (expanded-native-input-snapshots provider))))
+             (handler-case (application-operation-call application "mission-wakeup" ticket)
+               (mission-error () nil))
+             (test-assert (= count (length (expanded-native-input-snapshots provider))) "Reconsuming the claimed ticket issues no request."))
+           (expanded-native-test--checkpoint application)
+           (expanded-native-test--settled application 180)
+           (setf now 110
+                 (expanded-native-results provider)
+                 (list (agent-test-result "later" (list (agent-test-message "Later scheduled answer."))
+                                          :usage (json-object "input_tokens" 20 "output_tokens" 10))))
+           (let ((next (first (application-mission-schedules-wake application))))
+             (test-assert next "The next recurring occurrence is independently eligible.")
+             (when next
+                 (expanded-native-test--transport
+                  application :status status :signaled-p t :expected-posts 0
+                  :function (lambda ()
+                              (application-operation-call application "mission-wakeup" (mission-schedule-tests--ticket next))))
+               (test-assert (= 3 (length (expanded-native-input-snapshots provider))) "A later recurrence actually answers."))))))
+     :owned-p t :large-p t))
+  nil)
+
+(-> test-expanded-native-unavailable-terminal-idle () null)
+(defun test-expanded-native-unavailable-terminal-idle ()
+  "Run due terminal episodes with and without mission ownership, then accept later input."
+  (dolist (status '(404 405 501))
+    (dolist (owned-p '(nil t))
+      (expanded-native-test--fixture
+       (lambda (application provider)
+         (let* ((controller                       (make-instance 'application-input-controller :application application :main-thread (current-thread)))
+                (*idle-compaction-clock-function* (lambda () 1180)))
+           (change-class (terminal-ui-terminal (application-ui application)) 'waiting-recording-terminal)
+           (setf (application-input-controller application) controller
+                 (config :prompt-cache-retention-seconds (application-configuration application)) 300)
+           (idle-compaction-tests--prime application)
+           (let ((work (application-input-controller--next-work controller)))
+             (test-assert (eq :idle-compaction (first work)) "A due real episode selects idle work.")
+             (expanded-native-test--transport application :status status :signaled-p t :function
+              (lambda () (application-input-controller--run-work controller work)))
+             (application-input-controller--finish-work controller)
+             (expanded-native-test--checkpoint application)
+             (test-assert (null (application-idle-compaction-episode application)) "The idle opportunity is consumed once.")
+             (test-assert (not (application-input-controller-active-p controller)) "The terminal controller releases activity.")
+             (test-assert (equal '(t) (expanded-native-compaction-flags provider)) "Idle maintenance completes one paid summary.")
+             (when owned-p (expanded-native-test--settled application 150))
+             (expanded-native-test--transport
+              application :status status :signaled-p t :expected-posts 0
+              :function (lambda ()
+                          (application--run-message-input application "Later actual user input." :tools-p nil :goal-continuations-p nil)))
+             (test-assert (equal '(nil t) (expanded-native-compaction-flags provider)) "Later input gets its ordinary answer.")
+             (when owned-p (expanded-native-test--settled application 180)))
+           (setf (application-input-controller application) nil)))
+       :owned-p owned-p :large-p t)))
+  nil)
+
+(-> test-expanded-native-unavailable-acp-idle () null)
+(defun test-expanded-native-unavailable-acp-idle ()
+  "Use inert ACP session ownership, cleanup, and a later real prompt."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "144000") ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "8192"))
+    (acp-input-test--session
+     (lambda (session client)
+       (declare (ignore client))
+       (let* ((application  (acp-session-application session))
+              (provider     (application-provider application))
+              (conversation (application-conversation application))
+              (*idle-compaction-clock-function* (lambda () 1180)) (failure nil))
+         (change-class provider 'expanded-native-test-provider
+                       :credential-manager (credential-manager-create (application-configuration application)))
+         (setf (slot-value provider 'cl-llm-provider-api::configuration) (application-configuration application)
+               (expanded-native-results provider)
+               (list (agent-test-result "summary" (list (agent-test-compaction-message)) :usage (json-object "input_tokens" 100 "output_tokens" 50))
+                     (agent-test-result "answer" (list (agent-test-message "Later ACP answer.")) :usage (json-object "input_tokens" 20 "output_tokens" 10)))
+               (config :prompt-cache-retention-seconds (application-configuration application)) 300)
+         (conversation-append-user-message conversation "Earlier exchange.")
+         (conversation-append-provider-item conversation (agent-test-message (make-string 190000 :initial-element #\h)))
+         (conversation-append-user-message conversation "Continue.")
+         (application-mission-start application (mission-test--specification :tokens 2000000 :turns 32))
+         (unwind-protect
+              (progn
+                (idle-compaction-tests--prime application)
+                (expanded-native-test--transport application :status 404 :signaled-p t :function
+                 (lambda () (handler-case (acp-completion--cycle session)
+                              (error (condition) (setf failure condition)))))
+                (format t "~&NATIVE-ACP failure=~S~%" (type-of failure))
+                (test-assert (null failure) "ACP idle unavailability does not escape as an exception.")
+                (expanded-native-test--checkpoint application)
+                (test-assert (null (acp-session-prompt-thread session)) "ACP releases prompt ownership.")
+                (test-assert (not (acp-session-prompt-interruptible-p session)) "ACP finalizes interruption state.")
+                (test-assert (not (application-input-controller-active-p (acp-input-controller session))) "ACP releases controller activity.")
+                (test-assert (null (application-idle-compaction-episode application)) "ACP consumes the opportunity once.")
+                (test-assert (null (acp-completion--cycle session)) "Consumed ACP work cannot repeat.")
+                (expanded-native-test--settled application 150)
+                (expanded-native-test--transport
+                 application :status 404 :signaled-p t :expected-posts 0
+                 :function (lambda () (acp-session-run-turn session "Later actual ACP prompt.")))
+                (test-assert (equal '(nil t) (expanded-native-compaction-flags provider)) "A later ACP prompt really answers.")
+                (expanded-native-test--settled application 180))
+           (mission-detach application))))))
+  nil)
+
+
+;;;; -- Unpublishable Portable Compaction --
+
+(-> expanded-native-test--no-fit
+    (application expanded-native-test-provider keyword
+     &key (:entry keyword) (:session t) (:client t)) null)
+(defun expanded-native-test--no-fit (application provider phase &key entry session client)
+  "Exercise real pre-dispatch or post-paid refusal through an owning product entry."
+  (setf (config :compaction-threshold-percent (application-configuration application)) 35)
+  (let* ((conversation                     (application-conversation application))
+         (controller                       (or (application-input-controller application)
+                                               (make-instance 'application-input-controller :application application :main-thread (current-thread))))
+         (*idle-compaction-clock-function* (lambda () 1180))
+         (note-original                    (symbol-function 'agent--note-compaction-request))
+         (arrival                          nil)
+         (escaped nil) (result nil) (work nil) (ticket nil) (service nil) (completion-id nil))
+    (ecase phase
+      (:before
+       ;; Native local exhaustion permits portable recovery.  The newest
+       ;; summary source exchange is itself too large to drop or admit.
+       (conversation-append-user-message conversation (make-string 600000 :initial-element #\a))
+       (conversation-append-provider-item conversation (agent-test-message "Old protected user exchange completed."))
+       (conversation-append-user-message
+        conversation (make-string (if (eq entry :acp-completion) 600000 1000) :initial-element #\b)))
+      (:after
+       (conversation-append-user-message conversation "Older large response.")
+       (conversation-append-provider-item conversation (agent-test-message (make-string 190000 :initial-element #\h)))
+       (conversation-append-user-message conversation "Summarize before continuing.")
+       (setf arrival
+             (lambda ()
+               (conversation-append-user-message conversation (make-string 600000 :initial-element #\n))))))
+    (when (member entry '(:terminal :acp))
+      (setf (application-input-controller application) controller
+            (config :prompt-cache-retention-seconds (application-configuration application)) 300)
+      (unless session
+        (change-class (terminal-ui-terminal (application-ui application)) 'waiting-recording-terminal))
+      (idle-compaction-tests--prime application)
+      (unless session
+        (setf work (application-input-controller--next-work controller))
+        (test-assert (eq :idle-compaction (first work)) "No-fit begins with a genuine due idle episode.")))
+    (when (eq entry :wakeup)
+      (setf service (mission-schedule-service-create application :clock (lambda () 100)
+                     :enqueue                                           (lambda (owner command) (declare (ignore owner command)) t))
+            (gethash application *mission-schedule-services*) service)
+      (application-mission-schedule-add application :id "no-fit" :content "Perform scheduled work." :at 100 :interval 10)
+      (setf ticket (mission-schedule-tests--ticket (first (application-mission-schedules-wake application)))))
+    (when (eq entry :acp-queue)
+      (acp-input-test--submit session "_autolith/queue" "Actual queued ACP input.")
+      (acp-input-test--submit session "_autolith/queue" "Remaining queued ACP input."))
+    (when (eq entry :acp-completion)
+      (let* ((agent (application-agent application))
+             (job   (job-completion-tests--start agent (task-completion--runtime agent))))
+        (setf completion-id (session-job-execution-identifier job))
+        (test-assert (task-completion-pending agent) "A real completed job awaits automatic delivery.")
+        (acp-completion-test--wait
+         (lambda () (let ((notices (acp-completion--admitted-notices session)))
+                      (and notices (every (lambda (notice) (<= (getf notice :ready-at) (get-universal-time))) notices)))))
+        (test-assert (not (task-completion--delivered-p conversation (session-job-execution-identifier job)))
+                     "The completion has not been consumed before owner admission.")))
+    (test-call-with-function-replacements
+     (list (list 'agent--note-compaction-request
+                 (lambda (agent observer &rest arguments)
+                   (multiple-value-prog1 (apply note-original agent observer arguments)
+                     ;; Append once after the original durable paid-summary receipt.
+                     (when (and arrival (eq :summary (getf arguments :kind)))
+                       (funcall (shiftf arrival nil)))))))
+     (lambda ()
+      (expanded-native-test--transport
+       application :status 404 :signaled-p (eq phase :after) :function
+       (lambda ()
+         (handler-case
+             (setf result
+                   (ecase entry
+                     (:manual
+                      (application-compact application))
+                     (:turn
+                      (nth-value 1 (application--run-turn application "Perform the requested work." :tools-p nil :continuation-p t)))
+                     (:message
+                      (application--run-message-input application "Actual mission user input." :tools-p nil))
+                     (:continuation
+                      (application--run-goal-continuations application))
+                     (:wakeup
+                      (application-operation-call application "mission-wakeup" ticket))
+                     (:terminal
+                      (application-input-controller--run-work controller work))
+                     (:acp
+                      (acp-completion--cycle session))
+                     (:acp-prompt
+                      (agentcomms:client-prompt client (acp-session-identifier session)
+                                                (list (agentcomms:acp-text-content "Actual explicit ACP input."))))
+                     ((:acp-queue :acp-completion)
+                      (acp-completion--cycle session))))
+           (error (condition) (setf escaped condition))))
+       :expected-posts (if (eq phase :before) 0 1))))
+    (when (eq entry :terminal) (application-input-controller--finish-work controller))
+    (let* ((loaded  (conversation-load (conversation-pathname conversation)))
+           (records (conversation-records-newest loaded 100))
+           (notices (remove-if-not (lambda (record) (eq :side-status (first record))) records)))
+      (format t "~&NO-FIT phase=~S entry=~S escaped=~S result=~S summary-requests=~D notices=~D~%"
+              phase entry (type-of escaped) (and (keywordp result) result)
+              (count t (expanded-native-compaction-flags provider)) (length notices))
+      (test-assert (null escaped) "Context admission refusal is a normal explained product outcome.")
+      (test-assert (not (find :summary records :key #'first)) "No invalid checkpoint is durably published.")
+      (test-assert (not (find :turn-aborted records :key #'first)) "A local no-fit refusal is not recorded as an application crash.")
+      (test-assert (find-if (lambda (record)
+                             (and (test-object-contains-string-p record "context")
+                                  (every (lambda (span) (not (eq :failure (terminal-span-style span))))
+                                         (getf (rest record) :spans)))) notices)
+                   "A durable informational explanation identifies the context refusal.")
+      (test-assert (equal (conversation-input-history loaded) (conversation-input-history conversation))
+                   "Canonical reload preserves every user arrival and the original text history.")
+      (when completion-id
+        (test-assert (task-completion--delivered-p loaded completion-id)
+                     "Durable reload retains the claimed completion's delivery exactly once."))
+      (test-assert (= (if (eq phase :after) 1 0) (length (expanded-native-input-snapshots provider)))
+                   "Only an admitted, completed summary can incur paid usage.")
+      (expanded-native-test--settled application (if (eq phase :after) 150 0))
+      (when (eq entry :acp-prompt)
+        (test-assert (eq :refusal result) "The ACP protocol returns refusal, never a completed answer."))
+      (when (eq entry :turn)
+        (test-assert (eq :failed result) "A refused turn is never returned as a completed answer."))
+      (when service
+        (let* ((snapshot   (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler service)))
+               (occurrence (first (getf snapshot :wakeups))))
+          (test-assert (eq :failed (getf occurrence :state)) "The refused scheduled occurrence is settled failed, never executed or unknown.")
+          (test-assert (zerop (hash-table-count (mission-schedule-executing service)))
+                       "A refused wakeup releases its live execution reservation.")
+          (let* ((restored (mission-schedule-service-create application :clock (lambda () 100)))
+                 (record   (first (getf (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler restored)) :wakeups))))
+            (test-assert (and (eq :failed (getf record :state)) (eq :runner-failed (getf record :result)))
+                         "Reopening preserves a truthful failed refusal rather than an executed or replayable claim.")
+            (setf (gethash application *mission-schedule-services*) restored)
+            (let ((count   (length (expanded-native-input-snapshots provider)))
+                  (notices (length (mission-schedule-test--notices application))))
+              (handler-case (application-operation-call application "mission-wakeup" ticket)
+                (mission-error () nil))
+              (mission-schedule--announce restored)
+              (test-assert (= count (length (expanded-native-input-snapshots provider))) "A reopened refusal cannot charge the occurrence twice.")
+              (test-assert (= notices (length (mission-schedule-test--notices application)))
+                           "Reopening and duplicate consumption do not republish a terminal notice."))))))
+    (when (eq entry :continuation)
+      (test-assert (= 1 (getf (application-goal application) :continuations 0))
+                   "A refusal during continuation stops after one attempt, without a busy retry."))
+    (when (member entry '(:terminal :acp))
+      (test-assert (null (application-idle-compaction-episode application)) "Refusal consumes the idle episode once.")
+      (test-assert (not (application-input-controller-active-p controller)) "Refusal releases controller activity.")
+      (when session
+        (test-assert (null (acp-session-prompt-thread session)) "Refusal releases ACP prompt ownership.")
+        (test-assert (not (acp-session-prompt-interruptible-p session)) "Refusal finalizes ACP interruption state.")
+        (test-assert (null (acp-completion--cycle session)) "The consumed ACP opportunity cannot repeat.")))
+    (unless session (setf (application-input-controller application) nil)))
+  nil)
+
+(-> test-expanded-native-no-fit-product-boundaries () null)
+(defun test-expanded-native-no-fit-product-boundaries ()
+  "Check pre-dispatch exhaustion and true unavailable-HTTP post-paid refusal."
+  (dolist (phase '(:before :after))
+    (dolist (entry '(:manual :turn :message :continuation :wakeup :terminal))
+      (expanded-native-test--fixture
+       (lambda (application provider) (expanded-native-test--no-fit application provider phase :entry entry))
+       :owned-p t)))
+  nil)
+
+(-> test-expanded-native-no-fit-acp () null)
+(defun test-expanded-native-no-fit-acp ()
+  "Return a normal context refusal while finalizing real inert ACP idle ownership."
+  (dolist (phase '(:before :after))
+    (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "144000") ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "8192"))
+      (acp-input-test--session
+       (lambda (session client)
+         (declare (ignore client))
+         (let* ((application (acp-session-application session)) (provider (application-provider application)))
+           (change-class provider 'expanded-native-test-provider
+                         :credential-manager (credential-manager-create (application-configuration application)))
+           (setf (slot-value provider 'cl-llm-provider-api::configuration) (application-configuration application)
+                 (expanded-native-results provider)
+                 (list (agent-test-result "summary" (list (agent-test-compaction-message))
+                                          :usage (json-object "input_tokens" 100 "output_tokens" 50))))
+           (application-mission-start application (mission-test--specification :tokens 2000000 :turns 32))
+           (unwind-protect
+                (expanded-native-test--no-fit application provider phase :entry ':acp :session session)
+             (mission-detach application)))))))
+  nil)
+
+
+;;;; -- ACP Prompt and Continuation Refusals --
+
+(-> expanded-native-test--acp-turn-refusal (keyword) null)
+(defun expanded-native-test--acp-turn-refusal (entry)
+  "Exercise the real ACP owner and dispatcher, including subsequent reuse."
+  (dolist (phase '(:before :after))
+    (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "144000")
+                            ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "8192"))
+      (acp-input-test--session
+       (lambda (session client)
+         (let* ((application  (acp-session-application session))
+                (conversation (application-conversation application))
+                (agent        (application-agent application))
+                (provider     (application-provider application))
+                (controller   (acp-input-controller session)))
+           (change-class provider 'expanded-native-test-provider
+                         :credential-manager (credential-manager-create (application-configuration application)))
+           (setf (slot-value provider 'cl-llm-provider-api::configuration) (application-configuration application)
+                 (expanded-native-results provider)
+                 (list (agent-test-result "summary" (list (agent-test-compaction-message))
+                                          :usage (json-object "input_tokens" 100 "output_tokens" 50))))
+           (application-mission-start application (mission-test--specification :tokens 2000000 :turns 32))
+           (mission-context-bind (mission-context-find conversation) agent)
+           (unwind-protect
+                (progn
+                  (expanded-native-test--no-fit application provider phase :entry entry :session session :client client)
+                  (acp-completion-test--wait (lambda () (= 2 (length (acp-session-test-turn-events client)))))
+                  (acp-session-test-check-turns client
+                                               (list (ecase entry
+                                                       (:acp-prompt
+                                                        "prompt")
+                                                       (:acp-queue
+                                                        "queue")
+                                                       (:acp-completion
+                                                        "completion")))
+                                               '("refusal"))
+                  (test-assert (find-if (lambda (update)
+                                         (and (equal "agent_message_chunk" (json-get update "sessionUpdate"))
+                                              (test-object-contains-string-p update "Context admission refused")))
+                                       (acp-session-test-updates client))
+                               "The client receives the plain explanation inside the refused turn.")
+                  (test-assert (null (acp-session-completion-report session)) "A local refusal is not a controller crash report.")
+                  (test-assert (null (acp-session-prompt-thread session)) "Refusal releases the ACP owner.")
+                  (test-assert (not (acp-session-prompt-interruptible-p session)) "Refusal completes interruption cleanup.")
+                  (test-assert (not (application-input-controller-active-p controller)) "Refusal releases native controller activity.")
+                  (test-assert (application-input-controller-queued-work-paused-p controller)
+                               "Refusal pauses automatic queued work without pretending to answer.")
+                  (test-assert (not (acp-input--pending-p session)) "The refused current input cannot replay automatically.")
+                  (test-assert (null (task-completion-pending agent)) "Delivered completion work is consumed once.")
+                  (let ((reopened (make-instance 'application-input-controller
+                                                 :application application :main-thread nil)))
+                    (application-input-controller--load-pending reopened)
+                    (test-assert (equal (if (eq entry :acp-queue) '("Remaining queued ACP input.") nil)
+                                        (mapcar (lambda (work) (user-message-input-text (second work)))
+                                                (deque->list (application-input-controller-work-items reopened))))
+                                 "Durable reload retains only unclaimed queue tail, not the refused current prompt.")
+                    (test-assert (deque-empty-p (application-input-controller-initial-work-items reopened))
+                                 "No refused input is restored into the initial queue."))
+                  (format t "~&ACP-REFUSAL entry=~S phase=~S outcome=~S report=~S goal=~S~%"
+                          entry phase (json-get (first (last (acp-session-test-turn-events client))) "outcome")
+                          (acp-session-completion-report session) (getf (application-goal application) :status))
+                  (let ((count   (length (expanded-native-input-snapshots provider)))
+                        (records (conversation-next-sequence conversation)))
+                    (test-assert (null (acp-completion--cycle session)) "A refusal does not start a retry cycle.")
+                    (test-assert (= count (length (expanded-native-input-snapshots provider))) "No paid work repeats.")
+                    (test-assert (= records (conversation-next-sequence conversation)) "No durable delivery repeats."))
+                  (expanded-native-test--settled application (if (eq phase :after) 150 0)))
+             (mission-detach application)))))))
+  nil)
+
+(-> test-expanded-native-no-fit-acp-prompt () null)
+(defun test-expanded-native-no-fit-acp-prompt ()
+  "Return a plain protocol refusal for real explicit ACP prompts."
+  (expanded-native-test--acp-turn-refusal :acp-prompt))
+
+(-> test-expanded-native-no-fit-acp-queue () null)
+(defun test-expanded-native-no-fit-acp-queue ()
+  "Consume queued ACP input once when portable recovery cannot fit."
+  (expanded-native-test--acp-turn-refusal :acp-queue))
+
+(-> test-expanded-native-no-fit-acp-completion () null)
+(defun test-expanded-native-no-fit-acp-completion ()
+  "Deliver a real job once without crashing its automatic ACP continuation."
+  (expanded-native-test--acp-turn-refusal :acp-completion))
+
+(-> test-expanded-native-stream-fixture () null)
+(defun test-expanded-native-stream-fixture ()
+  "Independently qualify native success and the production stream event decoder."
+  (expanded-native-test--fixture
+   (lambda (application provider)
+     (let ((configuration (application-configuration application))
+           (conversation  (application-conversation application))
+           (posts         0))
+       (test-call-with-function-replacements
+        (list (list 'credential-manager-credentials
+                    (lambda (&rest arguments)
+                      (declare (ignore arguments))
+                      (provider-tests--credentials configuration)))
+              (list 'dexador:post
+                    (lambda (endpoint &rest arguments)
+                      (declare (ignore arguments))
+                      (incf posts)
+                      (test-assert (search "/responses/compact" endpoint) "Native success uses the real native POST.")
+                      (values (json-encode
+                               (json-object "id" "native-fixture" "output"
+                                            (json-array (json-object "type" "compaction" "encrypted_content" "synthetic"))
+                                            "usage" (json-object "input_tokens" 1 "output_tokens" 1)))
+                              200 nil))))
+        (lambda ()
+          (let ((window (provider-native-compact-conversation provider conversation
+                                                             :tool-namespaces #() :event-callback #'identity)))
+            (test-assert window "A genuine native success decodes a complete native window."))
+          (let* ((*telemetry-request-role* :compaction)
+                 (result                   (provider-stream-turn provider conversation :tool-namespaces #()
+                                               :event-callback #'identity :compaction-p t)))
+            (test-assert (equal "summary" (provider-result-response-id result)) "Production decoding returns the completed response identity.")
+            (test-assert (equal (provider-result-assistant-text result)
+                                (provider-result-assistant-text (agent-test-result "expected" (list (agent-test-compaction-message)))))
+                         "Production decoding reconstructs the complete structured summary.")
+            (test-assert (= 100 (json-get (provider-result-usage result) "input_tokens")) "Production decoding retains metered input usage.")
+            (test-assert (= 50 (json-get (provider-result-usage result) "output_tokens")) "Production decoding retains metered output usage."))))
+       (test-assert (= 1 posts) "Fixture qualification admits one real native POST.")
+       (test-assert (equal '(t) (expanded-native-compaction-flags provider)) "Fixture qualification admits one production summary stream."))))
+  nil)
+
+
+;;;; -- Paid Summary Arrival and Terminal Ownership --
+
+(-> expanded-native-test--owner-snapshot
+    (&key (:entry keyword) (:owned-p boolean) (:status integer)
+          (:signaled-p boolean) (:arrival-size (option (integer 1))) (:reuse-p boolean) (:controller-p boolean) (:one-shot-p boolean)) list)
+(defun expanded-native-test--owner-snapshot
+    (&key entry owned-p status signaled-p arrival-size reuse-p controller-p one-shot-p)
+  "Observe real owning work and append a canonical arrival after original decoded usage persistence."
+  (let ((snapshot nil))
+    (expanded-native-test--fixture
+     (lambda (application provider)
+       (let* ((conversation  (application-conversation application))
+              (configuration (application-configuration application))
+              (note-original (symbol-function 'agent--note-compaction-request))
+              (fit-original  (symbol-function 'agent--validate-compaction-projection))
+              (controller    (if controller-p
+                              (application-input-controller-create application :load-pending-p nil :start-reader-p nil)
+                              (make-instance 'application-input-controller
+                                             :application application :main-thread (current-thread))))
+              (events nil) (posts 0) (summaries 0) (failure nil) (result nil)
+              (ticket nil) (service nil) (reuse-failure nil) (reuse-result nil))
+         (change-class (terminal-ui-terminal (application-ui application)) 'waiting-recording-terminal)
+         (when (or controller-p (eq entry :terminal-message))
+           (setf (application-input-controller application) controller))
+         (when (eq entry :wakeup)
+           (setf service (mission-schedule-service-create
+                          application :clock (lambda () 100) :notify (when controller-p (lambda () nil))
+                          :enqueue (if controller-p #'mission-schedule--queue
+                                       (lambda (owner command) (declare (ignore owner command)) t)))
+                 (gethash application *mission-schedule-services*) service)
+           (apply #'application-mission-schedule-add application :id "paid-arrival"
+                  :content "Perform scheduled work." :at 100 (unless one-shot-p (list :interval 10)))
+           (setf ticket (mission-schedule-tests--ticket
+                         (first (application-mission-schedules-wake application)))))
+         ;; Only inert transport and original-once observations are replaced.
+         ;; NOTE-ORIGINAL persists decoded usage before the canonical arrival.
+         (test-call-with-function-replacements
+          (list
+           (list 'credential-manager-credentials
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   (provider-tests--credentials configuration)))
+           (list 'dexador:post
+                 (lambda (endpoint &rest arguments)
+                   (declare (ignore arguments))
+                   (test-assert (search "/responses/compact" endpoint) "The actual native POST is used.")
+                   (incf posts)
+                   (push (list :native-post status signaled-p) events)
+                   (cond
+                     (signaled-p
+                      (error 'http-request-failed :status status :body "Native endpoint unavailable."
+                                                 :headers nil :uri endpoint :method ':post))
+                     ((= status 200)
+                      (values (json-encode
+                               (json-object "id" "native-control" "output"
+                                            (json-array (json-object "type" "compaction"
+                                                                     "encrypted_content" "synthetic"))
+                                            "usage" (json-object "input_tokens" 1 "output_tokens" 1)))
+                              200 nil))
+                     (t
+                      (values "Native endpoint unavailable." status nil)))))
+           (list 'agent--note-compaction-request
+                 (lambda (agent observer &rest arguments)
+                   (multiple-value-prog1 (apply note-original agent observer arguments)
+                     (let ((usage (provider-usage-normalize (getf arguments :usage))))
+                       (push (list :usage-persisted (getf arguments :kind)
+                                   (getf arguments :request-number)
+                                   (json-get usage "input_tokens") (json-get usage "output_tokens")) events))
+                     (when (eq :summary (getf arguments :kind))
+                       (incf summaries)
+                       (when (and arrival-size (= summaries 1))
+                         (conversation-append-user-message
+                          conversation (make-string arrival-size :initial-element #\n))
+                         (push (list :canonical-arrival arrival-size) events))))))
+           (list 'agent--validate-compaction-projection
+                 (lambda (&rest arguments)
+                   (push (list :validation-start) events)
+                   (handler-bind
+                       ((provider-context-budget-error
+                          (lambda (condition)
+                            (expanded-native-test--refusal-budget condition)
+                            (push (list :validation-refusal (type-of condition)) events))))
+                     (multiple-value-prog1 (apply fit-original arguments)
+                       (push (list :validation-returned) events))))))
+          (lambda ()
+            (handler-case
+                (setf result
+                      (ecase entry
+                        (:manual
+                         (application-compact application))
+                        (:terminal-message
+                         (multiple-value-bind (accepted delivery)
+                             (application-input-controller-submit-primary-prompt
+                              controller "Actual terminal user work." :prefer-steering-p nil)
+                           (push (list :terminal-submit accepted delivery) events))
+                         (when owned-p
+                           (application-input-controller-submit-primary-prompt
+                            controller "Later queued user work." :prefer-steering-p nil))
+                         (let ((work (application-input-controller--next-work controller)))
+                           (push (list :terminal-work (first work)) events)
+                           (unwind-protect
+                                (application-input-controller--run-work controller work)
+                             (application-input-controller--finish-work controller))))
+                        (:wakeup
+                         (if controller-p
+                             (let ((work (application-input-controller--next-work controller)))
+                               (push (list :terminal-work (first work)) events)
+                               (unwind-protect (application-input-controller--run-work controller work)
+                                 (application-input-controller--finish-work controller)))
+                             (application-operation-call application "mission-wakeup" ticket)))))
+              (error (condition)
+                (setf failure condition)))
+            (let* ((loaded  (conversation-load (conversation-pathname conversation)))
+                   (records (conversation-records-newest loaded 100))
+                   (goal    (application-goal application))
+                   (wake    (when service
+                              (first (getf (cl-jobpond:scheduler-snapshot
+                                            (mission-schedule-scheduler service)) :wakeups)))))
+              (setf snapshot
+                    (list :entry               entry
+                          :owned-p             owned-p
+                          :status              status
+                          :signaled-p          signaled-p
+                          :arrival-size        arrival-size
+                          :posts               posts
+                          :summaries           summaries
+                          :events              (reverse events)
+                          :failure             (and failure (type-of failure))
+                          :result              (and (keywordp result) result)
+                          :flags               (copy-list (expanded-native-compaction-flags provider))
+                          :checkpoint-p        (not (null (find :summary records :key #'first)))
+                          :aborted-p           (not (null (find :turn-aborted records :key #'first)))
+                          :notice-p
+                          (not (null (find-if
+                                      (lambda (record)
+                                        (and (eq :side-status (first record))
+                                             (test-object-contains-string-p record "context"))) records)))
+                          :arrival-present-p
+                          (or (null arrival-size)
+                              (not (null (find (make-string arrival-size :initial-element #\n) (conversation-input-history loaded) :test #'equal))))
+                          :arrival-preserved-p
+                          (or (null arrival-size)
+                              (= arrival-size (length (first (last (conversation-input-history loaded))))))
+                          :paid                (getf goal :tokens-used 0)
+                          :outstanding         (getf goal :requests-outstanding 0)
+                          :reserved            (getf goal :tokens-reserved 0)
+                          :unknown             (getf goal :unknown-usage 0)
+                          :mission-status      (getf goal :status)
+                          :wakeup-state        (getf wake :state)
+                          :wakeup-result       (getf wake :result)
+                          :executing           (if service (hash-table-count (mission-schedule-executing service)) 0)
+                          :controller-active-p (application-input-controller-active-p controller)
+                          :prompt-status       (application-input-controller-prompt-marker-status controller)
+                          :input-count         (count "Actual terminal user work." (conversation-input-history loaded) :test #'equal))))
+            ;; The same credential fixture encloses the complete later lifecycle.
+            ;; A new explicit user message does not alter any prior durable item.
+            (when reuse-p
+              (setf (expanded-native-results provider)
+                    (list (agent-test-result "reuse-summary" (list (agent-test-compaction-message))
+                                             :usage (json-object "input_tokens" 100 "output_tokens" 50))
+                          (agent-test-result "reuse-answer" (list (agent-test-message "Later actual answer."))
+                                             :usage (json-object "input_tokens" 20 "output_tokens" 10))))
+              (handler-case
+                  (setf reuse-result (application--run-message-input
+                                      application "Later explicit user work." :tools-p nil :goal-continuations-p nil))
+                (error (condition)
+                  (setf reuse-failure condition)))
+              (setf (getf snapshot :reuse-failure) (and reuse-failure (type-of reuse-failure))
+                    (getf snapshot :reuse-result) reuse-result
+                    (getf snapshot :reuse-flags) (copy-list (expanded-native-compaction-flags provider))
+                    (getf snapshot :reuse-input-preserved-p)
+                    (not (null (member "Later explicit user work." (conversation-input-history conversation) :test #'equal)))))))
+         (setf (getf snapshot :restored-p)
+               (and (eq note-original (symbol-function 'agent--note-compaction-request))
+                    (eq fit-original (symbol-function 'agent--validate-compaction-projection))))
+         (setf (application-input-controller application) nil)))
+     :owned-p owned-p :large-p t)
+    snapshot))
+
+(-> expanded-native-test--paid-snapshot-checks (list) null)
+(defun expanded-native-test--paid-snapshot-checks (snapshot)
+  "Check genuine paid completion, canonical arrival and original final guard in order."
+  (let* ((events (getf snapshot :events))
+         (kinds  (mapcar #'first events))
+         (usage  (find :summary events :key #'second)))
+    (test-assert (= 1 (getf snapshot :posts)) "One genuine unavailable native POST precedes portable recovery.")
+    (test-assert (= 1 (getf snapshot :summaries)) "The production decoder completes exactly one summary.")
+    (test-assert (and usage (= 100 (fourth usage)) (= 50 (fifth usage)))
+                 "The original post-decoder event persists metered input100/output50.")
+    (test-assert (and (position :canonical-arrival kinds) (position :validation-start kinds)
+                      (< (position :canonical-arrival kinds) (position :validation-start kinds)))
+                 "The legitimate arrival precedes the original publication fit check.")
+    (test-assert (getf snapshot :arrival-preserved-p) "Canonical reload retains the entire new user input.")
+    (test-assert (member :validation-refusal kinds) "The actual publication guard rejects the next projection.")
+    (test-assert (not (getf snapshot :checkpoint-p)) "An invalid summary is never durably published.")
+    (test-assert (getf snapshot :restored-p) "Both original observational bindings are restored.")
+    (when (getf snapshot :owned-p)
+      (test-assert (= 150 (getf snapshot :paid)) "Completed paid summary usage is retained exactly once.")
+      (test-assert (eq :active (getf snapshot :mission-status)) "The definitive fit refusal preserves the mission.")
+      (dolist (key '(:outstanding :reserved :unknown))
+        (test-assert (zerop (getf snapshot key)) (format nil "The genuine refusal releases ~A." key)))))
+  nil)
+
+(-> test-expanded-native-paid-arrival-fixture () null)
+(defun test-expanded-native-paid-arrival-fixture ()
+  "Qualify original-once usage interleaving with native success and portable arrival controls."
+  (dolist (cell '((200 nil) (404 nil) (404 64)))
+    (let ((snapshot (expanded-native-test--owner-snapshot
+                     :entry ':manual :owned-p t :status (first cell) :arrival-size (second cell))))
+      (test-assert (null (getf snapshot :failure)) "A fitting native or portable control returns normally.")
+      (test-assert (getf snapshot :checkpoint-p) "Fitting controls publish a real validated checkpoint.")
+      (test-assert (= 1 (getf snapshot :summaries)) "The original stream and decoder complete one summary.")
+      (test-assert (getf snapshot :arrival-preserved-p) "The small concurrent arrival is canonical.")
+      (test-assert (member :validation-returned (mapcar #'first (getf snapshot :events)))
+                   "The actual original validator returns normally for fitting controls.")
+      (test-assert (getf snapshot :restored-p) "Qualification restores both original functions.")))
+  nil)
+
+(-> test-expanded-native-paid-owner-refusals () null)
+(defun test-expanded-native-paid-owner-refusals ()
+  "Reject actual post-paid unpublishable projections without aborting manual or scheduled owners."
+  (dolist (entry '(:manual :terminal-message :wakeup))
+    (dolist (status '(404 405 501))
+      (let ((snapshot (expanded-native-test--owner-snapshot
+                       :entry entry :owned-p t :status status :arrival-size 600000)))
+        (expanded-native-test--paid-snapshot-checks snapshot)
+        (test-assert (null (getf snapshot :failure)) "The real owner presents an explained refusal normally.")
+        (test-assert (not (getf snapshot :aborted-p)) "A definitive fit refusal is not a crashed turn.")
+        (test-assert (getf snapshot :notice-p) "The owner durably explains the context refusal.")
+        (when (eq entry :wakeup)
+          (test-assert (eq :failed (getf snapshot :wakeup-state)) "A refused occurrence is failed, not executed or unknown.")
+          (test-assert (eq :runner-failed (getf snapshot :wakeup-result)) "The default runner reports truthful failure.")
+          (test-assert (zerop (getf snapshot :executing)) "The real executing reservation is released.")))))
+  nil)
+
+(-> test-expanded-native-terminal-message-owners () null)
+(defun test-expanded-native-terminal-message-owners ()
+  "Reach real submitted terminal message work for returned and typed unavailable statuses."
+  (dolist (status '(200 404 405 501))
+    (dolist (signaled-p (if (= status 200) '(nil) '(nil t)))
+      (dolist (owned-p '(nil t))
+        (let ((snapshot (expanded-native-test--owner-snapshot
+                         :entry ':terminal-message :owned-p owned-p :status status :signaled-p signaled-p)))
+          (test-assert (= 1 (getf snapshot :posts)) "The message owner reaches the actual native POST.")
+          (test-assert (null (getf snapshot :failure)) "Unavailable native compaction does not escape the terminal owner.")
+          (test-assert (= 1 (getf snapshot :input-count)) "Real submitted user input is persisted exactly once.")
+          (test-assert (equal '(nil t) (getf snapshot :flags)) "One real summary and the original ordinary answer complete.")
+          (test-assert (getf snapshot :checkpoint-p) "The actual owner publishes the portable or native checkpoint.")
+          (test-assert (not (getf snapshot :aborted-p)) "The real message lifecycle never records a native-unavailable abort.")
+          (test-assert (not (getf snapshot :controller-active-p)) "The terminal work releases controller activity.")
+          (when owned-p
+            (test-assert (= (if (= status 200) 182 180) (getf snapshot :paid))
+                         "Only actual decoded native, summary and answer usage is charged."))))))
+  nil)
+
+
+;;;; -- Actual ACP and Idle Owner Matrix --
+
+(-> expanded-native-test--matrix-fixture (function &key (:acp-p boolean) (:owned-p boolean)) null)
+(defun expanded-native-test--matrix-fixture (function &key acp-p owned-p)
+  "Supply an actual ACP session or terminal application with identical production transport."
+  (if acp-p
+      (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "144000") ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "8192"))
+        (acp-input-test--session
+         (lambda (session client)
+           (let* ((application   (acp-session-application session))
+                  (configuration (application-configuration application))
+                  (provider      (application-provider application))
+                  (conversation  (application-conversation application)))
+             (change-class provider 'expanded-native-test-provider
+                           :credential-manager (credential-manager-create configuration))
+             (setf (slot-value provider 'cl-llm-provider-api::configuration) configuration
+                   (config :session-title-generation-p configuration) nil)
+             (conversation-append-user-message conversation "An earlier text-only exchange.")
+             (conversation-append-provider-item conversation (agent-test-message (make-string 190000 :initial-element #\h)))
+             (conversation-append-user-message conversation "Continue the actual work.")
+             (expanded-native-test--soft-pressure application)
+             (when owned-p
+               (application-mission-start application (mission-test--specification :tokens 2000000 :turns 32)))
+             (unwind-protect (funcall function application provider session client)
+               (when owned-p (mission-detach application)))))))
+      (expanded-native-test--fixture
+       (lambda (application provider) (funcall function application provider nil nil))
+       :owned-p owned-p :large-p t))
+  nil)
+
+(-> expanded-native-test--matrix-snapshot
+    (&key (:entry keyword) (:owned-p boolean) (:status integer) (:signaled-p boolean)
+          (:arrival-p boolean) (:image-p boolean) (:reuse-p boolean) (:cancel-before-refusal-p boolean)) list)
+(defun expanded-native-test--matrix-snapshot
+    (&key entry owned-p status signaled-p arrival-p image-p reuse-p cancel-before-refusal-p)
+  "Record each genuine entry separately, retaining owner errors without intercepting product conditions."
+  (let ((snapshot nil))
+    (expanded-native-test--matrix-fixture
+     (lambda (application provider session client)
+       (let* ((conversation                     (application-conversation application))
+              (configuration                    (application-configuration application))
+              (controller                       (if session (acp-input-controller session)
+                                                    (make-instance 'application-input-controller :application application :main-thread (current-thread))))
+              (note-original                    (symbol-function 'agent--note-compaction-request))
+              (fit-original                     (symbol-function 'agent--validate-compaction-projection))
+              (turn-original                    (symbol-function 'acp-session-run-turn))
+              (guard-original                   (symbol-function 'provider-check-request-context))
+              (application-turn-original        (symbol-function 'application--run-turn))
+              (later-turn-result                nil)
+              (*idle-compaction-clock-function* (lambda () 1180))
+              (events nil) (posts 0) (summaries 0) (failure nil) (result nil)
+              (completion-id nil) (runtime nil) (work nil) (later-failure nil) (later-result nil) (reuse-started-p nil))
+         (unless session
+           (change-class (terminal-ui-terminal (application-ui application)) 'waiting-recording-terminal)
+           (setf (application-input-controller application) controller))
+         (setf (expanded-native-results provider)
+               (list (agent-test-result "matrix-summary" (list (agent-test-compaction-message))
+                                        :usage (json-object "input_tokens" 100 "output_tokens" 50))
+                     (agent-test-result "matrix-answer" (list (agent-test-message "Matrix ordinary answer."))
+                                        :usage (json-object "input_tokens" 20 "output_tokens" 10))))
+         (when image-p
+           (conversation-append-provider-item
+            conversation (json-object "type" "message" "role" "user" "content"
+                                      (json-array (json-object "type" "input_text" "text" "Synthetic image review.")
+                                                  (json-object "type" "input_image" "image_url" "https://example.invalid/synthetic.png" "detail" "high")))))
+         (when (member entry '(:terminal-idle :acp-idle))
+           (setf (config :prompt-cache-retention-seconds configuration) 300)
+           (idle-compaction-tests--prime application)
+           (unless session
+             (setf work (application-input-controller--next-work controller))
+             (push (list :selected-work (first work)) events)))
+         (when (eq entry :acp-queue)
+           (acp-input-test--submit session "_autolith/queue" "Matrix claimed queued input.")
+           (acp-input-test--submit session "_autolith/queue" "Matrix unclaimed queued tail."))
+         (when (eq entry :acp-completion)
+           (setf runtime (task-completion--runtime (application-agent application)))
+           (let ((job (job-completion-tests--start (application-agent application) runtime)))
+             (setf completion-id (session-job-execution-identifier job))
+             (test-assert (not (null (task-completion-pending (application-agent application)))) "The notification comes from an actually completed job.")
+             (acp-completion-test--wait
+              (lambda ()
+                (let ((notices (acp-completion--admitted-notices session)))
+                  (and notices (every (lambda (notice) (<= (getf notice :ready-at) (get-universal-time))) notices)))))
+             (push (list :completed-job-ready (not (null (acp-completion--admitted-notices session)))) events)))
+         (unwind-protect
+              (test-call-with-function-replacements
+               (list
+                 (list 'provider-check-request-context
+                       (lambda (&rest arguments)
+                         (handler-bind ((provider-context-budget-error
+                                          (lambda (condition)
+                                            (when reuse-started-p
+                                              (push (list :later-context-condition (type-of condition)) events)))))
+                           (apply guard-original arguments))))
+                (list 'credential-manager-credentials
+                      (lambda (&rest arguments) (declare (ignore arguments)) (provider-tests--credentials configuration)))
+                (list 'dexador:post
+                      (lambda (endpoint &rest arguments)
+                        (declare (ignore arguments))
+                        (incf posts)
+                        (test-assert (search "/responses/compact" endpoint) "A real admitted native POST reaches only inert I/O.")
+                        (push (list :native-post status signaled-p) events)
+                        (cond
+                          (signaled-p
+                               (error 'http-request-failed :status status :body "Native endpoint unavailable."
+                                                          :headers nil :uri endpoint :method ':post))
+                          ((= status 200)
+                           (values (json-encode (json-object "id" "native-control" "output"
+                                                            (json-array (json-object "type" "compaction" "encrypted_content" "synthetic"))
+                                                            "usage" (json-object "input_tokens" 1 "output_tokens" 1))) 200 nil))
+                          (t
+                           (values "Native endpoint unavailable." status nil)))))
+                (list 'application--run-turn
+                      (lambda (&rest arguments)
+                        (let ((results (multiple-value-list (apply application-turn-original arguments))))
+                          (when reuse-started-p (setf later-turn-result (second results)))
+                          (values-list results))))
+                (list 'agent--note-compaction-request
+                      (lambda (agent observer &rest arguments)
+                        (multiple-value-prog1 (apply note-original agent observer arguments)
+                          (let ((usage (provider-usage-normalize (getf arguments :usage))))
+                            (push (list :usage-persisted (getf arguments :kind) (getf arguments :request-number)
+                                        (json-get usage "input_tokens") (json-get usage "output_tokens")) events))
+                          (when (eq :summary (getf arguments :kind))
+                            (incf summaries)
+                            (when (and arrival-p (= summaries 1))
+                              (conversation-append-user-message conversation (make-string 600000 :initial-element #\n))
+                              (push (list :canonical-arrival 600000) events))))))
+                (list 'agent--validate-compaction-projection
+                      (lambda (&rest arguments)
+                        (push (list :validation-start) events)
+                        (handler-bind ((provider-context-budget-error
+                                         (lambda (condition)
+                                             (expanded-native-test--refusal-budget condition)
+                                             (push (list :validation-refusal (type-of condition)) events)
+                                             (when cancel-before-refusal-p
+                                               (acp-session-cancel session)
+                                               (push (list :cancel-recorded (acp-session-cancelled-p session)) events)))))
+                          (multiple-value-prog1 (apply fit-original arguments)
+                            (push (list :validation-returned) events)))))
+                (list 'acp-session-run-turn
+                      (lambda (&rest arguments)
+                        (push (list :shared-turn-entry (getf (rest (rest arguments)) :automatic-p)
+                                    (getf (rest (rest arguments)) :queued-p)) events)
+                        (handler-bind ((provider-context-budget-error
+                                         (lambda (condition)
+                                           (when reuse-started-p
+                                             (push (list :later-context-condition (type-of condition)) events)))))
+                          (multiple-value-prog1 (setf result (apply turn-original arguments))
+                            (push (list :shared-turn-return result) events))))))
+               (lambda ()
+                 (handler-case
+                     (handler-bind ((provider-context-budget-error
+                                      (lambda (condition) (push (list :owner-context-condition (type-of condition)) events)))
+                                    (mission-error
+                                      (lambda (condition) (declare (ignore condition)) (push (list :owner-mission-error) events))))
+                       (ecase entry
+                         (:terminal-idle
+                          (unwind-protect (application-input-controller--run-work controller work)
+                            (application-input-controller--finish-work controller)))
+                         (:acp-prompt
+                          (setf result (agentcomms:client-prompt
+                                        client (acp-session-identifier session)
+                                        (list (agentcomms:acp-text-content "Matrix actual client input.")))))
+                         ((:acp-idle :acp-queue :acp-completion)
+                          (acp-completion--cycle session))))
+                   (application-turn-cancelled (condition) (setf failure condition))
+                   (error (condition) (setf failure condition)))
+                 (let* ((loaded  (conversation-load (conversation-pathname conversation)))
+                        (records (conversation-records-newest loaded 200))
+                        (goal    (application-goal application)))
+                   (setf snapshot
+                         (list :entry entry :owned-p owned-p :status status :signaled-p signaled-p
+                               :arrival-size (when arrival-p 600000) :image-p image-p :posts posts :summaries summaries
+                               :events (reverse events) :failure (and failure (type-of failure)) :result result
+                               :flags                   (copy-list (expanded-native-compaction-flags provider))
+                               :checkpoint-p            (not (null (find :summary records :key #'first)))
+                               :aborted-p               (not (null (find :turn-aborted records :key #'first)))
+                               :notice-p                (not (null (find-if (lambda (record) (and (eq :side-status (first record))
+                                                                                                (test-object-contains-string-p record "context"))) records)))
+                               :answer-p                (test-object-contains-string-p (conversation-input-items loaded) "Matrix ordinary answer.")
+                               :arrival-preserved-p     (or (not arrival-p) (= 600000 (length (first (last (conversation-input-history loaded))))))
+                               :paid (getf goal :tokens-used 0) :outstanding (getf goal :requests-outstanding 0)
+                               :reserved (getf goal :tokens-reserved 0) :unknown (getf goal :unknown-usage 0)
+                               :mission-status          (getf goal :status)
+                               :ui-compacting-p         (and (application-ui application) (terminal-ui-compacting-p (application-ui application)))
+                               :controller-active-p     (application-input-controller-active-p controller)
+                               :paused-p                (application-input-controller-queued-work-paused-p controller)
+                               :prompt-thread-p         (and session (not (null (acp-session-prompt-thread session))))
+                               :interruptible-p         (and session (acp-session-prompt-interruptible-p session))
+                               :report-p                (and session (not (null (acp-session-completion-report session))))
+                               :episode-p               (not (null (application-idle-compaction-episode application)))
+                               :queued-input-count      (count "Matrix claimed queued input." (conversation-input-history loaded) :test #'equal)
+                               :queue-tail-in-history-p (not (null (member "Matrix unclaimed queued tail." (conversation-input-history loaded) :test #'equal)))
+                               :queue-tail-pending-p    (and (eq entry :acp-queue) (not (deque-empty-p (application-input-controller-work-items controller))))
+                               :queue-reloaded-tail-p   (and (eq entry :acp-queue)
+                                                             (multiple-value-bind (form complete-p)
+                                                                 (snapshot-read (configuration-pending-inputs-path configuration (conversation-pathname loaded)))
+                                                               (let* ((state      (and complete-p (application-input-controller--pending-state form (conversation-identifier loaded))))
+                                                                      (work-items (getf state :work-items)))
+                                                                 (and (= 1 (length work-items))
+                                                                      (equal "Matrix unclaimed queued tail."
+                                                                              (user-message-input-text (second (first work-items))))))))
+                               :completion-delivered-p  (and completion-id (task-completion--delivered-p loaded completion-id)))))
+                 (when (or (eq entry :acp-completion) (and (eq entry :acp-queue) arrival-p) (eq entry :acp-idle))
+                   (let ((before (length (expanded-native-input-snapshots provider))))
+                     (handler-case (acp-completion--cycle session)
+                        (error (condition) (setf (getf snapshot :repeat-cycle-failure) (type-of condition))))
+                     (setf (getf snapshot :repeat-cycle-opens) (- (length (expanded-native-input-snapshots provider)) before))))
+                 (when reuse-p
+                   (setf reuse-started-p t)
+                   ;; Only an ordinary answer is queued. A summary accidentally used as
+                   ;; an answer cannot satisfy this independently fitting-history control.
+                   (setf (expanded-native-results provider)
+                         (list (agent-test-result "matrix-later-answer" (list (agent-test-message "Matrix later ordinary answer."))
+                                                  :usage (json-object "input_tokens" 20 "output_tokens" 10))))
+                   (let ((before       (length (expanded-native-input-snapshots provider)))
+                         (history      (conversation-input-history conversation))
+                         (later-events nil))
+                     (handler-case
+                         (handler-bind ((provider-context-budget-error
+                                          (lambda (condition) (push (type-of condition) later-events))))
+                           (setf later-result
+                                 (if session
+                                     (agentcomms:client-prompt client (acp-session-identifier session)
+                                                              (list (agentcomms:acp-text-content "Matrix later explicit input.")))
+                                     (application--run-message-input application "Matrix later explicit input."
+                                                                     :tools-p nil :goal-continuations-p nil))))
+                       (error (condition) (setf later-failure condition)))
+                     (setf (getf snapshot :later-failure) (and later-failure (type-of later-failure))
+                           (getf snapshot :later-public-result) later-result
+                           (getf snapshot :later-result) (if session later-result later-turn-result)
+                           (getf snapshot :later-context-conditions) (append (reverse later-events)
+                                                                             (loop for event in events
+                                                                                   when (eq :later-context-condition (first event))
+                                                                                     collect (second event)))
+                           (getf snapshot :later-opens) (- (length (expanded-native-input-snapshots provider)) before)
+                           (getf snapshot :later-role) (first (expanded-native-compaction-flags provider))
+                           (getf snapshot :later-answer-p) (test-object-contains-string-p (conversation-input-items conversation) "Matrix later ordinary answer.")
+                           (getf snapshot :prior-history-preserved-p) (equal history (subseq (conversation-input-history conversation) 0 (length history)))
+                           (getf snapshot :window) (config :context-window configuration)
+                           (getf snapshot :later-owner-clean-p)
+                           (and (not (application-input-controller-active-p controller))
+                                (or (null session) (null (acp-session-prompt-thread session)))
+                                (zerop (getf (application-goal application) :requests-outstanding 0))
+                                (zerop (getf (application-goal application) :tokens-reserved 0))))))))
+           (when runtime (task-orchestrator-close runtime))
+           (unless session (setf (application-input-controller application) nil)))
+         (setf (getf snapshot :restored-p)
+               (and (eq note-original (symbol-function 'agent--note-compaction-request))
+                    (eq application-turn-original (symbol-function 'application--run-turn))
+                    (eq fit-original (symbol-function 'agent--validate-compaction-projection))
+                    (eq guard-original (symbol-function 'provider-check-request-context))
+                    (eq turn-original (symbol-function 'acp-session-run-turn))))))
+     :acp-p (not (eq entry :terminal-idle)) :owned-p owned-p)
+    snapshot))
+
+(-> expanded-native-test--matrix-checks (list) null)
+(defun expanded-native-test--matrix-checks (snapshot)
+  "Assert portable success or explained final refusal at the actual owning boundary."
+  (test-assert (= 1 (getf snapshot :posts)) "Every cell actually reaches native POST.")
+  (test-assert (null (getf snapshot :failure)) "The owner does not propagate a crash or remote error.")
+  (test-assert (not (getf snapshot :aborted-p)) "A context refusal is not a crashed turn.")
+  (test-assert (not (getf snapshot :report-p)) "An explained refusal is not an ACP completion crash report.")
+  (test-assert (getf snapshot :restored-p) "All original observer and owner bindings are restored.")
+  (dolist (key '(:controller-active-p :prompt-thread-p :interruptible-p))
+    (test-assert (not (getf snapshot key)) (format nil "The owner releases ~A." key)))
+  (if (getf snapshot :arrival-size)
+      (progn
+        (expanded-native-test--paid-snapshot-checks snapshot)
+        (test-assert (getf snapshot :notice-p) "A real postpaid refusal has a durable context explanation.")
+        (when (member (getf snapshot :entry) '(:acp-prompt :acp-queue :acp-completion))
+          (test-assert (eq :refusal (getf snapshot :result)) "The actual shared ACP turn returns refusal.")))
+      (progn
+        (test-assert (getf snapshot :checkpoint-p) "A fitting portable summary is durably published.")
+        (test-assert (= 1 (getf snapshot :summaries)) "One real summary is decoded and persisted.")
+        (unless (member (getf snapshot :entry) '(:terminal-idle :acp-idle))
+          (test-assert (getf snapshot :answer-p) "The actual owner records a genuine ordinary answer."))))
+  (when (getf snapshot :owned-p)
+    (dolist (key '(:outstanding :reserved :unknown))
+      (test-assert (zerop (getf snapshot key)) (format nil "The settled request releases ~A." key))))
+  (when (member (getf snapshot :entry) '(:terminal-idle :acp-idle))
+    (test-assert (not (getf snapshot :episode-p)) "The due cache episode is consumed once."))
+  (when (eq :acp-queue (getf snapshot :entry))
+    (test-assert (= 1 (getf snapshot :queued-input-count)) "The genuinely claimed current input is durable once.")
+    (test-assert (not (getf snapshot :queue-tail-in-history-p)) "The unclaimed tail is not silently appended.")
+    (test-assert (getf snapshot :queue-tail-pending-p) "The unclaimed tail is retained in pending work.")
+    (test-assert (getf snapshot :queue-reloaded-tail-p) "The original pending-state reader reloads only the unclaimed durable tail.")
+    (when (getf snapshot :arrival-size)
+      (test-assert (getf snapshot :paused-p) "Refusal pauses unclaimed queued work.")))
+  (when (eq :acp-completion (getf snapshot :entry))
+    (test-assert (getf snapshot :completion-delivered-p) "The real completed job has a durable delivery receipt."))
+  (when (getf snapshot :repeat-cycle-opens)
+    (test-assert (null (getf snapshot :repeat-cycle-failure)) "The repeated default completion cycle does not fail.")
+    (test-assert (zerop (getf snapshot :repeat-cycle-opens)) "A consumed notice or paused episode cannot automatically replay provider work."))
+  (when (getf snapshot :window)
+    (test-assert (getf snapshot :later-owner-clean-p) "The later explicit input releases its real ownership and reservations.")
+    (test-assert (= 144000 (getf snapshot :window)) "Later explicit work uses the same configured window.")
+    (test-assert (getf snapshot :prior-history-preserved-p) "Later explicit work retains every prior durable input.")
+    (test-assert (null (getf snapshot :later-failure)) "Later explicit admission is not a leaked owner failure.")
+    (if (getf snapshot :arrival-size)
+        (progn
+          (test-assert (eq (if (eq :terminal-idle (getf snapshot :entry)) :failed :refusal) (getf snapshot :later-result))
+                       "Protected giant input receives another explained refusal.")
+          (test-assert (getf snapshot :later-context-conditions) "The original later admission guard observes legitimately oversized protected history."))
+        (progn
+          (test-assert (= 1 (getf snapshot :later-opens)) "A fitting later input reaches exactly one ordinary transport.")
+          (test-assert (null (getf snapshot :later-role)) "The later transport is an answer, not a summary.")
+          (test-assert (getf snapshot :later-answer-p) "The genuine later ordinary answer is durable."))))
+  nil)
+
+(-> test-expanded-native-acp-owner-matrix () null)
+(defun test-expanded-native-acp-owner-matrix ()
+  "Exercise actual client, claimed queue and completed-job owners over all unavailable statuses."
+  (dolist (entry '(:acp-prompt :acp-queue :acp-completion))
+    (dolist (status '(404 405 501))
+      (dolist (owned-p '(nil t))
+        (dolist (cell '((nil nil) (nil t) (t nil) (t t)))
+          (expanded-native-test--matrix-checks
+           (expanded-native-test--matrix-snapshot :entry entry :status status :owned-p owned-p
+                                                 :signaled-p (first cell) :arrival-p (second cell)))))))
+  nil)
+
+(-> test-expanded-native-idle-owner-matrix () null)
+(defun test-expanded-native-idle-owner-matrix ()
+  "Run terminal and ACP due episodes through real idle owners on all status and ownership cells."
+  (dolist (entry '(:terminal-idle :acp-idle))
+    (dolist (status '(404 405 501))
+      (dolist (owned-p '(nil t))
+        (dolist (cell '((nil nil) (nil t) (t nil) (t t)))
+          (expanded-native-test--matrix-checks
+           (expanded-native-test--matrix-snapshot :entry entry :status status :owned-p owned-p
+                                                 :signaled-p (first cell) :arrival-p (second cell) :reuse-p t))))))
+  nil)
+
+(-> test-expanded-native-image-owner-and-reuse () null)
+(defun test-expanded-native-image-owner-and-reuse ()
+  "Contrast synthetic image and text owners and role-qualify fitting later ordinary answers."
+  (dolist (image-p '(nil t))
+    (dolist (status '(200 404 405 501))
+      (dolist (arrival-p (if (= status 200) '(nil) '(nil t)))
+        (expanded-native-test--matrix-checks
+         (expanded-native-test--matrix-snapshot :entry ':acp-prompt :owned-p t :status status
+                                               :arrival-p arrival-p :image-p image-p :reuse-p t)))))
+  nil)
+
+(defclass expanded-native-values-agent (agent)
+  ((return-values :initarg :return-values :reader expanded-native-test-return-values
+                  :documentation "The complete values returned by a test generic extension."))
+  (:documentation "Agent extension exercising the owner's primary-value contract."))
+
+(defmethod agent-run-user-turn ((agent expanded-native-values-agent) content &key &allow-other-keys)
+  "Return the configured value count without replacing the generic function."
+  (declare (ignore content))
+  (values-list (expanded-native-test-return-values agent)))
+
+(-> test-expanded-native-owner-return-values () null)
+(defun test-expanded-native-owner-return-values ()
+  "Accept generic extensions returning zero, one, or multiple values at the real terminal owner."
+  (expanded-native-test--fixture
+   (lambda (application provider)
+     (declare (ignore provider))
+     (let* ((agent          (application-agent application))
+            (primary        (agent-test-result "extension" (list (agent-test-message "Extension result."))))
+            (note-original  (symbol-function 'application--note-goal-turn))
+            (title-original (symbol-function 'application--maybe-refresh-conversation-title)))
+       (change-class agent 'expanded-native-values-agent :return-values nil)
+       (dolist (returned (list nil (list primary) (list primary :secondary)))
+         (setf (slot-value agent 'return-values) returned)
+         (let ((noted :unset) (titles 0) (failure nil) (result nil))
+           (test-call-with-function-replacements
+            (list (list 'application--note-goal-turn
+                        (lambda (owner value)
+                          (setf noted value)
+                          ;; NIL has no provider-result parser. Observe the owner's primary
+                          ;; selection independently; real results use original goal handling.
+                          (when value (funcall note-original owner value))))
+                  (list 'application--maybe-refresh-conversation-title
+                        (lambda (owner) (incf titles) (funcall title-original owner))))
+            (lambda ()
+              (handler-case (setf result (multiple-value-list (application--run-turn application "Extension input.")))
+                (error (condition) (setf failure condition)))))
+           (test-assert (null failure) "The actual turn owner accepts the extension's value count.")
+           (test-assert (equal (list nil (first returned)) result) "Only the primary extension value is selected.")
+           (test-assert (eq noted (first returned)) "Goal accounting receives the primary value, including NIL.")
+           (test-assert (= 1 titles) "Successful input reaches title finalization once."))))))
+  nil)
+
+(-> test-expanded-native-idle-cancellation-refusal () null)
+(defun test-expanded-native-idle-cancellation-refusal ()
+  "Record cancellation at the real final validator before the ACP idle refusal catch."
+  (dolist (cancel-p '(nil t))
+    (let ((snapshot (expanded-native-test--matrix-snapshot
+                     :entry :acp-idle :owned-p t :status 404 :signaled-p t
+                     :arrival-p t :cancel-before-refusal-p cancel-p)))
+      (test-assert (= 1 (getf snapshot :posts)) "Cancellation is recorded after the admitted native attempt.")
+      (test-assert (= 1 (getf snapshot :summaries)) "The original paid summary completed before final validation.")
+      (test-assert (= 150 (getf snapshot :paid)) "Paid usage settles exactly once.")
+      (test-assert (eq :active (getf snapshot :mission-status)) "The mission remains active.")
+      (test-assert (getf snapshot :arrival-preserved-p) "Canonical arriving history is retained.")
+      (test-assert (not (getf snapshot :checkpoint-p)) "An unfit projection is not published.")
+      (test-assert (if cancel-p (eq 'application-turn-cancelled (getf snapshot :failure))
+                      (null (getf snapshot :failure)))
+                   "Recorded cancellation wins before refusal presentation; the ordinary control refuses normally.")
+      (test-assert (eq (not cancel-p) (getf snapshot :notice-p)) "Cancellation produces no spurious context-refusal notice.")
+      (test-assert (not (getf snapshot :report-p)) "The idle controller has no completion crash report.")
+      (test-assert (not (getf snapshot :controller-active-p)) "External work ownership is finalized.")
+      (test-assert (not (getf snapshot :prompt-thread-p)) "The idle prompt lease is released.")
+      (test-assert (not (getf snapshot :interruptible-p)) "Finalization disables interruption.")
+      (test-assert (not (getf snapshot :episode-p)) "The idle episode is consumed once.")
+      (test-assert (not (getf snapshot :aborted-p)) "No failed model turn is fabricated.")
+      (test-assert (every #'zerop (mapcar (lambda (key) (getf snapshot key)) '(:outstanding :reserved :unknown)))
+                   "Accounting has no outstanding, reserved, or unknown usage.")
+      (test-assert (zerop (getf snapshot :repeat-cycle-opens)) "A repeated default cycle starts no paid request.")))
+  nil)
+
+(-> test-expanded-native-owner-finalization-errors () null)
+(defun test-expanded-native-owner-finalization-errors ()
+  "Keep goal, title and terminal presentation failures outside the inference refusal catch."
+  (dolist (target '(application--note-goal-turn application--maybe-refresh-conversation-title application-render-records))
+    (expanded-native-test--fixture
+     (lambda (application provider)
+       (declare (ignore provider))
+       (let* ((agent     (application-agent application))
+              (condition (make-condition 'provider-context-budget-error
+                                         :estimated-input-tokens 300000 :output-reserve 8192
+                                         :context-window 272000 :non-text-estimate-p nil))
+              (caught nil) (presented 0))
+         (change-class agent 'expanded-native-values-agent
+                       :return-values (list (agent-test-result "extension" (list (agent-test-message "Extension result.")))))
+         (test-call-with-function-replacements
+          (list (list target (lambda (&rest arguments) (declare (ignore arguments)) (error condition)))
+                (list 'application-present-context-refusal
+                      (lambda (&rest arguments) (declare (ignore arguments)) (incf presented))))
+          (lambda ()
+            (handler-case (application--run-turn application "Finalization input.")
+              (provider-context-budget-error (failure) (setf caught failure)))))
+         (test-assert (eq condition caught) "The original finalization condition escapes to its existing owner.")
+         (test-assert (zerop presented) "A finalization failure is not presented as inference context refusal.")))))
+  nil)
+
+(-> test-expanded-native-scheduled-controller () null)
+(defun test-expanded-native-scheduled-controller ()
+  "Consume valid claimed wakeups through the default enqueue, terminal dispatch and default runner."
+  (dolist (status '(404 405 501))
+    (dolist (signaled-p '(nil t))
+      (dolist (mode '(:fitting-recurring :refused-recurring :refused-one-shot))
+        (let* ((arrival-p (not (eq mode :fitting-recurring)))
+               (snapshot  (expanded-native-test--owner-snapshot
+                           :entry :wakeup :owned-p t :status status :signaled-p signaled-p
+                           :controller-p t :one-shot-p (eq mode :refused-one-shot)
+                           :arrival-size (when arrival-p 600000))))
+
+          (test-assert (null (getf snapshot :failure)) "Actual scheduled controller dispatch returns without an owner exception.")
+          (test-assert (member '(:terminal-work :native-lisp) (getf snapshot :events) :test #'equal)
+                       "The valid ticket enters the real noninteractive native Lisp work path.")
+          (test-assert (= 1 (getf snapshot :posts)) "One original native attempt reaches inert transport.")
+          (test-assert (= 1 (getf snapshot :summaries)) "The portable summary is paid once.")
+          (test-assert (equal (if arrival-p '(t) '(nil t)) (getf snapshot :flags))
+                       "No unrequested paid request follows a final-fit refusal.")
+          (test-assert (= (if arrival-p 150 180) (getf snapshot :paid)) "Only the actual summary and fitting answer are charged.")
+          (test-assert (eq (if arrival-p :failed :completed) (getf snapshot :wakeup-state))
+                       "The default runner durably settles refused or completed work, never UNKNOWN.")
+          (test-assert (not (getf snapshot :aborted-p)) "The mission turn is not aborted.")
+          (test-assert (eq :active (getf snapshot :mission-status)) "The scheduled mission remains active.")
+          (test-assert (getf snapshot :arrival-present-p) "Refusal retains the complete canonical arrival even when operation records follow it.")
+          (test-assert (not (getf snapshot :controller-active-p)) "The controller releases active work.")
+          (test-assert (zerop (getf snapshot :executing)) "Scheduler execution reservations are released.")
+          (test-assert (every #'zerop (mapcar (lambda (key) (getf snapshot key)) '(:outstanding :reserved :unknown)))
+                       "No usage remains outstanding, reserved, or unknown.")))))
+  nil)

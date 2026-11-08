@@ -96,7 +96,14 @@
                         (*configuration*      (application-configuration application))
                         (*default-pathname-defaults*
                           (config :working-directory (application-configuration application))))
-                    (agent-compact-conversation agent (acp-observer-create session)))))
+                    (handler-case
+                        (agent-compact-conversation agent (acp-observer-create session))
+                      (provider-context-budget-error (condition)
+                        (acp-session--call-with-finalization
+                         session
+                         (lambda ()
+                           (acp-session-check-cancelled session)
+                           (application-present-context-refusal application condition))))))))
            (when claimed-p
              (acp-session--call-with-finalization
               session

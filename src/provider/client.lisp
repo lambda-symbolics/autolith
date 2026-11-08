@@ -1260,24 +1260,26 @@ success body cannot be decoded. Unknown usage and response IDs remain NIL."
              (and (eq :ready (third *provider-compaction-recovery-permit*))
                   *provider-compaction-recovery-permit*)))
       (handler-case
-          (let ((request
-                  (provider-native-compaction-request-object
-                   provider conversation tool-namespaces)))
-            (multiple-value-bind (body status raw-headers)
-                (provider--open-native-compaction
-                 provider request :credentials credentials :conversation conversation)
-              (let ((headers (provider--sanitize-wire-value raw-headers)))
-                (provider-note-response-headers provider headers)
-                (unless (= status 200)
-                  (provider--codex-signal-status-failure
-                   provider status :headers headers :raw-body body))
-                (provider--decode-native-compaction-response
-                 provider body :status status :headers headers
-                 :event-callback event-callback))))
-        (dexador.error:http-request-unauthorized (condition)
-          (provider-signal-http-failure provider condition))
-        (http-request-failed (condition)
-          (provider-signal-transport-failure provider condition))
+          (handler-case
+              (let ((request
+                      (provider-native-compaction-request-object
+                       provider conversation tool-namespaces)))
+                (multiple-value-bind (body status raw-headers)
+                    (provider--open-native-compaction
+                     provider request :credentials credentials :conversation conversation)
+                  (let ((headers (provider--sanitize-wire-value raw-headers)))
+                    (provider-note-response-headers provider headers)
+                    (unless (= status 200)
+                      (provider--codex-signal-status-failure
+                       provider status :headers headers :raw-body body))
+                    (provider--decode-native-compaction-response
+                     provider body :status status :headers headers
+                     :event-callback event-callback))))
+            ;; Normalized Dexador conditions must reach the attempt's classifier.
+            (dexador.error:http-request-unauthorized (condition)
+              (provider-signal-http-failure provider condition))
+            (http-request-failed (condition)
+              (provider-signal-transport-failure provider condition)))
         (provider-error (condition)
           ;; Classify inside the attempt, before mission supervision wraps failures.
           (if (provider--native-compaction-unavailable-p condition)
