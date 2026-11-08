@@ -2321,10 +2321,10 @@
 (-> test-terminal-modal-selection () null)
 (defun test-terminal-modal-selection ()
   "Test application picker metadata, callbacks, draft preservation and resize."
-  (let* ((terminal  (make-instance 'scripted-terminal
-                                   :events '((:insert "beta") :submit) :columns 40))
-         (ui        (terminal-ui-create :terminal terminal))
-         (resized-p nil)
+  (let* ((terminal       (make-instance 'scripted-terminal
+                                        :events '((:insert "beta") :submit) :columns 40))
+         (ui             (terminal-ui-create :terminal terminal))
+         (resized-p      nil)
          (hint-checked-p nil))
     (with-terminal-ui (active-ui ui)
       (terminal-ui-set-input active-ui "draft")

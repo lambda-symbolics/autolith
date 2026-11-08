@@ -2254,8 +2254,8 @@ and the modeline last, so the response being received stays in view."
          (selector  (terminal-ui-selector ui)))
     (cond
       (selector
-          (let* ((hint (or (terminal-ui-selector-hint ui)
-                           "Enter to select, Escape to cancel"))
+          (let* ((hint       (or (terminal-ui-selector-hint ui)
+                                 "Enter to select, Escape to cancel"))
                  (hint-spans (if (stringp hint)
                                  (list (terminal-span ':hint hint))
                                  hint))
