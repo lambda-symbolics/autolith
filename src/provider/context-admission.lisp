@@ -8,16 +8,27 @@
   "Return the configured window or this request's unspent recovery allowance."
   (let ((configured (config :context-window (provider-configuration provider)))
         (permit     *provider-compaction-recovery-permit*))
-    (if (and permit (eq provider (first permit)) (eq :ready (third permit)))
+    (if (and permit (eq provider (first permit))
+             (member (third permit) '(:ready :portable-ready)))
         (max configured (second permit))
         configured)))
 
-(-> provider-consume-compaction-recovery-permit (model-provider) null)
-(defun provider-consume-compaction-recovery-permit (provider)
-  "Consume a recovery permit only at an admitted transport boundary."
+(-> provider-consume-compaction-recovery-permit (model-provider &key (:native-p boolean)) null)
+(defun provider-consume-compaction-recovery-permit (provider &key native-p)
+  "Consume an admitted allowance, retaining native provenance for an unsupported handoff."
   (when (and *provider-compaction-recovery-permit*
-             (eq provider (first *provider-compaction-recovery-permit*)))
-    (setf (third *provider-compaction-recovery-permit*) :spent))
+             (eq provider (first *provider-compaction-recovery-permit*))
+             (member (third *provider-compaction-recovery-permit*)
+                     (if native-p '(:ready) '(:ready :portable-ready))))
+    (setf (third *provider-compaction-recovery-permit*) (if native-p :native-spent :spent)))
+  nil)
+
+(-> provider-handoff-unsupported-native-permit (model-provider) null)
+(defun provider-handoff-unsupported-native-permit (provider)
+  "Transfer only a just-consumed native allowance to one portable summary."
+  (let ((permit *provider-compaction-recovery-permit*))
+    (when (and permit (eq provider (first permit)) (eq :native-spent (third permit)))
+      (setf (third permit) :portable-ready)))
   nil)
 
 (defparameter *provider-context-admission-state* nil
@@ -145,8 +156,12 @@ may use provider token counts when available; the default is not a tokenizer."))
     ((provider model-provider) (request hash-table) &key credentials conversation)
   "Apply context admission to native compaction requests as well as ordinary turns."
   (declare (ignore credentials conversation))
-  (provider-context--admit-request provider request)
-  (provider-consume-compaction-recovery-permit provider)
+  ;; The unsupported handoff belongs to the summary, never another native attempt.
+  (let ((*provider-compaction-recovery-permit*
+          (unless (eq :portable-ready (third *provider-compaction-recovery-permit*))
+            *provider-compaction-recovery-permit*)))
+    (provider-context--admit-request provider request)
+    (provider-consume-compaction-recovery-permit provider :native-p t))
   (when *provider-context-admission-state*
     (setf (first *provider-context-admission-state*) :entered
           (rest *provider-context-admission-state*) nil)))

@@ -1844,6 +1844,10 @@
   test-job-completion-controller-unknown-usage-policy)
 
 (define-test-suite compaction-recovery
+  test-unsupported-native-permit-controls
+  test-unsupported-native-mission-fallback
+  test-unsupported-native-metadata-handoff
+  test-compaction-recovery-notice-counts
   test-compaction-recovery-encrypted-history
   test-compaction-recovery-publication-preserves-tail-families
   test-compaction-recovery-metadata-permit

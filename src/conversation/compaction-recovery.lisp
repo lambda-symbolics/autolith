@@ -263,7 +263,8 @@ exhaustion preserves the original conversation and signals the final refusal."
                (when (fits-p)
                  (return-from try-fitting-candidate (attempt)))
                (let ((permit (compaction-recovery-permit state)))
-                 (when (and permit (eq :ready (third permit)))
+                 (when (and permit (or (eq :ready (third permit))
+                                       (and (not native-p) (eq :portable-ready (third permit)))))
                    (let ((*provider-compaction-recovery-permit* permit))
                      (when (fits-p)
                        (return-from try-fitting-candidate (attempt))))))
@@ -335,6 +336,17 @@ exhaustion preserves the original conversation and signals the final refusal."
 (defun compaction-recovery-notice (audit)
   "Describe durable recovery stages and losses in transcript and replay notices."
   (when audit
-    (format nil "Emergency compaction recovery (~(~A~)): ~{~(~A~)~^, ~}."
-            (getf audit :outcome)
-            (mapcar (lambda (stage) (getf stage :tier)) (getf audit :stages)))))
+    (let ((counts nil))
+      (dolist (stage (getf audit :stages))
+        (let* ((tier  (getf stage :tier))
+               (entry (assoc tier counts)))
+          (if entry
+              (incf (rest entry))
+              (push (cons tier 1) counts))))
+      (format nil "Emergency compaction recovery (~(~A~)): ~{~A~^, ~}."
+              (getf audit :outcome)
+              (mapcar (lambda (entry)
+                        (if (= 1 (rest entry))
+                            (format nil "~(~A~)" (first entry))
+                            (format nil "~(~A~) (~D)" (first entry) (rest entry))))
+                      (nreverse counts))))))

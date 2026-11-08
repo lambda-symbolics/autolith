@@ -188,7 +188,7 @@
             (if native-p
                 (provider-open-native-compaction provider request)
                 (provider-open-response-stream provider request))
-            (test-assert (eq :spent (third *provider-compaction-recovery-permit*))
+            (test-assert (= 5000 (provider-effective-context-window provider))
                          "Actual dispatch consumes the sole allowance.")
             (test-assert (handler-case (progn (provider-open-response-stream provider request) nil)
                            (provider-context-budget-error () t))
@@ -440,4 +440,299 @@
           (test-assert (and (zerop (compaction-recovery-test-native-calls provider))
                             (= 1 (context-admission-test-provider-network-calls provider)))
                        "Only the admitted older-history summary reaches transport.")))))
+  nil)
+
+
+;;;; -- Unsupported Native Dispatch Accounting --
+
+(defclass unsupported-native-test-provider (scripted-provider codex-subscription-provider)
+  ((status :initarg :status :reader unsupported-native-test-status
+           :documentation "Synthetic native HTTP status or transport failure.")
+   (window :initarg :window :initform nil :reader unsupported-native-test-window
+           :documentation "Existing metadata available to recovery.")
+   (source :initform nil :accessor unsupported-native-test-source
+           :documentation "Canonical conversation, never used for native dispatch.")
+   (context :initform nil :accessor unsupported-native-test-context
+            :documentation "Exact source mission owner.")
+   (native-calls :initform 0 :accessor unsupported-native-test-native-calls
+                 :documentation "Actual admitted native dispatches.")
+   (summary-calls :initform 0 :accessor unsupported-native-test-summary-calls
+                  :documentation "Admitted portable summary requests.")
+   (settlements :initform nil :accessor unsupported-native-test-settlements
+                :documentation "Ledger snapshots after native accounting settles."))
+  (:documentation "Production native attempts with inert final dispatch and real mission accounting."))
+
+(defmethod provider-compaction-recovery-window ((provider unsupported-native-test-provider))
+  "Supply existing metadata without discovery or network access."
+  (unsupported-native-test-window provider))
+
+(defmethod provider-request-object
+    ((provider unsupported-native-test-provider) (conversation conversation)
+     (tool-namespaces vector) &key goal-context compaction-p)
+  "Use the real Codex encoder rather than scripted request encoding."
+  (provider-request-object
+   (make-instance 'codex-subscription-provider :configuration (provider-configuration provider))
+   conversation tool-namespaces :goal-context goal-context :compaction-p compaction-p))
+
+(defmethod provider-open-native-compaction
+    ((provider unsupported-native-test-provider) (request hash-table) &key credentials conversation)
+  "Refuse only at the final native dispatch boundary, without network traffic."
+  (declare (ignore request credentials))
+  (incf (unsupported-native-test-native-calls provider))
+  (test-assert (not (eq conversation (unsupported-native-test-source provider)))
+               "Native requests use a detached view.")
+  (test-assert (eq (mission-context-find conversation) (unsupported-native-test-context provider))
+               "The detached native dispatch retains its exact mission owner.")
+  (test-assert (= 1 (getf (mission-context-goal (mission-context-find conversation)) :requests-outstanding))
+               "Dispatch occurs under real mission reservation and supervision.")
+  (case (unsupported-native-test-status provider)
+    (:transport
+     (error 'provider-transport-error :message "Inert native transport failure."
+            :status nil :code nil :request-id nil :response-id nil :response nil))
+    (200
+     (values (json-encode
+              (json-object "output" (json-array (json-object "type" "compaction" "encrypted_content" "fixture"))
+                           "usage" (json-object "input_tokens" 2 "output_tokens" 3)))
+             200 nil))
+    (t
+     (values "Not found" (unsupported-native-test-status provider) nil))))
+
+(defmethod provider-attempt-native-compaction :around
+    ((provider unsupported-native-test-provider) (conversation conversation)
+     &key tool-namespaces force-refresh event-callback)
+  "Observe settlement outside the production accounting around method."
+  (declare (ignore conversation tool-namespaces force-refresh event-callback))
+  (unwind-protect (call-next-method)
+    (push (copy-tree (mission-context-goal (unsupported-native-test-context provider)))
+          (unsupported-native-test-settlements provider))))
+
+(defmethod provider-open-response-stream
+    ((provider unsupported-native-test-provider) (request hash-table) &key credentials conversation)
+  "Admit an inert stream through the normal context boundary."
+  (declare (ignore request credentials conversation))
+  (values nil 200 nil))
+
+(defmethod provider-stream-turn
+    ((provider unsupported-native-test-provider) (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Apply final admission, then return deterministic positive portable usage."
+  (declare (ignore event-callback))
+  (provider-open-response-stream
+   provider (provider-request-object provider conversation tool-namespaces
+                                     :goal-context goal-context :compaction-p compaction-p)
+   :conversation conversation)
+  (when compaction-p
+    (incf (unsupported-native-test-summary-calls provider)))
+  (call-next-method))
+
+(-> unsupported-native-test--run (&key (:status (or integer keyword)) (:reactive-p boolean)
+                                     (:permit-p boolean)) null)
+(defun unsupported-native-test--run (&key status reactive-p permit-p)
+  "Exercise actual manual or C1 operations and retain native settlement witnesses."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+    (with-test-configuration (configuration)
+      (let* ((provider                                  (make-instance 'unsupported-native-test-provider
+                                                                       :configuration configuration :status status
+                                                                       :credential-manager (provider-credential-manager (provider-create configuration))
+                                                                       :window             (when permit-p 50000)
+                                                                       :results            (list (agent-test-result
+                                                                                                  "summary" (list (agent-test-compaction-message))
+                                                                                                  :usage (json-object "input_tokens" 7 "output_tokens" 3))
+                                                                                                 (agent-test-result
+                                                                                                  "answer" (list (agent-test-message "OK"))
+                                                                                                  :usage (json-object "input_tokens" 2 "output_tokens" 1)))))
+             (application                               (mission-inference-test--application configuration provider))
+             (conversation                              (application-conversation application))
+             (agent                                     (agent-create :configuration configuration :conversation conversation
+                                                                      :provider provider :tool-registry (make-instance 'tool-registry)))
+             (observer                                  (make-instance 'agent-observer))
+             (*conversation-compaction-tail-characters* 256)
+             (failure                                   nil)
+             (unsupported-p                             (member status '(404 405 501))))
+        (setf (application-agent application) agent
+              (unsupported-native-test-source provider) conversation)
+        (conversation-append-user-message conversation "old exchange")
+        (if permit-p
+            (conversation-append-provider-item conversation (agent-test-message (make-string 40000 :initial-element #\h)))
+            (conversation-append-provider-item
+             conversation (json-object "type" "reasoning" "encrypted_content" (make-string 40000 :initial-element #\e))))
+        (conversation-append-user-message conversation "continue")
+        (application-mission-start application (mission-test--specification :tokens 100000 :turns 16))
+        (setf (unsupported-native-test-context provider) (mission-context-find conversation))
+        (unwind-protect
+             (progn
+               (compaction-recovery-test-small-context
+                (lambda ()
+                  (test-call-with-function-replacements
+                   (list (list 'credential-manager-credentials
+                               (lambda (&rest arguments)
+                                 (declare (ignore arguments))
+                                 (provider-tests--credentials configuration)))
+                         (list 'agent-should-compact-p (lambda (agent) (declare (ignore agent)) nil)))
+                   (lambda ()
+                     (handler-case
+                         (if reactive-p
+                             (agent--run-provider-loop agent observer :tools-p nil)
+                             (application-compact application))
+                       (error (condition) (setf failure condition)))))))
+               (when failure (format t "~&FIXTURE-FAILURE ~A~%" failure))
+               (let* ((ledger   (mission-context-goal (unsupported-native-test-context provider)))
+                      (snapshot (first (unsupported-native-test-settlements provider))))
+                 (format t "~&UNSUPPORTED-WITNESS status=~S reactive=~S permit=~S failure=~S native=~D summary=~D settlement=~S final=~S~%"
+                         status reactive-p permit-p (and failure (type-of failure))
+                         (unsupported-native-test-native-calls provider)
+                         (unsupported-native-test-summary-calls provider) snapshot ledger)
+                 (test-assert (= 1 (unsupported-native-test-native-calls provider)) "One native dispatch reaches transport.")
+                 (test-assert (zerop (getf ledger :requests-outstanding 0)) "All final requests settle.")
+                 (test-assert (zerop (getf ledger :tokens-reserved 0)) "All final allocations settle.")
+                 (when unsupported-p
+                   (test-assert (null failure) "Unsupported native dispatch falls back without mission error.")
+                   (test-assert (eq :active (getf ledger :status)) "Unsupported native dispatch preserves ACTIVE status.")
+                   (test-assert (= 1 (unsupported-native-test-summary-calls provider)) "Portable fallback is admitted exactly once.")
+                   (test-assert (= (if reactive-p 13 10) (getf ledger :tokens-used 0)) "Only legitimate positive summary and resumed usage is charged.")
+                   (dolist (key '(:tokens-used :unknown-usage :reservation-charged-tokens :tokens-reserved :requests-outstanding))
+                     (test-assert (and snapshot (zerop (getf snapshot key 0)))
+                                  (format nil "Native settlement is known zero before summary admission: ~S" key))))
+                 (unless unsupported-p
+                   (test-assert (typep failure 'mission-error) "Unrelated native failures retain mission handling.")
+                   (test-assert (= 1 (getf ledger :unknown-usage 0)) "Unrelated native usage stays uncertain.")
+                   (test-assert (zerop (unsupported-native-test-summary-calls provider)) "Unrelated failures never take unsupported fallback."))))
+          (mission-detach application)))))
+  nil)
+
+(-> test-unsupported-native-mission-fallback () null)
+(defun test-unsupported-native-mission-fallback ()
+  "Cover all unsupported HTTP statuses and unrelated failures in manual and C1 paths."
+  (dolist (reactive-p '(nil t))
+    (dolist (status '(404 405 501 500 :transport))
+      (unsupported-native-test--run :status status :reactive-p reactive-p)))
+  nil)
+
+(-> test-unsupported-native-metadata-handoff () null)
+(defun test-unsupported-native-metadata-handoff ()
+  "A refused native attempt must not spend the portable summary's metadata allowance."
+  (dolist (reactive-p '(nil t))
+    (dolist (status '(404 405 501))
+      (unsupported-native-test--run :status status :reactive-p reactive-p :permit-p t)))
+  nil)
+
+(-> test-compaction-recovery-notice-counts () null)
+(defun test-compaction-recovery-notice-counts ()
+  "Count interleaved recovery tiers in first-seen order without changing audit data."
+  (let* ((stages (append (list (list :tier :metadata) (list :tier :tool-output)
+                              (list :tier :plain-text))
+                         (loop repeat 26 collect (list :tier :tool-output))
+                         (list (list :tier :metadata))))
+         (audit  (list :outcome :success :stages stages))
+         (before (copy-tree audit))
+         (notice (compaction-recovery-notice audit)))
+    (test-assert (= 1 (cl-ppcre:count-matches "tool-output" notice)) "Repeated tiers appear once.")
+    (test-assert (search "tool-output (27)" notice) "Multiplicity reflects every interleaved stage.")
+    (test-assert (< (search "metadata" notice) (search "tool-output" notice) (search "plain-text" notice))
+                 "Tiers follow first-seen chronological order.")
+    (test-assert (equal before audit) "The durable detailed audit is untouched.")
+    (test-assert (null (compaction-recovery-notice nil)) "Absent audit has no notice."))
+  nil)
+
+(-> test-unsupported-native-permit-controls () null)
+(defun test-unsupported-native-permit-controls ()
+  "Limit a metadata allowance to one native-to-portable handoff at real dispatch."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+    (dolist (status '(404 405 501 200 500 :transport :local))
+      (with-test-configuration (configuration)
+        (let* ((provider      (make-instance 'unsupported-native-test-provider
+                                             :configuration      configuration
+                                             :credential-manager (provider-credential-manager (provider-create configuration))
+                                             :status             (if (eq status :local) 404 status)
+                                             :results            (list (agent-test-result
+                                                                        "summary" (list (agent-test-compaction-message))
+                                                                        :usage (json-object "input_tokens" 7 "output_tokens" 3)))))
+               (application   (mission-inference-test--application configuration provider))
+               (source        (application-conversation application))
+               (candidate     (conversation-create configuration))
+               (permit        (list provider (if (eq status :local) 5001 50000) :ready))
+               (failure       nil)
+               (unsupported-p (member status '(404 405 501))))
+          (conversation-append-user-message candidate (make-string 40000 :initial-element #\x))
+          (application-mission-start application (mission-test--specification :tokens 100000 :turns 16))
+          (setf (unsupported-native-test-source provider) source
+                (unsupported-native-test-context provider) (mission-context-find source))
+          (unwind-protect
+               (compaction-recovery-test-small-context
+                (lambda ()
+                  (test-call-with-function-replacements
+                   (list (list 'credential-manager-credentials
+                               (lambda (&rest arguments)
+                                 (declare (ignore arguments))
+                                 (provider-tests--credentials configuration))))
+                   (lambda ()
+                     (let ((*provider-compaction-recovery-permit* permit))
+                       (flet ((native ()
+                                (mission-call-with-native-compaction-view
+                                 (unsupported-native-test-context provider) candidate
+                                 (lambda ()
+                                   (provider-attempt-native-compaction
+                                    provider candidate :tool-namespaces #() :force-refresh nil
+                                    :event-callback #'identity)))))
+                         (handler-case (native)
+                           (error (condition) (setf failure condition)))
+                         (test-assert (= (if (eq status :local) 0 1) (unsupported-native-test-native-calls provider))
+                                      "Only locally admitted attempts reach native dispatch.")
+                         (cond
+                           (unsupported-p
+                            (test-assert (null failure) "Unsupported native dispatch settles normally.")
+                            ;; A second native attempt must not use the portable allowance.
+                            (setf failure nil)
+                            (handler-case (native)
+                              (error (condition) (setf failure condition)))
+                            (test-assert (typep failure 'provider-context-budget-error)
+                                         "The handoff cannot fund a repeated native request.")
+                            (test-assert (= 1 (unsupported-native-test-native-calls provider))
+                                         "Repeated native refusal reaches no new transport.")
+                            (mission-call-with-request-view
+                             (unsupported-native-test-context provider) candidate
+                             (lambda ()
+                               (provider-stream-turn provider candidate :tool-namespaces #()
+                                                     :event-callback #'identity :compaction-p t)))
+                            (test-assert (= 1 (unsupported-native-test-summary-calls provider))
+                                         "Exactly one portable request uses the handoff.")
+                            (setf failure nil)
+                            (handler-case
+                                (mission-call-with-request-view
+                                 (unsupported-native-test-context provider) candidate
+                                 (lambda ()
+                                   (provider-stream-turn provider candidate :tool-namespaces #()
+                                                         :event-callback                     #'identity)))
+                              (error (condition) (setf failure condition)))
+                            (test-assert (typep failure 'provider-context-budget-error)
+                                         "Later ordinary requests cannot reuse the spent allowance."))
+                           ((eq status :local)
+                            (test-assert (typep failure 'provider-context-budget-error)
+                                         "Local refusal never consumes an allowance."))
+                           ((eql status 200)
+                            (test-assert (null failure) "A genuine native result retains positive usage.")
+                            (test-assert (= 5000 (provider-effective-context-window provider))
+                                         "A successful native request does not renew an allowance."))
+                           (t
+                            (test-assert (typep failure 'mission-error)
+                                         "Other admitted failures retain mission error handling.")
+                            (test-assert (= 5000 (provider-effective-context-window provider))
+                                         "Unrelated failures do not renew an allowance.")))))))))
+            (let ((ledger (mission-context-goal (unsupported-native-test-context provider))))
+              (format t "~&PERMIT-CONTROL status=~S permit=~S used=~D unknown=~D~%"
+                      status (third permit) (getf ledger :tokens-used) (getf ledger :unknown-usage 0))
+              (test-assert (= (cond (unsupported-p
+                                     10)
+                                    ((eql status 200)
+                                     5)
+                                    (t
+                                     0)) (getf ledger :tokens-used))
+                           "Native and portable positive usage retain their exact charges.")
+              (test-assert (= (if (member status '(500 :transport)) 1 0) (getf ledger :unknown-usage 0))
+                           "Only unrelated admitted failures have unknown usage.")
+              (test-assert (zerop (getf ledger :requests-outstanding)) "Every control settles its reservation.")
+              (test-assert (zerop (getf ledger :tokens-reserved)) "Every control releases reserved tokens."))
+            (mission-detach application))))))
   nil)

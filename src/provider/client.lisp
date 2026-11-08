@@ -1255,7 +1255,10 @@ success body cannot be decoded. Unknown usage and response IDs remain NIL."
            (*provider-active-credential-redaction-marker*
              (safe-redaction-marker
               *provider-credential-redaction-marker*
-              *provider-active-credential-values*)))
+              *provider-active-credential-values*))
+           (native-recovery-permit
+             (and (eq :ready (third *provider-compaction-recovery-permit*))
+                  *provider-compaction-recovery-permit*)))
       (handler-case
           (let ((request
                   (provider-native-compaction-request-object
@@ -1274,7 +1277,15 @@ success body cannot be decoded. Unknown usage and response IDs remain NIL."
         (dexador.error:http-request-unauthorized (condition)
           (provider-signal-http-failure provider condition))
         (http-request-failed (condition)
-          (provider-signal-transport-failure provider condition))))))
+          (provider-signal-transport-failure provider condition))
+        (provider-error (condition)
+          ;; Classify inside the attempt, before mission supervision wraps failures.
+          (if (provider--native-compaction-unavailable-p condition)
+              (progn
+                (when native-recovery-permit
+                  (provider-handoff-unsupported-native-permit provider))
+                (values nil (json-object "input_tokens" 0 "output_tokens" 0)))
+              (error condition)))))))
 
 (-> provider--native-compaction-unavailable-p (provider-error) boolean)
 (defun provider--native-compaction-unavailable-p (condition)
