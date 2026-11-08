@@ -296,7 +296,7 @@ Press Enter to run it.
 
 This is also useful if a Lisp form you want to evaluate does not start with a parenthesis:
 
-=? *my-var*= 
+=? *my-var*=
 
 @@brand:(form)    local evaluation
 ? (form)  background local evaluation@@
@@ -570,7 +570,7 @@ Autolith can use *recursive language models (RLM)* to process very large inputs 
       -> combined result@@
 
 You can request it specifically if you like, but generally, Autolith knows when to use it.
-      
+
 * Delegate independent work
 :PROPERTIES:
 :ID: child-agents
