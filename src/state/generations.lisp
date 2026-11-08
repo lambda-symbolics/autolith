@@ -268,7 +268,7 @@ structured type and message survive the round trip."
       (with-output-to-string (stream)
         (when invalid-selected-p
           (format stream "the selected checkpoint cannot start: ~A; "
-                  (getf selected-health :reason)))
+                  (string-right-trim "." (princ-to-string (getf selected-health :reason)))))
         (let ((fallback (getf summary :fallback)))
           (if fallback
               (format stream "(rollback) can start checkpoint ~A instead; "
