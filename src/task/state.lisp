@@ -230,11 +230,6 @@
     :accessor      task-orchestrator-maximum-depth
     :type          (integer 1)
     :documentation "The maximum child depth below the primary agent.")
-   (next-name-index
-    :initform      0
-    :accessor      task-orchestrator-next-name-index
-    :type          (integer 0)
-    :documentation "The source of readable names for children given none.")
    (next-session-order
     :initform      0
     :accessor      task-orchestrator-next-session-order

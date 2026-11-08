@@ -735,8 +735,7 @@ guarantee."
                                                      job :state  state
                                                          :result result
                                                          :report report))
-                        :name                     (task-orchestrator--child-name
-                                                   orchestrator (getf item :name))
+                        :name                     (task-child-name item (getf entry :definition))
                         ;; A child a child agent waits for runs on the waiting
                         ;; worker rather than occupying a second one, so a deep
                         ;; synchronous chain cannot starve the pool.
@@ -747,7 +746,8 @@ guarantee."
                         (list :orchestrator          orchestrator
                               :telemetry-run         (unless (getf entry :detached)
                                                        (or (getf entry :telemetry-run) *telemetry-run*))
-                              :execution-identifier  (make-identifier)
+                              :execution-identifier  (task-child-identifier-generate
+                                                      (agent-configuration parent-agent))
                               :session-order         session-order
                               :definition            (getf entry :definition)
                               :item                  item
