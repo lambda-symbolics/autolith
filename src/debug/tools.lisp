@@ -37,23 +37,57 @@
     (setf (debug-session-manager-closed-p (debug-tool-manager tool)) nil))
   nil)
 
-(-> debug--number (hash-table string &key (:default integer) (:minimum integer) (:maximum integer)) integer)
-(defun debug--number (arguments name &key (default 0) (minimum 0) (maximum most-positive-fixnum))
-  "Validate a finite integer parameter independently of provider schema validation."
-  (let ((value (gethash name arguments default)))
-    (unless (and (integerp value) (<= minimum value maximum))
-      (debug--fail ':invalid-arguments (format nil "~A must be an integer in ~D..~D." name minimum maximum)))
+(defvar *debug-argument-schema* nil
+  "Field contracts bound for the currently executing debug tool.")
+
+(-> debug--argument (hash-table string) t)
+(defun debug--argument (arguments name)
+  "Read one checked/defaulted field, translating payload-free diagnostics."
+  (multiple-value-bind (value supplied-p diagnostic)
+      (cl-llm-provider-api:provider-schema-argument-value
+       *debug-argument-schema* arguments name)
+    (declare (ignore supplied-p))
+    (when diagnostic
+      (debug--fail ':invalid-arguments
+                   (format nil "Invalid ~A argument (~A)." name
+                           (cl-llm-provider-api:provider-argument-diagnostic-code diagnostic))))
     value))
+
+(-> debug--validate-arguments (debug-tool hash-table) null)
+(defun debug--validate-arguments (tool arguments)
+  "Check used fields before session reservation, approval or adapter effects."
+  (let* ((operation             (debug-tool-operation tool))
+         (startup-p             (member operation '("launch" "attach") :test #'equal))
+         (initial-breakpoints-p (and startup-p
+                                     (or (gethash "breakpoint-path" arguments)
+                                         (gethash "breakpoint-lines" arguments))))
+         (properties            (json-get *debug-argument-schema* "properties")))
+    (when initial-breakpoints-p
+      (tool-argument arguments "breakpoint-path" :required t)
+      (tool-argument arguments "breakpoint-lines" :required t))
+    (maphash
+     (lambda (name schema)
+       (declare (ignore schema))
+       (unless (or (and (equal operation "cancel") (equal name "timeout"))
+                   (and startup-p (not initial-breakpoints-p)
+                        (member name '("breakpoint-path" "breakpoint-lines") :test #'equal))
+                   (and (equal operation "events")
+                      (if (tool-argument arguments "wait-for")
+                          (equal name "count")
+                          (equal name "wait-for")))
+                   (and (equal operation "evaluate") (equal name "frame")
+                        (not (tool-argument arguments name))))
+         (debug--argument arguments name)))
+     properties))
+  nil)
 
 (-> debug--breakpoints
     (tool-context hash-table &key (:path-name string) (:lines-name string)) (values json-object vector))
 (defun debug--breakpoints (context arguments &key (path-name "path") (lines-name "lines"))
   "Authorize a source path and validate a bounded semantic line breakpoint set."
-  (let ((path  (workspace-tool-path context (tool-argument arguments path-name :required t) :tool-name "debug"))
-        (lines (tool-argument arguments lines-name :required t)))
-    (unless (and (vectorp lines) (not (stringp lines)) (<= (length lines) 100)
-                 (every (lambda (line) (typep line '(integer 1 100000000))) lines))
-      (debug--fail ':invalid-arguments "Breakpoint lines must be an array of at most 100 positive integers."))
+  (tool-argument arguments lines-name :required t)
+  (let ((lines (debug--argument arguments lines-name))
+        (path  (workspace-tool-path context (tool-argument arguments path-name :required t) :tool-name "debug")))
     (values (json-object "path" (uiop:native-namestring path))
             (map 'vector (lambda (line) (json-object "line" line)) lines))))
 
@@ -61,11 +95,9 @@
 (defun debug--events (entry arguments &key timeout cancel-p)
   "Present finite event pages, retaining unpresented events rather than silently dropping them."
   (let ((session (debug-session-entry-session entry))
-        (name    (tool-argument arguments "wait-for")))
+        (name    (when (tool-argument arguments "wait-for") (debug--argument arguments "wait-for"))))
     (cond
       (name
-       (unless (non-empty-string-p name)
-         (debug--fail ':invalid-arguments "wait-for must be a non-empty event name."))
        (let ((event (find name (debug-session-entry-events entry)
                           :key (lambda (event) (json-get event "event")) :test #'equal)))
          (when event
@@ -77,7 +109,7 @@
        (unless (debug-session-entry-events entry)
          (setf (debug-session-entry-events entry) (daphne:session-events session)))
        (let* ((pending (debug-session-entry-events entry))
-              (count   (min (length pending) (debug--number arguments "count" :default 20 :minimum 1 :maximum 100)))
+              (count   (min (length pending) (debug--argument arguments "count")))
               (page    (json-object "events" (coerce (subseq pending 0 count) 'vector)
                                     "bufferedRemaining" (- (length pending) count))))
          (debug--bounded-json page)
@@ -91,7 +123,7 @@
          (operation         (debug-tool-operation tool))
          (program           (debug-tool-program tool))
          (configuration     (debug--configuration context (tool-argument arguments "configuration" :required t)))
-         (timeout           (debug--number arguments "timeout" :default 10 :minimum 1 :maximum 120))
+         (timeout           (debug--argument arguments "timeout"))
          (source            nil)
          (breakpoints       nil)
          (breakpoint-result nil))
@@ -150,7 +182,7 @@
   "Run one semantic operation against an exclusively reserved session."
   (let* ((session   (debug-session-entry-session entry))
          (operation (debug-tool-operation tool))
-         (timeout   (debug--number arguments "timeout" :default 10 :minimum 1 :maximum 120))
+         (timeout   (debug--argument arguments "timeout"))
          (cancel    (lambda () (debug--cancel-p (debug-tool-manager tool) entry (debug-tool-cancel-p tool))))
          (options   (list :timeout timeout :cancel-p cancel)))
     (when (funcall cancel)
@@ -164,32 +196,28 @@
       ((equal operation "threads")
        (apply #'daphne:session-threads session options))
       ((equal operation "stack")
-       (apply #'daphne:session-stack-trace session (debug--number arguments "thread")
-              :start-frame (debug--number arguments "start")
-              :levels      (debug--number arguments "count" :default 20 :minimum 1 :maximum 100) options))
+       (apply #'daphne:session-stack-trace session (debug--argument arguments "thread")
+              :start-frame (debug--argument arguments "start")
+              :levels      (debug--argument arguments "count") options))
       ((equal operation "scopes")
-       (apply #'daphne:session-scopes session (debug--number arguments "frame") options))
+       (apply #'daphne:session-scopes session (debug--argument arguments "frame") options))
       ((equal operation "variables")
-       (apply #'daphne:session-variables session (debug--number arguments "reference")
-              :start (debug--number arguments "start")
-              :count (debug--number arguments "count" :default 50 :minimum 1 :maximum 100) options))
+       (apply #'daphne:session-variables session (debug--argument arguments "reference")
+              :start (debug--argument arguments "start")
+              :count (debug--argument arguments "count") options))
       ((equal operation "evaluate")
-       (let ((expression (tool-argument arguments "expression" :required t))
-             (frame      (tool-argument arguments "frame")))
-         (unless (stringp expression) (debug--fail ':invalid-arguments "Expression must be a string."))
-         (when frame (debug--number arguments "frame"))
+       (let ((expression (debug--argument arguments "expression"))
+             (frame      (when (tool-argument arguments "frame") (debug--argument arguments "frame"))))
          (debug--authorize context "evaluate" (json-object "session" (debug-session-entry-identifier entry)
                                                           "expression" expression "frame" frame))
          (apply #'daphne:session-evaluate session expression :frame-id frame options)))
       ((equal operation "continue")
-       (apply #'daphne:session-continue session (debug--number arguments "thread") options))
+       (apply #'daphne:session-continue session (debug--argument arguments "thread") options))
       ((equal operation "pause")
-       (apply #'daphne:session-pause session (debug--number arguments "thread") options))
+       (apply #'daphne:session-pause session (debug--argument arguments "thread") options))
       ((equal operation "step")
-       (let ((kind (tool-argument arguments "kind" :required t)))
-         (unless (member kind '("in" "over" "out") :test #'equal)
-           (debug--fail ':invalid-arguments "Step kind must be in, over or out."))
-         (apply #'daphne:session-step session (debug--number arguments "thread")
+       (let ((kind (debug--argument arguments "kind")))
+         (apply #'daphne:session-step session (debug--argument arguments "thread")
                 (cond ((equal kind "in")
                        ':in)
                       ((equal kind "over")
@@ -198,7 +226,7 @@
                        ':out)) options)))
       ((equal operation "terminate")
        (apply #'daphne:session-terminate session :disconnect t
-              :terminate-debuggee                            (tool-boolean-argument arguments "terminate-debuggee" :default t :tool-name "debug.terminate") options)
+              :terminate-debuggee                            (json-true-p (debug--argument arguments "terminate-debuggee")) options)
        (json-object "terminated" t))
       (t
        (debug--fail ':unknown-operation "Unknown debug operation.")))))
@@ -250,8 +278,12 @@
 
 (defmethod tool-execute ((tool debug-tool) (context tool-context) (arguments hash-table))
   "Invoke semantic debug operations and translate library failures to product errors."
-  (handler-case (tool-success (debug--bounded-json (debug--execute tool context arguments)))
-    (daphne:dap-error (condition) (debug--translate condition))))
+  (let ((*debug-argument-schema* (tool-parameters tool)))
+    (handler-case
+        (progn
+          (debug--validate-arguments tool arguments)
+          (tool-success (debug--bounded-json (debug--execute tool context arguments))))
+      (daphne:dap-error (condition) (debug--translate condition)))))
 
 (-> debug--properties (string) (values json-object list))
 (defun debug--properties (operation)
@@ -262,7 +294,9 @@
                (when required-p (push name required)))
 
              (integer-field (name description &optional required-p)
-               (setf (gethash name properties) (tool-integer-property description))
+               (setf (gethash name properties)
+                     (json-object "type" "integer" "description" description
+                                  "minimum" 0 "maximum" most-positive-fixnum "default" 0))
                (when required-p (push name required))))
       (unless (equal operation "status")
         (integer-field "timeout" "Request deadline in seconds, 1..120; default 10."))
@@ -271,7 +305,7 @@
          (string-field "configuration" "Bounded adapter-specific launch or attach JSON object. Exact content requires execution approval." t)
          (string-field "breakpoint-path" "Optional source path for breakpoints before configurationDone; supply breakpoint-lines too.")
          (setf (gethash "breakpoint-lines" properties)
-               (json-object "type" "array" "items" (json-object "type" "integer" "minimum" 1) "maxItems" 100)))
+               (json-object "type" "array" "items" (json-object "type" "integer" "minimum" 1 "maximum" 100000000) "maxItems" 100)))
         ((not (equal operation "status"))
          (string-field "session" "Opaque session ID returned by launch/attach in this conversation." t)))
       (when (member operation '("continue" "pause" "step" "stack") :test #'equal)
@@ -292,8 +326,25 @@
         (setf (gethash "terminate-debuggee" properties) (tool-boolean-property "Request debuggee termination on disconnect; default true.")))
       (when (equal operation "breakpoints")
         (string-field "path" "Authorized source pathname." t)
-        (setf (gethash "lines" properties) (json-object "type" "array" "items" (json-object "type" "integer" "minimum" 1) "maxItems" 100))
+        (setf (gethash "lines" properties) (json-object "type" "array" "items" (json-object "type" "integer" "minimum" 1 "maximum" 100000000) "maxItems" 100))
         (push "lines" required)))
+    (flet ((bounds (name &key minimum maximum default)
+             (let ((field (gethash name properties)))
+               (when field
+                 (setf (gethash "minimum" field) minimum
+                       (gethash "maximum" field) maximum
+                       (gethash "default" field) default)))))
+      (bounds "timeout" :minimum 1 :maximum 120 :default 10)
+      (bounds "count" :minimum 1 :maximum 100 :default (if (equal operation "variables") 50 20)))
+    (when (equal operation "evaluate")
+      (remhash "default" (gethash "frame" properties)))
+    (when (equal operation "step")
+      (setf (gethash "enum" (gethash "kind" properties)) #("in" "over" "out")))
+    (when (equal operation "events")
+      (setf (gethash "minLength" (gethash "wait-for" properties)) 1))
+    (when (equal operation "terminate")
+      (setf (gethash "type" (gethash "terminate-debuggee" properties)) #("boolean" "null")
+            (gethash "default" (gethash "terminate-debuggee" properties)) t))
     (values properties (nreverse required))))
 
 (-> debug-register-tools

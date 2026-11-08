@@ -291,8 +291,7 @@
                                     (tool-result-content special))))
              (dolist (case
                        (list
-                        (list "missing selector" nil
-                              "exactly one of query or patterns")
+                         (list "missing selector" nil :missing-required-arguments)
                         (list "both selectors"
                               (list "query" "AUTOLITH_FFF_PRIMARY"
                                     "patterns" #("AUTOLITH_FFF_SECONDARY"))
@@ -311,10 +310,12 @@
                                             :namespace "search"
                                             :name      "content"
                                             :arguments arguments)))
-                  (test-assert
-                   (and (not (tool-result-success-p result))
-                        (search expected (tool-result-content result)))
-                   (format nil "search.content rejects ~A" label)))))
+                   (test-assert
+                    (and (not (tool-result-success-p result))
+                         (if (keywordp expected)
+                             (eq expected (tool-result-error-code result))
+                             (search expected (tool-result-content result))))
+                    (format nil "search.content rejects ~A" label)))))
              (let* ((worker          (search-tool-engine files-tool))
                     (watched-process (worker-process worker))
                     (watched-pid     (uiop:process-info-pid watched-process)))

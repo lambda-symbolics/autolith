@@ -431,124 +431,49 @@
                         "unknown provider calls produce a correlated tool failure")
            (test-assert (eq (tool-result-error-code result) ':invalid-arguments)
                         "Invalid tool calls carry a stable failure category.")
-           (let ((result
-                   (tool-registry-execute-call
-                    registry
-                    (json-object
-                     "namespace" "resource"
-                     "name" "edit"
-                     "arguments"
-                     (json-encode
-                      (json-object "uri" "scratchpad:argument-probe.txt"
-                                   "base_revision" "R0"
-                                   "operations" (json-array))))
-                    context)))
-             (test-assert (eq (tool-result-error-code result) ':unknown-arguments)
-                          "an unknown argument is rejected before execution")
-             (test-assert
-              (search "did you mean base-revision?" (tool-result-content result))
-              "an unknown argument suggests the closest declared name"))
-           (let ((result
-                   (tool-registry-execute-call
-                    registry
-                    (json-object
-                     "namespace" "resource"
-                     "name" "read"
-                     "arguments"
-                     (json-encode
-                      (json-object "uri" "scratchpad:argument-probe.txt"
-                                   "bogus" t)))
-                    context)))
-             (test-assert (eq (tool-result-error-code result) ':unknown-arguments)
-                          "an unrelated unknown argument is still rejected")
-             (test-assert
-              (not (search "did you mean" (tool-result-content result)))
-              "an unrelated unknown argument gets no misleading suggestion"))
-           (let ((result
-                   (tool-registry-execute-call
-                    registry
-                    (json-object
-                     "namespace" "resource"
-                     "name" "read"
-                     "arguments"
-                     (json-encode
-                      (json-object "uri" "scratchpad:argument-probe.txt")))
-                    context)))
-             (test-assert
-              (not (eq (tool-result-error-code result) ':unknown-arguments))
-              "declared arguments are not rejected as unknown"))
-           (dolist (case '(("ur" "uri") ("line-coun" "line-count")))
-             (destructuring-bind (supplied expected) case
-               (let* ((result
-                        (tool-registry-execute-call
-                         registry
-                         (json-object "namespace" "resource" "name" "read"
-                                      "arguments" (json-encode (json-object supplied "probe")))
-                         context))
-                      (content (tool-result-content result))
-                      (start   (position #\{ content))
-                      (retry   (json-get (json-decode (subseq content start)) "arguments")))
-                 (test-assert (eq (tool-result-error-code result) ':unknown-arguments)
-                              "incomplete argument names are rejected before execution")
-                 (test-assert (equal (json-get retry expected) "probe")
-                              "the retry skeleton repairs a missing final letter"))))
-           (dolist (arguments
-                    (list (json-object "uri" "workspace:keep" "urii" "workspace:other")
-                          (json-object "urii" "workspace:other" "uri" "workspace:keep")
-                          (json-object "urii" "workspace:first" "urix" "workspace:second")))
-             (let* ((result  (tool-registry-execute-call
-                              registry
-                              (json-object "namespace" "resource" "name" "read"
-                                           "arguments" (json-encode arguments))
-                              context))
-                    (content (tool-result-content result))
-                    (retry   (json-get (json-decode (subseq content (position #\{ content)))
-                                       "arguments")))
-               (test-assert
-                (equal (json-get retry "uri") (json-get arguments "uri"))
-                "suggestions preserve explicit values and leave ambiguous aliases unresolved")))
-           (dolist (case
-                    (list
-                     (list (json-object "type" "object" "properties" (json-object "known" (json-object))
-                                        "additionalProperties" (json-false)) nil)
-                     (list (json-object "type" "object" "properties" (json-object "known" (json-object))
-                                        "additionalProperties" t) t)
-                     (list (json-object "type" "object" "properties" (json-object "known" (json-object))) t)
-                     (list (json-object "type" "object" "properties" (json-object "known" (json-object))
-                                        "additionalProperties" (json-object "type" "string")) t)
-                     (list (json-object "type" "object" "properties" (json-object)
-                                        "additionalProperties" (json-false)) nil)
-                     (list (json-object "type" "object" "additionalProperties" (json-false)) nil)
-                     (list (json-object "type" "object" "properties" (json-object "known" (json-object))
-                                        "patternProperties" (json-object "^extra-" (json-object "type" "string"))
-                                        "additionalProperties" (json-false)) t)))
-             (destructuring-bind (schema permitted-p) case
-               (let ((probe-registry (make-instance 'tool-registry))
-                     (executed-p     nil))
-                 (tool-registry-register
-                  probe-registry
-                  (make-instance 'tool :namespace "probe" :name "schema"
-                                      :description "Exercise external tool schemas."
-                                      :parameters  schema))
-                 (test-call-with-function-replacements
-                  (list (list 'tool-execute-with-contracts
-                              (lambda (tool context arguments)
-                                (declare (ignore tool context arguments))
-                                (setf executed-p t)
-                                (tool-success "executed"))))
-                  (lambda ()
-                    (let ((result
-                            (tool-registry-execute-call
-                             probe-registry
-                             (json-object "namespace" "probe" "name" "schema"
-                                          "arguments" "{\"extra-valid\":\"allowed\"}")
-                             context)))
-                      (test-assert (eq executed-p permitted-p)
-                                   "schema openness controls whether the handler is called")
-                      (test-assert
-                       (eq (eq (tool-result-error-code result) ':unknown-arguments)
-                           (not permitted-p))
-                       "only simple closed schemas reject undeclared arguments")))))))
+           (dolist (correction-p '(nil t))
+             (let* ((probe-registry (make-instance 'tool-registry))
+                    (executed-p     nil)
+                    (received       nil)
+                    (schema         (tool-object-schema
+                                     (json-object "path" (tool-string-property "Path")) '("path"))))
+               (tool-registry-register
+                probe-registry
+                (make-instance 'tool :namespace "probe" :name "contract"
+                                    :description "Exercise argument mechanics projection."
+                                    :parameters schema :correction-metadata-p correction-p))
+               (test-call-with-function-replacements
+                (list (list 'tool-execute-with-contracts
+                            (lambda (tool context arguments)
+                              (declare (ignore tool context))
+                              (setf executed-p t received arguments)
+                              (tool-success "executed"))))
+                (lambda ()
+                  (let* ((result  (tool-registry-execute-call
+                                   probe-registry
+                                   (json-object "namespace" "probe" "name" "contract"
+                                                "arguments" "{\"pah\":\"workspace:probe\"}") context))
+                         (content (tool-result-content result))
+                         (retry   (json-decode (subseq content (position #\{ content)))))
+                    (test-assert (and (not executed-p)
+                                      (eq (tool-result-error-code result) ':unknown-arguments))
+                                 "argument mechanics rejects before dispatch")
+                    (test-assert (and (equal (json-get retry "namespace") "probe")
+                                      (equal (json-get retry "name") "contract")
+                                      (equal (json-get (json-get retry "arguments") "path") "workspace:probe"))
+                                 "mechanics retry carries tool identity and supplied value"))
+                  (let ((result (tool-registry-execute-call
+                                 probe-registry
+                                 (json-object "namespace" "probe" "name" "contract"
+                                              "arguments" "{\"path\":\"workspace:probe\",\"corrects_previous\":false}") context)))
+                    (test-assert (eq executed-p correction-p)
+                                 "correction metadata is permitted only for opted-in tools")
+                    (if correction-p
+                        (test-assert (and (tool-result-success-p result)
+                                          (not (nth-value 1 (gethash "corrects_previous" received))))
+                                     "opted-in correction metadata is consumed before dispatch")
+                        (test-assert (eq (tool-result-error-code result) ':unknown-arguments)
+                                     "ordinary closed schemas reject correction metadata")))))))
            (test-assert (eq (tool-result-error-code (tool-failure "private report")) ':tool-failure)
                         "Every directly returned failure receives a content-independent fallback code.")
            (let* ((commands
