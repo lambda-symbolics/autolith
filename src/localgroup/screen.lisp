@@ -29,6 +29,12 @@
 (defgeneric screen-panel-rows (panel terminal height)
   (:documentation "Return HEIGHT display rows of PANEL rendered for TERMINAL, each exactly its width."))
 
+(defgeneric screen-panel-click (panel column row)
+  (:documentation "Act on a click at COLUMN and ROW of PANEL, both from 1.
+
+Return :REDRAW when PANEL changed and wants painting, a (:SWITCH :SESSION-ID
+ID) request to move the terminal to channel ID, or NIL."))
+
 (defgeneric screen-panel-shown-p (panel)
   (:documentation "Return PANEL's visibility preference, or :SCREEN to use the screen's.
 
@@ -37,6 +43,11 @@ switches. The default methods leave the choice local to each screen."))
 
 (defgeneric (setf screen-panel-shown-p) (shown-p panel)
   (:documentation "Record whether the person wants PANEL beside the session."))
+
+(defmethod screen-panel-click ((panel t) column row)
+  "A panel without clickable rows ignores clicks."
+  (declare (ignore column row))
+  nil)
 
 (defmethod screen-panel-shown-p ((panel t))
   "A panel without a memory of its own leaves the choice to the screen."
@@ -148,20 +159,31 @@ switches. The default methods leave the choice local to each screen."))
 
 (-> localgroup-screen-filter-event (localgroup-screen t) t)
 (defun localgroup-screen-filter-event (screen event)
-  "Return EVENT as the session should see it, or :IGNORE when SCREEN consumed it.
+  "Return EVENT as the session should see it, :IGNORE when SCREEN consumed it, or a switch request.
 
 The toggle key shows or hides the side panel. A click lands in the panel,
-where it does nothing, or in the session's pane, whose columns start after
-the panel."
+which acts on it and may ask to move the terminal to another channel with a
+(:SWITCH :SESSION-ID ID) request, or in the session's pane, whose columns
+start after the panel."
   (cond
     ((equal event *localgroup-screen-toggle-event*)
      (localgroup-screen-toggle-panel screen)
      ':ignore)
     ((and (typep event '(cons (eql :click) (cons integer (cons integer null))))
           (localgroup-screen-panel-visible-p screen))
-     (let ((offset (1+ (screen-panel-width (localgroup-screen-panel screen)))))
+     (let* ((panel  (localgroup-screen-panel screen))
+            (offset (1+ (screen-panel-width panel))))
        (if (<= (second event) offset)
-           ':ignore
+           (let ((result (screen-panel-click panel (second event) (third event))))
+             (cond
+               ((eq result ':redraw)
+                (with-lock-held ((localgroup-screen-lock screen))
+                  (localgroup-screen--paint screen))
+                ':ignore)
+               ((consp result)
+                result)
+               (t
+                ':ignore)))
            (list ':click (- (second event) offset) (third event)))))
     (t
      event)))
