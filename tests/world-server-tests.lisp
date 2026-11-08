@@ -452,7 +452,7 @@ run once the wake has."
           (test-assert (handler-case
                            (progn (application--builtin-switch-command application "zzzzzzz") nil)
                          (world-error (condition)
-                           (search "does not exist" (autolith-error-message condition))))
+                           (search "No channel matches" (autolith-error-message condition))))
                        "an unknown channel is refused"))))))
   nil)
 

@@ -618,7 +618,7 @@ nothing; so does no match."
     (cond
       ((null matches)
        (error 'world-error
-              :message    (format nil "Channel ~A does not exist. Read channel:list for the channels there are."
+              :message    (format nil "No channel matches ~A."
                                   fragment)
               :pathname   nil
               :operation  ':resolve
@@ -701,19 +701,43 @@ need hundreds of suffixes."
 
 (-> world-channel-designated (world configuration string) channel)
 (defun world-channel-designated (world configuration designator)
-  "Return the channel DESIGNATOR names in WORLD by identifier, legacy alias or fragment.
+  "Return the channel DESIGNATOR names in WORLD by identifier, legacy alias, agent or fragment.
 
-The word inbox names the person's inbox. A full identifier, in either form
-or as a retained legacy alias of CONFIGURATION, names its channel directly;
-anything else is resolved as a fragment through WORLD-CHANNEL-RESOLVE."
+The word inbox names the person's inbox, and @NAME the channel where the
+participant NAME resides. A full identifier, in either form or as a retained
+legacy alias of CONFIGURATION, names its channel directly; anything else is
+resolved as a fragment through WORLD-CHANNEL-RESOLVE."
   (or (and (string-equal designator *world-inbox-designator*)
            (world-inbox-channel world))
+      (and (uiop:string-prefix-p "@" designator)
+           (world--residence-channel world (subseq designator 1)))
       (let ((resolved (handler-case
                           (conversation-identifier-migration-resolve configuration designator)
                         (conversation-error ()
                           nil))))
         (and resolved (world-channel-find world resolved)))
       (world-channel-resolve world designator)))
+
+(-> world--residence-channel (world string) channel)
+(defun world--residence-channel (world name)
+  "Return the channel where the participant NAME, an identifier or a name, resides."
+  (let ((participant (world-message-participant world name)))
+    (cond
+      ((null participant)
+       (error 'world-error
+              :message    (format nil "No participant is named ~A." name)
+              :pathname   nil
+              :operation  ':resolve
+              :identifier name))
+      ((null (participant-residence participant))
+       (error 'world-error
+              :message    (format nil "@~A is parked in no channel; mention it in a channel's message instead."
+                                  (participant-name participant))
+              :pathname   nil
+              :operation  ':resolve
+              :identifier name))
+      (t
+       (world--require-channel world (participant-residence participant) ':resolve)))))
 
 (-> world--newest-first (list function function) list)
 (defun world--newest-first (items updated-at identifier)
