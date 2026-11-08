@@ -3172,7 +3172,7 @@ show."
     (application-present application (application-notice-line (format nil "@~A is now @~A" before name))))
   ':continue)
 
-(-> application--placing-server (application keyword) world-server)
+(-> application--placing-server (application keyword) (values world-server &optional))
 (defun application--placing-server (application operation)
   "Return the world server that places APPLICATION's agents, or refuse OPERATION in a session of its own.
 

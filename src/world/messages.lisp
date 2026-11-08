@@ -460,7 +460,7 @@ writes can pass for that header."
                (format nil "to channel ~A, for the person" target))))
           (uiop:split-string (world-delivery-text delivery) :separator '(#\Newline))))
 
-(-> world-delivery-steering-input (world-delivery) agent-steering-input)
+(-> world-delivery-steering-input (world-delivery) (values agent-steering-input &optional))
 (defun world-delivery-steering-input (delivery)
   "Return DELIVERY as steering input that records the same request as a delivery between turns."
   (agent-steering-input-create :identifier        (world-delivery-pending-identifier delivery)
