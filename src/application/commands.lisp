@@ -37,31 +37,6 @@ transcript renderer, including in fullscreen."
                        (terminal-span (second field) (princ-to-string (third field)))
                        (terminal-span ':plain (string #\Newline))))))
 
-(-> application-conversations-entry (application) list)
-(defun application-conversations-entry (application)
-  "Return saved conversation names and metadata as semantic terminal spans."
-  (let ((items (application--conversation-items application)))
-    (if items
-        (append (list (terminal-span ':brand (format nil "conversations~%")))
-                (loop for item in items
-                      append (list (terminal-span ':code (getf item :name))
-                                   (terminal-span ':dim
-                                                  (format nil "~%  ~A~%"
-                                                          (getf item :description))))))
-        (list (terminal-span ':hint "No saved conversations exist.")))))
-
-(-> application-list-conversations (application) string)
-(defun application-list-conversations (application)
-  "Return saved conversations newest first with their times and origins."
-  (let ((items (application--conversation-items application)))
-    (if items
-        (format nil "conversations~%~{~A~%~}"
-                (loop for item in items
-                      collect (format nil "~A  ~A"
-                                      (getf item :name)
-                                      (getf item :description))))
-        "No saved conversations exist.")))
-
 (-> application--agenda-status-style (agenda-status) keyword)
 (defun application--agenda-status-style (status)
   "Return the terminal style associated with agenda STATUS."
@@ -3112,19 +3087,6 @@ last started is not in its world either, so the saved conversations come last."
          (before        (participant-name participant)))
     (world-participant-rename configuration (participant-identifier participant) name)
     (application-present application (format nil "Renamed @~A to @~A." before name)))
-  ':continue)
-
-(define-application-command application--builtin-conversations-command
-    (:name              "/conversations"
-     :argument          nil
-     :description       "list saved conversations"
-     :tip               "lists saved conversations from newest to oldest."
-     :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
-    (application)
-  (application-present application
-                       (application-conversations-entry application))
   ':continue)
 
 (define-application-command application--builtin-channels-command

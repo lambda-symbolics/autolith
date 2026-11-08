@@ -698,7 +698,7 @@
                           "applications install a dynamic operation completion provider")
              (test-assert (member "/help" entry-names :test #'string=)
                           "slash compatibility completion retains canonical commands")
-             (test-assert (member "(conversations)" entry-names :test #'string=)
+             (test-assert (member "(channels)" entry-names :test #'string=)
                           "completion offers a canonical no-argument Lisp command")
              (test-assert
               (and (member "/ste on" entry-names :test #'string=)
@@ -718,7 +718,7 @@
                 (and (equal (primary-of "/ste on") "/ste")
                      (equal (primary-of "(ste nil)") "(ste")
                      (null (primary-of "/ste"))
-                     (null (primary-of "(conversations)")))
+                     (null (primary-of "(channels)")))
                 "finite option entries stay behind their canonical command rows")
                (test-assert
                 (and (equal (primary-of "/exit") "/quit")

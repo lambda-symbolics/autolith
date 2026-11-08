@@ -3,9 +3,12 @@
 ;;;; -- Human Help --
 
 (defparameter *application-help-sections*
-  '((:topic :conversations :title "Conversations"
-     :description "Start, resume, and manage a conversation."
-     :commands    ("new" "resume" "conversations" "history" "goal" "context" "compact"))
+  '((:topic :channels :title "Channels"
+     :description "Move between channels, message them, and place their agents."
+     :commands    ("switch" "new" "channels" "tell" "move" "dismiss" "domestic" "rename"))
+    (:topic :conversations :title "Conversations"
+     :description "Manage the conversation of this channel."
+     :commands    ("history" "goal" "context" "compact"))
     (:topic :models :title "Models"
      :description "Choose a provider, model, and reasoning effort."
      :commands    ("auth" "model" "models" "effort" "fast" "hurry-up"))
@@ -142,15 +145,15 @@ Talk to Autolith in plain text. Run local commands as Lisp forms.
 ## Everyday commands
 
 ```lisp
-(new)     ; new conversation
-(resume)  ; resume conversation
+(switch)  ; go to another channel
+(new)     ; open a new channel here
 (model)   ; choose a model
 (cwd)     ; show workspace
 ```
 
 ~A
 
-For one command, use `(help 'resume)`. For a tool, use `(help \"lisp.eval\")`."
+For one command, use `(help 'switch)`. For a tool, use `(help \"lisp.eval\")`."
           (application-help--topic-menu)))
 
 (-> application-help--topic-menu () string)
