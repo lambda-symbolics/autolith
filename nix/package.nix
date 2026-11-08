@@ -39,7 +39,6 @@ let
     let entry = qlotEntry name;
     in builtins.fetchGit {
       inherit (entry) url rev;
-      shallow = true;
       allRefs = true;
     };
   qlotVersion = name: "git-${builtins.substring 0 12 (qlotEntry name).rev}";
