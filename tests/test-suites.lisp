@@ -666,7 +666,8 @@
   test-world-mention-boundaries
   test-world-presentation-cache
   test-world-compaction
-  test-world-portable-files)
+  test-world-portable-files
+  test-world-generated-identifier-released)
 
 (define-test-suite world-server
   test-world-server-cold-channels

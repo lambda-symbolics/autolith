@@ -818,6 +818,7 @@
                 #:identifier-match
                 #:identifier-normalize
                 #:identifier-p
+                #:identifier-release
                 #:identifier-reserved-p
                 #:identifier-space-exhausted)
   (:import-from #:sbcl-generations
