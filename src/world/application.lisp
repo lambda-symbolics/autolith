@@ -2,9 +2,7 @@
 
 ;;;; -- World Hooks of the Application --
 
-;;; The application keeps the world in step with the conversations it opens.
-;;; The reconciliation hook is release machinery that leaves with
-;;; src/world/sessions.lisp.
+;;; The application keeps the world in step with the conversation it hosts.
 
 (-> application-world-sync (application) null)
 (defun application-world-sync (application)
