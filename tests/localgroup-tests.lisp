@@ -494,7 +494,7 @@
          (titled-status (append status (list :conversation-title "Named local session")))
          (plain-output
           (with-output-to-string (stream)
-            (localgroup-print-statuses (list status) :stream stream :styled-p nil
+            (localgroup-print-statuses (list status titled-status) :stream stream :styled-p nil
                                        :columns 100)))
          (styled-output
           (with-output-to-string (stream)
@@ -510,17 +510,13 @@
                                        :columns 52)))
          (narrow-output
           (with-output-to-string (stream)
-            (localgroup-print-statuses (list titled-status) :stream stream :styled-p nil
-                                       :columns 24)))
-         (plain-lines
-          (remove "" (uiop/utility:split-string plain-output :separator '(#\Newline))
-                  :test #'string=)))
+            (localgroup-print-statuses (list titled-status status) :stream stream :styled-p nil
+                                       :columns 24))))
     (test-assert
-     (and (search "┌" plain-output)
-          (search (identifier-display (getf (rest status) :session-id)) plain-output)
+     (and (search (identifier-display (getf (rest status) :session-id)) plain-output)
           (search "41234" plain-output) (search "/tmp/example" plain-output)
           (not (search (string #\Esc) plain-output)))
-     "localgroup status renders a plain box-drawing table without ANSI controls")
+     "localgroup status renders session fields without ANSI controls")
     (test-assert
      (and (search "Named local session" title-output)
           (search "Named local session" narrow-output)
@@ -528,24 +524,50 @@
           (eq (localgroup--status-field-style titled-status ':conversation) ':plain)
           (eq (localgroup--status-field-style status ':conversation) ':code))
      "localgroup status shows titles at every width and falls back to coded IDs")
-    (let ((table-top    (third plain-lines))
-          (table-middle (fifth plain-lines))
-          (table-bottom (first (last plain-lines))))
-      (test-assert
-       (and (find #\BOX_DRAWINGS_LIGHT_DOWN_AND_HORIZONTAL table-top)
-            (not (find #\BOX_DRAWINGS_LIGHT_VERTICAL_AND_HORIZONTAL table-top))
-            (find #\BOX_DRAWINGS_LIGHT_VERTICAL_AND_HORIZONTAL table-middle)
-            (find #\BOX_DRAWINGS_LIGHT_UP_AND_HORIZONTAL table-bottom))
-       "localgroup table borders use top, interior, and bottom column junctions"))
+    (labels ((separator-positions (line separator)
+               "Return the character offsets of SEPARATOR within LINE."
+               (loop for character across line
+                     for index from 0
+                     when (char= character separator)
+                       collect index)))
+      (dolist (case (list (cons 100 plain-output) (cons 80 title-output)
+                         (cons 52 fallback-output)))
+        (let* ((columns   (first case))
+               (output    (rest case))
+               (lines     (remove "" (uiop/utility:split-string output :separator '(#\Newline))
+                                  :test #'string=))
+               (table     (rest lines))
+               (positions (separator-positions (first table) #\Box_Drawings_Light_Vertical)))
+          (test-assert
+           (and positions
+                (find #\Box_Drawings_Light_Vertical_And_Horizontal (second table))
+                (find #\Box_Drawings_Light_Vertical (first (last table)))
+                (notany (lambda (character) (find character "┌┐└┘├┤┬┴")) output)
+                (every
+                 (lambda (line)
+                   (and (= (text-cell-width line) columns)
+                        (not (char= (char line 0) #\Box_Drawings_Light_Vertical))
+                        (not (char= (char line (1- (length line)))
+                                    #\Box_Drawings_Light_Vertical))
+                        (equal positions
+                               (separator-positions
+                                line (if (find #\Box_Drawings_Light_Vertical_And_Horizontal line)
+                                         #\Box_Drawings_Light_Vertical_And_Horizontal
+                                         #\Box_Drawings_Light_Vertical)))))
+                 table))
+           (format nil "localgroup columns align without outer borders at ~D columns" columns)))))
     (test-assert
      (and (search (terminal-style-sequence ':brand) styled-output)
           (search (terminal-style-sequence ':success) styled-output))
      "localgroup status applies semantic ANSI styles only when requested")
     (test-assert
      (and (search "2025-01-02T03:04Z" styled-output)
+          (notany (lambda (character) (find character "│┌┐└┘├┤┬┴┼")) narrow-output)
+          (search (make-string 24 :initial-element #\Box_Drawings_Light_Horizontal)
+                  narrow-output)
           (every (lambda (line) (<= (text-cell-width line) 24))
                  (uiop/utility:split-string narrow-output :separator '(#\Newline))))
-     "localgroup status exposes encoded start times and fits narrow terminals"))
+     "localgroup status exposes start times and fits separated borderless narrow cards"))
   (let ((*standard-input*  (make-string-input-stream ""))
         (*standard-output* (make-string-output-stream)))
     (test-call-with-function-replacements

@@ -349,113 +349,71 @@ Prefer exact identifiers, then normalized identifiers, then unique prefixes."
   (terpri stream)
   nil)
 
-(-> localgroup--status-box-border (character character integer) terminal-styled-text)
-(defun localgroup--status-box-border (left right inner-width)
-  "Return one semantic outer border spanning INNER-WIDTH content cells."
+(-> localgroup--status-table-separator (list) terminal-styled-text)
+(defun localgroup--status-table-separator (widths)
+  "Return an internal row separator aligned with cell WIDTHS."
   (list
    (terminal-span
     ':dim
-    (concatenate 'string
-                 (string left)
-                 (make-string inner-width :initial-element #\Box_Drawings_Light_Horizontal)
-                 (string right)))))
-
-(-> localgroup--status-table-border (list keyword) terminal-styled-text)
-(defun localgroup--status-table-border (widths position)
-  "Return the semantic table border at POSITION across cell WIDTHS."
-  (multiple-value-bind (left junction right)
-      (ecase position
-        (:top
-         (values #\Box_Drawings_Light_Vertical_And_Right
-                 #\Box_Drawings_Light_Down_And_Horizontal
-                 #\Box_Drawings_Light_Vertical_And_Left))
-        (:middle
-         (values #\Box_Drawings_Light_Vertical_And_Right
-                 #\Box_Drawings_Light_Vertical_And_Horizontal
-                 #\Box_Drawings_Light_Vertical_And_Left))
-        (:bottom
-         (values #\Box_Drawings_Light_Up_And_Right
-                 #\Box_Drawings_Light_Up_And_Horizontal
-                 #\Box_Drawings_Light_Up_And_Left)))
-    (list
-     (terminal-span
-      ':dim
-      (with-output-to-string (stream)
-        (write-char left stream)
-        (loop for width in widths
-              for remaining on widths
-              do (write-string
-                  (make-string width
-                               :initial-element #\Box_Drawings_Light_Horizontal)
-                  stream)
-                 (when (rest remaining)
-                   (write-char junction stream)))
-        (write-char right stream))))))
+    (with-output-to-string (stream)
+      (loop for width in widths
+            for remaining on widths
+            do (write-string
+                (make-string width
+                             :initial-element #\Box_Drawings_Light_Horizontal)
+                stream)
+               (when (rest remaining)
+                 (write-char #\Box_Drawings_Light_Vertical_And_Horizontal stream)))))))
 
 (-> localgroup--status-table-row
     (list list list &key (:header-p boolean))
     terminal-styled-text)
 (defun localgroup--status-table-row (status fields widths &key header-p)
-  "Return one bordered STATUS row across FIELDS and WIDTHS.
+  "Return one STATUS row with separators between FIELDS across WIDTHS.
 
 HEADER-P renders field labels rather than status values."
-  (append
-   (list (terminal-span ':dim (string #\Box_Drawings_Light_Vertical)))
-   (loop for field in fields
-         for width in widths
-         for remaining on fields
-         append
-         (list
-          (terminal-span
-           (if header-p ':strong (localgroup--status-field-style status field))
-           (layout-fit-text
-            (if header-p
-                (localgroup--status-field-label field)
-                (localgroup--status-field-text status field))
-            width))
-          (terminal-span
-           ':dim
-           (string (if (rest remaining)
-                       #\Box_Drawings_Light_Vertical
-                       #\Box_Drawings_Light_Vertical)))))))
+  (loop for field in fields
+        for width in widths
+        for remaining on fields
+        collect
+        (terminal-span
+         (if header-p ':strong (localgroup--status-field-style status field))
+         (layout-fit-text
+          (if header-p
+              (localgroup--status-field-label field)
+              (localgroup--status-field-text status field))
+          width))
+        when (rest remaining)
+          collect (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))))
 
 (-> localgroup--status-card-row (list integer) terminal-styled-text)
-(defun localgroup--status-card-row (status inner-width)
-  "Return compact bordered rows for STATUS within INNER-WIDTH cells."
+(defun localgroup--status-card-row (status columns)
+  "Return compact rows for STATUS within COLUMNS cells."
   (let* ((identifier   (localgroup--status-field-text status ':session))
          (state        (localgroup--status-field-text status ':state))
          (session-width
-           (min (text-cell-width identifier)
-                (max 1 (- inner-width (text-cell-width state) 2))))
-         (state-width  (max 0 (- inner-width session-width 2)))
+          (min (text-cell-width identifier)
+               (max 1 (- columns (text-cell-width state) 2))))
+         (state-width  (max 0 (- columns session-width 2)))
          (detail
-           (format nil "~A  ~A"
-                   (localgroup--status-field-text status ':started)
-                   (localgroup--status-field-text status ':activity)))
+          (format nil "~A  ~A"
+                  (localgroup--status-field-text status ':started)
+                  (localgroup--status-field-text status ':activity)))
          (conversation (localgroup--status-field-text status ':conversation)))
-    (append
-     (list (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
-           (terminal-span ':code (layout-fit-text identifier session-width))
-           (terminal-span ':plain "  ")
-           (terminal-span (localgroup--status-state-style status)
-                          (layout-fit-text state state-width))
-           (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
-           (terminal-span ':plain (string #\Newline))
-           (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
-           (terminal-span ':timestamp-time (layout-fit-text detail inner-width))
-           (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
-           (terminal-span ':plain (string #\Newline))
-           (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
-           (terminal-span (localgroup--status-field-style status ':conversation)
-                          (layout-fit-text conversation inner-width))
-           (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
-           (terminal-span ':plain (string #\Newline))
-           (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
-           (terminal-span ':plain
-                          (layout-fit-text
-                           (localgroup--status-field-text status ':workspace)
-                           inner-width))
-           (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))))))
+    (list (terminal-span ':code (layout-fit-text identifier session-width))
+          (terminal-span ':plain "  ")
+          (terminal-span (localgroup--status-state-style status)
+                         (layout-fit-text state state-width))
+          (terminal-span ':plain (string #\Newline))
+          (terminal-span ':timestamp-time (layout-fit-text detail columns))
+          (terminal-span ':plain (string #\Newline))
+          (terminal-span (localgroup--status-field-style status ':conversation)
+                         (layout-fit-text conversation columns))
+          (terminal-span ':plain (string #\Newline))
+          (terminal-span ':plain
+                         (layout-fit-text
+                          (localgroup--status-field-text status ':workspace)
+                          columns)))))
 
 (-> localgroup-print-statuses
     (list &key (:stream stream) (:styled-p boolean) (:columns integer))
@@ -471,21 +429,12 @@ HEADER-P renders field labels rather than status values."
        stream
        (list (terminal-span ':notice "No local Autolith sessions are running."))
        styled-p)
-      (let* ((columns     (max 4 columns))
-             (inner-width (- columns 2))
-             (fields      (localgroup--status-table-fields columns))
-             (title       "Local Autolith sessions"))
+      (let* ((columns (max 4 columns))
+             (fields  (localgroup--status-table-fields columns))
+             (title   "Local Autolith sessions"))
         (localgroup--write-styled-line
          stream
-         (localgroup--status-box-border #\Box_Drawings_Light_Down_And_Right
-                                        #\Box_Drawings_Light_Down_And_Left
-                                        inner-width)
-         styled-p)
-        (localgroup--write-styled-line
-         stream
-         (list (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
-               (terminal-span ':brand (layout-fit-text title inner-width))
-               (terminal-span ':dim (string #\Box_Drawings_Light_Vertical)))
+         (list (terminal-span ':brand (layout-fit-text title columns)))
          styled-p)
         (if fields
             (let* ((rows
@@ -500,22 +449,16 @@ HEADER-P renders field labels rather than status values."
                        statuses)))
                    (widths
                      (layout-column-widths
-                      rows inner-width
+                      rows columns
                       :gap-width 1
                       :minimum-widths
                       (mapcar #'localgroup--status-field-minimum-width fields)
                       :fill-p    t)))
               (localgroup--write-styled-line
-               stream
-               (localgroup--status-table-border widths ':top)
-               styled-p)
-              (localgroup--write-styled-line
                stream (localgroup--status-table-row nil fields widths :header-p t)
                styled-p)
               (localgroup--write-styled-line
-               stream
-               (localgroup--status-table-border widths ':middle)
-               styled-p)
+               stream (localgroup--status-table-separator widths) styled-p)
               (loop for status in statuses
                     for remaining on statuses
                     do (localgroup--write-styled-line
@@ -523,33 +466,15 @@ HEADER-P renders field labels rather than status values."
                         styled-p)
                        (when (rest remaining)
                          (localgroup--write-styled-line
-                          stream
-                          (localgroup--status-table-border widths ':middle)
-                          styled-p)))
-              (localgroup--write-styled-line
-               stream
-               (localgroup--status-table-border widths ':bottom)
-               styled-p))
-            (progn
-              (loop for status in statuses
-                    for remaining on statuses
-                    do (localgroup--write-styled-line
-                        stream (localgroup--status-card-row status inner-width)
-                        styled-p)
-                       (when (rest remaining)
-                         (localgroup--write-styled-line
-                          stream
-                          (localgroup--status-box-border
-                           #\Box_Drawings_Light_Vertical_And_Right
-                           #\Box_Drawings_Light_Vertical_And_Left
-                           inner-width)
-                          styled-p)))
-              (localgroup--write-styled-line
-               stream
-               (localgroup--status-box-border #\Box_Drawings_Light_Up_And_Right
-                                              #\Box_Drawings_Light_Up_And_Left
-                                              inner-width)
-               styled-p)))))
+                          stream (localgroup--status-table-separator widths) styled-p))))
+            (loop for status in statuses
+                  for remaining on statuses
+                  do (localgroup--write-styled-line
+                      stream (localgroup--status-card-row status columns) styled-p)
+                     (when (rest remaining)
+                       (localgroup--write-styled-line
+                        stream (localgroup--status-table-separator (list columns))
+                        styled-p))))))
   nil)
 
 (-> localgroup--print-response (list stream &key (:styled-p boolean)) null)
