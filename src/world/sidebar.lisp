@@ -403,11 +403,11 @@ what it hides."
                      :current-p (equal (channel-identifier inbox) current)
                      :unread    (or (rest (assoc (channel-identifier inbox) pending :test #'string=))
                                     0))))
-       (loop for (workspace . members) in (world-sidebar--groups channels current)
+       (loop for (workspace . members) in (world-channel-groups channels current)
              for first-p = t then nil
              append (let ((shown nil)
                           (all   nil))
-                      (dolist (node (world-sidebar--forest members))
+                      (dolist (node (world-channel-forest members))
                         (multiple-value-bind (node-shown node-all) (channel-entries node 0)
                           (setf shown (append shown node-shown)
                                 all   (append all node-all))))
@@ -442,40 +442,6 @@ mentions, so nothing new below it goes unseen."
             :hidden          (length entries)
             :hidden-unread   (reduce #'+ entries :key (lambda (entry) (getf entry :unread 0)))
             :hidden-mentions (reduce #'+ entries :key (lambda (entry) (getf entry :mentions 0))))))
-
-(-> world-sidebar--groups (list (option string)) list)
-(defun world-sidebar--groups (channels current)
-  "Return (WORKSPACE . CHANNELS) groups of CHANNELS, the group of CURRENT first.
-
-CHANNELS arrive newest first, which orders the groups and their members."
-  (let ((groups nil))
-    (dolist (channel channels)
-      (let ((group (assoc (channel-workspace channel) groups :test #'string=)))
-        (if group
-            (setf (rest group) (append (rest group) (list channel)))
-            (setf groups (append groups (list (list (channel-workspace channel) channel)))))))
-    (let ((home (find-if (lambda (group)
-                           (find current (rest group) :key #'channel-identifier :test #'equal))
-                         groups)))
-      (if home
-          (cons home (remove home groups))
-          groups))))
-
-(-> world-sidebar--forest (list) list)
-(defun world-sidebar--forest (members)
-  "Return MEMBERS as (CHANNEL . CHILDREN) trees, each channel under its parent.
-
-A channel whose parent is not among MEMBERS is a root."
-  (labels ((children (parent)
-             "Return the trees of PARENT's members, or of the roots without a PARENT."
-             (loop for channel in members
-                   when (if parent
-                            (equal (channel-parent channel) (channel-identifier parent))
-                            (or (null (channel-parent channel))
-                                (not (find (channel-parent channel) members
-                                           :key #'channel-identifier :test #'equal))))
-                     collect (cons channel (children channel)))))
-    (children nil)))
 
 (-> world-sidebar--channel-entry
     (world-sidebar channel &key (:depth (integer 0)) (:name (option string)) (:status (option list))
