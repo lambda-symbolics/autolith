@@ -1861,16 +1861,24 @@ searches every task directory."
 
 (-> application--pick-destination (application) (option string))
 (defun application--pick-destination (application)
-  "Pick the channel an agent moves into, this one first, or return NIL when cancelled."
-  (application--pick-identifier application
-                                :title         "into which channel?"
-                                :items         (remove *world-inbox-designator* (application--channel-items application)
-                                                       :key (lambda (item) (getf item :name)) :test #'equal)
-                                :hint          "type to search, enter selects, esc cancels"
-                                :initial-value (conversation-identifier (application-conversation application))
-                                :search-p      t
-                                :usage         "Usage: (move \"AGENT\" \"CHANNEL\")"
-                                :empty-notice  (application-notice-line "no channels exist")))
+  "Pick an agent-free channel to move into, or return NIL when cancelled."
+  (let* ((world (application-world application))
+         (items (remove-if
+                 (lambda (item)
+                   (let* ((identifier (getf item :value))
+                          (channel    (world-channel-find world identifier)))
+                     (or (and channel (channel-inbox-p channel))
+                         (find ':agent (world-channel-residents world identifier)
+                               :key #'participant-kind))))
+                 (application--channel-items application))))
+    (application--pick-identifier application
+                                  :title         "into which channel?"
+                                  :items         items
+                                  :hint          "type to search, enter selects, esc cancels"
+                                  :initial-value (conversation-identifier (application-conversation application))
+                                  :search-p      t
+                                  :usage         "Usage: (move \"AGENT\" \"CHANNEL\")"
+                                  :empty-notice  (application-notice-line "no channels without an agent exist"))))
 
 (-> application--prefill-call (application string string) null)
 (defun application--prefill-call (application operator argument)
