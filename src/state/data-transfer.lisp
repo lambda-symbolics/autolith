@@ -5,6 +5,20 @@
 (defparameter *data-transfer-version* 1
   "The portable user-data archive version.")
 
+(defparameter *data-transfer-families*
+  '(:sessions :children :memories :papercuts :knowledge :agendas :plans)
+  "Durable record families in merge-planning order.")
+
+(defgeneric data-transfer-family-collect (family configuration archive &key workspace)
+  (:documentation "Collect FAMILY records using already collected ARCHIVE dependencies.
+Return the records and, for children, their excluded parent-owned file paths."))
+
+(defgeneric data-transfer-family-validate (family archive pathname)
+  (:documentation "Validate FAMILY records and identities without modifying storage."))
+
+(defgeneric data-transfer-family-plan (family configuration archive)
+  (:documentation "Return planned writes for FAMILY, rejecting conflicts without publishing."))
+
 (defvar *data-transfer-lock* (make-recursive-lock "Autolith data transfer")
   "Serialize exports and imports in this process.")
 

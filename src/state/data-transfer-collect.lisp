@@ -309,98 +309,139 @@ on other global memories, so premises are followed until none are new."
             (push form plans)))))
     (nreverse plans)))
 
+(defmethod data-transfer-family-collect
+    ((family (eql :agendas)) configuration archive &key workspace)
+  "Collect agenda records selected by workspace."
+  (declare (ignore family archive))
+  (mapcar #'agenda--record->form
+          (remove-if-not
+           (lambda (record)
+             (or (null workspace) (equal workspace (workspace-agenda-directory record))))
+           (agenda-state-records (agenda--read configuration :lock-held-p t)))))
+
+(defmethod data-transfer-family-collect
+    ((family (eql :memories)) configuration archive &key workspace)
+  "Collect complete memory histories selected by workspace and agenda links."
+  (declare (ignore family))
+  (let* ((linked
+           (loop for agenda in (getf archive :agendas)
+                 append (loop for item in (getf (rest agenda) :items)
+                              append (getf (rest item) :memory-ids))))
+         (records (data-transfer--log-records (configuration-memory-path configuration) ':memories)))
+    (data-transfer--filter-histories
+     records ':memory :workspace workspace
+     :linked                     (data-transfer--memory-links records :workspace workspace :linked linked))))
+
+(defmethod data-transfer-family-collect
+    ((family (eql :papercuts)) configuration archive &key workspace)
+  "Collect complete papercut histories selected by workspace."
+  (declare (ignore family archive))
+  (data-transfer--filter-histories
+   (data-transfer--log-records (configuration-papercut-path configuration) ':papercuts)
+   ':papercut :workspace workspace))
+
+(defmethod data-transfer-family-collect
+    ((family (eql :sessions)) configuration archive &key workspace)
+  "Collect conversation and inference sessions selected by workspace."
+  (declare (ignore family archive))
+  (loop for kind in '(:conversation :inference)
+        append (loop for identifier in (data-transfer--session-identities
+                                        (data-transfer--session-root configuration kind))
+                     for session = (data-transfer--session configuration kind identifier)
+                     when (or (null workspace) (equal workspace (getf session :directory)))
+                       collect session)))
+
+(defmethod data-transfer-family-collect
+    ((family (eql :children)) configuration archive &key workspace)
+  "Collect child transcripts owned by the selected root sessions."
+  (declare (ignore family workspace))
+  (data-transfer--children configuration (getf archive :sessions)))
+
+(defmethod data-transfer-family-collect
+    ((family (eql :knowledge)) configuration archive &key workspace)
+  "Collect structured knowledge selected by workspace."
+  (declare (ignore family archive))
+  (data-transfer--collect-knowledge configuration workspace))
+
+(defmethod data-transfer-family-collect
+    ((family (eql :plans)) configuration archive &key workspace)
+  "Collect workspace plans from current and legacy storage."
+  (declare (ignore family archive))
+  (data-transfer--plans configuration workspace))
+
 (-> data-transfer--collect (configuration t) list)
 (defun data-transfer--collect (configuration workspace)
-  "Collect owned durable records and their session and context assets."
-  (let* ((agendas
-           (remove-if-not
-            (lambda (record)
-              (or (null workspace)
-                  (equal workspace (workspace-agenda-directory record))))
-            (agenda-state-records (agenda--read configuration :lock-held-p t))))
-         (agenda-forms   (mapcar #'agenda--record->form agendas))
-         (linked         (loop for agenda in agendas append
-                           (loop for item in (workspace-agenda-items agenda)
-                                 append (agenda-item-memory-identifiers item))))
-         (memory-records (data-transfer--log-records
-                          (configuration-memory-path configuration) ':memories))
-         (memories       (data-transfer--filter-histories
-                          memory-records ':memory
-                          :workspace workspace
-                          :linked    (data-transfer--memory-links memory-records
-                                                                  :workspace workspace
-                                                                  :linked    linked)))
-         (papercuts      (data-transfer--filter-histories
-                          (data-transfer--log-records (configuration-papercut-path configuration)
-                                                      ':papercuts)
-                          ':papercut :workspace workspace))
-         (candidates
-           (loop for kind in '(:conversation :inference) append
-             (loop for identifier in (data-transfer--session-identities
-                                       (data-transfer--session-root configuration kind))
-                   collect (data-transfer--session configuration kind identifier))))
-         (sessions       (remove-if-not
-                          (lambda (session)
-                            (or (null workspace) (equal workspace (getf session :directory))))
-                          candidates))
-         (child-data     (multiple-value-list (data-transfer--children configuration sessions)))
-         (children       (first child-data))
-         (excluded       (second child-data))
-         (files          nil)
-         (plans          (data-transfer--plans configuration workspace))
-         (states         (data-transfer--states configuration sessions)))
-    (dolist (session sessions)
-      (when (eq (getf session :kind) ':conversation)
-        (dolist (area '(:images :scratchpad :tasks))
-          (setf files (append files (data-transfer--assets
-                                     configuration area (getf session :id)))))))
-    (setf files
-          (remove-if (lambda (file)
-                       (and (eq (getf file :area) ':tasks)
-                            (member (data-transfer--path
-                                     (data-transfer--asset-root configuration ':tasks (getf file :owner))
-                                     (getf file :path)) excluded :test #'equal))) files))
-    (dolist (child children)
-      (setf files (append files (data-transfer--assets
-                                 configuration ':scratchpad (getf (getf child :session) :id)))))
-    (let ((strings (append
-                    (data-transfer--strings
-                     (list sessions children memories papercuts agenda-forms plans states))
-                    (loop for file in files
-                          for text = (handler-case (utf8-octets-to-string (getf file :bytes))
-                                       (utf8-conversion-failed ()
-                                         nil))
-                          when text collect text)))
-          (root    (merge-pathnames "inferences/objects/" (config :data-root configuration))))
-      (when (uiop:directory-exists-p root)
-        (dolist (path (uiop:directory-files root "*.txt"))
-          (when (or (null workspace)
-                    (data-transfer--referenced-p (pathname-name path) strings))
-            (data-transfer--check-path (config :data-root configuration) path)
-            (push (list :area ':context :owner (pathname-name path)
-                        :path  (list (file-namestring path))
-                        :bytes (data-transfer--bytes path)) files)))))
-    (let* ((workspaces
-             (remove-duplicates
-              (remove nil
-                      (append (when workspace (list workspace))
-                              (mapcar (lambda (session) (getf session :directory)) sessions)
-                              (mapcar (lambda (child) (getf (getf child :session) :directory)) children)
-                              (mapcar (lambda (record) (getf (rest record) :workspace)) memories)
-                              (mapcar (lambda (record) (getf (rest record) :workspace)) papercuts)
-                              (mapcar (lambda (record) (getf (rest record) :directory))
-                                      (append plans agenda-forms)))) :test #'equal)))
-      (multiple-value-bind (states input-files)
-          (data-transfer--collect-inputs states)
-        (let ((knowledge (data-transfer--collect-knowledge configuration workspace)))
-          (list :format ':autolith-data :version *data-transfer-version*
-                :workspace  workspace
-                :workspaces (sort (remove-duplicates
-                                   (append workspaces
-                                           (data-transfer--knowledge-workspaces
-                                            (list :knowledge knowledge)))
-                                   :test #'equal)
-                                  #'string<)
-                :sessions sessions :children children :memories memories :papercuts papercuts
-                :agendas agenda-forms :plans plans :files (append files input-files)
-                :states states :knowledge knowledge))))))
+  "Collect durable families and their owned session, context and input assets."
+  ;; Agenda links select additional memory histories.
+  (let ((archive  (list :agendas (data-transfer-family-collect
+                                  ':agendas configuration nil :workspace workspace)))
+        (excluded nil))
+    (dolist (family *data-transfer-families*)
+      (unless (eq family :agendas)
+        (multiple-value-bind (records exclusions)
+            (data-transfer-family-collect family configuration archive :workspace workspace)
+          (setf (getf archive family) records)
+          (when (eq family :children) (setf excluded exclusions)))))
+    (let* ((agenda-forms (getf archive :agendas))
+           (memories     (getf archive :memories))
+           (papercuts    (getf archive :papercuts))
+           (sessions     (getf archive :sessions))
+           (children     (getf archive :children))
+           (plans        (getf archive :plans))
+           (files        nil)
+           (states       (data-transfer--states configuration sessions)))
+      (dolist (session sessions)
+        (when (eq (getf session :kind) ':conversation)
+          (dolist (area '(:images :scratchpad :tasks))
+            (setf files (append files (data-transfer--assets
+                                       configuration area (getf session :id)))))))
+      (setf files
+            (remove-if (lambda (file)
+                         (and (eq (getf file :area) ':tasks)
+                              (member (data-transfer--path
+                                       (data-transfer--asset-root configuration ':tasks (getf file :owner))
+                                       (getf file :path)) excluded :test #'equal))) files))
+      (dolist (child children)
+        (setf files (append files (data-transfer--assets
+                                   configuration ':scratchpad (getf (getf child :session) :id)))))
+      (let ((strings (append
+                      (data-transfer--strings
+                       (list sessions children memories papercuts agenda-forms plans states))
+                      (loop for file in files
+                            for text = (handler-case (utf8-octets-to-string (getf file :bytes))
+                                         (utf8-conversion-failed ()
+                                           nil))
+                            when text collect text)))
+            (root    (merge-pathnames "inferences/objects/" (config :data-root configuration))))
+        (when (uiop:directory-exists-p root)
+          (dolist (path (uiop:directory-files root "*.txt"))
+            (when (or (null workspace)
+                      (data-transfer--referenced-p (pathname-name path) strings))
+              (data-transfer--check-path (config :data-root configuration) path)
+              (push (list :area ':context :owner (pathname-name path)
+                          :path  (list (file-namestring path))
+                          :bytes (data-transfer--bytes path)) files)))))
+      (let* ((workspaces
+               (remove-duplicates
+                (remove nil
+                        (append (when workspace (list workspace))
+                                (mapcar (lambda (session) (getf session :directory)) sessions)
+                                (mapcar (lambda (child) (getf (getf child :session) :directory)) children)
+                                (mapcar (lambda (record) (getf (rest record) :workspace)) memories)
+                                (mapcar (lambda (record) (getf (rest record) :workspace)) papercuts)
+                                (mapcar (lambda (record) (getf (rest record) :directory))
+                                        (append plans agenda-forms)))) :test #'equal)))
+        (multiple-value-bind (states input-files)
+            (data-transfer--collect-inputs states)
+          (let ((knowledge (getf archive :knowledge)))
+            (list :format ':autolith-data :version *data-transfer-version*
+                  :workspace  workspace
+                  :workspaces (sort (remove-duplicates
+                                     (append workspaces
+                                             (data-transfer--knowledge-workspaces
+                                              (list :knowledge knowledge)))
+                                     :test #'equal)
+                                    #'string<)
+                  :sessions sessions :children children :memories memories :papercuts papercuts
+                  :agendas agenda-forms :plans plans :files (append files input-files)
+                  :states states :knowledge knowledge)))))))

@@ -242,48 +242,73 @@
           (data-transfer--fail pathname ':invalid "A child image artifact is missing.")))))
   nil)
 
+(defmethod data-transfer-family-validate ((family (eql :sessions)) archive pathname)
+  "Validate unique root session identities and transcript segments."
+  (data-transfer--unique (getf archive :sessions) #'data-transfer--session-key pathname)
+  (dolist (session (getf archive :sessions)) (data-transfer--validate-session session pathname)))
+
+(defmethod data-transfer-family-validate ((family (eql :children)) archive pathname)
+  "Validate child ownership, result records and image references."
+  (data-transfer--validate-children archive pathname))
+
+(defmethod data-transfer-family-validate ((family (eql :memories)) archive pathname)
+  "Validate complete memory revision histories."
+  (data-transfer--validate-history (getf archive :memories) ':memory pathname))
+
+(defmethod data-transfer-family-validate ((family (eql :papercuts)) archive pathname)
+  "Validate complete papercut revision histories."
+  (data-transfer--validate-history (getf archive :papercuts) ':papercut pathname))
+
+(defmethod data-transfer-family-validate ((family (eql :knowledge)) archive pathname)
+  "Validate structured knowledge records and references."
+  (data-transfer--validate-knowledge archive pathname))
+
+(defmethod data-transfer-family-validate ((family (eql :agendas)) archive pathname)
+  "Validate agenda forms and unique workspace ownership."
+  (dolist (record (getf archive :agendas))
+    (unless
+        (and (agenda--record-form-p record *agenda-version*)
+             (data-transfer--directory-p (getf (rest record) :directory)))
+      (data-transfer--fail pathname ':invalid "Malformed workspace agenda.")))
+  (data-transfer--unique (getf archive family) (lambda (record) (getf (rest record) :directory))
+                         pathname))
+
+(defmethod data-transfer-family-validate ((family (eql :plans)) archive pathname)
+  "Validate plan forms and unique workspace ownership."
+  (dolist (record (getf archive :plans))
+    (unless
+        (and (plan--form-p record) (data-transfer--directory-p (getf (rest record) :directory)))
+      (data-transfer--fail pathname ':invalid "Malformed workspace plan.")))
+  (data-transfer--unique (getf archive family) (lambda (record) (getf (rest record) :directory))
+                         pathname))
+
 (-> data-transfer--validate (t t) list)
 (defun data-transfer--validate (archive pathname)
   "Validate the entire archive and every destination-bearing field before writes."
   (handler-case
       (progn
-        (unless (and (data-transfer--portable-p archive)
-                     (record-check
-                      archive :properties-p t :versions (list *data-transfer-version*)
-                      :allow-other-keys nil
-                      :fields
-                      (append
-                       (list (list :indicator ':format :required t
-                                   :validate (lambda (value) (eq value ':autolith-data)))
-                             (list :indicator ':knowledge :validate #'listp))
-                       (mapcar (lambda (key) (list :indicator key :required t))
-                               '(:workspace :workspaces :sessions :children :memories
-                                 :papercuts :agendas :plans :files :states))))
-                     (or (null (getf archive :workspace))
-                         (data-transfer--directory-p (getf archive :workspace)))
-                     (every (lambda (key) (listp (getf archive key)))
-                            '(:workspaces :sessions :children :memories :papercuts :agendas :plans :files :states))
-                     (every #'data-transfer--directory-p (getf archive :workspaces)))
+        (unless
+            (and (data-transfer--portable-p archive)
+                 (record-check
+                  archive :properties-p t :versions (list *data-transfer-version*)
+                  :allow-other-keys nil
+                  :fields           (append
+                                     (list (list :indicator ':format :required t
+                                                 :validate (lambda (value) (eq value ':autolith-data)))
+                                           (list :indicator ':knowledge :validate #'listp))
+                                     (mapcar (lambda (key) (list :indicator key :required t))
+                                             '(:workspace :workspaces :sessions :children :memories
+                                               :papercuts :agendas :plans :files :states))))
+                 (or (null (getf archive :workspace))
+                     (data-transfer--directory-p (getf archive :workspace)))
+                 (every (lambda (key) (listp (getf archive key)))
+                        '(:workspaces :sessions :children :memories :papercuts :agendas
+                          :plans :files :states))
+                 (every #'data-transfer--directory-p (getf archive :workspaces)))
           (data-transfer--fail pathname ':invalid "Malformed or unsupported data archive."))
         (data-transfer--unique (getf archive :workspaces) #'identity pathname)
-        (data-transfer--unique (getf archive :sessions) #'data-transfer--session-key pathname)
-        (dolist (session (getf archive :sessions))
-          (data-transfer--validate-session session pathname))
-        (data-transfer--validate-children archive pathname)
-        (data-transfer--validate-history (getf archive :memories) ':memory pathname)
-        (data-transfer--validate-history (getf archive :papercuts) ':papercut pathname)
-        (data-transfer--validate-knowledge archive pathname)
-        (dolist (record (getf archive :agendas))
-          (unless (and (agenda--record-form-p record *agenda-version*)
-                       (data-transfer--directory-p (getf (rest record) :directory)))
-            (data-transfer--fail pathname ':invalid "Malformed workspace agenda.")))
-        (dolist (record (getf archive :plans))
-          (unless (and (plan--form-p record)
-                       (data-transfer--directory-p (getf (rest record) :directory)))
-            (data-transfer--fail pathname ':invalid "Malformed workspace plan.")))
-        (dolist (key '(:agendas :plans))
-          (data-transfer--unique (getf archive key)
-                                 (lambda (record) (getf (rest record) :directory)) pathname))
+        (dolist (family *data-transfer-families*)
+          (data-transfer-family-validate family archive pathname))
         (data-transfer--validate-files
          (getf archive :files)
          (append (getf archive :sessions)
@@ -293,12 +318,13 @@
                                (lambda (state) (list (getf state :kind) (getf state :owner))) pathname)
         (data-transfer--validate-ownership archive pathname)
         (dolist (state (getf archive :states))
-          (unless (and (data-transfer--properties-p state '(:kind :owner :form))
-                       (member (getf state :kind) '(:pending :vault))
-                       (find (list ':conversation (getf state :owner)) (getf archive :sessions)
-                             :key #'data-transfer--session-key :test #'equal)
-                       (equal (getf (rest (getf state :form)) :conversation-id) (getf state :owner))
-                       (data-transfer--input-state-p state pathname))
+          (unless
+              (and (data-transfer--properties-p state '(:kind :owner :form))
+                   (member (getf state :kind) '(:pending :vault))
+                   (find (list ':conversation (getf state :owner)) (getf archive :sessions)
+                         :key #'data-transfer--session-key :test #'equal)
+                   (equal (getf (rest (getf state :form)) :conversation-id) (getf state :owner))
+                   (data-transfer--input-state-p state pathname))
             (data-transfer--fail pathname ':invalid "Malformed conversation input state.")))
         (data-transfer--validate-references archive pathname)
         archive)
@@ -314,15 +340,15 @@
          (properties (rest form))
          (owner      (getf state :owner)))
     (if (eq (getf state :kind) ':pending)
-        (and (application-recovery-input-vault--pending-form-shape-p form)
-             (not (null (application-input-controller--pending-state form owner))))
+        (and (input-state-form-shape-p form)
+             (not (null (input-state-from-form form owner))))
         (and (application-recovery-input-vault--form-shape-p form)
              (progn
                (data-transfer--unique (getf properties :captures)
                                       (lambda (capture) (getf capture :id)) pathname)
                (every (lambda (capture)
                         (application-recovery-input-vault--capture-from-form
-                         capture owner (or pathname #P"archive.sexp")))
+                         capture (or pathname #P"archive.sexp")))
                       (getf properties :captures)))
              t))))
 

@@ -30,6 +30,13 @@
          (forgotten    (memory-remember configuration :title "Forgotten" :content "old guidance"))
          (papercut     (papercut-report configuration :title "Resolved issue" :content "durable issue history"))
          (inference    (conversation-create configuration :storage-root (configuration-inference-root configuration))))
+    (knowledge-define-schema
+     configuration
+     (knowledge-make-schema :predicate "transfer.present"
+                            :arguments '((:name "item" :type :entity)
+                                         (:name "present" :type :boolean))
+                            :key '("item") :description "Portable schema"))
+    (knowledge-assert configuration '("transfer.present" "fixture" :true) :basis ':assumption)
     (test-conversation--write-tiny-png image)
     (conversation-append-user-message
      conversation (user-message-input-create :text "An image with history" :image-pathnames (list image)))
@@ -61,7 +68,7 @@
       (ensure-directories-exist pending)
       (ensure-directories-exist vault)
       (snapshot-write pending
-                      (application-input-controller--pending-state-form
+                      (input-state->form
                        (list :snapshot-identifier             "transfer-pending"
                              :steering-items
                              (list (user-message-input-create :text            "queued image"
@@ -150,11 +157,203 @@
       (test-assert (not called-p) "ambient reader macros do not run")))
   nil)
 
+(-> test-data-transfer--extend-session (list) list)
+(defun test-data-transfer--extend-session (session)
+  "Append another valid sequenced record to an archived transcript."
+  (let* ((segment (first (last (getf session :segments))))
+         (record  (copy-tree (first (last (getf segment :records))))))
+    (incf (getf (rest record) :seq))
+    (setf (getf segment :records) (append (getf segment :records) (list record))))
+  session)
+
+(-> test-data-transfer--family-boundaries () null)
+(defun test-data-transfer--family-boundaries ()
+  "Exercise each family's validation, read-only planning, reuse and merge conflicts."
+  (with-test-configuration (source root)
+    (with-test-configuration (target)
+      (test-data-transfer--populate source root)
+      (let* ((archive (data-transfer--collect source nil))
+             (path    (merge-pathnames "families.sexp" root))
+             (writers 0))
+        (dolist (family *data-transfer-families*)
+          (test-assert (consp (getf archive family)) "every family has collected durable records"))
+        (test-call-with-function-replacements
+         (list (list 'snapshot-write (lambda (&rest arguments)
+                                      (declare (ignore arguments)) (incf writers)))
+               (list 'log-append (lambda (&rest arguments)
+                                  (declare (ignore arguments)) (incf writers)))
+               (list 'data-transfer--publish-files
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments)) (incf writers))))
+         (lambda ()
+           (test-assert (consp (data-transfer--plan-import target archive))
+                        "planning an empty destination produces writes")))
+        (test-assert (zerop writers) "planning invokes no storage writer")
+        (data-transfer--write-export path archive)
+        (data-import path :configuration target)
+        (test-assert (null (data-transfer--plan-import target archive))
+                     "identical installed records need no writes")
+        (dolist (family *data-transfer-families*)
+          (let ((invalid (copy-tree archive)))
+            (setf (getf invalid family) '(:invalid))
+            (delete-file path)
+            (data-transfer--write-export path invalid)
+            (test-assert (test-data-transfer--fails-p
+                          (lambda () (data-import path :configuration target)))
+                         "malformed records in every family are rejected")))
+        (dolist (case
+                 (list
+                  (cons :sessions
+                        (lambda (copy)
+                          (test-data-transfer--extend-session
+                           (find ':conversation (getf copy :sessions)
+                                 :key (lambda (session) (getf session :kind))))))
+                  (cons :children
+                        (lambda (copy)
+                          (test-data-transfer--extend-session
+                           (getf (first (getf copy :children)) :session))))
+                  (cons :memories
+                        (lambda (copy)
+                          (setf (getf (rest (first (getf copy :memories))) :content) "Divergent history")))
+                  (cons :papercuts
+                        (lambda (copy)
+                          (setf (getf (rest (first (getf copy :papercuts))) :title) "Divergent issue")))
+                  (cons :knowledge
+                        (lambda (copy)
+                          (incf (getf (rest (find ':claim-asserted (getf copy :knowledge)
+                                                  :key #'first)) :time))))
+                  (cons :agendas
+                        (lambda (copy)
+                          (setf (getf (rest (first (getf (rest (first (getf copy :agendas))) :items)))
+                                      :text) "Divergent agenda item")))
+                  (cons :plans
+                        (lambda (copy)
+                          (setf (getf (rest (first (getf copy :plans))) :explanation) "Divergent plan")))))
+          (let ((copy (copy-tree archive)) (publications 0))
+            (funcall (rest case) copy)
+            (data-transfer--validate copy path)
+            (delete-file path)
+            (data-transfer--write-export path copy)
+            (test-call-with-function-replacements
+             (list (list 'data-transfer--publish-writes
+                         (lambda (writes)
+                           (declare (ignore writes)) (incf publications) 0)))
+             (lambda ()
+               (test-assert (test-data-transfer--fails-p
+                             (lambda () (data-import path :configuration target))
+                             'data-transfer-conflict)
+                            (format nil "~A identity conflicts are rejected" (first case)))))
+            (test-assert (zerop publications) "identity conflicts precede the publication boundary")
+            (test-assert (equalp archive (data-transfer--collect target nil))
+                         "rejected imports preserve every durable family"))))))
+  nil)
+
+(-> test-data-transfer--segment-layout (list keyword) list)
+(defun test-data-transfer--segment-layout (session layout)
+  "Represent SESSION as a legacy log, named chunk, or mixed legacy/chunk transcript."
+  (let* ((segments (getf session :segments))
+         (header   (copy-tree (first (getf (first segments) :records))))
+         (records  (loop for segment in segments append (rest (getf segment :records))))
+         (identity (merge-pathnames (make-pathname :name (getf session :id) :type "sexp")
+                                    (uiop:temporary-directory))))
+    (flet ((segment (start chunk-records named-p)
+             (let ((chunk-header (copy-tree header)))
+               (if named-p
+                   (let ((projection (conversation--from-header
+                                      identity (conversation-chunk-pathname identity 1) header)))
+                     (dolist (record records)
+                       (when (< (getf (rest record) :seq) start)
+                         (conversation--apply-record projection record)))
+                     (setf chunk-header
+                           (conversation--header-record projection :chunk-start-sequence start)))
+                   (progn
+                     (setf (getf (rest chunk-header) :version) 1)
+                     (remf (rest chunk-header) :chunk-start-sequence)))
+               (list :name    (when named-p
+                                (file-namestring (conversation-chunk-pathname identity start)))
+                     :records (cons chunk-header chunk-records)))))
+      (setf (getf session :segments)
+            (ecase layout
+              (:legacy
+               (list (segment 1 records nil)))
+              (:chunk
+               (list (segment 1 records t)))
+              (:mixed
+               (list (segment 1 (list (first records)) nil)
+                     (segment 2 (rest records) t)))))))
+  session)
+
+(-> test-data-transfer--transcript-layouts () null)
+(defun test-data-transfer--transcript-layouts ()
+  "Import, reuse and compare root and child transcripts in each supported segment layout."
+  (with-test-configuration (source root)
+    (let* ((conversation (conversation-create source))
+           (owner        (conversation-identifier conversation))
+           (child-id     (make-identifier))
+           (child        (conversation-create
+                          source :identifier child-id
+                          :storage-root      (data-transfer--child-root source owner child-id))))
+      (dolist (session (list conversation child))
+        (conversation-append-user-message session "First turn")
+        (conversation-append-user-message session "Second turn"))
+      (dolist (layout '(:legacy :chunk :mixed))
+        (with-test-configuration (target)
+          (let* ((archive (data-transfer--collect source nil))
+                 (session (find owner (getf archive :sessions) :test #'equal
+                                :key                                 (lambda (entry) (getf entry :id))))
+                 (child   (getf (first (getf archive :children)) :session))
+                 (path    (merge-pathnames (format nil "segments-~A.sexp" layout) root)))
+            (test-data-transfer--segment-layout session layout)
+            (test-data-transfer--segment-layout child layout)
+            (data-transfer--validate archive path)
+            (data-transfer--write-export path archive)
+            (data-import path :configuration target)
+            (test-assert (equalp archive (data-transfer--collect target nil))
+                         "root and child segment placement preserves the archive")
+            (dolist (kind '(:sessions :children))
+              (let* ((divergent (copy-tree archive))
+                     (session   (if (eq kind ':children)
+                                    (getf (first (getf divergent :children)) :session)
+                                    (find owner (getf divergent :sessions) :test #'equal
+                                          :key                                   (lambda (entry) (getf entry :id))))))
+                (test-data-transfer--extend-session session)
+                (data-transfer--validate divergent path)
+                (test-assert (test-data-transfer--fails-p
+                              (lambda () (data-transfer--plan-import target divergent))
+                              'data-transfer-conflict)
+                             "divergent root and child transcripts conflict in every layout")))
+            (let* ((root-identity  (conversation-identifier--pathname
+                                    (configuration-conversation-root target) owner))
+                   (child-id       (getf child :id))
+                   (child-identity (conversation-identifier--pathname
+                                    (data-transfer--child-root target owner child-id) child-id))
+                   (paths          (append (conversation-storage-pathnames root-identity)
+                                           (conversation-storage-pathnames child-identity))))
+              ;; Existing printer choices are not a transcript conflict.
+              (dolist (stored paths)
+                (let ((records (log-read stored)))
+                  (test-data-transfer--write
+                   stored
+                    (utf8-string-to-octets
+                     (let ((*print-case* ':upcase) (*print-pretty* nil))
+                       (with-output-to-string (stream)
+                         (dolist (record records)
+                           (write record :stream stream :readably t)
+                           (format stream "~%~%"))))))))
+              (let ((bytes (mapcar #'data-transfer--bytes paths)))
+                (test-assert (zerop (getf (data-import path :configuration target) :installed-files))
+                             "record-equivalent root and child segments are reused")
+                (test-assert (every #'equalp bytes (mapcar #'data-transfer--bytes paths))
+                             "reuse preserves the existing segment bytes"))))))))
+  nil)
+
 (-> test-data-transfer-roundtrip () null)
 (defun test-data-transfer-roundtrip ()
   "Round-trip durable collections, replay/image assets, queued input, and native names."
   (test-data-transfer--empty-and-log-boundaries)
   (test-data-transfer--reader-isolation)
+  (test-data-transfer--family-boundaries)
+  (test-data-transfer--transcript-layouts)
   (with-test-configuration (source root)
     (with-test-configuration (target)
       (let* ((fixture      (test-data-transfer--populate source root))
