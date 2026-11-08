@@ -1473,6 +1473,26 @@
                  "an unknown identifier still does not exist"))
   nil)
 
+(-> test-world-inbox-modeline () null)
+(defun test-world-inbox-modeline ()
+  "Test the inbox names itself where a channel names its model, and measures no context."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-reconcile-sessions configuration)
+    (let* ((ui          (terminal-ui-create :terminal (make-instance 'recording-terminal :columns 80)))
+           (application (make-instance 'application
+                                       :configuration configuration
+                                       :conversation  (conversation-load-by-id
+                                                       configuration (world-tests--inbox configuration))
+                                       :ui            ui)))
+      (application-refresh-context-meter application)
+      (let ((text (test-terminal-row-text (application--status-details application))))
+        (test-assert (and (search "inbox" text)
+                          (not (search (config :model configuration) text))
+                          (null (terminal-ui-context-used ui)))
+                     "the inbox modeline shows the inbox, no model and no context meter"))))
+  nil)
+
 (-> test-world-prune-empty-conversations () null)
 (defun test-world-prune-empty-conversations ()
   "Test the conversations nobody wrote in are deleted before they become channels, and the rest stay."
