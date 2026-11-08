@@ -699,9 +699,10 @@ durably before the runtime changes; the tool registry stays."
       (application-refresh-context-meter application)
       (application-present
        application
-       (format nil "Agent ~A now resides here~@[, moved from channel ~A~]; it waits for your message."
-               (participant-name participant)
-               (and source (conversation-identifier-display source))))))
+       (application-notice-line
+        (format nil "agent ~A resides here now~@[, moved from channel ~A~]; it waits for your message"
+                (participant-name participant)
+                (and source (conversation-identifier-display source)))))))
   nil)
 
 (-> application-world--record-arrival
