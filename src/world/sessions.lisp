@@ -325,6 +325,18 @@ rewrite and nothing to reconcile, so the move leaves it to the world store."
                    t t)
            (values nil nil nil))))))
 
+(-> world-session-forget (configuration string) boolean)
+(defun world-session-forget (configuration conversation-identifier)
+  "Drop the mapping of CONVERSATION-IDENTIFIER, whose conversation and channel are gone, and return whether one existed."
+  (world-session--transact
+   configuration
+   (lambda (mappings)
+     (let ((mapping (find conversation-identifier mappings
+                          :key #'world-session-mapping-conversation :test #'string=)))
+       (if mapping
+           (values (remove mapping mappings) t t)
+           (values nil nil nil))))))
+
 
 ;;;; -- Reconciliation --
 

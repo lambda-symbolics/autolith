@@ -1521,6 +1521,97 @@
           (task-orchestrator-close orchestrator)))))
   nil)
 
+(-> test-world-child-lifecycle () null)
+(defun test-world-child-lifecycle ()
+  "Test a parent renames, resets and removes its children, and waits while one is busy."
+  (with-test-configuration (configuration)
+    (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
+      (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent "broot11"
+                                                             :name "helper" :role "scout" :created-at 1500)
+      (world-tests--child-conversation configuration "bgrand11" :root "broot11" :parent "bkid11"
+                                                               :name "aide" :created-at 1600)
+      (world-reconcile-sessions configuration :now 2000)
+      (let* ((orchestrator (task-tests--orchestrator))
+             (parent       (agent-create :configuration configuration
+                                         :provider      (make-instance 'model-provider)
+                                         :conversation  root
+                                         :tool-registry (make-instance 'tool-registry)
+                                         :worker        nil))
+             (context      (make-instance 'tool-context :configuration configuration
+                                                        :worker        nil
+                                                        :conversation  root
+                                                        :agent         parent
+                                                        :registry      (make-instance 'tool-registry))))
+        (flet ((call (class arguments)
+                 "Run the child tool of CLASS with ARGUMENTS for the root agent."
+                 (tool-execute (make-instance class :orchestrator orchestrator
+                                                    :namespace    "child"
+                                                    :name         "test"
+                                                    :description  "Exercise child lifecycle."
+                                                    :parameters   (tool-object-schema (json-object) nil))
+                               context arguments))
+               (refused-p (thunk)
+                 "Return true when THUNK signals a task error."
+                 (handler-case (progn (funcall thunk) nil)
+                   (task-error ()
+                     t))))
+          (unwind-protect
+               (progn
+                 (call 'child-rename-tool (json-object "child" "@helper" "name" "keeper"))
+                 (test-assert (string= (participant-name (world-participant-find (world-load configuration)
+                                                                                 "al-bkid11"))
+                                       "keeper")
+                              "a parent renames its child by its name")
+                 (test-assert (refused-p (lambda () (call 'child-reset-tool (json-object "child" "aide"))))
+                              "a grandchild is not the parent's to reset")
+                 (let ((lease (conversation-lease-acquire configuration "bkid11")))
+                   (unwind-protect
+                        (test-assert (and (refused-p (lambda ()
+                                                       (call 'child-reset-tool (json-object "child" "keeper"))))
+                                          (refused-p (lambda ()
+                                                       (call 'child-remove-tool (json-object "child" "keeper")))))
+                                     "a busy child is neither reset nor removed")
+                     (conversation-lease-release lease)))
+                 (let ((compacted nil))
+                   (test-call-with-function-replacements
+                    (list (list 'agent-compact-conversation
+                                (lambda (agent observer &rest options)
+                                  (declare (ignore observer options))
+                                  (setf compacted
+                                        (list (conversation-identifier (agent-conversation agent))
+                                              (config :child-role (agent-configuration agent))
+                                              (conversation-lease-busy-p configuration "bkid11")))
+                                  (values 1 nil))))
+                    (lambda ()
+                      (call 'child-compact-tool (json-object "child" "keeper"))))
+                   (test-assert (equal compacted '("bkid11" "scout" t))
+                                "compaction runs on the child's history, in its role, while holding its lease"))
+                 (call 'child-reset-tool (json-object "child" "bkid11"))
+                 (let ((child (conversation-load-by-id configuration "bkid11")))
+                   (test-assert (and (not (search "work for broot11"
+                                                  (format nil "~S" (conversation--read-records
+                                                                    (conversation-pathname child)))))
+                                     (equal (conversation-role child) "scout")
+                                     (equal (conversation-parent-identifier child) "broot11"))
+                                "a reset child keeps its role and parent and loses its history"))
+                 (test-assert (search "the 1 children below it"
+                                      (tool-result-content
+                                       (call 'child-remove-tool (json-object "child" "keeper"))))
+                              "removing a child removes the children below it")
+                 (let ((world (world-load configuration)))
+                   (test-assert (and (null (world-channel-find world "bkid11"))
+                                     (null (world-channel-find world "bgrand11"))
+                                     (null (world-participant-find world "al-bkid11"))
+                                     (null (conversation-task-pathname-for-id configuration "bkid11"))
+                                     (null (conversation-task-pathname-for-id configuration "bgrand11"))
+                                     (notany (lambda (mapping)
+                                               (member (world-session-mapping-conversation mapping)
+                                                       '("bkid11" "bgrand11") :test #'string=))
+                                             (world-session-mappings configuration)))
+                                "a removed child leaves no channel, agent, history or mapping")))
+            (task-orchestrator-close orchestrator))))))
+  nil)
+
 (-> test-world-child-role () null)
 (defun test-world-child-role ()
   "Test a child's own channel serves it in its role, and a session refuses to swap in a conversation of another role."
