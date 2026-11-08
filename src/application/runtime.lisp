@@ -470,9 +470,17 @@ exchange without scrolling through reasoning and tool activity.")
   "Ask Autolith anything. Type (help) for operations."
   "The dim hint shown on the prompt row while input is empty.")
 
-(-> application-terminal-ui-create (&key (:relay-presentation list) (:configuration (option configuration))) terminal-ui)
-(defun application-terminal-ui-create (&key relay-presentation configuration)
+(defparameter *application-inbox-placeholder*
+  "Your inbox: messages for you arrive here, and no agent reads it. (tell) writes to a channel."
+  "The dim hint shown on the inbox's prompt row while input is empty.")
+
+(-> application-terminal-ui-create
+    (&key (:relay-presentation list) (:configuration (option configuration)) (:inbox-p boolean))
+    terminal-ui)
+(defun application-terminal-ui-create (&key relay-presentation configuration inbox-p)
   "Create the standard interactive terminal UI at the current terminal size.
+
+INBOX-P gives it the inbox's prompt hint instead of the one inviting a question.
 
 RELAY-PRESENTATION, a plist of :ROWS, :COLUMNS and :STYLED-P, creates a relay
 without a direct terminal at that geometry for a client that attaches later.
@@ -495,7 +503,7 @@ from its world."
              :input-file-descriptor (terminal-standard-input-file-descriptor)))))
      :prompt                  *application-prompt*
      :message-header-prefixes *application-message-header-prefixes*
-     :placeholder             *application-placeholder*
+     :placeholder             (if inbox-p *application-inbox-placeholder* *application-placeholder*)
      :completion-function     #'application-command-completion-entries
      :mention-function        (and configuration
                                    (application-world-mention-function configuration)))))
@@ -1260,7 +1268,8 @@ servers. Release acquired resources if construction fails."
                        :worker        worker))
                     (ui (application-terminal-ui-create
                          :relay-presentation relay-presentation
-                         :configuration      configuration)))
+                         :configuration      configuration
+                         :inbox-p            (conversation-inbox-p conversation))))
                (setf application
                      (make-instance
                       'application
@@ -1474,7 +1483,8 @@ servers. Release acquired resources if construction fails."
                                              :hurry-up-p    hurry-up-p
                                              :worker        worker))
                              (ui (application-terminal-ui-create
-                                  :configuration configuration)))
+                                  :configuration configuration
+                                  :inbox-p       (conversation-inbox-p conversation))))
                         (setf new-application
                               (make-instance
                                'application
@@ -1669,16 +1679,18 @@ changes also invalidate the cache. External files are sampled at these boundarie
       (when ui
         (terminal-ui-set-idle-status-details
          ui (application--status-details application))
-        (multiple-value-bind (used estimated-p)
-            (application-context-usage application)
-          (let ((configuration (application-configuration application)))
-            (terminal-ui-set-context-usage
-             ui
-             :used        used
-             :estimated-p estimated-p
-             :window      (config :context-window configuration)
-             :compaction-limit
-             (configuration-compaction-token-limit configuration)))))))
+        ;; No agent reads the inbox, so it has no context to measure.
+        (unless (conversation-inbox-p (application-conversation application))
+          (multiple-value-bind (used estimated-p)
+              (application-context-usage application)
+           (let ((configuration (application-configuration application)))
+             (terminal-ui-set-context-usage
+              ui
+              :used        used
+              :estimated-p estimated-p
+              :window      (config :context-window configuration)
+              :compaction-limit
+              (configuration-compaction-token-limit configuration))))))))
   nil)
 
 (-> application--install-configuration
@@ -3775,13 +3787,15 @@ continuation turns, so the notice names what woke the model."
   "Return cached-phase inbox, session, model, effort, Fast mode, and repository status spans.
 
 Unread messages in the person's inbox come first, so a narrow modeline
-clips the session title before it hides them."
+clips the session title before it hides them. The inbox shows its name where
+other channels show their model, since no agent reads it."
   (when (slot-boundp application 'configuration)
     (let* ((configuration (application-configuration application))
            (unread        (application-world-inbox-unread application))
            (conversation
              (and (slot-boundp application 'conversation)
                   (application-conversation application)))
+           (inbox-p       (and conversation (conversation-inbox-p conversation)))
            (title         (and conversation (conversation-title conversation)))
            (session-label
              (and conversation
@@ -3795,12 +3809,14 @@ clips the session title before it hides them."
        (when (plusp unread)
          (list (terminal-span ':status-accent (format nil "✉ ~D unread" unread))
                (terminal-span ':status-dim " · ")))
-       (list (terminal-span ':status-model
-                            (config :model configuration))
-             (terminal-span ':status-dim " · ")
-             (terminal-span ':status-effort
-                            (config :reasoning-effort configuration)))
-       (when (configuration-codex-fast-mode-active-p configuration)
+       (if inbox-p
+           (list (terminal-span ':status-model "inbox"))
+           (list (terminal-span ':status-model
+                                (config :model configuration))
+                 (terminal-span ':status-dim " · ")
+                 (terminal-span ':status-effort
+                                (config :reasoning-effort configuration))))
+       (when (and (not inbox-p) (configuration-codex-fast-mode-active-p configuration))
          (list (terminal-span ':status-dim " · ")
                (terminal-span ':status-accent "FAST")))
        (when branch
