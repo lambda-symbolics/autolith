@@ -444,7 +444,6 @@ controller's exit reason."
          (recovery-input-storage-ready-p
            (or (not recovery-startup-p)
                (application-recovery-input-vault-import application))))
-    (setf (application-hosted-p application) hosted-p)
     (when (and (config :fullscreen-p (application-configuration application))
                (not (terminal-ui-fullscreen-p ui)))
       (change-class ui 'fullscreen-terminal-ui))

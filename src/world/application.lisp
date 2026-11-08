@@ -4,6 +4,11 @@
 
 ;;; The application keeps the world in step with the conversation it hosts.
 
+(-> application-hosted-p (application) boolean)
+(defun application-hosted-p (application)
+  "Return true when a world server hosts APPLICATION beside other channels."
+  (not (null (application-world-server application))))
+
 (-> application-world-sync (application) null)
 (defun application-world-sync (application)
   "Bring APPLICATION's own conversation into the world, once it is durable.
