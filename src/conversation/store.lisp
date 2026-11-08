@@ -3591,13 +3591,36 @@ later picker searches read it without scanning the log."
 
 (-> conversation-pathname-for-id (configuration string) pathname)
 (defun conversation-pathname-for-id (configuration identifier)
-  "Return CONFIGURATION's stable conversation identity for IDENTIFIER."
-  (merge-pathnames (make-pathname
-                    :name
-                    (conversation-identifier-migration-resolve
-                     configuration identifier)
-                    :type "sexp")
-                   (configuration-conversation-root configuration)))
+  "Return CONFIGURATION's stable conversation identity for IDENTIFIER.
+
+A child agent's conversation lives below its root's task directory; it is
+found there when no top-level conversation has IDENTIFIER."
+  (let* ((resolved  (conversation-identifier-migration-resolve configuration identifier))
+         (top-level (merge-pathnames (make-pathname :name resolved :type "sexp")
+                                     (configuration-conversation-root configuration))))
+    (if (conversation-storage-active-pathname top-level)
+        top-level
+        (or (conversation-task-pathname-for-id configuration resolved)
+            top-level))))
+
+(-> conversation-task-pathname-for-id (configuration string) (option pathname))
+(defun conversation-task-pathname-for-id (configuration identifier)
+  "Return the identity of child conversation IDENTIFIER below whichever root runs it, or NIL."
+  (let ((tasks (merge-pathnames "tasks/" (config :data-root configuration))))
+    ;; Child identifiers are idsmall identifiers or UUIDs: letters, digits
+    ;; and hyphens, safe as one path segment.
+    (when (and (plusp (length identifier))
+               (every (lambda (character)
+                        (or (alphanumericp character) (char= character #\-)))
+                      identifier)
+               (uiop:directory-exists-p tasks))
+      (loop for group in (uiop:subdirectories tasks)
+            for identity = (merge-pathnames (make-pathname :directory (list ':relative identifier)
+                                                           :name      identifier
+                                                           :type      "sexp")
+                                            group)
+            when (conversation-storage-active-pathname identity)
+              return identity))))
 
 (-> conversation-load-by-id (configuration string) conversation)
 (defun conversation-load-by-id (configuration identifier)

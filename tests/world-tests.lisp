@@ -1476,6 +1476,22 @@
     (conversation-append-user-message conversation (format nil "work for ~A" parent))
     conversation))
 
+(-> test-world-child-loadable () null)
+(defun test-world-child-loadable ()
+  "Test a child agent's conversation loads by its identifier like any channel's."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "broot11" 1000)
+    (world-tests--child-conversation configuration "e5a1b2c3-0000-4000-8000-000000000001"
+                                     :root "broot11" :parent "broot11" :name "helper" :created-at 1500)
+    (let ((conversation (conversation-load-by-id configuration "e5a1b2c3-0000-4000-8000-000000000001")))
+      (test-assert (search "work for broot11"
+                           (format nil "~S" (conversation--read-records (conversation-pathname conversation))))
+                   "a child's conversation is found below its root and loads with its history"))
+    (test-assert (handler-case (progn (conversation-load-by-id configuration "bnone11") nil)
+                   (conversation-error () t))
+                 "an unknown identifier still does not exist"))
+  nil)
+
 (-> test-world-placing-needs-server () null)
 (defun test-world-placing-needs-server ()
   "Test a session apart from the world server refuses to move or park agents."
