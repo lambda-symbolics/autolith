@@ -3049,14 +3049,16 @@
       (test-assert (and (search "1,204 files balanced" text)
                         (not (find #\Newline text)))
                    "a clean paren check is one line"))
-    (let ((rule (conversation-record-entry
-                 application
-                 (list :summary :seq 10 :time 0 :through-seq 9 :summary "older work"))))
-      (test-assert (and (= (terminal--spans-width rule) 39)
-                        (find (terminal-span ':failure " CONTEXT COMPACTED ") rule :test #'equal)
-                        (eq (terminal-span-style (first rule)) ':success)
-                        (not (search "9" (test-terminal-row-text rule))))
-                   "compaction is a terminal-wide cut line without sequence numbers"))
+    (loop for (columns width) in '((40 37) (170 64))
+          for rule = (conversation-record-entry
+                      (application-tests--ui-application :columns columns)
+                      (list :summary :seq 10 :time 0 :through-seq 9 :summary "older work"))
+          do (test-assert (and (= (terminal--spans-width rule) width)
+                               (find (terminal-span ':failure " CONTEXT COMPACTED ") rule :test #'equal)
+                               (eq (terminal-span-style (first rule)) ':success)
+                               (not (search "9" (test-terminal-row-text rule))))
+                          (format nil "at ~D columns compaction is a ~D-cell cut line without sequence numbers"
+                                  columns width)))
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 4 :time 0 :call-id 3
