@@ -26,11 +26,7 @@
   "Probe the authoritative primary lease, including owners in other processes."
   (let ((lease (application-conversation-lease application)))
     (or (and lease (conversation-lease-matches-p lease identifier))
-        (handler-case
-            (let ((probe (conversation-lease-acquire (application-configuration application) identifier)))
-              (conversation-lease-release probe)
-              nil)
-          (conversation-in-use () t)))))
+        (conversation-lease-busy-p (application-configuration application) identifier))))
 
 (-> acp-extension--conversation-row (application pathname) hash-table)
 (defun acp-extension--conversation-row (application pathname)

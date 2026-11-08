@@ -359,8 +359,10 @@ Return the launcher status a hosted session asked for, or NIL."
   "Serve channel IDENTIFIER without a terminal, so its agent reads the message that just reached it.
 
 Nothing happens when nobody resides there, when it is the person's inbox, or
-when a host serves it already. The channel goes cold again once it has been
-idle long enough. A channel that cannot be served keeps its message waiting."
+when a host serves it already. Nothing happens either while another holder
+leases its conversation, as a running child does: that holder reads the
+message. The channel goes cold again once it has been idle long enough. A
+channel that cannot be served keeps its message waiting."
   (world-server--enqueue
    server
    (lambda ()
@@ -374,6 +376,7 @@ idle long enough. A channel that cannot be served keeps its message waiting."
                         (find ':agent (world-channel-residents world identifier)
                               :key #'participant-kind)
                         (null (world-server--find-host server identifier))
+                        (not (conversation-lease-busy-p configuration identifier))
                         (not (world-server-stopping-p server))
                         (not (world-server-checkpointing-p server)))
                (world-server--start-host

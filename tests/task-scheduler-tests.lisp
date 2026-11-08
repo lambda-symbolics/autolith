@@ -3345,3 +3345,34 @@ pool must reject the cancelled parent without creating a descendant."
       (test-assert (and (identifier-p identifier) (< (length identifier) 12))
                    "a child's identifier is a short identifier, not a UUID")))
   nil)
+
+(-> test-task-child-channel-lease () null)
+(defun test-task-child-channel-lease ()
+  "Test a running child leases its conversation, so nothing opens its channel twice, and frees it when done."
+  (let ((run      (symbol-function 'agent-run-user-turn))
+        (release  (symbol-function 'conversation-lease-release))
+        (running  nil)
+        (released nil))
+    (test-call-with-function-replacements
+     (list (list 'agent-run-user-turn
+                 (lambda (agent &rest arguments)
+                   (when (typep agent 'task-child-agent)
+                     (let ((identifier (conversation-identifier (agent-conversation agent))))
+                       (push (cons identifier
+                                   (conversation-lease-busy-p (agent-configuration agent) identifier))
+                             running)))
+                   (apply run agent arguments)))
+           (list 'conversation-lease-release
+                 (lambda (lease)
+                   (push (conversation-lease-identifier lease) released)
+                   (funcall release lease))))
+     (lambda ()
+       (let ((observation (task-tests--run-scheduler-case
+                           (make-instance 'task-test-provider :mode ':concurrent)
+                           (json-object "agent" "task" "task" "Hold the channel." "blocking" t))))
+         (test-assert (getf observation :success-p) "the leased child run succeeds")
+         (test-assert (and running (every #'rest running))
+                      "the child's conversation is leased while it runs")
+         (test-assert (member (first (first running)) released :test #'string=)
+                      "the child's lease is released when its run ends")))))
+  nil)
