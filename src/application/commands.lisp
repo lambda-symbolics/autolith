@@ -3006,21 +3006,24 @@ The current value and its source sit in aligned columns of their own."
 
 (-> application--switch-target (application string) string)
 (defun application--switch-target (application designator)
-  "Return the identifier of the channel DESIGNATOR names, among the world's channels or the running sessions.
+  "Return the identifier of the channel DESIGNATOR names, among the world's channels, the running sessions or the saved conversations.
 
 A channel opened moments ago has no durable record and so no world channel
 yet, but its session is published, so the running sessions are searched when
-the world knows no such channel."
-  (handler-case
-      (application-world-channel-identifier application designator)
-    (world-error (condition)
-      (or (handler-case
-              (localgroup--record-session-id
-               (rest (localgroup--find-record (application-configuration application)
-                                              designator)))
-            (localgroup-error ()
-              nil))
-          (error condition)))))
+the world knows no such channel. A conversation saved since the world server
+last started is not in its world either, so the saved conversations come last."
+  (let ((configuration (application-configuration application)))
+    (handler-case
+        (application-world-channel-identifier application designator)
+      (world-error (condition)
+        (or (handler-case
+                (localgroup--record-session-id
+                 (rest (localgroup--find-record configuration designator)))
+              (localgroup-error ()
+                nil))
+            (handler-case (main-resolve-conversation configuration designator)
+              (configuration-error ()
+                (error condition))))))))
 
 (define-application-command application--builtin-switch-command
     (:name              "/switch"
