@@ -104,10 +104,15 @@
                       nil)))
         (lambda ()
           (flet ((wake (identifier)
-                   "Wake IDENTIFIER and wait for the server's main thread to act on it."
-                   (setf started nil)
-                   (funcall *world-message-unserved-function* identifier)
-                   (task-tests--wait-until (lambda () (null (world-server-jobs server))) 10)))
+                   "Wake IDENTIFIER and wait until the server's main thread has acted on it.
+
+The main thread runs its jobs in order, so a job queued after the wake has
+run once the wake has."
+                   (let ((done-p nil))
+                     (setf started nil)
+                     (funcall *world-message-unserved-function* identifier)
+                     (world-server--enqueue server (lambda () (setf done-p t)))
+                     (task-tests--wait-until (lambda () done-p) 10))))
             (setf (world-server-fullscreen-p server) t)
             (wake "bwake11")
             (test-assert (equal started '(("bwake11" t t)))
