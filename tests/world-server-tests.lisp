@@ -164,6 +164,38 @@
                     "lg status names the world server's process first"))))
   nil)
 
+(-> test-world-server-new-channel () null)
+(defun test-world-server-new-channel ()
+  "Test (new) in a hosted channel opens another channel in its workspace and moves the terminal there."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry       (world-client-entry configuration))
+            (first-id    (getf (rest (world-server-tests--open entry (world-tests--workspace root "new")))
+                               :session-id))
+            (application (world-host-application (world-server--find-host server first-id)))
+            (attachment  (make-instance 'image-daemon:attachment
+                                        :socket nil
+                                        :stream (make-broadcast-stream)
+                                        :mode   ':control)))
+       (image-daemon:relay-attach (terminal-ui-terminal (application-ui application)) attachment
+                                  :rows 24 :columns 80 :styled-p nil :session-id first-id)
+       (application--builtin-new-command application)
+       (let* ((hosts   (mapcar #'world-host-channel (world-server--hosts server)))
+              (second  (find-if-not (lambda (identifier) (string= identifier first-id)) hosts))
+              (packets (coerce (structlisp:deque->vector (image-daemon:attachment-queue attachment))
+                               'list)))
+         (test-assert (and (= (length hosts) 2)
+                           (string= (conversation-identifier (application-conversation application))
+                                    first-id))
+                      "the channel keeps its conversation, and a second channel runs beside it")
+         (test-assert (and second
+                           (some (lambda (packet)
+                                   (and (search ":SWITCH" (string-upcase packet))
+                                        (search second packet)))
+                                 packets))
+                      "the terminal is sent to the new channel")))))
+  nil)
+
 (-> test-world-server-hosting () null)
 (defun test-world-server-hosting ()
   "Test opening, sharing, closing and resuming channels through a world server."
