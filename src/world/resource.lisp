@@ -13,6 +13,12 @@
 (defparameter *channel-resource-list-identifier* "list"
   "The identifier naming the survey of every channel.")
 
+(defparameter *channel-resource-list-default-results* 40
+  "How many channels channel:list shows unless asked for more.")
+
+(defparameter *channel-resource-list-maximum-results* 200
+  "The most channels one read of channel:list shows.")
+
 (defparameter *channel-resource-identifier-prefix* "id/"
   "The prefix before a channel identifier.")
 
@@ -53,7 +59,7 @@
 (defmethod resource-resolver-read-documentation ((resolver channel-resolver))
   "Document channel: reads."
   (declare (ignore resolver))
-  "channel:current describes the current channel (residents, subscribers, workspace, your children and whether each is busy) and then reads its history with the conversation: arguments. channel:id/<id> names another channel; channel:list surveys every channel.")
+  "channel:current describes the current channel (residents, subscribers, workspace, your children and whether each is busy) and then reads its history with the conversation: arguments. channel:id/<id> names another channel; channel:list shows the most recently changed channels, filtered by query and bounded by max-results.")
 
 (-> channel-resource--uri (channel-resolver string) string)
 (defun channel-resource--uri (resolver identifier)
@@ -262,16 +268,29 @@ parked while it resides nowhere."
             (conversation-identifier-display identifier)
             (conversation-lease-busy-p configuration identifier))))
 
-(-> channel-resource--list-text (world list) string)
-(defun channel-resource--list-text (world served)
-  "Return every channel of WORLD with its residents, most recently changed first, given the SERVED channels."
-  (let ((channels (world-channels world)))
+(-> channel-resource--list-text
+    (world list &key (:query (option string)) (:maximum (integer 1)))
+    string)
+(defun channel-resource--list-text (world served &key query (maximum *channel-resource-list-default-results*))
+  "Return up to MAXIMUM channels of WORLD with their residents, most recently changed first, given the SERVED channels.
+
+QUERY keeps the channels whose identifier, title, workspace or participants'
+names contain it, ignoring case."
+  (let* ((all      (world-channels world))
+         (matching (if query
+                       (remove-if-not (lambda (channel)
+                                        (channel-resource--matches-p world channel query))
+                                      all)
+                       all))
+         (channels (subseq matching 0 (min maximum (length matching)))))
     (with-output-to-string (stream)
       (if (null channels)
-          (format stream "No channels exist yet.~%")
+          (format stream "~:[No channels exist yet.~;No channel matches ~:*~S.~]~%" query)
           (progn
-            (format stream "~D channel~:P, most recently changed first. Read channel:id/<id> for one channel's history.~%"
-                    (length channels))
+            (format stream "~D of ~D channel~:P~@[ matching ~S~], most recently changed first.~:[~; Narrow them with query, or raise max-results up to ~D.~] Read channel:id/<id> for one channel's history.~%"
+                    (length channels) (length matching) query
+                    (< (length channels) (length matching))
+                    *channel-resource-list-maximum-results*)
             (dolist (channel channels)
               (let ((identifier (channel-identifier channel)))
                 (format stream "~A~@[ ~S~] workspace ~A; residents: ~A; subscribers: ~A~%"
@@ -289,11 +308,39 @@ parked while it resides nowhere."
 (defmethod resource-tool-read
     ((resource channel-list-resource) (tool resource-read-tool)
      (context tool-context) (arguments hash-table))
-  "Return the survey of every channel."
-  (declare (ignore tool arguments))
-  (tool-success (channel-resource--list-text
-                 (channel-list-resource-world resource)
-                 (channel-resource--served-channels (tool-context-configuration context)))))
+  "Return the most recently changed channels, those matching the query argument when given, up to max-results."
+  (declare (ignore tool))
+  (let ((query   (tool-argument arguments "query"))
+        (maximum (or (tool-argument arguments "max-results") *channel-resource-list-default-results*)))
+    (unless (or (null query) (non-empty-string-p query))
+      (error 'tool-error
+             :message   "channel:list query must be non-empty text."
+             :tool-name "resource.read"))
+    (unless (typep maximum `(integer 1 ,*channel-resource-list-maximum-results*))
+      (error 'tool-error
+             :message   (format nil "channel:list max-results must be an integer from 1 to ~D."
+                                *channel-resource-list-maximum-results*)
+             :tool-name "resource.read"))
+    (tool-success (channel-resource--list-text
+                   (channel-list-resource-world resource)
+                   (channel-resource--served-channels (tool-context-configuration context))
+                   :query   query
+                   :maximum maximum))))
+
+(-> channel-resource--matches-p (world channel string) boolean)
+(defun channel-resource--matches-p (world channel query)
+  "Return true when CHANNEL's identifier, title, workspace or participants' names contain QUERY, ignoring case."
+  (let ((identifier (channel-identifier channel)))
+    (and (some (lambda (text)
+                 (and text (search query text :test #'char-equal)))
+               (append (list identifier
+                             (conversation-identifier-display identifier)
+                             (channel-title channel)
+                             (channel-workspace channel))
+                       (mapcar #'participant-name
+                               (append (world-channel-residents world identifier)
+                                       (world-channel-subscribers world identifier)))))
+         t)))
 
 (defmethod resource-tool-read
     ((resource channel-resource) (tool resource-read-tool)
