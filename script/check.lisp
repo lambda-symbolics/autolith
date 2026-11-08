@@ -391,6 +391,25 @@ that start fresh Autolith processes. Private XDG roots isolate user preferences.
              (when (or (check-process-problem entry) (not (zerop (check-process-status entry))))
                (setf successful-p nil)
                (check--print-process-log entry)))
+           (let* ((reported-names (remove-duplicates
+                                    (loop for result in (reverse results)
+                                          append (mapcar #'first (getf result :timings)))
+                                    :test #'string=))
+                  (missing-names  (set-difference (mapcar #'string-downcase cases)
+                                                  reported-names :test #'string=))
+                  (invalid-shards (loop for entry in entries
+                                        when (check-process-problem entry)
+                                          collect (check-process-label entry))))
+             (format t "~&Coverage: assigned ~D cases in ~D shards; validated reported ~D cases in ~D shards.~%"
+                     (length cases) (length entries) (length reported-names) (length results))
+             (when (or missing-names invalid-shards)
+               (format t "Coverage gaps: ~D missing cases, ~D invalid shards.~%"
+                       (length missing-names) (length invalid-shards))
+               (when missing-names
+                 (format t "Missing cases: ~{~A~^, ~}~%" missing-names))
+               (when invalid-shards
+                 (format t "Invalid shards: ~{~A~^, ~}~%" invalid-shards)))
+             (finish-output))
            (let* ((timings   (loop for result in results append (getf result :timings)))
                   (aggregate (list :version  1
                                    :cases    (loop for result in results sum (getf result :cases))

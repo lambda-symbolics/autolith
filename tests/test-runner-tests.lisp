@@ -51,7 +51,29 @@
              (test-assert (= 3 (length (getf result ':timings)))
                           "timings include successful and failed cases")
              (test-assert (not (tests-report result :stream (make-broadcast-stream)))
-                          "failed cases produce a false report status")))
+                         "failed cases produce a false report status"))
+           (let* ((root    (test-make-temporary-root))
+                  (output  (make-string-output-stream))
+                  (cleanup (make-condition 'test-fixture-error)))
+             (unwind-protect
+                  (let ((observed
+                          (handler-case
+                              (test-call-with-function-replacements
+                               (list (list 'platform-delete-directory-tree
+                                           (lambda (&rest arguments)
+                                             (declare (ignore arguments))
+                                             (error cleanup))))
+                               (lambda ()
+                                 (tests-run-cases '(runner-probe-failure)
+                                                  :stream output :temporary-root root)))
+                            (test-fixture-error (condition) condition))))
+                    (test-assert (eq cleanup observed)
+                                 "fixture cleanup failure escapes without replacement")
+                    (test-assert (search "intentional failed assertion"
+                                         (get-output-stream-string output))
+                                 "primary case evidence is emitted before failed cleanup"))
+               (platform-delete-directory-tree *platform* root
+                                               :validate t :if-does-not-exist ':ignore))))
       (dolist (name '(runner-probe-failure runner-probe-error runner-probe-success))
         (fiveam:rem-test name))))
   nil)
@@ -471,9 +493,10 @@
     (let ((runner    (symbol-function (find-symbol "CHECK--RUN-PROCESSES" '#:cl-user)))
           (unrelated (test-make-temporary-root)))
       (unwind-protect
-           (dolist (mode '(:normal :failure :crash :timeout :invalid :unwind))
+           (dolist (mode '(:normal :failure :crash :timeout :invalid :incomplete :unwind))
              (let ((owned     nil)
                    (entry     nil)
+                   (output    (make-string-output-stream))
                    (directory (merge-pathnames (format nil "~(~A~)/" mode) root)))
                (test-call-with-function-replacements
                 (list
@@ -499,11 +522,11 @@
                                          '(:fixture :present))
                          (when (eq mode :unwind)
                            (throw 'worker-exit :escaped))
-                         (when (member mode '(:normal :invalid))
+                         (when (member mode '(:normal :invalid :incomplete))
                            (test-check--call
                             "CHECK--WRITE-FORM"
                             (test-check--call "CHECK-PROCESS-RESULT-PATH" entry)
-                            (when (eq mode :normal)
+                            (when (member mode '(:normal :incomplete))
                               '(:version 1 :cases 1 :checks 1 :failures nil
                                 :timings (("fixture-probe" 0d0))))))
                          (funcall (fdefinition '(setf cl-user::check-process-command))
@@ -520,11 +543,14 @@
                                   entry)
                          (apply runner entries arguments))))
                 (lambda ()
-                  (let ((*standard-output* (make-broadcast-stream))
-                        (*error-output*    (make-broadcast-stream)))
+                  (let ((*standard-output* output)
+                        (*error-output*    output))
                     (test-assert
                      (eql (catch 'worker-exit
-                            (test-check--call "CHECK--RUN-WORKERS" '(fixture-probe)
+                             (test-check--call "CHECK--RUN-WORKERS"
+                                               (if (eq mode ':incomplete)
+                                                   '(fixture-probe missing-probe)
+                                                   '(fixture-probe))
                                               :source-root (asdf:system-source-directory :autolith)
                                               :temporary-root directory :jobs 1 :timeout 1))
                           (case mode
@@ -535,6 +561,11 @@
                             (otherwise
                              nil)))
                      "worker success, process failures and unwind preserve their outcomes"))))
+               (when (eq mode ':incomplete)
+                 (let ((diagnostic (get-output-stream-string output)))
+                   (test-assert (and (search "fixture-probe" diagnostic)
+                                     (search "missing-probe" diagnostic))
+                                "unvalidated partial shard reports every missing assigned case")))
                (test-assert (and owned (not (probe-file owned)))
                             "the parent deletes fixtures a dead worker cannot clean up")
                (test-assert (probe-file unrelated)

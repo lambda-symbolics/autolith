@@ -123,8 +123,14 @@
             (unless (equal (mapcar #'string-downcase cases) names)
               (check--fail "Worker selection does not match its assigned cases."))
             (test-worker--start-stack-watchdog)
-            (let ((result (uiop:symbol-call '#:autolith '#:tests-run-cases cases
-                                            :temporary-root (getf request :temporary-root))))
+            (let ((result
+                    (handler-case
+                        (uiop:symbol-call '#:autolith '#:tests-run-cases cases
+                                          :temporary-root (getf request :temporary-root))
+                      (error (condition)
+                        (handler-case (test-worker--report-live-threads)
+                          (error () nil))
+                        (error condition)))))
               (check--validate-result result names)
               (test-worker--report-live-threads)
               (unwind-protect

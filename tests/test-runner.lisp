@@ -111,11 +111,16 @@ ownership of TEMPORARY-ROOT when supplied or allocating a fresh run directory."
            (incf checks (length results))
            (push (list (string-downcase name) elapsed) timings)
            (unless passed
-             (push (list :test   (string-downcase name)
-                         :detail (with-output-to-string (output)
-                                   (let ((fiveam:*test-dribble* output))
-                                     (fiveam:explain! results))))
-                   failures))
+             (let ((failure (list :test   (string-downcase name)
+                                  :detail (with-output-to-string (output)
+                                            (let ((fiveam:*test-dribble* output))
+                                              (fiveam:explain! results))))))
+               ;; Emit the detail while the owned fixture root still exists.  A
+               ;; cleanup failure must not erase the primary test diagnosis.
+               (format stream "~&~A:~%~A~%"
+                       (getf failure :test) (getf failure :detail))
+               (finish-output stream)
+               (push failure failures)))
            (format stream "~&~A ~,3Fs ~(~A~)~%"
                    (if passed "PASS" "FAIL") elapsed name)
            (finish-output stream)))
