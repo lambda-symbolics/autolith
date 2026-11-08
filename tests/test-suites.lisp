@@ -1190,6 +1190,7 @@
 (define-test-suite prompt
   test-system-prompt
   test-system-prompt-structured-knowledge
+  test-system-prompt-child-role
   test-system-prompt-session-date
   test-request-context-agenda-selection)
 

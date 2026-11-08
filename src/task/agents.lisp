@@ -17,7 +17,7 @@
     :initarg       :instructions
     :reader        task-agent-definition-instructions
     :type          non-empty-string
-    :documentation "The specialized role instructions prepended to assignments.")
+    :documentation "The specialized role instructions the child's system prompt carries.")
    (tools
     :initarg       :tools
     :initform      nil

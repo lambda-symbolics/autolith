@@ -234,8 +234,17 @@ prompt instead of the full Autolith persona.")
         :workspace           (system-prompt--context-value
                               (namestring (config :working-directory configuration)))
         :session-date        (system-prompt-session-date)
+        :child-role          (system-prompt--setting-text configuration :child-role)
+        :child-role-instructions
+        (system-prompt--setting-text configuration :child-role-instructions)
         :workspace-instructions
         (system-prompt--workspace-instructions configuration)))
+
+(-> system-prompt--setting-text (configuration keyword) (option string))
+(defun system-prompt--setting-text (configuration name)
+  "Return text setting NAME of CONFIGURATION, or NIL when it is empty, so a section that needs it is left out."
+  (let ((text (config name configuration)))
+    (and (non-empty-string-p text) text)))
 
 (-> request-context--bounded-complete-lines (string integer) string)
 (defun request-context--bounded-complete-lines (text limit)
