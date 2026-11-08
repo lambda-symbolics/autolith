@@ -247,6 +247,40 @@
                     "the channel is gone and the world server still runs"))))
   nil)
 
+(-> test-world-server-checkpoint-cancel () null)
+(defun test-world-server-checkpoint-cancel ()
+  "Test a checkpoint waiting for running work can be cancelled, and the channels go on without it."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry       (world-client-entry configuration))
+            (identifier  (getf (rest (world-server-tests--open entry (world-tests--workspace root "c")))
+                               :session-id))
+            (application (world-host-application (world-server--find-host server identifier)))
+            (controller  (application-input-controller application))
+            (ran-p       nil)
+            (thread      nil))
+       (test-assert (not (world-server-cancel-checkpoint server))
+                    "with no checkpoint waiting there is nothing to cancel")
+       (application-input-controller-begin-external-work controller)
+       (unwind-protect
+            (progn
+              (setf thread (make-thread
+                            (lambda ()
+                              (world-server-call-quiesced server application
+                                                          (lambda () (setf ran-p t))))
+                            :name "Autolith world server test cancelled checkpoint"))
+              (test-assert (task-tests--wait-until (lambda () (application-world-held-p application)) 10)
+                           "the checkpoint holds the channel while its work runs")
+              (test-assert (world-server-cancel-checkpoint server)
+                           "a waiting checkpoint can be cancelled")
+              (sb-thread:join-thread thread :default nil :timeout 30)
+              (test-assert (and (not ran-p)
+                                (not (application-world-held-p application))
+                                (not (world-server-checkpointing-p server)))
+                           "the cancelled checkpoint never saves, and the channel goes on"))
+         (application-input-controller-finish-external-work controller)))))
+  nil)
+
 (-> test-world-server-hosting () null)
 (defun test-world-server-hosting ()
   "Test opening, sharing, closing and resuming channels through a world server."

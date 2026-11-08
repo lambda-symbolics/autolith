@@ -97,6 +97,11 @@ the process could fork, and a new thread serves the application again."))
     :accessor      world-server-holding-p
     :type          boolean
     :documentation "Whether a checkpoint waits for the work under way; no channel starts a new turn meanwhile.")
+   (checkpoint-cancel-p
+    :initform      nil
+    :accessor      world-server-checkpoint-cancel-p
+    :type          boolean
+    :documentation "Whether someone cancelled the checkpoint that is waiting for the work under way.")
    (lease
     :initform      nil
     :accessor      world-server-lease
@@ -1396,54 +1401,85 @@ not be a channel's thread, which could not end for the pause."
                             (serious-condition (condition)
                               (setf outcome condition))))
        :reconnect-id    reconnect-id
-       :notice-function #'notice)))
+       :notice-function #'notice
+       :cancel-function (lambda ()
+                          (setf outcome (world-server--cancelled-condition))))))
   nil)
+
+(-> world-server--cancelled-condition () checkpoint-error)
+(defun world-server--cancelled-condition ()
+  "Return the condition a checkpoint cancelled while it waited ends with."
+  (make-condition 'checkpoint-error
+                  :message  "cancelled while it waited for the work under way"
+                  :stage    ':validation
+                  :pathname nil))
 
 (-> world-server--call-with-quiescer
     (world-server &key (:application application) (:function function) (:reconnect-id string)
-                       (:notice-function (option function)))
+                       (:notice-function (option function)) (:cancel-function (option function)))
     t)
 (defun world-server--call-with-quiescer (server &key application function reconnect-id
-                                                     notice-function)
+                                                     notice-function cancel-function)
   "Call FUNCTION with the checkpoint quiescer bound, then serve every paused channel again.
 
 The quiescer pauses the channels, telling their clients to reconnect under
 RECONNECT-ID, and stops the process services around its thunk. The process
 saves its heap with APPLICATION as the active application, so a rollback
 into the checkpoint resumes that channel. NOTICE-FUNCTION, given an
-application, returns what its channel is told once served again."
+application, returns what its channel is told once served again. A
+checkpoint cancelled while it waits for the work under way calls
+CANCEL-FUNCTION instead of FUNCTION."
   (unwind-protect
-       (progn
-         (world-server--drain server)
+       (if (not (world-server--drain server))
+           (when cancel-function
+             (funcall cancel-function))
+           (progn
          ;; An open admitted before this point holds the open lock until its
          ;; host is registered and served, so the checkpoint declares itself
          ;; only once every host it will pause is listed, and later opens are
          ;; refused.
-         (with-lock-held ((world-server-open-lock server))
-           (with-lock-held ((world-server-lock server))
-             (setf (world-server-checkpointing-p server) t)))
-         (setf *active-application* application)
-         (let ((*checkpoint-thread-quiescer*
-                 (lambda (thunk)
-                   (world-server--pause-channels server application reconnect-id)
-                   (world-server--call-with-services-stopped server thunk))))
-           (funcall function)))
+            (with-lock-held ((world-server-open-lock server))
+              (with-lock-held ((world-server-lock server))
+                (setf (world-server-checkpointing-p server) t)))
+            (setf *active-application* application)
+            (let ((*checkpoint-thread-quiescer*
+                    (lambda (thunk)
+                      (world-server--pause-channels server application reconnect-id)
+                      (world-server--call-with-services-stopped server thunk))))
+              (funcall function))))
     (setf *active-application* nil)
     (world-server--resume-channels server application reconnect-id
                                    :notice-function notice-function)))
 
-(-> world-server--drain (world-server) null)
+(-> world-server--drain (world-server) boolean)
 (defun world-server--drain (server)
-  "Hold every channel's new turns and wait until no turn runs and no job is live.
+  "Hold every channel's new turns and wait until no turn runs and no job is live; return true then.
 
 Opens still pass meanwhile: a channel opened now is held like the others.
 Work already under way finishes, and so do the jobs it starts, since a turn
-or a job may be waiting for them. The wait has no deadline."
+or a job may be waiting for them. The wait has no deadline, but
+(checkpoint :cancel t) ends it, and then this returns NIL."
   (with-lock-held ((world-server-lock server))
-    (setf (world-server-holding-p server) t))
-  (loop while (some #'world-server--host-busy-p (world-server--hosts server))
-        do (sleep *world-server-checkpoint-poll-seconds*))
-  nil)
+    (setf (world-server-holding-p server)       t
+          (world-server-checkpoint-cancel-p server) nil))
+  (loop
+    (cond
+      ((world-server-checkpoint-cancel-p server)
+       (return nil))
+      ((notany #'world-server--host-busy-p (world-server--hosts server))
+       (return t))
+      (t
+       (sleep *world-server-checkpoint-poll-seconds*)))))
+
+(-> world-server-cancel-checkpoint (world-server) boolean)
+(defun world-server-cancel-checkpoint (server)
+  "Cancel SERVER's checkpoint while it waits for the work under way, and return whether one was waiting.
+
+Once the checkpoint pauses the channels to save, it can no longer be cancelled."
+  (with-lock-held ((world-server-lock server))
+    (and (world-server-holding-p server)
+         (not (world-server-checkpointing-p server))
+         (setf (world-server-checkpoint-cancel-p server) t))))
 
 (-> world-server--host-busy-p (world-host) boolean)
 (defun world-server--host-busy-p (host)

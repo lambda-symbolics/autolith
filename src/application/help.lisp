@@ -22,7 +22,7 @@
                    "compact-tool"))
     (:topic :runtime :title "Runtime and recovery"
      :description "Inspect the session, save a generation, or recover queued input."
-     :commands    ("info" "status" "checkpoint" "generations" "rollback" "update"
+     :commands    ("info" "status" "checkpoint" "checkpoint-cancel" "generations" "rollback" "update"
                    "fix-skipped-definitions" "vault" "vault-store" "vault-restore"
                    "vault-discard" "data.export" "data.import" "detach" "quit")))
   "Human help topics and their preferred command order; registrations supply the text.")

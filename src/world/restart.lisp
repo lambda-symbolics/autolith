@@ -126,6 +126,8 @@ began ends the process, and the next client starts a new server."
              :application     application
              :reconnect-id    reconnect-id
              :notice-function #'notice
+             :cancel-function (lambda ()
+                                (setf failure (world-server--cancelled-condition)))
              :function
              (lambda ()
                (handler-case
