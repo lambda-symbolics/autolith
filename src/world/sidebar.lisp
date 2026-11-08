@@ -53,7 +53,7 @@
     :initform      (make-hash-table :test #'equal)
     :reader        world-sidebar-toggled
     :type          hash-table
-    :documentation "The tree nodes the person opened or closed against their default, workspaces by path and channels by identifier.")
+    :documentation "The tree nodes the person opened or closed, as :OPEN or :CLOSED, workspaces by path and channels by identifier.")
    (actions
     :initform      #()
     :accessor      world-sidebar-actions
@@ -239,11 +239,14 @@ A failed gather keeps the entries shown before; the next one tries again."
 
 (-> world-sidebar--toggle (world-sidebar string) null)
 (defun world-sidebar--toggle (sidebar key)
-  "Open the tree node KEY names in SIDEBAR when it is closed, or close it, and rebuild the entries."
-  (let ((toggled (world-sidebar-toggled sidebar)))
-    (if (gethash key toggled)
-        (remhash key toggled)
-        (setf (gethash key toggled) t)))
+  "Open the tree node KEY names in SIDEBAR when it shows closed, or close it, and rebuild the entries.
+
+The choice stays when the terminal moves to another channel."
+  (let ((entry (find key (world-sidebar-entries sidebar)
+                     :key  (lambda (entry) (or (getf entry :key) (getf entry :id)))
+                     :test #'equal)))
+    (setf (gethash key (world-sidebar-toggled sidebar))
+          (if (getf entry :open-p) ':closed ':open)))
   (world-sidebar--take sidebar (world-sidebar-inputs sidebar))
   nil)
 
@@ -344,8 +347,8 @@ the person, so it stays true across clients and restarts. CHANNELS arrive
 latest touched first. The workspace of the current channel comes first, then
 the others in that order. Within a workspace, channels nest under their
 parents. The first workspace is open, and a channel when the current one
-nests below it, unless the person toggled them; a closed one counts what it
-hides."
+nests below it, unless the person opened or closed them; a closed one counts
+what it hides."
   (let ((current (world-sidebar-current sidebar))
         (table   (make-hash-table :test #'equal)))
     (dolist (status statuses)
@@ -403,10 +406,14 @@ hides."
 
 (-> world-sidebar--open-p (world-sidebar string boolean) boolean)
 (defun world-sidebar--open-p (sidebar key default-p)
-  "Return whether the tree node KEY is open: DEFAULT-P, unless the person toggled it."
-  (if (gethash key (world-sidebar-toggled sidebar))
-      (not default-p)
-      default-p))
+  "Return whether the tree node KEY is open: as the person last set it, or else DEFAULT-P."
+  (ecase (gethash key (world-sidebar-toggled sidebar) ':default)
+    (:open
+     t)
+    (:closed
+     nil)
+    (:default
+     default-p)))
 
 (-> world-sidebar--fold (list &key (:open-p boolean)) list)
 (defun world-sidebar--fold (entries &key open-p)
