@@ -92,8 +92,8 @@
   :version "git-98b52a2dccb3e8d81cdb898d80f2e1f25dcf1e0c"))
 ("clinker-transcript" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "1a2af5d4c7441fe756ead213c96a7f332ea8ce25")
-  :version "git-1a2af5d4c7441fe756ead213c96a7f332ea8ce25"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "3b4af05627c024383cbd08c2c9adc27b300b8956")
+  :version "git-3b4af05627c024383cbd08c2c9adc27b300b8956"))
 ("cl-rfc8252" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-rfc8252.git" :ref "e2bbd2374ec159f86123c046c020fce27fce2d99")
@@ -104,8 +104,8 @@
   :version "git-38d5b6ae81a24031ad6c95b4f42ba99f2cf0a6c3"))
 ("cl-llm-provider-api" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "9f2154b55edaf0fbf9ca79651ca3ea3cf7aa75bd")
-  :version "git-9f2154b55edaf0fbf9ca79651ca3ea3cf7aa75bd"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "d4c5027e00b83ac63d01d23743e12cde3b139e91")
+  :version "git-d4c5027e00b83ac63d01d23743e12cde3b139e91"))
 ("cl-lsp" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-lsp.git" :ref "71327540754e7d77f90f76205c206985859b04c6")
