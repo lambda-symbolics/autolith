@@ -736,3 +736,203 @@
               (test-assert (zerop (getf ledger :tokens-reserved)) "Every control releases reserved tokens."))
             (mission-detach application))))))
   nil)
+
+(-> compaction-image-tests--image (integer) json-object)
+(defun compaction-image-tests--image (size)
+  "Build synthetic media without opening or decoding an image."
+  (json-object "type" "input_image" "detail" "high"
+               "image_url" (concatenate 'string "data:image/png;base64,PAYLOAD-MARKER"
+                                         (make-string size :initial-element #\a))
+               "private_metadata" "IMAGE-SECRET-MARKER"))
+
+(-> compaction-image-tests--items (integer &key (:separate-p boolean)) list)
+(defun compaction-image-tests--items (size &key separate-p)
+  "Build forty-seven recent fs.view-image-style correlated outputs."
+  (let ((items nil))
+    (unless separate-p
+      (push (json-object "type" "message" "role" "user" "content"
+                         (concatenate 'string "LATEST-INSTRUCTION " (make-string 32000 :initial-element #\u)))
+            items))
+    (dotimes (index 47)
+      (when separate-p
+        (push (json-object "type" "message" "role" "user" "content"
+                           (format nil "Recent instruction ~D ~A" index (make-string 680 :initial-element #\u)))
+              items))
+      (let ((id (format nil "image-call-~D" index)))
+        (push (compaction-tail-tests--call id) items)
+        (push (json-object "type" "function_call_output" "call_id" id
+                           "output" (vector (json-object "type" "input_text" "text" "Viewed synthetic PNG")
+                                            (compaction-image-tests--image size)))
+              items)))
+    (nreverse items)))
+
+(-> compaction-image-tests--transcript (conversation) list)
+(defun compaction-image-tests--transcript (view)
+  "Read the structured exchanges from an emergency text projection."
+  (loop for item in (conversation-input-items view)
+        append (coerce (json-decode (json-get (aref (json-get item "content") 0) "text")) 'list)))
+
+(-> test-compaction-recovery-image-projection () null)
+(defun test-compaction-recovery-image-projection ()
+  "Bound semantic media nodes without redacting ordinary text or changing source objects."
+  (with-test-configuration (configuration)
+    (let ((lengths nil))
+      (dolist (size '(16 100000 3000000))
+        (let* ((conversation (conversation-create configuration))
+               (state        (make-compaction-recovery))
+               (literal      "literal data:image/png;base64,ORDINARY-TEXT")
+               (items        (list (json-object "type" "message" "id" "old-user" "role" "user"
+                                                "content" (vector (compaction-image-tests--image size)))
+                                   (compaction-tail-tests--call "paired-image")
+                                   (json-object "type" "function_call_output" "call_id" "paired-image"
+                                                "output" (vector (json-object "type" "input_text" "text" literal)
+                                                                 (json-object "type" "image_url" "image_url"
+                                                                              (json-object "url" "https://example.invalid/?token=URL-SECRET-MARKER"))))
+                                   (json-object "type" "message" "id" "newest-user" "role" "user"
+                                                "content" (vector (json-object "type" "input_text" "text" "LATEST-INSTRUCTION")
+                                                                  (compaction-image-tests--image size)))))
+               (before       (mapcar #'json-encode items))
+               (source       (conversation-compaction-summary-view conversation items))
+               (view         (compaction-recovery-text-view state (compaction-recovery-view state source)))
+               (encoded      (json-encode (coerce (conversation-input-items view) 'vector)))
+               (restored     (compaction-image-tests--transcript view)))
+          (push (length encoded) lengths)
+          (test-assert (< (length encoded) 3000) "Emergency image payload is bounded independently of bytes.")
+          (dolist (secret '("PAYLOAD-MARKER" "IMAGE-SECRET-MARKER" "URL-SECRET-MARKER"))
+            (test-assert (not (search secret encoded)) "Entire image media nodes are omitted, including metadata and URLs."))
+          (test-assert (equal before (mapcar #'json-encode items)) "Canonical media and source containers are unchanged.")
+          (test-assert (equal '("old-user" nil nil "newest-user")
+                              (mapcar (lambda (item) (json-get item "id")) restored))
+                       "Item IDs and exchange order survive the text representation.")
+          (test-assert (equal "paired-image" (json-get (third restored) "call_id")) "Output correlation survives.")
+          (test-assert (test-object-contains-string-p restored literal) "Literal data URLs in text are not media.")
+          (test-assert (test-object-contains-string-p restored "LATEST-INSTRUCTION") "Newest user text is intact.")
+          (let ((notice (aref (json-get (first restored) "content") 0)))
+            (test-assert (and (json-string= (json-get notice "type") "input_text")
+                              (plusp (length (or (json-get notice "text") "")))
+                              (search "unavailable" (json-get notice "text")))
+                         "Image-only exchanges have an explicit unavailable-visual-content notice."))
+          (let ((audit (find :plain-text (compaction-recovery-notes state) :key (lambda (note) (getf note :tier)))))
+            (test-assert (= 3 (getf audit :images-omitted 0)) "One bounded aggregate records all omitted images."))
+          (test-assert (equal (mapcar #'json-encode (conversation-input-items view))
+                              (mapcar #'json-encode
+                                      (conversation-input-items
+                                       (compaction-recovery-text-view (make-compaction-recovery) source))))
+                       "Independent retries produce the same detached transcript.")))
+      (test-assert (apply #'= lengths) "Several orders of payload magnitude produce identical transcript size.")))
+  nil)
+
+(-> test-compaction-recovery-recent-images () null)
+(defun test-compaction-recovery-recent-images ()
+  "Admit the real summary projection with forty-seven protected recent images at 600K."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "600000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "4096"))
+    (with-test-configuration (configuration)
+      (dolist (separate-p '(nil t))
+        (let* ((conversation (conversation-create configuration))
+               (provider     (make-instance 'compaction-recovery-test-provider :configuration configuration))
+               (state        (make-compaction-recovery))
+               (items        (compaction-image-tests--items 100000 :separate-p separate-p))
+               (before       (mapcar #'json-encode items))
+               (source       (conversation-compaction-summary-view conversation items))
+               (view         (compaction-recovery-text-view state (compaction-recovery-view state source))))
+          (compaction-recovery-test-small-context
+           (lambda ()
+             (let* ((raw     (provider-request-object provider source #() :compaction-p t))
+                    (request (provider-request-object provider view #() :compaction-p t))
+                    (decoded (compaction-image-tests--transcript view))
+                    (outputs (remove-if-not (lambda (item) (json-string= (json-get item "type") "function_call_output")) decoded)))
+               (test-assert (> (provider-request-input-token-estimate provider raw) 600000)
+                            "The unknown-model conservative raw image allowance exceeds this window.")
+               (test-assert (= 47 (length outputs)) "All recent correlated outputs are retained.")
+               (test-assert (every (lambda (item)
+                                    (json-string= (json-get (aref (json-get item "output") 1) "type") "input_text")) outputs)
+                            "Every recent image, including protected newest images, is represented by a notice.")
+               (test-assert (null (handler-case (provider-check-request-context provider request)
+                                    (provider-context-budget-error (condition) condition)))
+                            "Actual summary request plus positive output reserve fits 600K after Tier3.")
+               (test-assert (>= (provider-request-output-reserve provider request) 4096) "Configured and wire output headroom is charged.")
+               (format t "~&RECENT-IMAGES separate=~S raw=~D projected=~D reserve=~D~%"
+                       separate-p (provider-request-input-token-estimate provider raw)
+                       (provider-request-input-token-estimate provider request)
+                       (provider-request-output-reserve provider request)))))
+          (test-assert (equal before (mapcar #'json-encode items)) "Source images survive summary preflight unchanged.")))))
+  nil)
+
+(-> test-compaction-recovery-image-text-controls () null)
+(defun test-compaction-recovery-image-text-controls ()
+  "Keep newest image-only input useful and ordinary text fully costed."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (provider     (make-instance 'context-admission-test-provider :configuration configuration))
+           (state        (make-compaction-recovery))
+           (source       (conversation-compaction-summary-view
+                          conversation (list (json-object "type" "message" "role" "user" "content"
+                                                           (vector (compaction-image-tests--image 1000000))))))
+           (view         (compaction-recovery-text-view state source))
+           (notice       (aref (json-get (first (compaction-image-tests--transcript view)) "content") 0)))
+      (test-assert (json-string= (json-get notice "type") "input_text") "Newest image-only input becomes useful text.")
+      (test-assert (search "unavailable" (or (json-get notice "text") "")) "No invented visual description is supplied.")
+      (test-assert (null (compaction-recovery-drop-exchange view)) "Newest exchange is never dropped.")
+      (let ((counts nil))
+        (dolist (size '(100 100000))
+          (let* ((literal (concatenate 'string "data:image/png;base64," (make-string size :initial-element #\t)))
+                 (item    (json-object "type" "message" "role" "user" "content"
+                                      (vector (json-object "type" "input_text" "text" literal))))
+                 (text    (compaction-recovery-text-view
+                           (make-compaction-recovery) (conversation-compaction-summary-view conversation (list item)))))
+            (test-assert (test-object-contains-string-p (compaction-image-tests--transcript text) literal)
+                         "Ordinary image-looking text is preserved verbatim.")
+            (push (provider-request-input-token-estimate
+                   provider (json-object "input" (coerce (conversation-input-items text) 'vector))) counts)))
+        (test-assert (> (first counts) (+ 20000 (second counts))) "Ordinary long text retains its full estimate."))))
+  nil)
+
+(-> test-compaction-recovery-image-summary-transport () null)
+(defun test-compaction-recovery-image-summary-transport ()
+  "Recover a real portable summary at the inert transport with positive reported usage."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "600000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "4096"))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration))
+             (provider     (make-instance 'compaction-recovery-test-provider
+                                          :configuration configuration
+                                          :results       (list (agent-test-result
+                                                                "summary" (list (agent-test-compaction-message))
+                                                                :usage (json-object "input_tokens" 120 "output_tokens" 30)))))
+             (items        (compaction-image-tests--items 100000))
+             (source       (conversation-compaction-summary-view conversation items))
+             (before       (mapcar #'json-encode items))
+             (state        (make-compaction-recovery))
+             (result       nil)
+             (candidate    nil)
+             (failure      nil))
+        (compaction-recovery-test-small-context
+         (lambda ()
+           (handler-case
+               (multiple-value-setq (result candidate)
+                 (compaction-recovery-call
+                  state provider source
+                  :dispatch  (lambda (view)
+                               (provider-stream-turn provider view :tool-namespaces #() :compaction-p t
+                                                     :event-callback (lambda (event) (declare (ignore event)))))
+                  :preflight (lambda (view)
+                               (provider-check-request-context
+                                provider (provider-request-object provider view #() :compaction-p t)))))
+             (provider-context-budget-error (condition) (setf failure condition)))))
+        (test-assert (null failure) "All protected images permit portable recovery through the actual admission boundary.")
+        (test-assert (= 1 (context-admission-test-provider-network-calls provider)) "Only the admitted summary reaches transport.")
+        (when result
+          (test-assert (= 120 (json-get (provider-result-usage result) "input_tokens")) "Positive paid input usage is preserved.")
+          (test-assert (= 30 (json-get (provider-result-usage result) "output_tokens")) "Positive paid output usage is preserved."))
+        (test-assert (equal before (mapcar #'json-encode items)) "Local refusals and successful recovery do not mutate canonical media.")
+        (test-assert (= 1 (count :plain-text (compaction-recovery-notes state)
+                               :key          (lambda (note) (getf note :tier)))) "Tier3 runs once across refused candidates.")
+        (when candidate
+          (let ((notes (copy-tree (compaction-recovery-notes state))))
+            (compaction-recovery-test-small-context
+             (lambda ()
+               (provider-check-request-context
+                provider (provider-request-object provider (compaction-recovery-view state candidate) #() :compaction-p t))))
+            (test-assert (equal notes (compaction-recovery-notes state)) "Readmission does not duplicate omission audit entries."))))))
+  nil)

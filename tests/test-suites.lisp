@@ -1844,6 +1844,10 @@
   test-job-completion-controller-unknown-usage-policy)
 
 (define-test-suite compaction-recovery
+  test-compaction-recovery-image-projection
+  test-compaction-recovery-recent-images
+  test-compaction-recovery-image-text-controls
+  test-compaction-recovery-image-summary-transport
   test-unsupported-native-permit-controls
   test-unsupported-native-mission-fallback
   test-unsupported-native-metadata-handoff

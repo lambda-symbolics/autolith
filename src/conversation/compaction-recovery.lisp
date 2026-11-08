@@ -182,12 +182,42 @@
     (conversation-compaction-summary-view
      view (substitute copy item (conversation-input-items view) :test #'eq))))
 
+(-> compaction-recovery-text-item (t) (values t (integer 0)))
+(defun compaction-recovery-text-item (value)
+  "Copy VALUE for a text-only transcript, replacing media nodes with bounded notices.
+
+Return the copy and omitted image count. Ordinary strings are never interpreted
+as media; image payloads, URLs and incidental metadata are not copied."
+  (let ((images 0))
+    (labels ((project (item)
+               "Copy JSON containers while omitting recognized image nodes."
+               (typecase item
+                 (hash-table
+                  (if (provider-context--image-p item)
+                      (progn
+                        (incf images)
+                        (json-object "type" "input_text" "text"
+                                     "[Emergency compaction: image omitted; visual content unavailable in this text transcript.]"))
+                      (let ((copy (make-hash-table :test (hash-table-test item))))
+                        (maphash (lambda (key child) (setf (gethash key copy) (project child))) item)
+                        copy)))
+                 (string
+                  (copy-seq item))
+                 (vector
+                  (map 'vector #'project item))
+                 (cons
+                  (mapcar #'project item))
+                 (t
+                  item))))
+      (values (project value) images))))
+
 (-> compaction-recovery-text-view (compaction-recovery conversation) conversation)
 (defun compaction-recovery-text-view (state view)
   "Render whole exchanges as plain text, without clipping the newest exchange."
   (let ((groups  nil)
         (current nil)
-        (anchors 0))
+        (anchors 0)
+        (images  0))
     (dolist (item (conversation-input-items view))
       (when (and current (json-string= (json-get item "role") "user"))
         (push (nreverse current) groups)
@@ -195,9 +225,12 @@
       (if (or (native-compaction-item-p item)
               (json-string= (json-get item "type") "reasoning"))
           (incf anchors)
-          (push item current)))
+          (multiple-value-bind (text-item omitted) (compaction-recovery-text-item item)
+            (incf images omitted)
+            (push text-item current))))
     (when current (push (nreverse current) groups))
     (compaction-recovery-note state :plain-text :opaque-items-removed anchors
+                              :images-omitted images :image-policy ':unavailable
                               :notice           "Native opaque anchors and reasoning are absent from the plain transcript.")
     (conversation-compaction-summary-view
      view (loop for group in (nreverse groups)
