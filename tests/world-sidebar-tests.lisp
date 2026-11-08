@@ -2,12 +2,15 @@
 
 ;;;; -- World Sidebar Tests --
 
+(defparameter *world-sidebar-tests-width* 28
+  "The sidebar width the row tests render at.")
+
 (-> world-sidebar-tests--text (list) list)
 (defun world-sidebar-tests--text (rows)
-  "Return ROWS of styled spans as plain text lines."
+  "Return ROWS of styled spans as plain text lines of the test width."
   (let ((terminal (make-instance 'recording-terminal :columns 80 :rows 24)))
     (loop for spans in rows
-          collect (terminal--render-spans terminal (terminal--pad-spans spans *world-sidebar-width*)))))
+          collect (terminal--render-spans terminal (terminal--pad-spans spans *world-sidebar-tests-width*)))))
 
 (-> test-world-sidebar-rows () null)
 (defun test-world-sidebar-rows ()
@@ -32,7 +35,7 @@
                        :unread 0 :mentions 0 :pending 1)))
          (lines (world-sidebar-tests--text (world-sidebar--rows entries 10))))
     (test-assert (and (= (length lines) 10)
-                      (every (lambda (line) (= (text-cell-width line) *world-sidebar-width*))
+                      (every (lambda (line) (= (text-cell-width line) *world-sidebar-tests-width*))
                              lines))
                  "the sidebar fills its height with rows of exactly its width")
     (test-assert (and (search "Channels" (first lines))
@@ -80,7 +83,7 @@
 
              (click (column row)
                "Render the sidebar, then click it at COLUMN and ROW."
-               (screen-panel-rows sidebar terminal 20)
+               (screen-panel-rows sidebar terminal :height 20 :width *world-sidebar-tests-width*)
                (screen-panel-click sidebar column row)))
         (setf (world-sidebar-current sidebar) "bkid1")
         (world-sidebar--take sidebar
@@ -131,6 +134,37 @@
         (test-assert (and (localgroup-screen-panel-visible-p second)
                           (localgroup-screen-panel-visible-p first))
                      "showing it again is shared by every screen of the panel"))))
+  nil)
+
+(-> test-world-sidebar-layout () null)
+(defun test-world-sidebar-layout ()
+  "Test the sidebar takes a share of a wide terminal and all of a narrow one, which a switch hands back."
+  (with-test-configuration (configuration)
+    (let ((sidebar (world-sidebar-create configuration)))
+      (loop for (columns width) in '((170 37) (100 24))
+            do (test-assert (= (screen-panel-width sidebar columns) width)
+                            (format nil "beside a channel on ~D columns the sidebar takes ~D" columns width)))
+      (let* ((terminal (make-instance 'recording-terminal :columns 80 :rows 20))
+             (screen   (localgroup-screen-create :terminal terminal :panel sidebar)))
+        (flet ((channel (identifier)
+                 "Return channel IDENTIFIER in one workspace."
+                 (make-instance 'channel :identifier identifier :owner "user" :workspace "/w/"
+                                         :created-at 1 :updated-at 1)))
+          (world-sidebar--take sidebar (list :channels (list (channel "bhere1") (channel "bthere1"))))
+          (setf (world-sidebar-current sidebar) "bhere1")
+          (test-assert (and (eq (localgroup-screen-layout screen) ':alone)
+                            (equal (multiple-value-list (localgroup-screen-pane-size screen)) '(20 80)))
+                       "a narrow terminal shows the sidebar alone, the channel keeping the whole width behind it")
+          (test-assert (eq (localgroup-screen-filter-event screen #\a) ':ignore)
+                       "keys do not reach the hidden channel")
+          (screen-panel-rows sidebar terminal :height 20 :width 80)
+          (test-assert (and (equal (localgroup-screen-filter-event screen '(:click 10 4))
+                                   '(:switch :session-id "bthere1"))
+                            (eq (localgroup-screen-layout screen) ':session))
+                       "a click on a channel switches to it and hides the sidebar to show it")
+          (localgroup-screen-toggle-panel screen)
+          (test-assert (eq (localgroup-screen-layout screen) ':alone)
+                       "the toggle key shows the whole-screen sidebar again")))))
   nil)
 
 (-> test-world-sidebar-unread () null)

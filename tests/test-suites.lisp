@@ -712,6 +712,7 @@
   test-world-sidebar-gathers-apart
   test-world-sidebar-rows
   test-world-sidebar-tree
+  test-world-sidebar-layout
   test-world-sidebar-finds-conversations-once
   test-world-sidebar-visibility
   test-world-sidebar-unread)

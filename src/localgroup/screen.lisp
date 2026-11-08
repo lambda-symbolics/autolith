@@ -17,17 +17,17 @@
 
 ;;;; -- Side Panels --
 
-(defgeneric screen-panel-width (panel)
-  (:documentation "Return the columns PANEL takes left of the session's rows."))
+(defgeneric screen-panel-width (panel columns)
+  (:documentation "Return the columns PANEL takes left of the session's rows on a terminal COLUMNS wide."))
 
 (defgeneric screen-panel-minimum-columns (panel)
-  (:documentation "Return the narrowest terminal that shows PANEL beside the session."))
+  (:documentation "Return the narrowest terminal that shows PANEL beside the session; a narrower one shows it alone."))
 
 (defgeneric screen-panel-refresh (panel)
   (:documentation "Gather PANEL's current content and return whether it changed since the last call."))
 
-(defgeneric screen-panel-rows (panel terminal height)
-  (:documentation "Return HEIGHT display rows of PANEL rendered for TERMINAL, each exactly its width."))
+(defgeneric screen-panel-rows (panel terminal &key height width)
+  (:documentation "Return HEIGHT display rows of PANEL rendered for TERMINAL, each exactly WIDTH cells."))
 
 (defgeneric screen-panel-click (panel column row)
   (:documentation "Act on a click at COLUMN and ROW of PANEL, both from 1.
@@ -129,26 +129,53 @@ switches. The default methods leave the choice local to each screen."))
         (localgroup-screen-own-panel-shown-p screen)
         (and kept t))))
 
+(-> localgroup-screen-layout (localgroup-screen) (member :session :beside :alone))
+(defun localgroup-screen-layout (screen)
+  "Return how SCREEN shares its terminal: the session alone, the side panel beside it, or the panel alone.
+
+The panel shows when the person wants it and the session's frame does not ask
+for the whole screen. A terminal narrower than the panel's minimum gives it
+the whole screen; the person hides it again to see the session."
+  (let ((panel (localgroup-screen-panel screen)))
+    (cond
+      ((or (null panel)
+           (localgroup-screen-whole-screen-p screen)
+           (not (localgroup-screen-panel-shown-p screen)))
+       ':session)
+      ((< (terminal-columns (localgroup-screen-terminal screen))
+          (screen-panel-minimum-columns panel))
+       ':alone)
+      (t
+       ':beside))))
+
 (-> localgroup-screen-panel-visible-p (localgroup-screen) boolean)
 (defun localgroup-screen-panel-visible-p (screen)
-  "Return true when SCREEN's side panel takes part of the terminal."
-  (let ((panel (localgroup-screen-panel screen)))
-    (and panel
-         (not (localgroup-screen-whole-screen-p screen))
-         (localgroup-screen-panel-shown-p screen)
-         (>= (terminal-columns (localgroup-screen-terminal screen))
-             (screen-panel-minimum-columns panel))
-         t)))
+  "Return true when SCREEN's side panel takes part or all of the terminal."
+  (not (eq (localgroup-screen-layout screen) ':session)))
+
+(-> localgroup-screen--panel-width (localgroup-screen) (integer 0))
+(defun localgroup-screen--panel-width (screen)
+  "Return the columns SCREEN's side panel takes: none, its share beside the session, or all."
+  (let ((columns (terminal-columns (localgroup-screen-terminal screen))))
+    (ecase (localgroup-screen-layout screen)
+      (:session
+       0)
+      (:beside
+       (screen-panel-width (localgroup-screen-panel screen) columns))
+      (:alone
+       columns))))
 
 (-> localgroup-screen-pane-size (localgroup-screen) (values integer integer))
 (defun localgroup-screen-pane-size (screen)
-  "Return the rows and columns the session's pane gets of SCREEN's terminal."
+  "Return the rows and columns the session's pane gets of SCREEN's terminal.
+
+Beside the panel it gets the columns the panel and its rule leave. Behind a
+panel that takes the whole screen it keeps the whole width, so hiding the
+panel shows it without a resize."
   (let ((terminal (localgroup-screen-terminal screen)))
     (values (terminal-rows terminal)
-            (if (localgroup-screen-panel-visible-p screen)
-                (max 1 (- (terminal-columns terminal)
-                          (screen-panel-width (localgroup-screen-panel screen))
-                          1))
+            (if (eq (localgroup-screen-layout screen) ':beside)
+                (max 1 (- (terminal-columns terminal) (localgroup-screen--panel-width screen) 1))
                 (terminal-columns terminal)))))
 
 (-> localgroup-screen-take-resize (localgroup-screen) boolean)
@@ -164,29 +191,46 @@ switches. The default methods leave the choice local to each screen."))
 The toggle key shows or hides the side panel. A click lands in the panel,
 which acts on it and may ask to move the terminal to another channel with a
 (:SWITCH :SESSION-ID ID) request, or in the session's pane, whose columns
-start after the panel."
-  (cond
-    ((equal event *localgroup-screen-toggle-event*)
-     (localgroup-screen-toggle-panel screen)
-     ':ignore)
-    ((and (typep event '(cons (eql :click) (cons integer (cons integer null))))
-          (localgroup-screen-panel-visible-p screen))
-     (let* ((panel  (localgroup-screen-panel screen))
-            (offset (1+ (screen-panel-width panel))))
-       (if (<= (second event) offset)
-           (let ((result (screen-panel-click panel (second event) (third event))))
-             (cond
-               ((eq result ':redraw)
-                (with-lock-held ((localgroup-screen-lock screen))
-                  (localgroup-screen--paint screen))
-                ':ignore)
-               ((consp result)
-                result)
-               (t
-                ':ignore)))
-           (list ':click (- (second event) offset) (third event)))))
-    (t
-     event)))
+start after the panel. While the panel takes the whole screen, the hidden
+session gets no keys, and a switch hides the panel to show the channel
+switched to."
+  (let ((click-p (typep event '(cons (eql :click) (cons integer (cons integer null))))))
+    (cond
+      ((equal event *localgroup-screen-toggle-event*)
+       (localgroup-screen-toggle-panel screen)
+       ':ignore)
+      ((eq (localgroup-screen-layout screen) ':alone)
+       (cond
+         ((member event '(:interrupt :end-of-input :stream-end))
+          event)
+         (click-p
+          (let ((result (localgroup-screen--panel-click screen (second event) (third event))))
+            (when (consp result)
+              (localgroup-screen-toggle-panel screen))
+            result))
+         (t
+          ':ignore)))
+      ((and click-p (eq (localgroup-screen-layout screen) ':beside))
+       (let ((offset (1+ (localgroup-screen--panel-width screen))))
+         (if (<= (second event) offset)
+             (localgroup-screen--panel-click screen (second event) (third event))
+             (list ':click (- (second event) offset) (third event)))))
+      (t
+       event))))
+
+(-> localgroup-screen--panel-click (localgroup-screen integer integer) t)
+(defun localgroup-screen--panel-click (screen column row)
+  "Let SCREEN's panel act on a click at COLUMN and ROW; return its switch request or :IGNORE."
+  (let ((result (screen-panel-click (localgroup-screen-panel screen) column row)))
+    (cond
+      ((eq result ':redraw)
+       (with-lock-held ((localgroup-screen-lock screen))
+         (localgroup-screen--paint screen))
+       ':ignore)
+      ((consp result)
+       result)
+      (t
+       ':ignore))))
 
 (-> localgroup-screen-toggle-panel (localgroup-screen) null)
 (defun localgroup-screen-toggle-panel (screen)
@@ -197,12 +241,14 @@ across attachments."
   (let ((panel (localgroup-screen-panel screen)))
     (when panel
       (with-lock-held ((localgroup-screen-lock screen))
-        (let ((visible-p (localgroup-screen-panel-visible-p screen))
-              (wanted-p  (not (localgroup-screen-panel-shown-p screen))))
+        (let ((layout   (localgroup-screen-layout screen))
+              (columns  (nth-value 1 (localgroup-screen-pane-size screen)))
+              (wanted-p (not (localgroup-screen-panel-shown-p screen))))
           (setf (screen-panel-shown-p panel) wanted-p
                 (localgroup-screen-own-panel-shown-p screen) wanted-p)
-          (unless (eq visible-p (localgroup-screen-panel-visible-p screen))
-            (setf (localgroup-screen-resize-pending-p screen) t)
+          (unless (eq layout (localgroup-screen-layout screen))
+            (unless (= columns (nth-value 1 (localgroup-screen-pane-size screen)))
+              (setf (localgroup-screen-resize-pending-p screen) t))
             (terminal-screen-invalidate (localgroup-screen-terminal screen)
                                         (localgroup-screen-painter screen))
             (localgroup-screen--paint screen))))))
@@ -358,18 +404,27 @@ client tells the session, and the next paint rewrites the whole screen."
     (when (and frame (localgroup-screen-active-p screen))
       (destructuring-bind (cursor-row cursor-column cursor-visible-p)
           (localgroup-screen-cursor screen)
-        (let* ((panel-p (localgroup-screen-panel-visible-p screen))
-               (offset  (if panel-p
-                            (1+ (screen-panel-width (localgroup-screen-panel screen)))
-                            0)))
-          (terminal-screen-paint (localgroup-screen-terminal screen)
-                                 (localgroup-screen-painter screen)
-                                 (if panel-p
-                                     (localgroup-screen--composed-rows screen frame)
-                                     (coerce frame 'list))
-                                 :cursor-row       cursor-row
-                                 :cursor-column    (+ cursor-column offset)
-                                 :cursor-visible-p cursor-visible-p)))))
+        (let ((terminal (localgroup-screen-terminal screen))
+              (painter  (localgroup-screen-painter screen)))
+          (ecase (localgroup-screen-layout screen)
+            (:session
+             (terminal-screen-paint terminal painter (coerce frame 'list)
+                                    :cursor-row       cursor-row
+                                    :cursor-column    cursor-column
+                                    :cursor-visible-p cursor-visible-p))
+            (:beside
+             (terminal-screen-paint terminal painter (localgroup-screen--composed-rows screen frame)
+                                    :cursor-row       cursor-row
+                                    :cursor-column    (+ cursor-column 1 (localgroup-screen--panel-width screen))
+                                    :cursor-visible-p cursor-visible-p))
+            (:alone
+             (terminal-screen-paint terminal painter
+                                    (screen-panel-rows (localgroup-screen-panel screen) terminal
+                                                       :height (max 1 (terminal-rows terminal))
+                                                       :width  (terminal-columns terminal))
+                                    :cursor-row       0
+                                    :cursor-column    0
+                                    :cursor-visible-p nil)))))))
   nil)
 
 (-> localgroup-screen--composed-rows (localgroup-screen vector) list)
@@ -377,7 +432,9 @@ client tells the session, and the next paint rewrites the whole screen."
   "Return FRAME's rows with the side panel's rows before them, separated by a rule."
   (let* ((terminal   (localgroup-screen-terminal screen))
          (height     (max 1 (terminal-rows terminal)))
-         (panel-rows (screen-panel-rows (localgroup-screen-panel screen) terminal height))
+         (panel-rows (screen-panel-rows (localgroup-screen-panel screen) terminal
+                                        :height height
+                                        :width  (localgroup-screen--panel-width screen)))
          (rule       (terminal--render-spans terminal (list (terminal-span ':dim "│")))))
     (loop for index below height
           collect (concatenate 'string
