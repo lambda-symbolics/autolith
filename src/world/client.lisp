@@ -23,17 +23,16 @@ Records of dead processes are removed on the way."
 
 (-> world-client-start-server
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
-                        (:pristine-p boolean) (:attach-expected-p boolean))
+                        (:attach-expected-p boolean))
     cons)
 (defun world-client-start-server
-    (configuration &key (permission-mode ':ask) immutable-p pristine-p (attach-expected-p t))
+    (configuration &key (permission-mode ':ask) immutable-p (attach-expected-p t))
   "Start CONFIGURATION's world server and return its endpoint entry.
 
 Without ATTACH-EXPECTED-P no terminal is about to attach, as for lg start."
   (localgroup-handoff-spawn-fresh configuration
                                   :permission-mode   permission-mode
                                   :immutable-p       immutable-p
-                                  :pristine-p        pristine-p
                                   :attach-expected-p attach-expected-p
                                   :world-p           t)
   (or (world-client-entry configuration)
@@ -48,11 +47,9 @@ A server publishes its endpoint again after a checkpoint, and a channel
 opens once the checkpoint is over.")
 
 (-> world-client--entry
-    (configuration &key (:permission-mode keyword) (:immutable-p boolean) (:pristine-p boolean)
-                        (:deadline real))
+    (configuration &key (:permission-mode keyword) (:immutable-p boolean) (:deadline real))
     cons)
-(defun world-client--entry (configuration &key (permission-mode ':ask) immutable-p pristine-p
-                                               deadline)
+(defun world-client--entry (configuration &key (permission-mode ':ask) immutable-p deadline)
   "Return the world server's endpoint entry: the one answering, or a new server's.
 
 A server that holds the world without answering, as during a checkpoint, is
@@ -69,8 +66,7 @@ other."
          (handler-case
              (return (world-client-start-server configuration
                                                 :permission-mode permission-mode
-                                                :immutable-p     immutable-p
-                                                :pristine-p      pristine-p))
+                                                :immutable-p     immutable-p))
            (localgroup-error (condition)
              ;; Another client's server took the lease meanwhile: join it.
              (unless (world-server-running-p configuration)
@@ -85,12 +81,12 @@ other."
 (-> world-client-open
     (configuration &key (:directory (or null string pathname)) (:channel (option string))
                         (:permission-mode keyword) (:immutable-p boolean)
-                        (:pristine-p boolean) (:resume-command-p boolean)
+                        (:resume-command-p boolean)
                         (:recovery-diagnosis (option string)) (:launch list) (:new-p boolean)
                         (:images list) (:mcp-servers list) (:switch-p boolean))
     (values string boolean))
 (defun world-client-open
-    (configuration &key directory channel (permission-mode ':ask) immutable-p pristine-p
+    (configuration &key directory channel (permission-mode ':ask) immutable-p
                         resume-command-p recovery-diagnosis launch new-p images mcp-servers
                         switch-p)
   "Open CHANNEL, or a channel for DIRECTORY, in CONFIGURATION's world server.
@@ -115,7 +111,6 @@ sharing one it already served."
         (let* ((entry    (world-client--entry configuration
                                               :permission-mode permission-mode
                                               :immutable-p     immutable-p
-                                              :pristine-p      pristine-p
                                               :deadline        deadline))
                (response
                  (handler-case

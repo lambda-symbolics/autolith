@@ -22,12 +22,6 @@
     :reader        acp-service-permission-mode
     :type          (member :ask :auto :sandboxed :full-access)
     :documentation "The permission mode a session asks for when it opens its channel.")
-   (pristine-p
-    :initarg       :pristine-p
-    :initform      nil
-    :reader        acp-service-pristine-p
-    :type          boolean
-    :documentation "Whether a world server this process starts runs pristine.")
    (sessions
     :initform      (make-hash-table :test #'equal)
     :reader        acp-service-sessions

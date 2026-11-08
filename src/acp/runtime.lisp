@@ -50,7 +50,6 @@ subsequent events after its bounded history snapshot."
                                :channel         identifier
                                :new-p           (null identifier)
                                :permission-mode (acp-service-permission-mode service)
-                               :pristine-p      (acp-service-pristine-p service)
                                :mcp-servers     (and servers (client-portable servers)))
           (localgroup-error (condition)
             (error 'agentcomms:acp-state-error :message (autolith-error-message condition))))
@@ -393,16 +392,15 @@ its way, answers with a typed :CONDITION outcome; a closed service refuses."
       (agentcomms:channel-close channel)))
   nil)
 
-(-> acp-run (configuration &key (:permission-mode keyword) (:pristine-p boolean)
-                                (:endpoint (or null acp-endpoint)))
+(-> acp-run (configuration &key (:permission-mode keyword) (:endpoint (or null acp-endpoint)))
     null)
-(defun acp-run (configuration &key (permission-mode ':ask) pristine-p endpoint)
+(defun acp-run (configuration &key (permission-mode ':ask) endpoint)
   "Serve editors as clients of the world server until they leave or Ctrl-C.
 
 Without ENDPOINT, the one editor speaks on UTF-8 standard I/O. With ENDPOINT,
 remote editors connect over the network. Every editor gets its own service,
 and every session is a channel of the world server, which this process
-starts when none runs; PRISTINE-P starts it pristine."
+starts when none runs."
   (let* ((channel           (and (null endpoint) (agentcomms:acp-standard-io-channel)))
          (*standard-output* *error-output*)
          (*trace-output*    *error-output*)
@@ -418,8 +416,7 @@ starts when none runs; PRISTINE-P starts it pristine."
                     (call-with-secret-use
                      (lambda ()
                        (acp-service-serve (make-instance 'acp-service :configuration   configuration
-                                                                      :permission-mode permission-mode
-                                                                      :pristine-p      pristine-p)
+                                                                      :permission-mode permission-mode)
                                           client-channel)))))
              (if endpoint
                  (acp-serve-remote endpoint #'serve)

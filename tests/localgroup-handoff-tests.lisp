@@ -491,46 +491,18 @@
 
 (-> test-localgroup-client-first-resume () null)
 (defun test-localgroup-client-first-resume ()
-  "Test every resume keeping the client path whose detach is instant."
-  (flet ((client-p (&rest arguments)
-           (apply #'main--client-session-p
-                  :handoff-record           nil
-                  :recovery-conversation-id nil
-                  :recovery-diagnosis       nil
-                  :simulate-crash-p         nil
-                  arguments)))
-    (let ((ordinary (client-p :resume-requested-p nil :resume-id nil)))
-      (test-assert
-       (eq (client-p :resume-requested-p t :resume-id "K-8vQ2mp") ordinary)
-       "resuming an exact conversation is not a special case")
-      (test-assert
-       (eq (client-p :resume-requested-p t :resume-id nil) ordinary)
-       "resuming through the picker is not a special case either")))
-  (test-assert
-   (eq (main--client-session-p
-        :handoff-record           nil
-        :resume-requested-p       nil
-        :resume-id                nil
-        :recovery-conversation-id "K-8vQ2mp"
-        :recovery-diagnosis       "diagnose the crash"
-        :simulate-crash-p         nil)
-       (main--client-session-p
-        :handoff-record           nil
-        :resume-requested-p       nil
-        :resume-id                nil
-        :recovery-conversation-id nil
-        :recovery-diagnosis       nil
-        :simulate-crash-p         nil))
-   "crash recovery keeps the same client-first path as an ordinary start")
-  (test-assert
-   (not (main--client-session-p
-         :handoff-record           (list :localgroup-handoff :version 1)
-         :resume-requested-p       nil
-         :resume-id                nil
-         :recovery-conversation-id nil
-         :recovery-diagnosis       nil
-         :simulate-crash-p         nil))
-   "the spawned session itself runs direct")
+  "Test which starts open a channel in the world server and which run their session directly."
+  (with-platform-capability (':detached-sessions "client-first starts")
+    (dolist (case '((()                                                   t
+                     "an ordinary start, a resume or crash recovery is a client of the world server")
+                    ((:handoff-record (:localgroup-handoff :version 1)) nil
+                     "the spawned session itself runs direct")
+                    ((:pristine-p t)                                       nil
+                     "a pristine rescue session runs apart from the world server")
+                    ((:simulate-crash-p t)                                 nil
+                     "a simulated crash runs direct")))
+      (destructuring-bind (arguments expected label) case
+        (test-assert (eq (apply #'main--client-session-p arguments) expected) label))))
   nil)
 
 (-> test-localgroup-fresh-session-spawn () null)
