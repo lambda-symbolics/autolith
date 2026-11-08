@@ -49,8 +49,12 @@
 
 (-> task--role-tool-p (task-agent-definition tool &key (:spawn-p boolean)) boolean)
 (defun task--role-tool-p (definition tool &key spawn-p)
-  "Return true when a child in DEFINITION's role may use TOOL; SPAWN-P lets it spawn and list roles itself."
+  "Return true when a child in DEFINITION's role may use TOOL; SPAWN-P lets it spawn and list roles itself.
+
+Every role talks through channels, so any child can answer its parent."
   (or (task--definition-allows-tool-p definition tool)
+      (and (string= (tool-namespace tool) "channel")
+           (tool-child-safe-p tool))
       (and spawn-p
            (string= (tool-namespace tool) "child")
            (member (tool-name tool) '("spawn" "roles") :test #'string=)

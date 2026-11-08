@@ -1516,6 +1516,8 @@
              (test-assert (and (tool-registry-find registry "resource" "read")
                                (tool-registry-find registry "search" "content"))
                           "the channel keeps the tools the role grants")
+             (test-assert (tool-registry-find registry "channel" "send")
+                          "a role that grants no channel tools still talks through channels")
              (test-assert (notany (lambda (name)
                                     (tool-registry-find registry (first name) (second name)))
                                   '(("resource" "edit") ("shell" "run") ("self" "status") ("child" "spawn")))
