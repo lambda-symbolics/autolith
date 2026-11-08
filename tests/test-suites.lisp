@@ -663,6 +663,7 @@
   test-world-message-presentation
   test-world-child-participants
   test-world-child-sync
+  test-world-child-loadable
   test-world-placing-needs-server
   test-world-agent-hierarchy
   test-world-parent-mention
