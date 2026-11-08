@@ -2508,6 +2508,8 @@ may execute immediately; other Lisp waits for the idle boundary."
                  (application-input-controller--active-turn-interrupt-action
                   controller))))
       (cond
+        ((eq event ':channel-picker)
+         (application-input-controller--handle-submission controller "(switch)" :steer-p nil))
         ((eq event ':stream-end)
          (application-input-controller--request-exit
           controller ':end-of-input))

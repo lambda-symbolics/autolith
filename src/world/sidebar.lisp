@@ -18,7 +18,7 @@
   "The fewest columns the sidebar takes beside the channel.")
 
 (defparameter *world-sidebar-minimum-columns* 90
-  "The narrowest terminal that shows the sidebar beside the channel; a narrower one shows it alone.")
+  "The minimum transcript width beside the sidebar; below it Ctrl-T opens a fullscreen drawer.")
 
 (defparameter *world-sidebar-marker-columns* 3
   "The columns at the start of a sidebar row where a click opens or closes the row's tree node.")
@@ -67,6 +67,11 @@
     :accessor      world-sidebar-actions
     :type          vector
     :documentation "What a click on each row of the last rendering does, as plists of :OPEN and :TOGGLE, or NIL.")
+   (selected-row
+    :initform      0
+    :accessor      world-sidebar-selected-row
+    :type          (integer 0)
+    :documentation "The zero-based selected action row for keyboard navigation in the drawer.")
    (seen
     :initform      (make-hash-table :test #'equal)
     :reader        world-sidebar-seen
@@ -141,7 +146,7 @@
   (max *world-sidebar-minimum-width* (round (* columns *world-sidebar-share*))))
 
 (defmethod screen-panel-minimum-columns ((panel world-sidebar))
-  "The narrowest terminal that keeps a readable channel beside the sidebar; a narrower one shows the sidebar alone."
+  "The narrowest terminal with room for both channel and sidebar; below it the drawer is explicit."
   *world-sidebar-minimum-columns*)
 
 (defmethod screen-panel-refresh ((panel world-sidebar))
@@ -165,11 +170,21 @@ a refresh is due."
 
 (defmethod screen-panel-rows ((panel world-sidebar) terminal &key height width)
   "Render the sidebar's entries as HEIGHT rows WIDTH cells wide for TERMINAL, remembering what a click on each does."
-  (multiple-value-bind (rows actions) (world-sidebar--rows (world-sidebar-entries panel) height)
+  (multiple-value-bind (rows actions)
+      (world-sidebar--rows (world-sidebar-entries panel) height
+                           :drawer-p (= width (terminal-columns terminal)))
     (setf (world-sidebar-actions panel) (coerce actions 'vector))
+    (unless (nth (world-sidebar-selected-row panel) actions)
+      (setf (world-sidebar-selected-row panel) (or (position-if #'identity actions) 0)))
     (loop for spans in rows
-          collect (terminal--render-spans
-                   terminal (terminal--pad-spans spans width)))))
+          for index from 0
+          collect (let ((padded (terminal--pad-spans spans width)))
+                    (terminal--render-spans
+                     terminal
+                     (if (and (= width (terminal-columns terminal))
+                              (= index (world-sidebar-selected-row panel)))
+                         (list (terminal-span ':selected (terminal-ui--raw-spans-text padded)))
+                         padded))))))
 
 (defmethod screen-panel-click ((panel world-sidebar) column row)
   "Open or close the tree node at ROW, or ask to switch to its channel.
@@ -182,12 +197,44 @@ the channel, unless the terminal shows it already."
          (open    (getf action :open))
          (toggle  (getf action :toggle)))
     (cond
+      ((getf action :picker-p)
+       ':channel-picker)
       ((and toggle (or (null open) (<= column *world-sidebar-marker-columns*)))
        (world-sidebar--toggle panel toggle)
        ':redraw)
-      ((and open (not (equal open (world-sidebar-current panel))))
-       (list ':switch :session-id open))
+      (open
+       (if (equal open (world-sidebar-current panel))
+           ':dismiss
+           (list ':switch :session-id open)))
       (t
+       nil))))
+
+(defmethod screen-panel-event ((panel world-sidebar) event)
+  "Navigate the drawer's actionable rows; Enter opens and arrows expand trees."
+  (let* ((actions (world-sidebar-actions panel))
+         (rows    (loop for action across actions
+                        for index from 0 when action collect index))
+         (current (world-sidebar-selected-row panel)))
+    (case event
+      ((:up :down)
+       (when rows
+         (setf (world-sidebar-selected-row panel)
+               (nth (mod (+ (or (position current rows) 0) (if (eq event ':up) -1 1))
+                         (length rows))
+                    rows)))
+       ':redraw)
+      (:submit
+       (screen-panel-click panel (1+ *world-sidebar-marker-columns*) (1+ current)))
+      ((:left :right)
+       (let* ((action (and (< current (length actions)) (aref actions current)))
+              (key    (getf action :toggle))
+              (entry  (and key (find key (world-sidebar-entries panel)
+                                      :key  (lambda (entry) (or (getf entry :key) (getf entry :id)))
+                                      :test #'equal))))
+         (when (and entry (not (eq (not (null (getf entry :open-p))) (eq event ':right))))
+           (world-sidebar--toggle panel key))
+         ':redraw))
+      (otherwise
        nil))))
 
 
@@ -497,8 +544,8 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
 
 ;;;; -- Rows --
 
-(-> world-sidebar--rows (list (integer 0)) (values list list))
-(defun world-sidebar--rows (entries height)
+(-> world-sidebar--rows (list (integer 0) &key (:drawer-p boolean)) (values list list))
+(defun world-sidebar--rows (entries height &key drawer-p)
   "Return HEIGHT rows of styled spans showing ENTRIES under a heading, with the legend last, and what a click on each row does.
 
 Entries past the rows available are counted on the last row they would take.
@@ -511,16 +558,16 @@ Each action is NIL or a plist of :OPEN, the channel a click switches to, and
          (rows       (append (list (list (terminal-span ':brand " Channels")))
                              (mapcar #'world-sidebar--entry-spans shown)
                              (when overflow-p
-                               (list (list (terminal-span ':dim (format nil " … ~D more" (- (length entries) kept))))))))
+                              (list (list (terminal-span ':notice (format nil " … ~D more · open picker" (- (length entries) kept))))))))
          (actions    (append (list nil)
                              (mapcar #'world-sidebar--entry-action shown)
                              (when overflow-p
-                               (list nil))))
+                              (list (list :picker-p t)))))
          (filler     (max 0 (- height 1 (length rows))))
-         (legend     (list (terminal-span ':legend-dim " click ")
-                           (terminal-span ':legend-plain "opens")
-                           (terminal-span ':legend-dim " · Ctrl-T ")
-                           (terminal-span ':legend-plain "hides"))))
+         (legend     (list (terminal-span ':legend-dim
+                                          (if drawer-p
+                                              " ↑↓ select · Enter opens · ←→ tree · Esc closes"
+                                              " click opens · Ctrl-T hides")))))
     (values (subseq (append rows (make-list filler :initial-element nil) (list legend)) 0 height)
             (subseq (append actions (make-list filler :initial-element nil) (list nil)) 0 height))))
 

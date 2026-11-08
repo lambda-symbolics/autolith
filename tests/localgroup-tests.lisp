@@ -347,8 +347,8 @@
                    "the next ordinary frame brings the panel back")
       (terminal-set-dimensions terminal 50 :rows 6)
       (test-assert (and (equal (pane) '(6 50))
-                        (eq (localgroup-screen-layout screen) ':alone))
-                   "a narrow terminal shows the wanted panel alone, the session keeping the whole width")
+                        (eq (localgroup-screen-layout screen) ':session))
+                   "a narrow terminal keeps the channel visible until the drawer is explicitly opened")
       (localgroup-screen-close screen)))
   nil)
 

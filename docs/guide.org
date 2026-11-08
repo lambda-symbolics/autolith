@@ -1601,10 +1601,16 @@ mentions of you. Each terminal tracks its own unread counts. A channel first
 seen by that terminal starts at zero. The =✉= count shows deliveries waiting
 for a channel that no process serves.
 
-The sidebar takes about a fifth of the terminal's width. Below 90 columns it
-takes the whole screen; a click on a channel switches to it and hides the
-sidebar. Press =Ctrl-T= to hide or show the sidebar. That preference is kept
-when the same terminal switches channels or reconnects.
+The sidebar takes about a fifth of a wide terminal's width. Press =Ctrl-T=
+to hide or show it; that preference is kept across channel switches and
+reconnects. When docking the sidebar would leave fewer than 90 transcript
+columns after subtracting the sidebar and its divider, the channel is visible
+by default. Press =Ctrl-T= to open a full-screen channel drawer. Use =↑= and
+=↓= to select, =Enter= to open a channel, and =←= or =→= to close or open a
+tree node.
+Press =Esc= or =Ctrl-T=, or select the current channel, to return to the
+composer. Opening another channel closes the drawer. Select the overflow
+row with the mouse or keyboard to open the =(switch)= picker.
 
 *** Session endpoints
 
