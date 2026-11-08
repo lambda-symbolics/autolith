@@ -28,6 +28,25 @@
                        description)))))
   nil)
 
+(-> test-system-prompt-child-role () null)
+(defun test-system-prompt-child-role ()
+  "Test a child's role and its instructions reach the stable prompt, and an agent nobody spawned has no role section."
+  (with-test-configuration (configuration)
+    (let* ((definition (make-instance 'task-agent-definition
+                                      :name         "reviewer"
+                                      :description  "Review changes."
+                                      :instructions "Review the change for correctness first."
+                                      :source       ':test))
+           (child      (system-prompt (task-configuration-for-definition configuration definition)))
+           (primary    (system-prompt configuration)))
+      (prompt-tests--contains child "role reviewer."
+                              "a child's prompt names its role")
+      (prompt-tests--contains child "Review the change for correctness first."
+                              "a child's prompt carries its role's instructions")
+      (prompt-tests--absent primary "spawned you with"
+                            "an agent nobody spawned has no role section")))
+  nil)
+
 (-> test-system-prompt () null)
 (defun test-system-prompt ()
   "Test stable system-prompt and mutable request-context rendering."

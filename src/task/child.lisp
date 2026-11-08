@@ -189,7 +189,7 @@ child it spawns.")
 
 (-> task-configuration-for-definition (configuration task-agent-definition) configuration)
 (defun task-configuration-for-definition (parent-configuration definition)
-  "Copy PARENT-CONFIGURATION with DEFINITION's model, effort, and web policy.
+  "Copy PARENT-CONFIGURATION with DEFINITION's model, effort, web policy, and role.
 
 Children never inherit Codex Fast mode: the premium tier stays an explicit
 choice for the primary agent rather than a silent property of every task."
@@ -209,9 +209,11 @@ choice for the primary agent rather than a silent property of every task."
                       :test #'string-equal))))
     (configuration-copy
      parent-configuration
-     :model             model
-     :reasoning-effort  effort
-     :codex-fast-mode-p nil
+     :model                   model
+     :reasoning-effort        effort
+     :codex-fast-mode-p       nil
+     :child-role              (task-agent-definition-name definition)
+     :child-role-instructions (task-agent-definition-instructions definition)
      :web-search-mode
      (if web-enabled-p
          (config :web-search-mode parent-configuration)
@@ -267,10 +269,10 @@ boundary cannot fit within that budget."
               (getf item :context)))
          (output     (task-output-definition-text definition)))
     (format nil
-            "You are child agent ~A of type ~A, depth ~D. Your specialized role follows.~2%~A~@[~2%Shared parent context:~%~A~]~@[~2%Your yield data must satisfy this native output contract:~%~A~]~2%You are not the primary Autolith session. self.* tools are deliberately unavailable. Your initial workspace is ~A. Work within the assignment's scope. Paths outside the workspace use the ordinary tool path authorization; this initial directory is not an additional confinement policy. Complete the assignment in the user message. You MUST end by calling yield.submit exactly once. A normal assistant stop without yield is a failed child run. Put the useful parent-facing answer in yield.text and structured data in yield.data when requested."
-            (getf identity :id) (task-agent-definition-name definition)
+            "You are child agent ~A, depth ~D; the system prompt carries your role.~@[~2%Shared parent context:~%~A~]~@[~2%Your yield data must satisfy this native output contract:~%~A~]~2%Your initial workspace is ~A. Work within the assignment's scope. Paths outside the workspace use the ordinary tool path authorization; this initial directory is not an additional confinement policy. Complete the assignment in the user message. You MUST end by calling yield.submit exactly once. A normal assistant stop without yield is a failed child run. Put the useful parent-facing answer in yield.text and structured data in yield.data when requested."
+            (getf identity :id)
             (1+ (task-parent-depth (task-job-parent-agent job)))
-            (task-agent-definition-instructions definition) context output
+            context output
             (namestring
              (config :working-directory child-configuration)))))
 
