@@ -3099,6 +3099,18 @@ last started is not in its world either, so the saved conversations come last."
                        (application-channels-entry application))
   ':continue)
 
+(-> application--placing-server (application keyword) world-server)
+(defun application--placing-server (application operation)
+  "Return the world server that places APPLICATION's agents, or refuse OPERATION in a session of its own.
+
+Agents move between channels of one world, which only its server holds; a
+pristine or recovery session runs apart from it."
+  (or (application-world-server application)
+      (error 'world-error
+             :message   "Agents move only between the world server's channels; this session runs apart from it."
+             :pathname  nil
+             :operation operation)))
+
 (define-application-command application--builtin-move-command
     (:name              "/move"
      :argument          "AGENT [CHANNEL]"
@@ -3109,52 +3121,26 @@ last started is not in its world either, so the saved conversations come last."
      :callable          t)
     (application agent &optional channel)
   (let* ((configuration (application-configuration application))
-         (here          (application-world--served-channel application))
+         (server        (application--placing-server application ':move))
          (target        (if channel
                             (princ-to-string channel)
-                            (or here
+                            (or (application-world--served-channel application)
                                 (error 'world-error
                                        :message   "This conversation is not a channel yet; name the channel to move the agent into."
                                        :pathname  nil
                                        :operation ':move))))
-         (server        (application-world-server application)))
-    (if server
-        (let ((answer (rest (world-server-move server (princ-to-string agent) target))))
-          (application-present
-           application
-           (format nil "Agent ~A moved ~:[out of parking~;from channel ~:*~A~] to ~A~@[; ~D queued message~:P dropped~]."
-                   (participant-name (world-participant-find (world-load configuration)
-                                                             (getf answer :participant)))
-                   (let ((source (getf answer :source)))
-                     (and source (conversation-identifier-display source)))
-                   (conversation-identifier-display (getf answer :channel))
-                   (let ((dropped (getf answer :dropped)))
-                     (and (plusp dropped) dropped)))))
-        (let* ((world       (world-load configuration))
-               (participant (or (world-participant-designated world (princ-to-string agent))
-                                (error 'world-error
-                                       :message    (format nil "No participant is named ~A." agent)
-                                       :pathname   nil
-                                       :operation  ':move
-                                       :identifier (princ-to-string agent))))
-               (destination (channel-identifier (world-channel-designated world configuration target)))
-               (source-p    (and here (equal here (participant-residence participant))))
-               (result      (world-move-agent
-                             configuration participant destination
-                             :source-application      (and source-p application)
-                             :destination-application (and here (string= here destination) application)
-                             :interrupt-task          (lambda (candidate)
-                                                        (application-world-interrupt-task
-                                                         application candidate)))))
-          (application-present
-           application
-           (format nil "Agent ~A moved ~:[out of parking~;from channel ~:*~A~] to ~A~@[; ~D queued message~:P dropped~]."
-                   (participant-name participant)
-                   (let ((source (getf result :source)))
-                     (and source (conversation-identifier-display source)))
-                   (conversation-identifier-display destination)
-                   (let ((dropped (getf result :dropped)))
-                     (and (plusp dropped) dropped)))))))
+         (answer        (rest (world-server-move server (princ-to-string agent) target))))
+    (application-present
+     application
+     (application-notice-line
+      (format nil "agent ~A moved ~:[out of parking~;from ~:*~A~] to ~A~@[; ~D queued message~:P dropped~]"
+              (participant-name (world-participant-find (world-load configuration)
+                                                        (getf answer :participant)))
+              (let ((source (getf answer :source)))
+                (and source (conversation-identifier-display source)))
+              (conversation-identifier-display (getf answer :channel))
+              (let ((dropped (getf answer :dropped)))
+                (and (plusp dropped) dropped))))))
   ':continue)
 
 (define-application-command application--builtin-domestic-command
@@ -3178,38 +3164,18 @@ last started is not in its world either, so the saved conversations come last."
      :terminal-behavior :shared
      :callable          t)
     (application agent)
-  (let* ((configuration (application-configuration application))
-         (server        (application-world-server application))
-         (answer        (if server
-                            (rest (world-server-dismiss server (princ-to-string agent)))
-                            (let* ((world       (world-load configuration))
-                                   (participant (or (world-participant-designated
-                                                     world (princ-to-string agent))
-                                                    (error 'world-error
-                                                           :message    (format nil "No participant is named ~A."
-                                                                               agent)
-                                                           :pathname   nil
-                                                           :operation  ':park
-                                                           :identifier (princ-to-string agent))))
-                                   (here        (application-world--served-channel application)))
-                              (list* :name (participant-name participant)
-                                     (world-park-agent
-                                      configuration participant
-                                      :application    (and here
-                                                           (equal here (participant-residence participant))
-                                                           application)
-                                      :interrupt-task (lambda (candidate)
-                                                        (application-world-interrupt-task
-                                                         application candidate))))))))
+  (let ((answer (rest (world-server-dismiss (application--placing-server application ':park)
+                                            (princ-to-string agent)))))
     (application-present
      application
-     (format nil "Agent ~A parked~:[, already out of every channel~; from channel ~:*~A~]~@[; ~D queued message~:P dropped~]. (move \"~A\") brings it into a channel."
-             (getf answer :name)
-             (let ((channel (getf answer :channel)))
-               (and channel (conversation-identifier-display channel)))
-             (let ((dropped (getf answer :dropped)))
-               (and (plusp dropped) dropped))
-             (getf answer :name))))
+     (application-notice-line
+      (format nil "agent ~A parked~:[, already out of every channel~; from ~:*~A~]~@[; ~D queued message~:P dropped~]; (move ~S) brings it back"
+              (getf answer :name)
+              (let ((channel (getf answer :channel)))
+                (and channel (conversation-identifier-display channel)))
+              (let ((dropped (getf answer :dropped)))
+                (and (plusp dropped) dropped))
+              (getf answer :name)))))
   ':continue)
 
 (define-application-command application--builtin-tell-command

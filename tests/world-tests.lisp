@@ -1435,6 +1435,22 @@
     (conversation-append-user-message conversation (format nil "work for ~A" parent))
     conversation))
 
+(-> test-world-placing-needs-server () null)
+(defun test-world-placing-needs-server ()
+  "Test a session apart from the world server refuses to move or park agents."
+  (with-test-configuration (configuration)
+    (let ((application (make-instance 'application
+                                      :configuration configuration
+                                      :conversation  (world-tests--persisted-conversation
+                                                      configuration "bapart1" 1000))))
+      (dolist (call (list (lambda () (application--builtin-move-command application "frob" "bapart1"))
+                          (lambda () (application--builtin-dismiss-command application "frob"))))
+        (test-assert (handler-case (progn (funcall call) nil)
+                       (world-error (condition)
+                         (search "runs apart" (autolith-error-message condition))))
+                     "moving or parking an agent outside the world server is refused"))))
+  nil)
+
 (-> test-world-child-sync () null)
 (defun test-world-child-sync ()
   "Test a child that starts after the server's start gets its channel from its lifecycle event alone."
