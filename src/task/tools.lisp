@@ -1474,6 +1474,7 @@ poll a job whose completion will wake it."
                     :description                        "Classify owned durable jobs and explicitly reattach, reconstruct, safely restart, or abandon unfinished work. Recovery requires primary-owner authorization and a durable replay claim."
                     :parameters                         (task-continuity-parameters)))
     (task-worktree-register-tool registry orchestrator)
+    (task-children-register-tools registry orchestrator)
     (peer-message-register-tools registry :orchestrator orchestrator)
     (channel-register-tools registry)
     registry))

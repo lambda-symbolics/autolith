@@ -249,6 +249,14 @@ whether to write."
          (values kept nil (< (length kept) (length current)))))))
   nil)
 
+(-> world-inbox-delete (configuration string) null)
+(defun world-inbox-delete (configuration channel-identifier)
+  "Delete channel CHANNEL-IDENTIFIER's inbox with any messages still in it, as when the channel goes."
+  (let ((pathname (world-inbox-pathname configuration channel-identifier)))
+    (when (probe-file pathname)
+      (delete-file pathname)))
+  nil)
+
 (defparameter *world-delivery-receipt-prefix* "channel:"
   "What begins the pending-input identifier of a channel delivery's receipt.")
 

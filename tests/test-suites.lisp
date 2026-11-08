@@ -666,6 +666,7 @@
   test-world-child-loadable
   test-world-child-role
   test-world-agent-children
+  test-world-child-lifecycle
   test-world-placing-needs-server
   test-world-agent-hierarchy
   test-world-parent-mention

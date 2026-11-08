@@ -282,6 +282,7 @@
                                           (:file "task/unfinished-work")
                                           (:file "task/continuity-tools")
                                           (:file "task/worktrees")
+                                          (:file "task/children")
                                           (:file "agent/context-rules")
                                           (:file "agent/saved-context-rules")
                                           (:file "terminal/protocol")
