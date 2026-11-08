@@ -185,9 +185,122 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(defclass test-self-printed-value ()
+  ((stream :initform nil :accessor test-self-printed-value-stream
+           :documentation "The stream received by the custom printer."))
+  (:documentation "A value whose printer produces large incremental output."))
+
+(defmethod print-object ((value test-self-printed-value) stream)
+  "Record STREAM and emit more text than the self capture budget."
+  (setf (test-self-printed-value-stream value) stream)
+  (dotimes (index 100000)
+    (write-char #\x stream)))
+
+(-> test-self-capture-bounds () null)
+(defun test-self-capture-bounds ()
+  "Test bounded capture, value printing, nested calls, and restart propagation."
+  (let ((*self-evaluation-character-limit* 64)
+        (printed                           (make-instance 'test-self-printed-value)))
+    (multiple-value-bind (rendered output metadata)
+        (self-capture-evaluation
+         (lambda ()
+           (test-assert (typep *standard-output* 'bounded-output-stream)
+                        "evaluation writes directly to a bounded stream")
+           (dotimes (index 100000)
+             (write-char #\a *standard-output*)
+             (write-char #\b *error-output*)
+             (write-char #\c *trace-output*))
+           (test-assert (= 64 (length (bounded-output-stream-text *standard-output*)))
+                        "large incremental output retains only its budget")
+           (values printed (make-string 100000 :initial-element #\y) 42)))
+      (test-assert (= 3 (length rendered)) "multiple value arity is preserved")
+      (test-assert (and (getf metadata :output-truncated-p)
+                        (getf metadata :values-truncated-p))
+                   "capture reports output and value truncation separately")
+      (test-assert (and (typep (test-self-printed-value-stream printed)
+                               'bounded-output-stream)
+                        (= 64 (bounded-output-stream-capacity
+                               (test-self-printed-value-stream printed))))
+                   "custom value printer receives a bounded stream")
+      (test-assert (and (<= (length output) 76)
+                        (<= (reduce #'+ rendered :key #'length) 100)
+                        (<= (length (self-evaluation-result rendered output)) 76))
+                   "output, aggregate values, and final formatting are bounded"))
+    (multiple-value-bind (rendered output metadata)
+        (self-capture-evaluation (lambda () (values)))
+      (test-assert (and (null rendered) (string= "" output)
+                        (not (getf metadata :output-truncated-p))
+                        (not (getf metadata :values-truncated-p)))
+                   "no values and empty output remain distinguishable"))
+    (multiple-value-bind (rendered output)
+        (self-capture-evaluation (lambda () (values nil 0 "text")))
+      (test-assert (equal '("NIL" "0" "\"text\"") rendered)
+                   "small values keep worker printer semantics")
+      (test-assert (string= "" output) "value rendering is not captured output"))
+    (let ((*print-pretty*                    t)
+          (*self-evaluation-character-limit* 64))
+      (multiple-value-bind (rendered output metadata)
+          (apply #'self-capture-evaluation
+                 (list (lambda ()
+                         (apply #'values
+                                (loop repeat 24
+                                      collect (make-string 1000 :initial-element #\z))))))
+        (test-assert (string= "" output)
+                     "pretty value rendering does not leak into output")
+        (test-assert (<= (reduce #'+ rendered :key #'length) 64)
+                     "many truncated values share one aggregate budget")
+        (test-assert (getf metadata :values-truncated-p)
+                     "aggregate value truncation is reported")))
+    (multiple-value-bind (rendered output)
+        (self-capture-evaluation
+         (lambda ()
+           (write-string "outer")
+           (multiple-value-bind (inner inner-output)
+               (self-capture-evaluation (lambda () (write-string "inner") (values 7 8)))
+             (test-assert (equal '("7" "8") inner) "nested values are independent")
+             (test-assert (string= "inner" inner-output) "nested output is independent"))
+           (write-string "end")
+           :outer))
+      (test-assert (and (equal '(":OUTER") rendered) (string= "outerend" output))
+                   "nested evaluation restores outer capture"))
+    (let ((condition (make-condition 'simple-error :format-control "capture failure")))
+      (test-assert
+       (eq condition (handler-case
+                         (self-capture-evaluation (lambda () (error condition)))
+                       (error (caught) caught)))
+       "capture propagates the original condition object"))
+    (flet ((correctable ()
+             (restart-case (error "Choose a result")
+               (use-value (value) :report "Supply a value." (values value :resumed))
+               (continue () :report "Continue." (values :continued)))))
+      (test-assert
+       (handler-case
+           (progn (self-capture-evaluation
+                   (lambda () (self-call-with-restarts #'correctable))) nil)
+         (self-correctable-error (condition)
+           (and (member "USE-VALUE" (self-correctable-error-restart-names condition)
+                        :test #'string-equal)
+                (member "CONTINUE" (self-correctable-error-restart-names condition)
+                        :test #'string-equal))))
+       "capture preserves selectable restart diagnostics")
+      (test-assert
+       (equal '("23" ":RESUMED")
+              (self-capture-evaluation
+               (lambda () (self-call-with-restarts #'correctable
+                                                  :restart-name         "USE-VALUE"
+                                                  :restart-value-source "23"))))
+       "value restart preserves multiple resumed values")
+      (test-assert
+       (equal '(":CONTINUED")
+              (self-capture-evaluation
+               (lambda () (self-call-with-restarts #'correctable :restart-name "CONTINUE"))))
+       "no-argument restart returns normally")))
+  nil)
+
 (-> test-self-tools () null)
 (defun test-self-tools ()
   "Test active definition installation, inspection, and form-aware persistence."
+  (test-self-capture-bounds)
   (let* ((configuration          (test-configuration))
          (root                   (test-configuration-root configuration))
          (pathname               (merge-pathnames "definitions.lisp" root))

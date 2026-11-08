@@ -245,27 +245,75 @@ symbol itself."
 
 ;;;; -- Exploratory Evaluation --
 
-(-> self-capture-evaluation (function) (values list string))
+(defparameter *self-evaluation-character-limit* 12000
+  "The retained character budget for output, values, and assembled self results.")
+
+(-> self--captured-text (bounded-output-stream) string)
+(defun self--captured-text (stream)
+  "Return STREAM's prefix with an explicit notice when characters were discarded."
+  (let ((text (bounded-output-stream-text stream)))
+    (if (bounded-output-stream-truncated-p stream)
+        (concatenate 'string text (string #\Newline) "[truncated]")
+        text)))
+
+(-> self-capture-evaluation (function) (values list string list))
 (defun self-capture-evaluation (function)
-  "Call FUNCTION in the active image while capturing output and rendered values."
-  (let ((result-values nil))
-    (let ((output
-            (with-output-to-string (stream)
-              (let ((*standard-output* stream)
-                    (*error-output*    stream)
-                    (*trace-output*    stream)
-                    (*package*         (find-package '#:autolith)))
-                (setf result-values
-                      (multiple-value-list (funcall function)))))))
-      (values (mapcar #'sbcl-worker-render-value result-values) output))))
+  "Call FUNCTION with bounded output and value rendering.
+
+Return rendered values, captured output, and truncation metadata. Values share
+one character budget; output has a separate budget. Printer traversal settings
+match worker rendering. Conditions and nonlocal exits propagate unchanged."
+  (let* ((stream             (bounded-output-stream-create *self-evaluation-character-limit*))
+         (result-values
+           (let ((*standard-output* stream)
+                 (*error-output*    stream)
+                 (*trace-output*    stream)
+                 (*package*         (find-package '#:autolith)))
+             (multiple-value-list (funcall function))))
+         (remaining          *self-evaluation-character-limit*)
+         (values-truncated-p nil)
+         (rendered-values
+           (loop for value in result-values
+                 for value-stream = (bounded-output-stream-create remaining)
+                 collect (progn
+                           (let ((*print-pretty* nil))
+                             (write value :stream value-stream :readably nil
+                                    :circle t :level 10 :length 100))
+                           (let* ((text        (bounded-output-stream-text value-stream))
+                                  (truncated-p (bounded-output-stream-truncated-p value-stream))
+                                  (marker      (if truncated-p
+                                                  (concatenate 'string (string #\Newline)
+                                                               "[truncated]")
+                                                  ""))
+                                  (available   remaining)
+                                  (marker-p    (and truncated-p
+                                                    (>= available (length marker))))
+                                  (text-limit  (if marker-p
+                                                   (- available (length marker))
+                                                   available))
+                                  (retained    (subseq text 0 (min (length text)
+                                                                   (max 0 text-limit))))
+                                  (rendered    (if marker-p
+                                                   (concatenate 'string retained marker)
+                                                   retained)))
+                             (decf remaining (length rendered))
+                             (when truncated-p
+                               (setf values-truncated-p t))
+                             rendered)))))
+    (values rendered-values
+            (self--captured-text stream)
+            (list :character-limit    *self-evaluation-character-limit*
+                  :output-truncated-p (bounded-output-stream-truncated-p stream)
+                  :values-truncated-p values-truncated-p))))
 
 (-> self-evaluation-result (list string) string)
 (defun self-evaluation-result (result-values output)
-  "Render active-image RESULT-VALUES and captured OUTPUT for a tool result."
-  (with-output-to-string (stream)
+  "Render RESULT-VALUES and OUTPUT within the self result character budget."
+  (let ((stream (bounded-output-stream-create *self-evaluation-character-limit*)))
     (when (non-empty-string-p output)
       (format stream "Output:~%~A~%" output))
-    (format stream "Values:~%~{~A~%~}" result-values)))
+    (format stream "Values:~%~{~A~%~}" result-values)
+    (self--captured-text stream)))
 
 
 ;;;; -- Restart Selection --
