@@ -257,6 +257,17 @@
   "Ten columns."
   10)
 
+(defmethod screen-panel-click ((panel localgroup-tests-panel) column row)
+  "Ask to switch from the first row, redraw from the second, and ignore the rest."
+  (declare (ignore column))
+  (case row
+    (1
+     (list ':switch :session-id "bnext1"))
+    (2
+     ':redraw)
+    (otherwise
+     nil)))
+
 (defmethod screen-panel-minimum-columns ((panel localgroup-tests-panel))
   "Sixty columns."
   60)
@@ -292,8 +303,15 @@
         (test-assert (and (search "PANEL-A   │host row" painted)
                           (search "PANEL-B   │second" painted))
                      "frames are painted beside the panel rows with a rule between"))
-      (test-assert (eq (localgroup-screen-filter-event screen '(:click 5 2)) ':ignore)
-                   "a click in the panel does nothing")
+      (test-assert (equal (localgroup-screen-filter-event screen '(:click 5 1))
+                          '(:switch :session-id "bnext1"))
+                   "a click the panel answers with a switch hands the request on")
+      (let ((before (length (output))))
+        (test-assert (and (eq (localgroup-screen-filter-event screen '(:click 5 2)) ':ignore)
+                          (> (length (output)) before))
+                     "a click that changes the panel repaints it and reaches no session"))
+      (test-assert (eq (localgroup-screen-filter-event screen '(:click 5 3)) ':ignore)
+                   "a click the panel ignores reaches no session")
       (test-assert (equal (localgroup-screen-filter-event screen '(:click 20 2)) '(:click 9 2))
                    "a click in the session's pane is moved to its columns")
       (test-assert (eq (localgroup-screen-filter-event screen ':page-up) ':page-up)

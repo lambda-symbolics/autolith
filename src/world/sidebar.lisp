@@ -17,6 +17,9 @@
 (defparameter *world-sidebar-minimum-columns* 100
   "The narrowest terminal that shows the sidebar beside the channel.")
 
+(defparameter *world-sidebar-marker-columns* 3
+  "The columns at the start of a sidebar row where a click opens or closes the row's tree node.")
+
 (defparameter *world-sidebar-refresh-seconds* 1
   "How often the sidebar asks the world and the server what changed.")
 
@@ -40,7 +43,22 @@
     :initform      nil
     :accessor      world-sidebar-entries
     :type          list
-    :documentation "The workspace and channel entries as last gathered.")
+    :documentation "The inbox, workspace and channel entries shown, built from INPUTS.")
+   (inputs
+    :initform      nil
+    :accessor      world-sidebar-inputs
+    :type          list
+    :documentation "The world as last gathered, the keyword arguments of `world-sidebar--entries', so a click rebuilds the entries at once.")
+   (toggled
+    :initform      (make-hash-table :test #'equal)
+    :reader        world-sidebar-toggled
+    :type          hash-table
+    :documentation "The tree nodes the person opened or closed against their default, workspaces by path and channels by identifier.")
+   (actions
+    :initform      #()
+    :accessor      world-sidebar-actions
+    :type          vector
+    :documentation "What a click on each row of the last rendering does, as plists of :OPEN and :TOGGLE, or NIL.")
    (seen
     :initform      (make-hash-table :test #'equal)
     :reader        world-sidebar-seen
@@ -86,7 +104,7 @@
     :initform      nil
     :accessor      world-sidebar-gathered
     :type          list
-    :documentation "(ENTRIES) as the gatherer last produced them, or NIL when nothing new waits.")
+    :documentation "(INPUTS) as the gatherer last produced them, or NIL when nothing new waits.")
    (stopping-p
     :initform      nil
     :accessor      world-sidebar-stopping-p
@@ -119,7 +137,7 @@
   *world-sidebar-minimum-columns*)
 
 (defmethod screen-panel-refresh ((panel world-sidebar))
-  "Take the newest gathered entries and return whether they changed.
+  "Take the newest gathered world and return whether the entries changed.
 
 A started sidebar's thread gathers; without one the panel gathers itself when
 a refresh is due."
@@ -138,10 +156,31 @@ a refresh is due."
               (world-sidebar--take panel (world-sidebar--gather panel)))))))
 
 (defmethod screen-panel-rows ((panel world-sidebar) terminal height)
-  "Render the sidebar's entries as HEIGHT rows for TERMINAL."
-  (loop for spans in (world-sidebar--rows (world-sidebar-entries panel) height)
-        collect (terminal--render-spans
-                 terminal (terminal--pad-spans spans *world-sidebar-width*))))
+  "Render the sidebar's entries as HEIGHT rows for TERMINAL, remembering what a click on each does."
+  (multiple-value-bind (rows actions) (world-sidebar--rows (world-sidebar-entries panel) height)
+    (setf (world-sidebar-actions panel) (coerce actions 'vector))
+    (loop for spans in rows
+          collect (terminal--render-spans
+                   terminal (terminal--pad-spans spans *world-sidebar-width*)))))
+
+(defmethod screen-panel-click ((panel world-sidebar) column row)
+  "Open or close the tree node at ROW, or ask to switch to its channel.
+
+The first columns of a channel row hold its marker: a click there opens or
+closes the channel's nested channels. Anywhere else the click switches to
+the channel, unless the terminal shows it already."
+  (let* ((actions (world-sidebar-actions panel))
+         (action  (and (<= 1 row (length actions)) (aref actions (1- row))))
+         (open    (getf action :open))
+         (toggle  (getf action :toggle)))
+    (cond
+      ((and toggle (or (null open) (<= column *world-sidebar-marker-columns*)))
+       (world-sidebar--toggle panel toggle)
+       ':redraw)
+      ((and open (not (equal open (world-sidebar-current panel))))
+       (list ':switch :session-id open))
+      (t
+       nil))))
 
 
 ;;;; -- Gathering --
@@ -174,13 +213,13 @@ a refresh is due."
 
 A failed gather keeps the entries shown before; the next one tries again."
   (loop
-    (let ((entries (handler-case
-                       (world-sidebar--gather sidebar)
-                     (error ()
-                       nil))))
+    (let ((inputs (handler-case
+                      (world-sidebar--gather sidebar)
+                    (error ()
+                      nil))))
       (with-lock-held ((world-sidebar-lock sidebar))
-        (when entries
-          (setf (world-sidebar-gathered sidebar) (list entries)))
+        (when inputs
+          (setf (world-sidebar-gathered sidebar) (list inputs)))
         (when (world-sidebar-stopping-p sidebar)
           (return))
         (condition-wait (world-sidebar-condition-variable sidebar)
@@ -191,22 +230,42 @@ A failed gather keeps the entries shown before; the next one tries again."
   nil)
 
 (-> world-sidebar--take (world-sidebar list) boolean)
-(defun world-sidebar--take (sidebar entries)
-  "Show ENTRIES in SIDEBAR and return whether they differ from those shown before."
-  (prog1 (not (equal entries (world-sidebar-entries sidebar)))
-    (setf (world-sidebar-entries sidebar) entries)))
+(defun world-sidebar--take (sidebar inputs)
+  "Show the entries of the world INPUTS describe in SIDEBAR and return whether they differ from those shown before."
+  (let ((entries (apply #'world-sidebar--entries sidebar inputs)))
+    (setf (world-sidebar-inputs sidebar) inputs)
+    (prog1 (not (equal entries (world-sidebar-entries sidebar)))
+      (setf (world-sidebar-entries sidebar) entries))))
+
+(-> world-sidebar--toggle (world-sidebar string) null)
+(defun world-sidebar--toggle (sidebar key)
+  "Open the tree node KEY names in SIDEBAR when it is closed, or close it, and rebuild the entries."
+  (let ((toggled (world-sidebar-toggled sidebar)))
+    (if (gethash key toggled)
+        (remhash key toggled)
+        (setf (gethash key toggled) t)))
+  (world-sidebar--take sidebar (world-sidebar-inputs sidebar))
+  nil)
 
 (-> world-sidebar--gather (world-sidebar) list)
 (defun world-sidebar--gather (sidebar)
-  "Return the sidebar's entries for the world as it is now."
+  "Return the world as it is now, as the keyword arguments of `world-sidebar--entries'."
   (let* ((configuration (world-sidebar-configuration sidebar))
          (statuses      (world-sidebar--statuses sidebar))
          (world         (world-presented configuration)))
-    (world-sidebar--entries sidebar
-                            :inbox    (world-inbox-channel world)
-                            :channels (world-sidebar--channels configuration world statuses)
-                            :statuses statuses
-                            :pending  (world-sidebar--pending configuration))))
+    (list :inbox    (world-inbox-channel world)
+          :channels (world-sidebar--channels configuration world statuses)
+          :names    (world-sidebar--names world)
+          :statuses statuses
+          :pending  (world-sidebar--pending configuration))))
+
+(-> world-sidebar--names (world) list)
+(defun world-sidebar--names (world)
+  "Return (CHANNEL-ID . NAME) pairs naming the agent that resides in each of WORLD's channels."
+  (loop for participant in (world-participants world)
+        when (and (eq (participant-kind participant) ':agent)
+                  (participant-residence participant))
+          collect (cons (participant-residence participant) (participant-name participant))))
 
 (-> world-sidebar--channels (configuration world list) list)
 (defun world-sidebar--channels (configuration world statuses)
@@ -273,41 +332,94 @@ first, and belongs to the workspace its status names."
         nil)))
 
 (-> world-sidebar--entries
-    (world-sidebar &key (:inbox (option channel)) (:channels list) (:statuses list)
-                        (:pending list))
+    (world-sidebar &key (:inbox (option channel)) (:channels list) (:names list)
+                        (:statuses list) (:pending list))
     list)
-(defun world-sidebar--entries (sidebar &key inbox channels statuses pending)
-  "Return the INBOX entry, then workspace and channel entries of CHANNELS, with STATUSES and PENDING deliveries folded in.
+(defun world-sidebar--entries (sidebar &key inbox channels names statuses pending)
+  "Return the INBOX entry, then the workspace and channel entries of CHANNELS that are open to view.
 
-The inbox's unread count is what waits in it for the person, so it stays
-true across clients and restarts. CHANNELS arrive latest touched first. The
-workspace of the current channel comes first, then the others in that order.
-Within a workspace, channels nest under their parents."
+NAMES pairs channels with their agents' names; STATUSES and PENDING
+deliveries are folded in. The inbox's unread count is what waits in it for
+the person, so it stays true across clients and restarts. CHANNELS arrive
+latest touched first. The workspace of the current channel comes first, then
+the others in that order. Within a workspace, channels nest under their
+parents. The first workspace is open, and a channel when the current one
+nests below it, unless the person toggled them; a closed one counts what it
+hides."
   (let ((current (world-sidebar-current sidebar))
         (table   (make-hash-table :test #'equal)))
     (dolist (status statuses)
       (let ((identifier (getf status :session-id)))
         (when (stringp identifier)
           (setf (gethash identifier table) status))))
-    (append
-     (when inbox
-       (list (list :kind      ':inbox
-                   :id        (channel-identifier inbox)
-                   :current-p (equal (channel-identifier inbox) current)
-                   :unread    (or (rest (assoc (channel-identifier inbox) pending :test #'string=))
-                                  0))))
-     (loop for (workspace . members) in (world-sidebar--groups channels current)
-           append (cons (list :kind ':workspace
-                              :name (world-workspace-leaf workspace)
-                              :path (world-sidebar--short-path workspace))
-                        (loop for (channel . depth) in (world-sidebar--tree members)
-                              collect (world-sidebar--channel-entry
-                                       sidebar channel
-                                       :depth   depth
-                                       :status  (gethash (channel-identifier channel) table)
-                                       :pending (rest (assoc (channel-identifier channel)
-                                                             pending
-                                                             :test #'string=)))))))))
+    (labels ((channel-entries (node depth)
+               "Return the shown entries of NODE at DEPTH, and the entries of all its descendants."
+               (let* ((channel    (first node))
+                      (identifier (channel-identifier channel))
+                      (entry      (world-sidebar--channel-entry
+                                   sidebar channel
+                                   :depth   depth
+                                   :name    (rest (assoc identifier names :test #'string=))
+                                   :status  (gethash identifier table)
+                                   :pending (rest (assoc identifier pending :test #'string=))))
+                      (shown      nil)
+                      (all        nil))
+                 (dolist (child (rest node))
+                   (multiple-value-bind (child-shown child-all) (channel-entries child (1+ depth))
+                     (setf shown (append shown child-shown)
+                           all   (append all child-all))))
+                 (if (null (rest node))
+                     (values (list entry) (list entry))
+                     (let ((open-p (world-sidebar--open-p
+                                    sidebar identifier
+                                    (and (find current all :key  (lambda (entry) (getf entry :id))
+                                                           :test #'equal)
+                                         t))))
+                       (values (cons (append entry (world-sidebar--fold all :open-p open-p))
+                                     (and open-p shown))
+                               (cons entry all)))))))
+      (append
+       (when inbox
+         (list (list :kind      ':inbox
+                     :id        (channel-identifier inbox)
+                     :current-p (equal (channel-identifier inbox) current)
+                     :unread    (or (rest (assoc (channel-identifier inbox) pending :test #'string=))
+                                    0))))
+       (loop for (workspace . members) in (world-sidebar--groups channels current)
+             for first-p = t then nil
+             append (let ((shown nil)
+                          (all   nil))
+                      (dolist (node (world-sidebar--forest members))
+                        (multiple-value-bind (node-shown node-all) (channel-entries node 0)
+                          (setf shown (append shown node-shown)
+                                all   (append all node-all))))
+                      (let ((open-p (world-sidebar--open-p sidebar workspace first-p)))
+                        (cons (append (list :kind ':workspace
+                                            :key  workspace
+                                            :name (world-workspace-leaf workspace)
+                                            :path (world-sidebar--short-path workspace))
+                                      (world-sidebar--fold all :open-p open-p))
+                              (and open-p shown)))))))))
+
+(-> world-sidebar--open-p (world-sidebar string boolean) boolean)
+(defun world-sidebar--open-p (sidebar key default-p)
+  "Return whether the tree node KEY is open: DEFAULT-P, unless the person toggled it."
+  (if (gethash key (world-sidebar-toggled sidebar))
+      (not default-p)
+      default-p))
+
+(-> world-sidebar--fold (list &key (:open-p boolean)) list)
+(defun world-sidebar--fold (entries &key open-p)
+  "Return the properties of a tree node over ENTRIES: whether it is open, and when closed what it hides.
+
+A closed node carries the count of ENTRIES and their unread messages and
+mentions, so nothing new below it goes unseen."
+  (if open-p
+      (list :children-p t :open-p t)
+      (list :children-p t :open-p nil
+            :hidden          (length entries)
+            :hidden-unread   (reduce #'+ entries :key (lambda (entry) (getf entry :unread 0)))
+            :hidden-mentions (reduce #'+ entries :key (lambda (entry) (getf entry :mentions 0))))))
 
 (-> world-sidebar--groups (list (option string)) list)
 (defun world-sidebar--groups (channels current)
@@ -327,31 +439,33 @@ CHANNELS arrive newest first, which orders the groups and their members."
           (cons home (remove home groups))
           groups))))
 
-(-> world-sidebar--tree (list) list)
-(defun world-sidebar--tree (members)
-  "Return (CHANNEL . DEPTH) pairs of MEMBERS, each child after its parent."
-  (labels ((children (parent depth)
-             "Return PARENT's members at DEPTH, each followed by its own children."
+(-> world-sidebar--forest (list) list)
+(defun world-sidebar--forest (members)
+  "Return MEMBERS as (CHANNEL . CHILDREN) trees, each channel under its parent.
+
+A channel whose parent is not among MEMBERS is a root."
+  (labels ((children (parent)
+             "Return the trees of PARENT's members, or of the roots without a PARENT."
              (loop for channel in members
                    when (if parent
                             (equal (channel-parent channel) (channel-identifier parent))
                             (or (null (channel-parent channel))
                                 (not (find (channel-parent channel) members
                                            :key #'channel-identifier :test #'equal))))
-                     append (cons (cons channel depth)
-                                  (children channel (1+ depth))))))
-    (children nil 0)))
+                     collect (cons channel (children channel)))))
+    (children nil)))
 
 (-> world-sidebar--channel-entry
-    (world-sidebar channel &key (:depth (integer 0)) (:status (option list))
+    (world-sidebar channel &key (:depth (integer 0)) (:name (option string)) (:status (option list))
                            (:pending (option integer)))
     list)
-(defun world-sidebar--channel-entry (sidebar channel &key (depth 0) status pending)
-  "Return the entry of CHANNEL at DEPTH, with its hosted STATUS and PENDING deliveries."
+(defun world-sidebar--channel-entry (sidebar channel &key (depth 0) name status pending)
+  "Return the entry of CHANNEL at DEPTH, whose agent is NAME, with its hosted STATUS and PENDING deliveries."
   (let* ((identifier (channel-identifier channel))
          (current-p  (equal identifier (world-sidebar-current sidebar))))
     (list :kind       ':channel
           :id         identifier
+          :name       name
           :title      (channel-title channel)
           :depth      depth
           :state      (if status (getf status :state) ':absent)
@@ -395,67 +509,121 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
 
 ;;;; -- Rows --
 
-(-> world-sidebar--rows (list (integer 0)) list)
+(-> world-sidebar--rows (list (integer 0)) (values list list))
 (defun world-sidebar--rows (entries height)
-  "Return HEIGHT rows of styled spans showing ENTRIES under a heading, with the key legend last.
+  "Return HEIGHT rows of styled spans showing ENTRIES under a heading, with the legend last, and what a click on each row does.
 
-Entries past the rows available are counted on the last row they would take."
-  (let* ((body   (mapcar #'world-sidebar--entry-spans entries))
-         (limit  (max 0 (- height 2)))
-         (shown  (if (> (length body) limit)
-                     (let ((kept (max 0 (1- limit))))
-                       (append (subseq body 0 kept)
-                               (list (list (terminal-span ':dim
-                                                          (format nil " … ~D more"
-                                                                  (- (length body) kept)))))))
-                     body))
-         (rows   (cons (list (terminal-span ':brand " Channels")) shown))
-         (legend (list (terminal-span ':legend-dim " Ctrl-T ")
-                       (terminal-span ':legend-plain "hide"))))
-    (subseq (append rows
-                    (make-list (max 0 (- height 1 (length rows))) :initial-element nil)
-                    (list legend))
-            0 height)))
+Entries past the rows available are counted on the last row they would take.
+Each action is NIL or a plist of :OPEN, the channel a click switches to, and
+:TOGGLE, the tree node a click on the marker opens or closes."
+  (let* ((limit      (max 0 (- height 2)))
+         (overflow-p (> (length entries) limit))
+         (kept       (if overflow-p (max 0 (1- limit)) (length entries)))
+         (shown      (subseq entries 0 kept))
+         (rows       (append (list (list (terminal-span ':brand " Channels")))
+                             (mapcar #'world-sidebar--entry-spans shown)
+                             (when overflow-p
+                               (list (list (terminal-span ':dim (format nil " … ~D more" (- (length entries) kept))))))))
+         (actions    (append (list nil)
+                             (mapcar #'world-sidebar--entry-action shown)
+                             (when overflow-p
+                               (list nil))))
+         (filler     (max 0 (- height 1 (length rows))))
+         (legend     (list (terminal-span ':legend-dim " click ")
+                           (terminal-span ':legend-plain "opens")
+                           (terminal-span ':legend-dim " · Ctrl-T ")
+                           (terminal-span ':legend-plain "hides"))))
+    (values (subseq (append rows (make-list filler :initial-element nil) (list legend)) 0 height)
+            (subseq (append actions (make-list filler :initial-element nil) (list nil)) 0 height))))
+
+(-> world-sidebar--entry-action (list) (option list))
+(defun world-sidebar--entry-action (entry)
+  "Return what a click on ENTRY's row does: open its channel, toggle its tree node, or both."
+  (ecase (getf entry :kind)
+    (:inbox
+     (list :open (getf entry :id)))
+    (:workspace
+     (list :toggle (getf entry :key)))
+    (:channel
+     (append (list :open (getf entry :id))
+             (when (getf entry :children-p)
+               (list :toggle (getf entry :id)))))))
 
 (-> world-sidebar--entry-spans (list) list)
 (defun world-sidebar--entry-spans (entry)
-  "Return the styled spans of one inbox, workspace or channel ENTRY."
+  "Return the styled spans of one inbox, workspace or channel ENTRY.
+
+A channel shows whether it is current, its tree marker, its agent's state,
+then its agent's name and its title; a closed node shows what it hides."
   (ecase (getf entry :kind)
     (:inbox
      (append
-      (list (if (getf entry :current-p)
-                (terminal-span ':legend-accent "▸ ")
-                (terminal-span ':plain "  "))
+      (list (world-sidebar--current-span entry)
+            (terminal-span ':plain " ")
             (terminal-span (if (plusp (getf entry :unread)) ':strong ':plain) "✉ inbox"))
       (when (plusp (getf entry :unread))
         (list (terminal-span ':notice (format nil " ~D unread" (getf entry :unread)))))))
     (:workspace
-     (list (terminal-span ':strong (format nil " ~A" (getf entry :name)))
-           (terminal-span ':dim (format nil "  ~A" (getf entry :path)))))
+     (append
+      (list (world-sidebar--marker-span entry)
+            (terminal-span ':strong (format nil " ~A" (getf entry :name))))
+      (world-sidebar--hidden-spans entry)
+      (when (getf entry :open-p)
+        (list (terminal-span ':dim (format nil "  ~A" (getf entry :path)))))))
     (:channel
      (append
-      (list (if (getf entry :current-p)
-                (terminal-span ':legend-accent "▸ ")
-                (terminal-span ':plain "  "))
-            (if (getf entry :attached-p)
-                (terminal-span ':user "● ")
-                (terminal-span ':plain "  "))
-            (world-sidebar--state-span (getf entry :state)))
-      (when (plusp (getf entry :depth))
-        (list (terminal-span ':dim
-                             (format nil "~A↳ "
-                                     (make-string (* 2 (1- (getf entry :depth)))
-                                                  :initial-element #\Space)))))
-      (list (terminal-span ':command-id
-                           (conversation-identifier-display (getf entry :id))))
+      (list (world-sidebar--current-span entry)
+            (world-sidebar--marker-span entry)
+            (terminal-span ':plain (make-string (1+ (* 2 (getf entry :depth))) :initial-element #\Space))
+            (world-sidebar--state-span (getf entry :state))
+            (terminal-span (cond
+                             ((getf entry :current-p)
+                              ':legend-accent)
+                             ((getf entry :attached-p)
+                              ':user)
+                             (t
+                              ':plain))
+                           (or (getf entry :name)
+                               (getf entry :title)
+                               (conversation-identifier-display (getf entry :id)))))
       (when (plusp (getf entry :mentions))
         (list (terminal-span ':legend-accent (format nil " @~D" (getf entry :mentions)))))
       (when (plusp (getf entry :unread))
         (list (terminal-span ':notice (format nil " ~D" (getf entry :unread)))))
       (when (plusp (getf entry :pending))
         (list (terminal-span ':dim (format nil " ✉~D" (getf entry :pending)))))
-      (when (getf entry :title)
-        (list (terminal-span ':plain (format nil " ~A" (getf entry :title)))))))))
+      (world-sidebar--hidden-spans entry)
+      (when (and (getf entry :name) (getf entry :title))
+        (list (terminal-span ':dim (format nil " ~A" (getf entry :title)))))))))
+
+(-> world-sidebar--current-span (list) cons)
+(defun world-sidebar--current-span (entry)
+  "Return the span marking ENTRY as the channel this terminal shows, or a blank one."
+  (if (getf entry :current-p)
+      (terminal-span ':legend-accent "›")
+      (terminal-span ':plain " ")))
+
+(-> world-sidebar--marker-span (list) cons)
+(defun world-sidebar--marker-span (entry)
+  "Return ENTRY's tree marker: open, closed, or blank without nested entries."
+  (cond
+    ((not (getf entry :children-p))
+     (terminal-span ':plain " "))
+    ((getf entry :open-p)
+     (terminal-span ':dim "▾"))
+    (t
+     (terminal-span ':dim "▸"))))
+
+(-> world-sidebar--hidden-spans (list) list)
+(defun world-sidebar--hidden-spans (entry)
+  "Return the spans counting what closed ENTRY hides: its channels and their unread mentions and messages."
+  (when (and (getf entry :children-p) (not (getf entry :open-p)))
+    (append
+     (list (terminal-span ':dim (format nil " +~D" (getf entry :hidden))))
+     (when (plusp (getf entry :hidden-mentions))
+       (list (terminal-span ':legend-accent (format nil " @~D" (getf entry :hidden-mentions)))))
+     (when (plusp (getf entry :hidden-unread))
+       (list (terminal-span ':notice (format nil " ~D" (getf entry :hidden-unread))))))))
 
 (-> world-sidebar--state-span (keyword) cons)
 (defun world-sidebar--state-span (state)

@@ -722,6 +722,7 @@
 (define-test-suite world-sidebar
   test-world-sidebar-gathers-apart
   test-world-sidebar-rows
+  test-world-sidebar-tree
   test-world-sidebar-visibility
   test-world-sidebar-unread)
 

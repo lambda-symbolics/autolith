@@ -505,7 +505,14 @@ channel ID instead; this attachment has ended by then."
                     (terminal-input-ready-p terminal))
                   :read-event-function
                   (lambda ()
-                    (localgroup-screen-filter-event screen (terminal-read-event terminal)))
+                    ;; A click in the side panel can ask to move to another
+                    ;; channel; ending the attachment here hands it on.
+                    (let ((event (localgroup-screen-filter-event screen (terminal-read-event terminal))))
+                      (if (and (consp event) (eq (first event) ':switch))
+                          (progn
+                            (setf reconnect event)
+                            ':stream-end)
+                          event)))
                   :packet-function
                   (lambda (packet)
                     (cond
