@@ -61,7 +61,7 @@
   (let ((lines (world-sidebar-tests--text
                 (world-sidebar--rows (list (list :kind ':inbox :id "f6uouHJ" :current-p nil :unread 2))
                                      3))))
-    (test-assert (search "✉ inbox 2 unread" (second lines))
+    (test-assert (search "inbox 2 unread" (second lines))
                  "the inbox row shows how many messages wait unread"))
   nil)
 

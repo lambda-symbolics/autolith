@@ -595,7 +595,7 @@ then its agent's name and its title; a closed node shows what it hides."
      (append
       (list (world-sidebar--current-span entry)
             (terminal-span ':plain " ")
-            (terminal-span (if (plusp (getf entry :unread)) ':strong ':plain) "✉ inbox"))
+            (terminal-span ':legend-accent "inbox"))
       (when (plusp (getf entry :unread))
         (list (terminal-span ':notice (format nil " ~D unread" (getf entry :unread)))))))
     (:workspace
