@@ -1535,11 +1535,11 @@ The server runs until you stop it, even with no open channel or attached
 terminal:
 
 #+BEGIN_SRC sh
-autolith lg server
+autolith lg status
 autolith lg stop
 #+END_SRC
 
-Use =server= to inspect the server process and its hosted channels, and
+Use =status= to inspect the server process and its hosted channels, and
 =stop= to end all channels and the server. Updating or rolling back from any
 channel also stops the server because the image is shared.
 

@@ -296,41 +296,29 @@ terminal. A channel the server started for this run closes once it ends."
   "Report on STREAM that no world server is reachable."
   (localgroup--write-styled-line
    stream
-   (list (terminal-span ':notice "No world server is reachable."))
+   (list (terminal-span ':notice "· no world server is running"))
    (localgroup--status-output-styled-p stream))
   nil)
 
-(-> world-client--server-command () clingon:command)
-(defun world-client--server-command ()
-  "Return the localgroup server sub-command, describing the world server and its channels."
-  (make-command
-   :name        "server"
-   :description "show the world server and the channels it hosts"
-   :handler
-   (lambda (command)
-     (when (command-arguments command)
-       (error 'localgroup-error
-              :message   "localgroup server accepts no arguments."
-              :operation ':arguments))
-     (let* ((configuration (localgroup--client-configuration))
-            (entry         (world-client-entry configuration))
-            (stream        *standard-output*))
-       (if entry
-           (let ((status   (getf (rest (localgroup-query-record entry ':status)) :status))
-                 (channels (getf (rest (localgroup-query-record entry ':channels)) :channels)))
-             (localgroup--write-styled-line
-              stream
-              (list (terminal-span ':notice "World server PID ")
-                    (terminal-span ':success (princ-to-string (getf (rest status) :pid)))
-                    (terminal-span ':notice
-                                   (format nil ", Autolith ~A, ~D open channel~:P~:[~;, stopping~]."
-                                           (getf (rest status) :autolith-version)
-                                           (length (getf (rest status) :channels))
-                                           (getf (rest status) :stopping-p))))
-              (localgroup--status-output-styled-p stream))
-             (when channels
-               (localgroup-print-statuses channels :stream stream)))
-           (world-client--print-absent stream))))))
+(-> world-client-print-server (configuration stream) null)
+(defun world-client-print-server (configuration stream)
+  "Write one line about CONFIGURATION's world server on STREAM: its process, version and open channels.
+
+Nothing is written while no server runs."
+  (let ((entry (world-client-entry configuration)))
+    (when entry
+      (let ((status (getf (rest (localgroup-query-record entry ':status)) :status)))
+        (localgroup--write-styled-line
+         stream
+         (list (terminal-span ':notice "· world server PID ")
+               (terminal-span ':success (princ-to-string (getf (rest status) :pid)))
+               (terminal-span ':notice
+                              (format nil ", Autolith ~A, ~D open channel~:P~:[~;, stopping~]"
+                                      (getf (rest status) :autolith-version)
+                                      (length (getf (rest status) :channels))
+                                      (getf (rest status) :stopping-p))))
+         (localgroup--status-output-styled-p stream)))))
+  nil)
 
 (-> world-client--stop-command () clingon:command)
 (defun world-client--stop-command ()
