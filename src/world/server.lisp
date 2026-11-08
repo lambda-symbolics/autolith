@@ -97,6 +97,12 @@ the process could fork, and a new thread serves the application again."))
     :accessor      world-server-holding-p
     :type          boolean
     :documentation "Whether a checkpoint waits for the work under way; no channel starts a new turn meanwhile.")
+   (fullscreen-p
+    :initarg       :fullscreen-p
+    :initform      nil
+    :accessor      world-server-fullscreen-p
+    :type          boolean
+    :documentation "The presentation terminals last opened channels with, which a channel served for a message takes too.")
    (checkpoint-cancel-p
     :initform      nil
     :accessor      world-server-checkpoint-cancel-p
@@ -207,6 +213,8 @@ pristine: a pristine rescue session runs apart from it."
          (server       (make-instance 'world-server
                                       :configuration            bootstrapped
                                       :permission-mode          permission-mode
+                                      :fullscreen-p             (not (null (config :fullscreen-p
+                                                                                   bootstrapped)))
                                       :mutation-replay-failures failures))
          (completed-p  nil))
     (unwind-protect
@@ -373,7 +381,7 @@ idle long enough. A channel that cannot be served keeps its message waiting."
                 :conversation-id identifier
                 :directory       (channel-workspace channel)
                 :arguments       (list :switch-p     t
-                                       :fullscreen-p (not (null (config :fullscreen-p configuration))))))))
+                                       :fullscreen-p (world-server-fullscreen-p server))))))
        (error (condition)
          (format *error-output* "~&World server could not serve channel ~A for its message: ~A~%"
                  (conversation-identifier-display identifier) condition)))))
@@ -606,6 +614,8 @@ published, so the client can attach at once."
           (error 'world-error
                  :message   "The world server is checkpointing; the channel opens once it resumes."
                  :operation ':checkpointing))
+        (unless (getf arguments :switch-p)
+          (setf (world-server-fullscreen-p server) (not (null (getf arguments :fullscreen-p)))))
         (world-server--host-for server arguments))
     (world-server--wait-ready server host)
     (let ((images (getf arguments :images)))
