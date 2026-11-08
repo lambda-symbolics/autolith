@@ -2151,6 +2151,7 @@
           (string= saved (uiop:read-file-string (configuration-preferences-path configuration)))
           "rejection leaves the durable preferences untouched")))))
   nil)
+
 (-> test-channel-command-admission-safety () null)
 (defun test-channel-command-admission-safety ()
   "Keep current-session mutation and computed Lisp arguments off the immediate path."

@@ -877,7 +877,7 @@ ordinary append protocol. Failed scans or checkpoint writes can be retried."
   "Return true when a lease in this process or another holds conversation IDENTIFIER."
   (handler-case
       (progn
-        (conversation-lease-release (conversation-lease-acquire configuration identifier))
+        (conversation--lease-claim configuration identifier :probe-p t)
         nil)
     (conversation-in-use ()
       t)))
@@ -888,11 +888,17 @@ ordinary append protocol. Failed scans or checkpoint writes can be retried."
 
 The kernel lock is authoritative. Normal release removes its empty per-ID file;
 a crash may leave one that a later lease acquisition can reuse safely."
+  (conversation--lease-claim configuration identifier :pathname pathname))
+
+(-> conversation--lease-claim
+    (configuration string &key (:pathname (option pathname)) (:probe-p boolean)) (option conversation-lease))
+(defun conversation--lease-claim (configuration identifier &key pathname probe-p)
+  "Claim IDENTIFIER, or probe and release it before dropping the lifecycle guard."
   (let* ((normalized
            (conversation-identifier-migration-resolve
             configuration identifier))
          (conversation-pathname
-            (or pathname (conversation-pathname-for-id configuration normalized)))
+           (or pathname (conversation-pathname-for-id configuration normalized)))
          (lease-pathname
            (conversation--lease-pathname configuration normalized))
          (guard-pathname
@@ -906,13 +912,21 @@ a crash may leave one that a later lease acquisition can reuse safely."
              (let ((tracking (conversation--lease-tracking)))
                (with-lock-held ((conversation-lease-tracking-mutex tracking))
                  (handler-case
-                     (let ((lease (make-instance 'conversation-lease
-                                                :identifier     normalized
-                                                :lock-pathname  lease-pathname
-                                                :guard-pathname guard-pathname
-                                                :lock-lease     (lease-acquire lease-pathname))))
-                       (conversation--lease-remember tracking lease)
-                       lease)
+                     (let ((lock-lease (lease-acquire lease-pathname)))
+                       (if probe-p
+                           (unwind-protect nil
+                             ;; Probes never enter the diagnostic ownership index.
+                             ;; Retain the lifecycle guard through descriptor and file cleanup.
+                             (lease-release lock-lease)
+                             ; mallet:suppress no-ignore-errors -- best-effort removal after releasing the temporary lease
+                             (ignore-errors (delete-file lease-pathname)))
+                           (let ((lease (make-instance 'conversation-lease
+                                                      :identifier     normalized
+                                                      :lock-pathname  lease-pathname
+                                                      :guard-pathname guard-pathname
+                                                      :lock-lease     lock-lease)))
+                             (conversation--lease-remember tracking lease)
+                             lease)))
                    (file-lock-busy ()
                      (conversation--lease-in-use
                       normalized conversation-pathname lease-pathname
