@@ -135,6 +135,26 @@
                (test-assert (null (lsp-semantic--apply context entry #())) "ignored operations do not publish")
                (test-assert (equal "source" (uiop:read-file-string source)) "ignored move retains source")
                (test-assert (equal "target" (uiop:read-file-string target)) "ignored collision retains target"))
+             (let* ((entry      (lsp-semantic-tests--proposal
+                                 context client
+                                 (json-object "documentChanges"
+                                              (vector
+                                               (json-object "textDocument"
+                                                            (json-object "uri" source-uri "version" nil)
+                                                            "edits" (vector (lsp-semantic-tests--text-edit 0 1 "S")))
+                                               (json-object "kind" "create" "uri" missing)))))
+                    (operations (json-get (lsp-semantic-entry-value entry) "operations")))
+               ;; A later malformed operation must fail before publishing an earlier valid edit.
+               (setf (aref operations 1)
+                     (json-object "kind" "text" "uri" source-uri "edits"
+                                  (vector (json-object "startOffset" 0 "endOffset" 99 "newText" "bad"))))
+               (test-assert (lsp-semantic-tests--rejected
+                             (lambda () (lsp-semantic--apply context entry #())))
+                            "materialization rejects a late invalid operation")
+               (test-assert (and (equal "source" (uiop:read-file-string source))
+                                 (equal "target" (uiop:read-file-string target))
+                                 (not (probe-file (merge-pathnames "missing.txt" root))))
+                            "failed materialization publishes no partial file effects"))
              (let ((entry (lsp-semantic-tests--proposal
                            context client
                            (json-object "documentChanges"

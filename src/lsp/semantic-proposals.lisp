@@ -193,119 +193,41 @@
      (lsp-semantic-entry-snapshots entry)))
   nil)
 
-(-> lsp-semantic--edit-text (string vector) string)
-(defun lsp-semantic--edit-text (text edits)
-  "Apply validated simultaneous offsets, retaining insertion order at equal offsets."
-  (let ((cursor  0)
-        (ordered (stable-sort (coerce edits 'list)
-                              (lambda (left right)
-                                (or (< (json-get left "startOffset") (json-get right "startOffset"))
-                                    (and (= (json-get left "startOffset") (json-get right "startOffset"))
-                                         (< (json-get left "endOffset") (json-get right "endOffset"))))))))
-    (with-output-to-string (output)
-      (dolist (edit ordered)
-        (let ((start (json-get edit "startOffset")) (end (json-get edit "endOffset")))
-          (unless (and (integerp start) (integerp end) (<= cursor start end (length text))
-                       (stringp (json-get edit "newText")))
-            (lsp-semantic--fail "Proposal offsets are invalid for the ordered resource state."))
-          (write-string text output :start cursor :end start)
-          (write-string (json-get edit "newText") output)
-          (setf cursor end)))
-      (write-string text output :start cursor))))
-
 (-> lsp-semantic--requests (tool-context lsp-semantic-entry) list)
 (defun lsp-semantic--requests (context entry)
-  "Evaluate ordered file effects in memory and produce one revisioned request per resource."
-  (let* ((plan              (lsp-semantic-entry-value entry))
-         (snapshots         (lsp-semantic-entry-snapshots entry))
-         (overlay           (make-hash-table :test #'equal))
-         (permission-donors (make-hash-table :test #'equal))
-         (order             nil))
-    (unless (equal (json-get plan "positionEncoding") "utf-16")
-      (lsp-semantic--fail "Semantic proposal encoding must be UTF-16."))
-    (maphash (lambda (uri record)
-               (let ((base (lsp-semantic--observation context record)))
-                 (setf (gethash uri overlay)
-                       (and (eq (workspace-file-observation-kind base) ':file)
+  "Materialize library effects and wrap them in revisioned host publication requests."
+  (let* ((snapshots (lsp-semantic-entry-snapshots entry))
+         (effects
+           (cl-lsp:lsp-materialize-workspace-plan
+            (lsp-semantic-entry-value entry)
+            :snapshot
+            (lambda (uri)
+              (let ((record (gethash uri snapshots)))
+                (unless record
+                  (lsp-semantic--fail "Proposal contains an unobserved resource."))
+                (let ((base (lsp-semantic--observation context record)))
+                  (values (and (eq (workspace-file-observation-kind base) ':file)
+                               (resource-observation-content base))
+                          (third record) (workspace-file-observation-kind base))))))))
+    (loop for effect across effects
+          for uri = (json-get effect "uri")
+          for record = (gethash uri snapshots)
+          for revision = (resource-observation-state-alias (second record))
+          for base = (lsp-semantic--observation context record)
+          for before = (and (eq (workspace-file-observation-kind base) ':file)
                             (resource-observation-content base))
-                     (gethash uri permission-donors)
-                     (and (eq (workspace-file-observation-kind base) ':file) uri)))) snapshots)
-    (labels ((content (uri)
-               (unless (gethash uri snapshots)
-                 (lsp-semantic--fail "Proposal contains an unobserved resource."))
-               (gethash uri overlay))
-
-             (replace-content (uri value)
-               (content uri)
-               (pushnew uri order :test #'equal)
-               (setf (gethash uri overlay) value)))
-      (loop for operation across (json-get plan "operations")
-            for kind = (json-get operation "kind")
-            for uri = (json-get operation "uri")
-            for options = (json-get operation "options")
-            for overwrite = (eq (and options (json-get options "overwrite")) t)
-            for ignore = (eq (and options (json-get options "ignoreIfExists")) t)
-            do (cond
-                 ((equal kind "text")
-                  (let ((text (content uri)))
-                    (unless text (lsp-semantic--fail "Cannot edit an absent resource."))
-                    (replace-content uri (lsp-semantic--edit-text text (json-get operation "edits")))))
-                 ((equal kind "create")
-                  (cond
-                    ((or overwrite (null (content uri)))
-                     (replace-content uri "")
-                     (setf (gethash uri permission-donors) nil))
-                    (ignore
-                     nil)
-                    (t
-                     (lsp-semantic--fail "Create target exists without overwrite or ignoreIfExists."))))
-                 ((equal kind "delete")
-                  (cond
-                    ((content uri)
-                     (replace-content uri nil)
-                     (setf (gethash uri permission-donors) nil))
-                    ((eq (and options (json-get options "ignoreIfNotExists")) t)
-                     nil)
-                    (t
-                     (lsp-semantic--fail "Delete target does not exist."))))
-                 ((equal kind "rename")
-                  (let* ((old    (json-get operation "oldUri"))
-                         (new    (json-get operation "newUri"))
-                         (source (content old))
-                         (target (content new)))
-                    (unless source (lsp-semantic--fail "Move source does not exist."))
-                    (cond
-                      ((equal old new)
-                       nil)
-                      ((or overwrite (null target))
-                       (replace-content old nil)
-                       (replace-content new source)
-                       (setf (gethash new permission-donors) (gethash old permission-donors)
-                             (gethash old permission-donors) nil))
-                      (ignore
-                       nil)
-                      (t
-                       (lsp-semantic--fail "Move target exists without overwrite or ignoreIfExists.")))))
-                 (t
-                  (lsp-semantic--fail "Unsupported semantic resource operation."))))
-      (loop for uri in (nreverse order)
-            for record = (gethash uri snapshots)
-            for revision = (resource-observation-state-alias (second record))
-            for base = (lsp-semantic--observation context record)
-            for before = (and (eq (workspace-file-observation-kind base) ':file)
-                              (resource-observation-content base))
-            for after = (gethash uri overlay)
-            for donor-uri = (and after (gethash uri permission-donors))
-            for moved-p = (and donor-uri (not (equal uri donor-uri)))
-            unless (and (equal before after) (not moved-p))
-              collect (cl-resources:make-resource-change
-                         (first record) :base-revision revision
-                       :operations
-                       (list (make-instance
-                              'workspace-content-operation :content after
-                              :permission-donor
-                              (and moved-p
-                                   (lsp-semantic--observation context (gethash donor-uri snapshots))))))))))
+          for after = (json-get effect "text")
+          for donor-uri = (json-get effect "originUri")
+          for moved-p = (and donor-uri (not (equal uri donor-uri)))
+          unless (and (equal before after) (not moved-p))
+            collect (cl-resources:make-resource-change
+                     (first record) :base-revision revision
+                     :operations
+                     (list (make-instance
+                            'workspace-content-operation :content after
+                            :permission-donor
+                            (and moved-p
+                                 (lsp-semantic--observation context (gethash donor-uri snapshots)))))))))
 
 (-> lsp-semantic--capture-plan
     (tool-context lsp-client &key (:snapshots hash-table) (:plan json-object)) lsp-semantic-entry)
