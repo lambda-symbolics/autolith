@@ -168,6 +168,12 @@
     :reader        conversation-agent-name
     :type          (option non-empty-string)
     :documentation "The readable name the parent gave this child agent, or NIL for a top-level one.")
+   (role
+    :initarg       :role
+    :initform      nil
+    :reader        conversation-role
+    :type          (option non-empty-string)
+    :documentation "The role this child agent was spawned with, or NIL for a top-level one.")
    (inbox-p
     :initarg       :inbox-p
     :initform      nil
@@ -1140,7 +1146,8 @@ person's inbox says it is one."
         (copy-tree (conversation-latest-goal-record conversation))
         (append (and (conversation-parent-identifier conversation)
                      (list :parent     (conversation-parent-identifier conversation)
-                           :agent-name (conversation-agent-name conversation)))
+                           :agent-name (conversation-agent-name conversation)
+                           :role       (conversation-role conversation)))
                 (and (conversation-inbox-p conversation)
                      (list :inbox-p t)))))
 
@@ -1480,16 +1487,18 @@ The revision is durable source coordination, not a regenerable search payload."
                         (:created-at (option timestamp))
                         (:parent-identifier (option string))
                         (:agent-name (option string))
+                        (:role (option string))
                         (:inbox-p boolean)
                         (:origin-directory (option string)))
     conversation)
 (defun conversation-create
     (configuration &key identifier prompt-cache-key storage-root created-at
-                        parent-identifier agent-name inbox-p origin-directory)
+                        parent-identifier agent-name role inbox-p origin-directory)
   "Create an in-memory conversation that persists under optional STORAGE-ROOT.
 
 A child agent's conversation records PARENT-IDENTIFIER, the conversation of
-the agent that created it, and AGENT-NAME, the name it was given. INBOX-P
+the agent that created it, AGENT-NAME, the name it was given, and ROLE, the
+role it was spawned with. INBOX-P
 marks the history of the person's inbox channel. ORIGIN-DIRECTORY replaces
 the configured working directory as the directory it began in."
   (let* ((created-at       (or created-at (get-universal-time)))
@@ -1518,6 +1527,7 @@ the configured working directory as the directory it began in."
                    :prompt-cache-key  prompt-cache-key
                    :parent-identifier parent-identifier
                    :agent-name        agent-name
+                   :role              role
                    :inbox-p           inbox-p
                    :pathname          identity
                    :log-pathname      log-pathname
@@ -3507,6 +3517,8 @@ later picker searches read it without scanning the log."
                                                   (and (non-empty-string-p parent) parent))
                              :agent-name        (let ((name (getf properties :agent-name)))
                                                   (and (non-empty-string-p name) name))
+                             :role              (let ((role (getf properties :role)))
+                                                  (and (non-empty-string-p role) role))
                              :inbox-p           (eq (getf properties :inbox-p) t)
                              :pathname          identity
                              :log-pathname      log-pathname
