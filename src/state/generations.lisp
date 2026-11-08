@@ -422,7 +422,7 @@ persisted identity, in this process."
          (identifier   (and conversation (conversation-identifier conversation))))
     (if (non-empty-string-p identifier)
         (let ((*main-direct-start-p* t))
-          (main (list "resume" identifier)))
+          (main (list "open" identifier)))
         (main arguments))))
 
 (-> checkpoint--source-snapshot (configuration &key (:allow-dirty-p boolean)) string)

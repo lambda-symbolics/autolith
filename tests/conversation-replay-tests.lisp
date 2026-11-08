@@ -327,9 +327,9 @@
                              :persisted-p t :created-at 1
                              :next-sequence 1 :input-items nil)))
       (list 'main--start-session
-            (lambda (command &key resume-requested-p resume-id &allow-other-keys)
+            (lambda (command &key open-requested-p open-id &allow-other-keys)
               (declare (ignore command))
-              (setf start-call (list resume-requested-p resume-id)))))
+              (setf start-call (list open-requested-p open-id)))))
      (lambda ()
        (main-dispatch '("fork" "--id" "new-fork" "source" "turn" "2"))))
     (test-assert

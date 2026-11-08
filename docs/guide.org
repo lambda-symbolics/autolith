@@ -1503,7 +1503,7 @@ Use a terminal for colored output; redirected output is plain text. Set
 One background server hosts your channels. Run =autolith= in a directory to
 connect to it, starting the server if needed. The client opens the channel
 in that workspace whose conversation file changed last and that no other
-terminal controls, or creates a channel if none qualifies. Use =autolith resume ID= to open a
+terminal controls, or creates a channel if none qualifies. Use =autolith open ID= to open a
 specific channel.
 
 If the server cannot be started or does not answer, the start ends with the
@@ -1516,7 +1516,7 @@ In a pristine or recovery session, which runs apart from the server, use the
 same command to resume that conversation in place.
 
 Input piped from another program runs as a script in a new channel of the
-server, or in =ID='s with =autolith resume ID=. Each line is one submission,
+server, or in =ID='s with =autolith open ID=. Each line is one submission,
 and a Lisp form spanning lines is read whole. Each submission runs to its end
 before the next, and the transcript goes to standard output as plain text.
 The channel closes once the input ends. A script answers no approvals, so
@@ -1606,7 +1606,7 @@ when the same terminal switches channels or reconnects.
 
 Every channel the server hosts, like every directly running session,
 publishes a private authenticated local endpoint. Its session ID is the
-active conversation ID, shared with =autolith resume= and stable across detach,
+active conversation ID, shared with =autolith open= and stable across detach,
 restart and checkpoint quiescence. Selecting another conversation with
 =new= or =fork= moves the endpoint to that conversation ID while
 attached terminals continue using the same connection. Inspect endpoints
@@ -1623,9 +1623,9 @@ Start an unattended session, or resume one by conversation ID or a part of it:
 
 #+BEGIN_SRC sh
 autolith --detached
-autolith resume b-6 --detached
-autolith resume b-6
-autolith resume
+autolith open b-6 --detached
+autolith open b-6
+autolith open
 #+END_SRC
 
 With =--detached=, Autolith prints the full conversation ID and session PID,
@@ -2462,12 +2462,12 @@ and conversation history, so reopening a session uses the same registration.
 
 Select a model for one launch with =--model MODEL=. Use a provider-qualified
 ID, or pass =--provider PROVIDER= together with =--model= for an exact catalog
-ID. These options work before or after =run-job= and =resume=:
+ID. These options work before or after =run-job= and =open=:
 
 #+begin_src sh
 autolith --model my-provider/my-model
 autolith --provider my-provider --model hf:custom/model
-autolith resume --model my-provider/my-model
+autolith open --model my-provider/my-model
 autolith run-job --model my-provider/my-model --input job.sexp --output result.sexp
 #+end_src
 
@@ -3391,7 +3391,7 @@ Explicit generation selection may use an older revision.
 To start a rescue session directly, use:
 
 #+BEGIN_SRC sh
-autolith resume --pristine --permissions full
+autolith open --pristine --permissions full
 #+END_SRC
 
 With =--pristine=, the process uses tracked source instead of a saved active

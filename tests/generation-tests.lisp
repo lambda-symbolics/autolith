@@ -790,8 +790,8 @@
 
 ;;;; -- Subsystem Tests --
 
-(-> generation-tests--test-checkpoint-resume-identity () null)
-(defun generation-tests--test-checkpoint-resume-identity ()
+(-> generation-tests--test-checkpoint-open-identity () null)
+(defun generation-tests--test-checkpoint-open-identity ()
   "Verify retained sessions resume directly by their persisted conversation ID."
   (let ((main-arguments nil)
         (style-events   nil))
@@ -813,7 +813,7 @@
                 nil)))
        (lambda ()
          (checkpoint-resume-main '("--localgroup-handoff" "consumed"))))
-     (test-assert (equal main-arguments '("resume" "conversation-identity"))
+     (test-assert (equal main-arguments '("open" "conversation-identity"))
                   "saved checkpoints resume their originating conversation")
      (test-assert (equal style-events '(t))
                   "saved checkpoints resume in their own process, bypassing client-first startup")
@@ -953,7 +953,7 @@
 (-> test-generation-manifest () null)
 (defun test-generation-manifest ()
   "Test generation publication, loading, selection, and compatibility checks."
-  (generation-tests--test-checkpoint-resume-identity)
+  (generation-tests--test-checkpoint-open-identity)
   (generation-tests--test-checkpoint-restart-finish-boundary)
   (with-platform-capability (':forked-image-saver "checkpoint backend behaviour")
     (generation-tests--test-checkpoint-runtime-resume)

@@ -1354,9 +1354,9 @@
                                              ':ignore)))
   nil)
 
-(-> test-localgroup-resume-instruction-relay () null)
-(defun test-localgroup-resume-instruction-relay ()
-  "Test a detached session's resume advice reaches the terminal that relays it."
+(-> test-localgroup-open-instruction-relay () null)
+(defun test-localgroup-open-instruction-relay ()
+  "Test the advice to open a channel again reaches the terminal that relays it."
   (with-test-configuration (configuration root)
     (declare (ignore root))
     (let* ((terminal     (localgroup-terminal-create))
@@ -1380,7 +1380,7 @@
              (multiple-value-setq (socket stream)
                (test-localgroup--attach (localgroup-start application) ':control
                                         :styled-p t))
-             (test-assert (application--present-resume-instruction application)
+             (test-assert (application--present-open-instruction application)
                           "a durable detached conversation has resume advice")
              (let ((exit (loop for ready-p = (task-tests--wait-until
                                               (lambda () (listen stream)) 10)
@@ -1391,7 +1391,7 @@
                (test-assert
                 (and exit
                      (eql (getf (rest exit) :status) 0)
-                     (search (application--resume-command application)
+                     (search (application--open-command application)
                              (getf (rest exit) :message)))
                 "the relaying terminal receives the resume command as its exit message")
                (test-assert (and exit (find #\Escape (getf (rest exit) :message)))

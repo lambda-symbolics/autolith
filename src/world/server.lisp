@@ -1074,10 +1074,10 @@ forgotten again when no thread could start."
           ;; that cannot be is told and tried again before the agent's turn.
           (application-world-adopt-pending-context application)
           (world-server--serve-host server host
-                                    :initial-command    (and (getf arguments :resume-command-p)
+                                    :initial-command    (and (getf arguments :pick-channel-p)
                                                              "(switch)")
                                     :recovery-diagnosis (getf arguments :recovery-diagnosis)
-                                    :resume-offer-p     (not (null (getf arguments :resume-command-p)))
+                                    :adaptation-offer-p (not (null (getf arguments :pick-channel-p)))
                                     :boot-screen-p      (not (getf arguments :switch-p))))
       (error (condition)
         (application--discard-connection-resources application
@@ -1091,14 +1091,14 @@ forgotten again when no thread could start."
 (-> world-server--serve-host
     (world-server world-host &key (:initial-command (option string))
                                   (:recovery-diagnosis (option string))
-                                  (:resume-offer-p boolean)
+                                  (:adaptation-offer-p boolean)
                                   (:resume-p boolean)
                                   (:reconnect-id (option string))
                                   (:notice (or null string list))
                                   (:boot-screen-p boolean))
     null)
 (defun world-server--serve-host (server host &key initial-command recovery-diagnosis
-                                                  resume-offer-p resume-p reconnect-id notice
+                                                  adaptation-offer-p resume-p reconnect-id notice
                                                   (boot-screen-p t))
   "Start the thread serving HOST's application, serving it again after a checkpoint with RESUME-P.
 
@@ -1109,7 +1109,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
            (world-server--host server host
                                :initial-command    initial-command
                                :recovery-diagnosis recovery-diagnosis
-                               :resume-offer-p     resume-offer-p
+                               :adaptation-offer-p adaptation-offer-p
                                :resume-p           resume-p
                                :reconnect-id       reconnect-id
                                :notice             notice
@@ -1135,13 +1135,13 @@ itself so that threads those threads start inherit it too."
 (-> world-server--host
     (world-server world-host &key (:initial-command (option string))
                                   (:recovery-diagnosis (option string))
-                                  (:resume-offer-p boolean)
+                                  (:adaptation-offer-p boolean)
                                   (:resume-p boolean)
                                   (:reconnect-id (option string))
                                   (:notice (or null string list))
                                   (:boot-screen-p boolean))
     null)
-(defun world-server--host (server host &key initial-command recovery-diagnosis resume-offer-p
+(defun world-server--host (server host &key initial-command recovery-diagnosis adaptation-offer-p
                                             resume-p reconnect-id notice (boot-screen-p t))
   "Serve HOST's application on this thread until its session ends.
 
@@ -1173,7 +1173,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
                           application
                           :initial-command    initial-command
                           :recovery-diagnosis recovery-diagnosis
-                          :resume-offer-p     resume-offer-p
+                          :adaptation-offer-p adaptation-offer-p
                           :hosted-p           t
                           :resume-p           resume-p
                           :notice             notice
