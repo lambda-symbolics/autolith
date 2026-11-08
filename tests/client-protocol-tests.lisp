@@ -126,94 +126,155 @@
                 (localgroup--find-record configuration channel)))))
   nil)
 
+(-> test-client-protocol-start-failure () null)
+(defun test-client-protocol-start-failure ()
+  "Report a writer-start refusal before unregistering and shutting down its transport."
+  (client-protocol-tests--call
+   (lambda (application entry)
+     (let ((start    #'image-daemon:attachment-start)
+           (injected (make-condition 'localgroup-error :operation ':client
+                                      :message                    "Injected writer-start refusal.")))
+       (test-call-with-function-replacements
+        (list (list 'image-daemon:attachment-start
+                    (lambda (attachment)
+                      (if (typep attachment 'channel-client-transport)
+                          (error injected)
+                          (funcall start attachment)))))
+        (lambda ()
+          (test-assert
+           (handler-case
+               (let ((connection (localgroup-client-connect entry)))
+                 (localgroup-client-close connection)
+                 nil)
+             (localgroup-error (condition)
+               (equal (autolith-error-message condition)
+                      (autolith-error-message injected))))
+           "a registered client's startup refusal reaches the peer before shutdown")
+          (test-assert
+           (task-tests--wait-until (lambda () (not (application-clients-attached-p application))) 2)
+           "startup failure removes the registered client"))))))
+  nil)
+
+(defclass client-protocol-test-stream (trivial-gray-streams:fundamental-character-output-stream)
+  ((delegate :initarg :delegate :reader client-protocol-test-stream-delegate
+             :documentation "The daemon-owned output stream.")
+   (entered :initarg :entered :reader client-protocol-test-stream-entered
+            :documentation "Signaled when an armed writer reaches output.")
+   (release :initarg :release :reader client-protocol-test-stream-release
+            :documentation "Optional gate holding the failing write.")
+   (armed-p :initform nil :accessor client-protocol-test-stream-armed-p
+            :documentation "Whether the next write should fail."))
+  (:documentation "A borrowed output boundary for structured-client failure tests."))
+
+(defmethod trivial-gray-streams:stream-write-string
+    ((stream client-protocol-test-stream) string &optional (start 0) end)
+  "Delegate output unless the test has armed a gated writer failure."
+  (when (client-protocol-test-stream-armed-p stream)
+    (sb-thread:signal-semaphore (client-protocol-test-stream-entered stream))
+    (when (client-protocol-test-stream-release stream)
+      (sb-thread:wait-on-semaphore (client-protocol-test-stream-release stream)))
+    (error 'stream-error :stream stream))
+  (write-string string (client-protocol-test-stream-delegate stream) :start start :end end)
+  string)
+
+(defmethod trivial-gray-streams:stream-write-char ((stream client-protocol-test-stream) character)
+  "Write CHARACTER through the same failure boundary as a string."
+  (trivial-gray-streams:stream-write-string stream (string character))
+  character)
+
+(defmethod trivial-gray-streams:stream-finish-output ((stream client-protocol-test-stream))
+  "Flush the borrowed output without closing it."
+  (finish-output (client-protocol-test-stream-delegate stream)))
+
 (-> test-client-protocol-disconnect () null)
 (defun test-client-protocol-disconnect ()
   "Test writer failure and overflow remove idle approvers and wake their observers."
   (dolist (failure '(:overflow :write))
-    (client-protocol-tests--call
-     (lambda (application entry)
-       (let* ((approval   (sb-thread:make-semaphore))
-              (settled    (sb-thread:make-semaphore))
-              (waiting    (sb-thread:make-semaphore))
-              (closed     (sb-thread:make-semaphore))
-              (writing    (sb-thread:make-semaphore))
-              (release    (sb-thread:make-semaphore))
-              (connection (localgroup-client-connect
-                           entry :name "failing"
-                           :event-function
-                           (lambda (event)
-                             (case (first event)
-                               (:approval
-                                (sb-thread:signal-semaphore approval))
-                               (:closed
-                                (sb-thread:signal-semaphore closed))))))
-              (client     (first (application-clients application)))
-              (healthy    (localgroup-client-connect entry :name "healthy" :approves-p nil))
-              (write      #'channel-client--write-event)
-              (wait       #'condition-wait)
-              (hub        (application-client-hub application))
-              (choice     :unanswered)
-              (asker      nil))
-         (unwind-protect
-              (test-call-with-function-replacements
-               (list
-                (list 'condition-wait
-                      (lambda (condition-variable lock &key timeout)
-                        (when (eq condition-variable (client-hub-condition-variable hub))
-                          (sb-thread:signal-semaphore waiting))
-                        (funcall wait condition-variable lock :timeout timeout)))
-                (list 'channel-client--write-event
-                      (lambda (recipient event)
-                        (if (and (eq recipient client)
-                                 (eq (first event) ':test-failure))
-                            (progn
-                              (sb-thread:signal-semaphore writing)
-                              (when (eq failure ':overflow)
-                                (sb-thread:wait-on-semaphore release :timeout 10))
-                              (error 'image-daemon:daemon-error
-                                     :message "Injected transport failure." :operation ':write-packet))
-                            (funcall write recipient event)))))
-               (lambda ()
-                 (setf asker
-                       (make-thread
-                        (lambda ()
-                          (unwind-protect
-                               (let ((*channel-approval-poll-seconds* 60))
-                                 (setf choice
-                                       (application-select-approval
-                                        application :kind ':command :title "test" :entry "test"
-                                        :items (list (list :name "once" :description "allow")))))
-                            (sb-thread:signal-semaphore settled)))
-                        :name "client approval waiter"))
-                 (test-assert (sb-thread:wait-on-semaphore approval :timeout 10)
-                              "the approver receives the pending approval before it goes idle")
-                 (test-assert (sb-thread:wait-on-semaphore waiting :timeout 10)
-                              "the approval waiter releases the hub lock into its wait")
-                 (channel-client-enqueue client '(:test-failure))
-                 (test-assert (sb-thread:wait-on-semaphore writing :timeout 10)
-                              "the writer reaches the injected transport boundary")
-                 (when (eq failure ':overflow)
-                   (let ((*channel-client-queue-limit* 1))
-                     (channel-client-enqueue client '(:queued))
-                     (channel-client-enqueue client '(:overflow))))
-                 (test-assert (sb-thread:wait-on-semaphore closed :timeout 10)
-                              "server shutdown wakes an idle peer without another request")
-                 (test-assert (sb-thread:wait-on-semaphore settled :timeout 10)
-                              "losing the last approver wakes the pending approval")
-                 (test-assert (and (null choice)
-                                   (not (application-clients-approving-p application))
-                                   (not (member client (application-clients application))))
-                              "the failed approver is unregistered before approval returns")
-                 ;; Repeated closes must not remove a different client or touch its socket.
-                 (channel-client-close client)
-                 (test-assert (getf (localgroup-client-call healthy ':state) :state)
-                              "a healthy observer still serves requests during teardown")
-                 (sb-thread:signal-semaphore release)))
-           (sb-thread:signal-semaphore release)
-           (localgroup-client-close connection)
-           (localgroup-client-close healthy)
-           (when asker
-             (join-thread asker)))))))
+    (let ((output  nil)
+          (create  #'channel-client-create)
+          (writing (sb-thread:make-semaphore))
+          (release (sb-thread:make-semaphore)))
+      (test-call-with-function-replacements
+       (list (list 'channel-client-create
+                   (lambda (&rest arguments)
+                     (when (equal (getf arguments :name) "failing")
+                       (setf output (make-instance 'client-protocol-test-stream
+                                                   :delegate (getf arguments :stream)
+                                                   :entered  writing
+                                                   :release  (when (eq failure ':overflow) release))
+                             (getf arguments :stream) output))
+                     (apply create arguments))))
+       (lambda ()
+         (client-protocol-tests--call
+          (lambda (application entry)
+            (let* ((approval   (sb-thread:make-semaphore))
+                   (settled    (sb-thread:make-semaphore))
+                   (waiting    (sb-thread:make-semaphore))
+                   (closed     (sb-thread:make-semaphore))
+                   (connection (localgroup-client-connect
+                                entry :name "failing"
+                                :event-function
+                                (lambda (event)
+                                  (case (first event)
+                                    (:approval
+                                     (sb-thread:signal-semaphore approval))
+                                    (:closed
+                                     (sb-thread:signal-semaphore closed))))))
+                   (client     (first (application-clients application)))
+                   (healthy    (localgroup-client-connect entry :name "healthy" :approves-p nil))
+                   (wait       #'condition-wait)
+                   (hub        (application-client-hub application))
+                   (choice     :unanswered)
+                   (asker      nil))
+              (unwind-protect
+                   (test-call-with-function-replacements
+                    (list (list 'condition-wait
+                                (lambda (condition-variable lock &key timeout)
+                                  (when (eq condition-variable (client-hub-condition-variable hub))
+                                    (sb-thread:signal-semaphore waiting))
+                                  (funcall wait condition-variable lock :timeout timeout))))
+                    (lambda ()
+                      (setf asker
+                            (make-thread
+                             (lambda ()
+                               (unwind-protect
+                                    (let ((*channel-approval-poll-seconds* 60))
+                                      (setf choice
+                                            (application-select-approval
+                                             application :kind ':command :title "test" :entry "test"
+                                             :items (list (list :name "once" :description "allow")))))
+                                 (sb-thread:signal-semaphore settled)))
+                             :name "client approval waiter"))
+                      (test-assert (sb-thread:wait-on-semaphore approval :timeout 10)
+                                   "the approver receives the pending approval before it goes idle")
+                      (test-assert (sb-thread:wait-on-semaphore waiting :timeout 10)
+                                   "the approval waiter releases the hub lock into its wait")
+                      (setf (client-protocol-test-stream-armed-p output) t)
+                      (channel-client-enqueue client '(:test-failure))
+                      (test-assert (sb-thread:wait-on-semaphore writing :timeout 10)
+                                   "the writer reaches the injected transport boundary")
+                      (when (eq failure ':overflow)
+                        (let ((image-daemon:*attachment-queue-character-limit*
+                                (length (image-daemon:daemon-packet-string '(:queued)))))
+                          (channel-client-enqueue client '(:queued))
+                          (channel-client-enqueue client '(:overflow))))
+                      (test-assert (sb-thread:wait-on-semaphore closed :timeout 10)
+                                   "server shutdown wakes an idle peer without another request")
+                      (test-assert (sb-thread:wait-on-semaphore settled :timeout 10)
+                                   "losing the last approver wakes the pending approval")
+                      (test-assert (and (null choice)
+                                        (not (application-clients-approving-p application))
+                                        (not (member client (application-clients application))))
+                                   "the failed approver is unregistered before approval returns")
+                      (test-assert (open-stream-p output) "the attachment does not close the borrowed stream")
+                      (channel-client-close client)
+                      (test-assert (getf (localgroup-client-call healthy ':state) :state)
+                                   "a healthy observer still serves requests during teardown")))
+                (sb-thread:signal-semaphore release)
+                (localgroup-client-close connection)
+                (localgroup-client-close healthy)
+                (when asker
+                  (join-thread asker))))))))))
   nil)
 
 (-> test-client-protocol-packet-limit () null)
