@@ -14,6 +14,9 @@
 (defparameter *task-maximum-batch-size* 16
   "The largest task batch accepted atomically.")
 
+(defparameter *task-children-maximum* 32
+  "The most children one agent may have; new work goes to an existing child through its channel.")
+
 (defparameter *task-maximum-live-jobs* 64
   "The maximum combined queued and running task jobs.")
 

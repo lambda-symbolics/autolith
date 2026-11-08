@@ -1497,6 +1497,26 @@
                  "an unknown identifier still does not exist"))
   nil)
 
+(-> test-world-agent-children () null)
+(defun test-world-agent-children ()
+  "Test an agent's children are the channels nested in its own, counted once."
+  (with-test-configuration (configuration)
+    (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
+      (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent "broot11"
+                                                             :name "helper" :created-at 1500)
+      (world-reconcile-sessions configuration :now 2000)
+      (let ((agent        (agent-create :configuration configuration
+                                        :provider      (make-instance 'model-provider)
+                                        :conversation  root
+                                        :tool-registry (make-instance 'tool-registry)
+                                        :worker        nil))
+            (orchestrator (task-tests--orchestrator)))
+        (unwind-protect
+             (test-assert (equal (task-agent-children orchestrator agent) '("bkid11"))
+                          "the child's nested channel is the agent's one child")
+          (task-orchestrator-close orchestrator)))))
+  nil)
+
 (-> test-world-child-role () null)
 (defun test-world-child-role ()
   "Test a child's own channel serves it in its role, and a session refuses to swap in a conversation of another role."

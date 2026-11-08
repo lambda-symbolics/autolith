@@ -3236,6 +3236,21 @@ exactly that race."
                    "a child's identifier is a short identifier, not a UUID")))
   nil)
 
+(-> test-task-children-limit () null)
+(defun test-task-children-limit ()
+  "Test child.spawn refuses a child beyond the most an agent may have, and says what to do instead."
+  (let ((*task-children-maximum* 0))
+    (test-assert (handler-case
+                     (progn
+                       (task-tests--run-scheduler-case
+                        (make-instance 'task-test-provider :mode ':concurrent)
+                        (json-object "agent" "task" "task" "Do not fit." "blocking" t))
+                       nil)
+                   (task-error (condition)
+                     (search "child.remove" (princ-to-string condition))))
+                 "a spawn past the limit is refused at admission, pointing at reuse and removal"))
+  nil)
+
 (-> test-task-child-channel-lease () null)
 (defun test-task-child-channel-lease ()
   "Test a running child leases its conversation, so nothing opens its channel twice, and frees it when done."
