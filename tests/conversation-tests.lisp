@@ -1891,6 +1891,84 @@ process without releasing the lease, exercising kernel cleanup."
                  "the existing release-error fallback still unlocks the kernel lease"))
   nil)
 
+(-> test-conversation-lease-probe-open () null)
+(defun test-conversation-lease-probe-open ()
+  "Interleave a free probe's release with an actual opener using real lifecycle locks."
+  (with-test-configuration (configuration)
+    (let* ((identifier           "probe42")
+           (guard                (conversation--lease-guard-pathname configuration))
+           (lock-file            (symbol-function 'call-with-file-lock))
+           (release              (symbol-function 'lease-release))
+           (release-conversation (symbol-function 'conversation-lease-release))
+           (probe-thread         (current-thread))
+           (guard-thread         nil)
+           (attempting           (sb-thread:make-semaphore))
+           (opener               nil)
+           (opened               nil)
+           (failure              nil))
+      (unwind-protect
+           (progn
+             (test-assert (not (conversation-lease-busy-p configuration identifier))
+                          "an unowned conversation is free")
+             (flet ((interleave ()
+                      (when (and (eq (current-thread) probe-thread) (null opener))
+                        (setf opener
+                              (make-thread
+                               (lambda ()
+                                 (handler-case
+                                     (setf opened (conversation-lease-acquire configuration identifier))
+                                   (error (condition) (setf failure condition))))
+                               :name "lease probe concurrent opener"))
+                        (unless (sb-thread:wait-on-semaphore attempting :timeout 5)
+                          (error "Concurrent opener did not reach lifecycle acquisition"))
+                        ;; Fill an exposed lifecycle gap before probe cleanup.
+                        (unless (eq guard-thread probe-thread)
+                          (join-thread opener)))))
+               (test-call-with-function-replacements
+                (list
+                 (list 'call-with-file-lock
+                       (lambda (pathname function &key (mode #o600))
+                         (when (and (equal pathname guard)
+                                    (not (eq (current-thread) probe-thread)))
+                           (sb-thread:signal-semaphore attempting))
+                         (funcall lock-file pathname
+                                  (lambda ()
+                                    (let ((previous guard-thread))
+                                      (unwind-protect
+                                           (progn
+                                             (setf guard-thread (current-thread))
+                                             (funcall function))
+                                        (setf guard-thread previous))))
+                                  :mode mode)))
+                 (list 'conversation-lease-release
+                       (lambda (lease)
+                         (interleave)
+                         (funcall release-conversation lease)))
+                 (list 'lease-release
+                       (lambda (lease)
+                         (unless (equal (ls-flock:lease-pathname lease) guard)
+                           (interleave))
+                         (funcall release lease))))
+                (lambda ()
+                  (test-assert (not (conversation-lease-busy-p configuration identifier))
+                               "the original free probe completes"))))
+             (when opener (join-thread opener))
+             (test-assert (and opened (null failure))
+                          "a concurrent real opener never mistakes a probe for a primary owner")
+             (when opened
+               (test-assert (conversation-lease-busy-p configuration identifier)
+                            "a genuine primary owner excludes probes")
+               (test-assert (conversation-lease-held-p opened)
+                            "probing does not release the primary owner")
+               (let ((condition (test-conversation--busy-condition configuration identifier)))
+                 (test-assert (= (current-process-id) (conversation-in-use-owner-pid condition))
+                              "probing preserves diagnostic ownership"))))
+        (when opener (join-thread opener))
+        (when opened (conversation-lease-release opened)))
+      (test-assert (not (probe-file (conversation--lease-pathname configuration identifier)))
+                   "normal probe and owner cleanup removes the per-ID lock file")))
+  nil)
+
 (-> test-conversation-lease-owner-diagnostic () null)
 (defun test-conversation-lease-owner-diagnostic ()
   "Own the contention snapshot, diagnostic isolation, non-pruning and lock-preservation contracts."
