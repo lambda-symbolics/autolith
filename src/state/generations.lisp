@@ -267,15 +267,15 @@ structured type and message survive the round trip."
                    (zerop (getf summary :compatible))))
       (with-output-to-string (stream)
         (when invalid-selected-p
-          (format stream "Selected checkpoint is unavailable: ~A "
+          (format stream "the selected checkpoint cannot start: ~A; "
                   (getf selected-health :reason)))
         (let ((fallback (getf summary :fallback)))
           (if fallback
-              (format stream "Compatible fallback: ~A. "
+              (format stream "(rollback) can start checkpoint ~A instead; "
                       (generation-identifier fallback))
-              (write-string "Rollback is unavailable: no compatible retained checkpoint. "
+              (write-string "no retained checkpoint can start, so (rollback) has nothing to go back to; "
                             stream)))
-        (write-string "Run (checkpoint) from a clean source checkout to create a compatible checkpoint."
+        (write-string "(checkpoint) saves one that can, and (checkpoint :allow-dirty t) saves it with uncommitted source changes"
                       stream)))))
 
 (-> generation-find (configuration string) (option generation))

@@ -642,6 +642,18 @@ run once the wake has."
                              "the next open joins it rather than starting it twice")))))))))
   nil)
 
+(-> test-world-server-generation-warning-once () null)
+(defun test-world-server-generation-warning-once ()
+  "Test the checkpoint warning shows in the first channel a world server opens, not in each."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (declare (ignore configuration root))
+     (test-assert (and (world-server-take-generation-warning server)
+                       (not (world-server-take-generation-warning server))
+                       (not (world-server-take-generation-warning server)))
+                  "only the first channel takes the warning")))
+  nil)
+
 (-> test-world-server-open-passes-damage () null)
 (defun test-world-server-open-passes-damage ()
   "Test a workspace open passes over a channel whose conversation cannot be loaded, and names it."
