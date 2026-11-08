@@ -95,7 +95,7 @@
          (root          (test-configuration-root configuration))
          (registry      (task-augment-tool-registry (make-instance 'tool-registry)))
          (orchestrator
-           (task-run-tool-orchestrator (tool-registry-find registry "task" "run")))
+           (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
          (parent        (task-tests--primary-agent configuration "rlm-activity" registry))
          (conversation  (agent-conversation parent))
          (terminal      (make-instance 'recording-terminal :columns 100 :rows 30))
@@ -3038,7 +3038,7 @@ A frame sends its shared views and its task as consecutive user messages."
                  "an exhausted budget without partial evidence stays a failure")
     (test-assert (search "audit the whole repository" content)
                  "the failure names the exhausted task")
-    (test-assert (and (search "task.run" content)
+    (test-assert (and (search "child.spawn" content)
                       (search (princ-to-string *rlm-tool-maximum-token-budget*)
                               content))
                  "the failure explains delegation and the explicit allowance ceiling"))

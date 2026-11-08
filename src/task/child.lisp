@@ -84,8 +84,8 @@
     (when
         (and (task-agent-definition-spawns definition)
              (< depth (task-orchestrator-maximum-depth orchestrator)))
-      (dolist (name '("run" "agents"))
-        (let ((task-tool (tool-registry-find parent-registry "task" name)))
+      (dolist (name '("spawn" "roles"))
+        (let ((task-tool (tool-registry-find parent-registry "child" name)))
           (when task-tool
             (tool-registry-register registry task-tool)))))
     (let ((output (task-agent-definition-output definition)))
@@ -608,7 +608,7 @@ continuation, allowing callers to hold a source lock through actual removal."
                :message
                (format nil "Task artifact pathname is already occupied: ~A"
                        target)
-               :tool-name "task.run"
+               :tool-name "child.spawn"
                :task-id   (job-identifier job)))
       (unwind-protect
            (progn
@@ -631,7 +631,7 @@ continuation, allowing callers to hold a source lock through actual removal."
                       :message
                       (format nil "Task artifact pathname became occupied: ~A"
                               target)
-                      :tool-name "task.run"
+                      :tool-name "child.spawn"
                       :task-id   (job-identifier job)))
              (rename-file temporary target)
              (task--prune-result-artifacts
@@ -646,7 +646,7 @@ continuation, allowing callers to hold a source lock through actual removal."
                                (uiop:pathname-equal group
                                  (uiop:pathname-parent-directory-pathname directory)))
                     (error 'task-error :message "Invalid retained child artifact identity."
-                                       :tool-name "task.run" :task-id (job-identifier job)))
+                                       :tool-name "child.spawn" :task-id (job-identifier job)))
                   (shell-log-persist-owner-delivery configuration
                     (session-job-root-conversation-identifier job) owner
                     :delete-function delete-function))))

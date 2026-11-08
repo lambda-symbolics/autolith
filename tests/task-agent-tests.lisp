@@ -391,13 +391,13 @@
            (let* ((primary
                     (task-tests--primary-agent
                      configuration "agents-primary" registry))
-                  (tool (tool-registry-find registry "task" "agents")))
+                  (tool (tool-registry-find registry "child" "roles")))
              (test-assert tool
-                          "the default registry exposes task.agents")
+                          "the default registry exposes child.roles")
              (let ((orchestrator (task-agents-tool-orchestrator tool)))
                (labels
                    ((invoke (selected-tool viewer offset limit)
-                      "Execute task.agents and return its result and native form."
+                      "Execute child.roles and return its result and native form."
                       (let* ((context
                                (make-instance
                                 'tool-context
@@ -429,7 +429,7 @@
                             thereis (eq (first tail) field)))
 
                     (run-report (viewer selected-registry agent-name)
-                      "Invoke task.run as VIEWER and return its failure report."
+                      "Invoke child.spawn as VIEWER and return its failure report."
                       (let* ((context
                                (make-instance
                                 'tool-context
@@ -442,8 +442,8 @@
                                (tool-registry-execute-call
                                 selected-registry
                                 (json-object
-                                 "namespace" "task"
-                                 "name" "run"
+                                 "namespace" "child"
+                                 "name" "spawn"
                                  "arguments"
                                  (json-encode
                                   (json-object
@@ -466,7 +466,7 @@
                            (eq (getf allowed :source) :project)
                            (getf allowed :pathname)
                            (eq (getf blocked :field) :instructions))
-                      "primary task.agents returns exact native role and diagnostic metadata")
+                      "primary child.roles returns exact native role and diagnostic metadata")
                      (test-assert
                       (every
                        (lambda (field) (field-present-p allowed field))
@@ -477,7 +477,7 @@
                      (test-assert
                       (and (not (field-present-p allowed :instructions))
                            (null (search secret (tool-result-content result))))
-                      "task.agents never exposes role instructions")))
+                      "child.roles never exposes role instructions")))
                  (multiple-value-bind (result form)
                      (invoke tool primary 0 1)
                    (declare (ignore result))
@@ -487,7 +487,7 @@
                          (> (getf (rest form) :total) 1)
                          (= (getf (rest form) :next-offset) 1)
                          (= (length (getf (rest form) :entries)) 1))
-                    "task.agents paginates native discovery without clipping forms"))
+                    "child.roles paginates native discovery without clipping forms"))
                  (let* ((definition
                           (task-agent-definition-create
                            :name         "spawn-parent"
@@ -508,10 +508,10 @@
                           (task-tests--child-viewer
                            configuration job :registry child-registry))
                         (child-tool
-                          (tool-registry-find child-registry "task" "agents")))
+                          (tool-registry-find child-registry "child" "roles")))
                    (test-assert
                     child-tool
-                    "a child allowed to delegate inherits task.agents")
+                    "a child allowed to delegate inherits child.roles")
                    (multiple-value-bind (result form)
                        (invoke child-tool child 0 *task-agent-page-maximum*)
                      (let ((entries (getf (rest form) :entries)))
@@ -527,7 +527,7 @@
                          (entry form "blocked" :diagnostic)
                          (null (entry form "denied" :agent))
                          (null (search secret (tool-result-content result))))
-                        "child task.agents shows only spawnable roles and reserved-name diagnostics")))
+                        "child child.roles shows only spawnable roles and reserved-name diagnostics")))
                    (let ((unknown-report
                            (run-report child child-registry
                                        "unlisted-request"))
@@ -535,7 +535,7 @@
                            (run-report child child-registry
                                        "hidden-broken"))
                          (expected
-                           "task.run failed: The current agent may not spawn the requested role."))
+                           "child.spawn failed: The current agent may not spawn the requested role."))
                      (test-assert
                       (and (string= unknown-report expected)
                            (null (search "Available agents" unknown-report))
@@ -590,9 +590,9 @@
                        (test-assert
                         (null
                          (tool-registry-find
-                          child-registry "task" "agents"))
+                          child-registry "child" "roles"))
                         (format nil
-                                "~A child does not inherit task.agents"
+                                "~A child does not inherit child.roles"
                                 name))
                        (multiple-value-bind (result form)
                            (invoke tool child 0 *task-agent-page-maximum*)
@@ -628,7 +628,7 @@
                           :agent         primary))
          (orchestrator
            (task-run-tool-orchestrator
-            (tool-registry-find registry "task" "run")))
+            (tool-registry-find registry "child" "spawn")))
          (definition
            (task-agent-definition-create
             :name         "default-types"
@@ -708,10 +708,10 @@
                          context)))))
              (dolist
                  (case
-                  '(("task" "agents" "{\"offset\":false}")
-                    ("task" "agents" "{\"offset\":null}")
-                    ("task" "agents" "{\"limit\":false}")
-                    ("task" "agents" "{\"limit\":null}")
+                  '(("child" "roles" "{\"offset\":false}")
+                    ("child" "roles" "{\"offset\":null}")
+                    ("child" "roles" "{\"limit\":false}")
+                    ("child" "roles" "{\"limit\":null}")
                     ("job" "list" "{\"offset\":false}")
                     ("job" "list" "{\"offset\":null}")
                     ("job" "list" "{\"limit\":false}")

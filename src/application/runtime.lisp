@@ -534,7 +534,7 @@ from its world."
           (and (slot-boundp application 'tool-registry)
                (application-tool-registry application))))
     (when (typep registry 'tool-registry)
-      (let ((tool (tool-registry-find registry "task" "run")))
+      (let ((tool (tool-registry-find registry "child" "spawn")))
         (and (typep tool 'task-run-tool)
              (task-run-tool-orchestrator tool))))))
 

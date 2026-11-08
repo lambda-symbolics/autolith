@@ -145,7 +145,7 @@ The root context never enters a prompt, but its environment holds it in memory."
      "type" "string"
      "enum" (json-array "none" "read")
      "description"
-     "Frame capabilities: none for a pure call over the views (the default), read to also allow a few targeted workspace resource reads, content searches, and nested rlm calls inside the shared budget and a handful of tool rounds. A read frame answers one bounded question; open-ended investigation belongs to a task.run child."))
+     "Frame capabilities: none for a pure call over the views (the default), read to also allow a few targeted workspace resource reads, content searches, and nested rlm calls inside the shared budget and a handful of tool rounds. A read frame answers one bounded question; open-ended investigation belongs to a child.spawn child."))
    (unless nested-p (rlm--routing-parameters))
    (rlm--allowance-parameters)
    (rlm--async-parameters)))
@@ -162,7 +162,7 @@ The root context never enters a prompt, but its environment holds it in memory."
    :provider  provider
    :budget    budget
    :description
-   "Run one bounded inference frame: a separate model call over only the supplied read-only views, isolated from this conversation. Use it to analyze inputs without loading them here. The frame sees nothing but its views, so pass everything it needs. Its budget is small by default and a read frame gets only a handful of tool rounds, so it answers one question over a few files: it cannot audit a repository, review a whole change set, or read many files, and such open-ended investigation belongs to a task.run child instead. Returns the frame's value, its trace identifier, its settled token spend, and the remaining budget."
+   "Run one bounded inference frame: a separate model call over only the supplied read-only views, isolated from this conversation. Use it to analyze inputs without loading them here. The frame sees nothing but its views, so pass everything it needs. Its budget is small by default and a read frame gets only a handful of tool rounds, so it answers one question over a few files: it cannot audit a repository, review a whole change set, or read many files, and such open-ended investigation belongs to a child.spawn child instead. Returns the frame's value, its trace identifier, its settled token spend, and the remaining budget."
    :parameters
    (tool-object-schema
     (apply #'json-object
@@ -548,7 +548,7 @@ filesystem paths are only a programmatic Lisp designator."
        (rlm--result-sexp (rlm-partial-result-observation condition))))
     (rlm-budget-exhausted (condition)
       (tool-failure
-       (format nil "~A Narrow the task or its views, set calls and tokens explicitly (at most ~D and ~D from the primary agent), or hand an open-ended investigation to a task.run child agent."
+       (format nil "~A Narrow the task or its views, set calls and tokens explicitly (at most ~D and ~D from the primary agent), or hand an open-ended investigation to a child.spawn child agent."
                condition
                *rlm-tool-maximum-call-budget*
                *rlm-tool-maximum-token-budget*)))

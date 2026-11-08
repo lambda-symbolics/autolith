@@ -85,7 +85,7 @@
              (test-assert
               (and (gethash "completion-policy" properties)
                    (gethash "completion-policy" item-properties))
-              "task.run exposes policy at flat and batch-item boundaries")))
+              "child.spawn exposes policy at flat and batch-item boundaries")))
       (tool-registry-close-runtime-state registry)))
   nil)
 
@@ -96,7 +96,7 @@
          (root          (test-configuration-root configuration))
          (registry      (task-augment-tool-registry (make-default-tool-registry)))
          (orchestrator
-           (task-run-tool-orchestrator (tool-registry-find registry "task" "run")))
+           (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
          (primary       (task-tests--primary-agent configuration "policy-primary" registry))
          (context
            (make-instance 'tool-context

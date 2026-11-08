@@ -492,13 +492,13 @@ is, use RLM first and keep bulky evidence outside this conversation.
 
 RLM sits between ordinary tool use and persistent child delegation:
 
-| Operation      | Prefer it when                                                                                                             |
-|----------------+----------------------------------------------------------------------------------------------------------------------------|
-| ordinary tool  | One small read, lookup, computation, edit, or other direct operation is enough.                                            |
-| =rlm.infer=      | One bounded analysis should run over explicit views, or a few targeted read-only lookups should return only their conclusion. |
-| =rlm.map=        | The same extraction, classification, review, or question applies independently to several resources.                       |
-| =rlm.complete=   | One input exceeds the provider window or must be processed nearly in full through programmatic decomposition.              |
-| =task.run= child | Another agent must independently edit, test, use broader tools, maintain state, or pursue a persistent objective.          |
+| Operation           | Prefer it when                                                                                                                |
+|---------------------+-------------------------------------------------------------------------------------------------------------------------------|
+| ordinary tool       | One small read, lookup, computation, edit, or other direct operation is enough.                                               |
+| =rlm.infer=         | One bounded analysis should run over explicit views, or a few targeted read-only lookups should return only their conclusion. |
+| =rlm.map=           | The same extraction, classification, review, or question applies independently to several resources.                          |
+| =rlm.complete=      | One input exceeds the provider window or must be processed nearly in full through programmatic decomposition.                 |
+| =child.spawn= child | Another agent must independently edit, test, use broader tools, maintain state, or pursue a persistent objective.             |
 
 Prefer =rlm.map= over serially reading many resources and repeating the
 same reasoning here. Prefer =rlm.infer= with =capabilities: read= when
@@ -506,7 +506,7 @@ a few targeted reads or searches should produce a bounded result
 without loading their evidence into this conversation. A read frame
 gets only a handful of tool rounds inside a small default budget, so
 repository audits, whole change-set reviews, and investigations that
-must read many files belong to a =task.run= child, not to a frame. Use
+must read many files belong to a =child.spawn= child, not to a frame. Use
 =capabilities: none= when the required views are already selected.
 Use =rlm.complete= early when the input is too large for this
 conversation rather than first consuming context by reading it in
@@ -666,10 +666,10 @@ Use =completion-policy: notify= when a result should wait for an ordinary turn.
 Use =job.get= or =job.wait= for deliberate inspection or waiting, including child
 sessions and interfaces without an automatic turn controller.
 
-| Tool        | Use                                                                                                                                               |
-|-------------+---------------------------------------------------------------------------------------------------------------------------------------------------|
-| =task.run=    | Independent or specialized work that significantly improves correctness or speed. Do not spawn a single child for work you can complete directly. |
-| =task.agents= | Inspect before choosing a role when roles, project or user overrides, or role restrictions matter.                                                |
+| Tool          | Use                                                                                                                                               |
+|---------------+---------------------------------------------------------------------------------------------------------------------------------------------------|
+| =child.spawn= | Independent or specialized work that significantly improves correctness or speed. Do not spawn a single child for work you can complete directly. |
+| =child.roles= | Inspect before choosing a role when roles, project or user overrides, or role restrictions matter.                                                |
 | =job.wait=    | Inspect or join a kept job ID.                                                                                                                    |
 | =job.list=    | Rediscover visible IDs.                                                                                                                           |
 | =job.cancel=  | Stop work that is no longer needed.                                                                                                               |

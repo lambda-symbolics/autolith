@@ -487,7 +487,7 @@ parent, and borrowed capabilities are released at terminal state."))
 
 (-> task-job-parent-call-id (task-job) (option string))
 (defun task-job-parent-call-id (job)
-  "Return the task.run call that created task JOB."
+  "Return the child.spawn call that created task JOB."
   (session-job-parent-call-id job))
 
 (-> task-job-detached-p (task-job) boolean)
@@ -653,9 +653,9 @@ parent, and borrowed capabilities are released at terminal state."))
   ':exclusive)
 
 (defmethod tool-decode-arguments ((tool task-run-tool) source)
-  "Decode task.run booleans without conflating JSON false and null."
+  "Decode child.spawn booleans without conflating JSON false and null."
   (declare (ignore tool))
-  (task-json-decode source :tool-name "task.run"))
+  (task-json-decode source :tool-name "child.spawn"))
 
 (defmethod tool-decode-arguments ((tool task-yield-tool) source)
   "Decode yield values without conflating JSON false and null."
@@ -663,9 +663,9 @@ parent, and borrowed capabilities are released at terminal state."))
   (task-json-decode source :tool-name "yield.submit"))
 
 (defmethod tool-decode-arguments ((tool task-agents-tool) source)
-  "Decode task.agents values without conflating JSON false and null."
+  "Decode child.roles values without conflating JSON false and null."
   (declare (ignore tool))
-  (task-json-decode source :tool-name "task.agents"))
+  (task-json-decode source :tool-name "child.roles"))
 
 (defmethod tool-decode-arguments ((tool task-job-tool) source)
   "Decode job tool values without conflating JSON false and null."

@@ -57,7 +57,7 @@
                                    :conversation  conversation
                                    :tool-registry registry
                                    :worker        nil)
-                     run-tool (tool-registry-find registry "task" "run")
+                     run-tool (tool-registry-find registry "child" "spawn")
                      orchestrator (task-run-tool-orchestrator run-tool)
                      context
                      (make-instance 'tool-context
@@ -170,7 +170,7 @@
         (list synchronous detached))))
     (test-assert
      (equal cancelled (list synchronous))
-     "task.run failure cleanup preserves deliberately detached jobs"))
+     "child.spawn failure cleanup preserves deliberately detached jobs"))
   nil)
 
 (-> test-task-running-cancellation () null)
@@ -197,7 +197,7 @@
                            :conversation  conversation
                            :tool-registry registry
                            :worker        nil))
-           (run-tool     (tool-registry-find registry "task" "run"))
+           (run-tool     (tool-registry-find registry "child" "spawn"))
            (orchestrator (task-run-tool-orchestrator run-tool))
            (context
              (make-instance 'tool-context
@@ -297,7 +297,7 @@
                                     :conversation  conversation
                                     :tool-registry registry
                                     :worker        nil))
-                    (run-tool     (tool-registry-find registry "task" "run"))
+                    (run-tool     (tool-registry-find registry "child" "spawn"))
                     (orchestrator (task-run-tool-orchestrator run-tool))
                     (context
                       (make-instance
@@ -339,7 +339,7 @@
                        (task-tests--wait-until
                         (lambda () (not (thread-alive-p runner)))
                         3)
-                       "the runtime deadline releases synchronous task.run")
+                       "the runtime deadline releases synchronous child.spawn")
                       (join-thread runner)
                       (setf runner nil)
                       (let* ((jobs
@@ -440,7 +440,7 @@
                            :conversation  conversation
                            :tool-registry registry
                            :worker        nil))
-           (run-tool     (tool-registry-find registry "task" "run"))
+           (run-tool     (tool-registry-find registry "child" "spawn"))
            (orchestrator (task-run-tool-orchestrator run-tool))
            (context
              (make-instance 'tool-context
@@ -818,7 +818,7 @@ exactly that race."
                      (= (task-orchestrator-hurry-up-admission-count orchestrator)
                         2)
                      (= (task-orchestrator-live-count orchestrator) 2))
-                "concurrent task.run calls atomically share the two-child allowance"))
+                "concurrent child.spawn calls atomically share the two-child allowance"))
              (let* ((orchestrator               (task-tests--orchestrator))
                     (viewer                     (make-viewer orchestrator "limit-parent"))
                     (submit-lock                (make-lock "Autolith limit race submit"))
@@ -1293,7 +1293,7 @@ exactly that race."
          (root                 (test-configuration-root configuration))
          (registry             (task-augment-tool-registry
                                 (make-default-tool-registry)))
-         (run-tool             (tool-registry-find registry "task" "run"))
+         (run-tool             (tool-registry-find registry "child" "spawn"))
          (get-tool             (tool-registry-find registry "job" "get"))
          (orchestrator         (task-run-tool-orchestrator run-tool))
          (definition
@@ -1413,7 +1413,7 @@ exactly that race."
          (root            (test-configuration-root configuration))
          (registry
            (task-augment-tool-registry (make-default-tool-registry)))
-         (run-tool        (tool-registry-find registry "task" "run"))
+         (run-tool        (tool-registry-find registry "child" "spawn"))
          (orchestrator    (task-run-tool-orchestrator run-tool))
          (definition
            (task-agent-definition-create
@@ -1587,7 +1587,7 @@ exactly that race."
          (registry
            (task-augment-tool-registry (make-default-tool-registry)))
          (shell-tool          (tool-registry-find registry "shell" "run"))
-         (run-tool            (tool-registry-find registry "task" "run"))
+         (run-tool            (tool-registry-find registry "child" "spawn"))
          (orchestrator        (task-run-tool-orchestrator run-tool))
          (primary
            (task-tests--primary-agent
@@ -1890,7 +1890,7 @@ exactly that race."
          (root          (test-configuration-root configuration))
          (registry
            (task-augment-tool-registry (make-default-tool-registry)))
-         (run-tool      (tool-registry-find registry "task" "run"))
+         (run-tool      (tool-registry-find registry "child" "spawn"))
          (orchestrator  (task-run-tool-orchestrator run-tool))
          (primary
            (task-tests--primary-agent
@@ -1928,7 +1928,7 @@ exactly that race."
          (root                                      (test-configuration-root configuration))
          (registry
            (task-augment-tool-registry (make-default-tool-registry)))
-         (run-tool                                  (tool-registry-find registry "task" "run"))
+         (run-tool                                  (tool-registry-find registry "child" "spawn"))
          (orchestrator                              (task-run-tool-orchestrator run-tool))
          (primary
            (task-tests--primary-agent
@@ -2787,7 +2787,7 @@ exactly that race."
                         :conversation  conversation
                         :tool-registry registry
                         :worker        nil))
-         (tool          (tool-registry-find registry "task" "run"))
+         (tool          (tool-registry-find registry "child" "spawn"))
          (orchestrator  (task-run-tool-orchestrator tool))
          (context
           (make-instance 'tool-context
@@ -2946,7 +2946,7 @@ exactly that race."
                    (eq (first form) :task-run)
                    (null (getf (rest form) :succeeded-p))
                    (<= (length content) *task-tool-content-limit*))
-              "task.run returns one exact bounded native manifest on partial failure")
+              "child.spawn returns one exact bounded native manifest on partial failure")
              (test-assert
               (and (= (length results) *task-maximum-batch-size*)
                    (= (length artifacts) *task-maximum-batch-size*)

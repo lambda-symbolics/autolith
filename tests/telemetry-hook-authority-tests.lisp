@@ -197,20 +197,20 @@
                                  configuration
                                  (lambda ()
                                    (let ((result (tool-registry-execute-call
-                                                  registry (agent-test-call :call-id "child" :namespace "task" :name "worktree"
+                                                  registry (agent-test-call :call-id "child" :namespace "child" :name "worktree"
                                                                             :arguments "{\"action\":\"inspect\"}")
                                                   context)))
                                      (test-assert (search "belong to the primary parent" (tool-result-content result))
                                                   "The child worktree refusal emitter runs.")
-                                     (telemetry-note-tool :tool "task.worktree" :outcome "error"
+                                     (telemetry-note-tool :tool "child.worktree" :outcome "error"
                                                           :error-code (tool-result-error-code result)))
                                    (let* ((primary-context (make-instance 'tool-context :configuration configuration
                                                                          :registry registry :worker nil))
                                           (result          (tool-registry-execute-call
-                                                            registry (agent-test-call :call-id "invalid" :namespace "task" :name "worktree"
+                                                            registry (agent-test-call :call-id "invalid" :namespace "child" :name "worktree"
                                                                                       :arguments "{\"action\":\"inspect\"}")
                                                             primary-context)))
-                                     (telemetry-note-tool :tool "task.worktree" :outcome "error"
+                                     (telemetry-note-tool :tool "child.worktree" :outcome "error"
                                                           :error-code (tool-result-error-code result))))))))
                      (span   (first (test-telemetry-hooks--kind (first bodies) "tool"))))
                 (test-telemetry-hooks--assert-failure span "permission_denied" "authority")
@@ -225,7 +225,7 @@
   (test-telemetry--call
    (lambda (configuration)
      (let* ((registry     (task-augment-tool-registry (make-default-tool-registry)))
-            (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "task" "run")))
+            (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
             (job          (task-tests--make-job
                            orchestrator :identifier "authority-child" :root-identifier "authority-owner"
                            :definition (task-agent-definition-create
@@ -236,9 +236,9 @@
             (cases        '(("lisp" "describe" "{\"designator\":\"CL:CAR\",\"target\":\"self\"}" "permission_denied" "authority")
                             ("lisp" "source" "{\"name\":\"CL:CAR\",\"target\":\"self\"}" "permission_denied" "authority")
                             ("lisp" "apropos" "{\"query\":\"CAR\"}" "permission_denied" "authority")
-                            ("task" "run" "{\"agent\":\"forbidden\",\"task\":\"Return a result.\"}" "permission_denied" "authority")
+                            ("child" "spawn" "{\"agent\":\"forbidden\",\"task\":\"Return a result.\"}" "permission_denied" "authority")
                             ("lisp" "describe" "{\"designator\":\"CL:CAR\",\"target\":\"invalid\"}" "error" "invalid-arguments")
-                            ("task" "run" "{\"agent\":\"allowed\",\"task\":\"Return a result.\"}" "error" "invalid-arguments"))))
+                            ("child" "spawn" "{\"agent\":\"allowed\",\"task\":\"Return a result.\"}" "error" "invalid-arguments"))))
        (with-lock-held ((cl-jobpond::job--lock job))
          (setf (job-state job) ':running))
        (task-job--set-progress-state job ':running)

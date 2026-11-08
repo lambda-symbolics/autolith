@@ -21,7 +21,7 @@
 (-> task-worktree--error (string &key (:code (option keyword))) nil)
 (defun task-worktree--error (message &key code)
   "Signal a product-specific worktree failure with tool attribution."
-  (error 'task-worktree-error :message message :code code :tool-name "task.worktree"))
+  (error 'task-worktree-error :message message :code code :tool-name "child.worktree"))
 
 (-> task-worktree-normalize-options (t) list)
 (defun task-worktree-normalize-options (object)
@@ -91,7 +91,7 @@ without changing the host environment."
   "Return an argv runner using AUTHORIZE and the ordinary command execution policy."
   (lambda (argv &key directory input)
     (let* ((directory (uiop:ensure-directory-pathname directory))
-           (command   (format nil "task.worktree Git argv ~S" argv))
+           (command   (format nil "child.worktree Git argv ~S" argv))
            (decision  (funcall authorize command directory)))
       (unless (member decision '(:sandboxed :full-access))
         (task-worktree--error "Worktree Git command was denied." :code ':authority))
@@ -327,14 +327,14 @@ a successful child is downgraded rather than claiming an absent artifact."
          (job    (task-orchestrator-visible-job-named
                   (task-orchestrator-tool-orchestrator tool) viewer identifier))
          (result (if job (getf (session-job-snapshot job) :result)
-                     (task--durable-job-result viewer identifier "task.worktree"))))
+                     (task--durable-job-result viewer identifier "child.worktree"))))
     (cond
       ((and job (null result))
        (task-worktree--error
         (format nil "Task ~A is still running; inspect its worktree once job.wait reports it finished."
                 identifier)))
       ((null result)
-       (task-worktree--error "No visible terminal isolated task has that identifier; use the job ID or execution ID task.run reported."))
+       (task-worktree--error "No visible terminal isolated task has that identifier; use the job ID or execution ID child.spawn reported."))
       ((null (getf result :worktree))
        (task-worktree--error
         (format nil "Task ~A did not run in an isolated worktree, so it has none to inspect." identifier))))
@@ -355,7 +355,7 @@ a successful child is downgraded rather than claiming an absent artifact."
   (when (typep (tool-context-agent context) 'task-child-agent)
     (task-worktree--error "Worktree integration and cleanup belong to the primary parent." :code ':authority))
   (task--validate-tool-arguments arguments '("action" "id" "source" "target" "discardDirty")
-                                 "task.worktree")
+                                 "child.worktree")
   (let* ((action        (tool-argument arguments "action" :required t))
          (configuration (tool-context-configuration context))
          (authorize     (lambda (command directory)
@@ -363,14 +363,14 @@ a successful child is downgraded rather than claiming an absent artifact."
          (writable-roots
            (when (member action '("apply" "commits" "abort") :test #'equal)
              (list (workspace-tool-path context (tool-argument arguments "target" :required t)
-                                        :tool-name "task.worktree"))))
+                                        :tool-name "child.worktree"))))
          (manager       (task-worktree--manager configuration authorize :writable-roots writable-roots)))
     (with-lock-held (*task-worktree-lock*)
       (let ((answer
               (cond
                 ((equal action "discover")
                  (let* ((source (workspace-tool-path context (tool-argument arguments "source")
-                                                     :tool-name "task.worktree"))
+                                                     :tool-name "child.worktree"))
                         (prefix (format nil "~A/" (conversation-identifier (tool-context-conversation context)))))
                    (multiple-value-bind (active absent)
                        (cl-worktree:discover-worktrees manager :source source)
@@ -381,7 +381,7 @@ a successful child is downgraded rather than claiming an absent artifact."
                        (list :active (owned active) :absent (owned absent))))))
                 ((equal action "cleanup-orphan")
                  (let* ((source (workspace-tool-path context (tool-argument arguments "source" :required t)
-                                                     :tool-name "task.worktree"))
+                                                     :tool-name "child.worktree"))
                         (id     (tool-argument arguments "id" :required t))
                         (handle (find id (task-worktree--owned-discovery manager context source)
                                       :key #'cl-worktree:worktree-id :test #'equal)))
@@ -406,10 +406,10 @@ a successful child is downgraded rather than claiming an absent artifact."
                      (list :removed (cl-worktree:cleanup-worktree
                                      cleanup-manager handle :owner (cl-worktree:worktree-owner handle)
                                      :discard-dirty                (tool-boolean-argument arguments "discardDirty"
-                                                                                         :tool-name "task.worktree"))))))
+                                                                                         :tool-name "child.worktree"))))))
                 ((member action '("conflicts" "abort") :test #'equal)
                  (let ((target (workspace-tool-path context (tool-argument arguments "target" :required t)
-                                                    :tool-name "task.worktree")))
+                                                    :tool-name "child.worktree")))
                    (if (equal action "abort")
                        (list :aborted (cl-worktree:abort-integration manager target))
                        (list :conflicts (cl-worktree:integration-conflicts manager target)))))
@@ -431,7 +431,7 @@ a successful child is downgraded rather than claiming an absent artifact."
                              manager (task-worktree--find-handle manager metadata)
                              :owner         (getf metadata :owner)
                              :discard-dirty (tool-boolean-argument arguments "discardDirty"
-                                                                  :tool-name "task.worktree"))))
+                                                                  :tool-name "child.worktree"))))
                      ((equal action "extract")
                       (let* ((artifact (task-worktree--extract manager metadata))
                              (path     (merge-pathnames "worktree-artifact.sexp"
@@ -447,7 +447,7 @@ a successful child is downgraded rather than claiming an absent artifact."
                                   :artifact-path (namestring (merge-pathnames "worktree-artifact.sexp"
                                                                            (pathname (getf metadata :metadata-path)))))
                             (let ((target (workspace-tool-path context (tool-argument arguments "target" :required t)
-                                                               :tool-name "task.worktree")))
+                                                               :tool-name "child.worktree")))
                               (list :integrated
                                     (cond
                                       ((equal action "check")
@@ -457,7 +457,7 @@ a successful child is downgraded rather than claiming an absent artifact."
                                       (t
                                        (cl-worktree:apply-commit-range manager target artifact))))))))
                      (t
-                      (task-worktree--error "Unknown task.worktree action."))))))))
+                      (task-worktree--error "Unknown child.worktree action."))))))))
         (task-tool-result (bounded-string (task--write-readable-sexp answer :pretty-p t)
                                           :limit *task-tool-content-limit*) answer)))))
 
@@ -467,7 +467,7 @@ a successful child is downgraded rather than claiming an absent artifact."
   (tool-registry-register
    registry
    (make-instance
-    'task-worktree-tool :orchestrator orchestrator :namespace "task" :name "worktree"
+    'task-worktree-tool :orchestrator orchestrator :namespace "child" :name "worktree"
     :description "Inspect/extract isolated task artifacts, explicitly check/apply patches or commits to an authorized target, inspect/abort conflicts, discover owned orphans, or explicitly clean owned checkouts. No automatic parent integration or dirty cleanup."
     :parameters
     (tool-object-schema

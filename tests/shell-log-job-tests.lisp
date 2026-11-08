@@ -13,7 +13,7 @@
                                         :provider      (make-instance 'model-provider)
                                         :tool-registry registry :worker nil))
            (orchestrator  (task-run-tool-orchestrator
-                           (tool-registry-find registry "task" "run")))
+                           (tool-registry-find registry "child" "spawn")))
            (context       (make-instance 'tool-context
                                          :configuration configuration
                                          :agent parent :registry registry :worker nil
@@ -310,7 +310,7 @@
            (application                       (mission-test--application configuration))
            (registry                          (task-augment-tool-registry (application-tool-registry application)))
            (orchestrator                      (task-run-tool-orchestrator
-                                               (tool-registry-find registry "task" "run"))))
+                                               (tool-registry-find registry "child" "spawn"))))
       (unwind-protect
            (dolist (exit-code '(0 7))
              (application-mission-start

@@ -986,7 +986,7 @@ structural discriminator as a readable heading instead."
     (application json-object)
     list)
 (defun application--task-run-rows (application arguments)
-  "Lay out the same normalized descriptions used to execute task.run."
+  "Lay out the same normalized descriptions used to execute child.spawn."
   (handler-case
       (let* ((definitions
                (task-discover-agents (application-configuration application)))
@@ -1005,12 +1005,12 @@ structural discriminator as a readable heading instead."
 
 (defmethod application-tool-call-entry
     ((tool task-run-tool) (application application) (call hash-table))
-  "Present task.run children as structured compact or expanded prose."
+  "Present child.spawn children as structured compact or expanded prose."
   (let ((arguments (application--task-run-arguments tool call)))
     (application--tool-entry
      application
      :style  ':tool
-     :header "▸ task.run"
+     :header "▸ child.spawn"
      :rows   (if arguments
                  (application--task-run-rows application arguments)
                  (list
