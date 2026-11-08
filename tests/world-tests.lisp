@@ -1473,6 +1473,29 @@
                  "an unknown identifier still does not exist"))
   nil)
 
+(-> test-world-prune-empty-conversations () null)
+(defun test-world-prune-empty-conversations ()
+  "Test the conversations nobody wrote in are deleted before they become channels, and the rest stay."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bwritten1" 1000)
+    (flet ((empty (identifier)
+             "Persist conversation IDENTIFIER with a goal record and no message."
+             (conversation-append-record (conversation-create configuration :identifier identifier)
+                                         (goal->record nil))))
+      (empty "bempty1")
+      (empty "bparent1")
+      (world-tests--child-conversation configuration "bkid1" :root "bparent1" :parent "bparent1"
+                                                            :name "helper" :created-at 1500))
+    (test-assert (equal (world-prune-empty-conversations configuration) '("bempty1"))
+                 "only the empty conversation without children is deleted")
+    (world-reconcile-sessions configuration)
+    (let ((world (world-load configuration)))
+      (test-assert (and (null (world-channel-find world "bempty1"))
+                        (world-channel-find world "bwritten1")
+                        (world-channel-find world "bparent1"))
+                   "the deleted conversation never becomes a channel")))
+  nil)
+
 (-> test-world-tell-prefill () null)
 (defun test-world-tell-prefill ()
   "Test (tell CHANNEL) without a message leaves the call in the input, the cursor where the message goes."

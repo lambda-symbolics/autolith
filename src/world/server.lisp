@@ -243,9 +243,13 @@ pristine: a pristine rescue session runs apart from it."
 (defun world-server--reconcile (configuration)
   "Bring every conversation of CONFIGURATION into the world once, as the server starts.
 
-Afterwards each channel keeps its own conversation in step as it changes. A
-world that cannot be reconciled only warns: the world never blocks the server."
-  (handler-case (world-reconcile-sessions configuration)
+Conversations without a single message are deleted first, so they never
+become channels. Afterwards each channel keeps its own conversation in step
+as it changes. A world that cannot be reconciled only warns: the world never
+blocks the server."
+  (handler-case (progn
+                  (world-prune-empty-conversations configuration)
+                  (world-reconcile-sessions configuration))
     (error (cause)
       (warn 'world-session-warning
             :pathname (configuration-world-sessions-path configuration)

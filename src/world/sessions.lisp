@@ -340,6 +340,39 @@ rewrite and nothing to reconcile, so the move leaves it to the world store."
 
 ;;;; -- Reconciliation --
 
+(-> world-prune-empty-conversations (configuration) list)
+(defun world-prune-empty-conversations (configuration)
+  "Delete CONFIGURATION's top-level conversations that hold no message, and return their identifiers.
+
+Old releases saved a conversation as soon as a session started, so each
+session nobody wrote in left one behind, which would show as a channel with
+an agent and nothing else. The inbox stays, and so does a conversation that
+some process has open or whose children are stored. A full reconciliation
+afterwards retires the channels and agents of the conversations deleted."
+  (loop for pathname in (conversation-list configuration)
+        for identifier = (pathname-name pathname)
+        when (and (not (conversation-inbox-pathname-p pathname))
+                  (world-session--empty-conversation-p pathname)
+                  (not (uiop:directory-exists-p
+                        (merge-pathnames (format nil "tasks/~A/"
+                                                 (or (conversation-identifier-path-fragment identifier)
+                                                     (string-downcase identifier)))
+                                         (config :data-root configuration))))
+                  (not (conversation-lease-busy-p configuration identifier)))
+          collect (progn
+                    (conversation-delete configuration identifier)
+                    (world-inbox-delete configuration identifier)
+                    identifier)))
+
+(-> world-session--empty-conversation-p (pathname) boolean)
+(defun world-session--empty-conversation-p (pathname)
+  "Return true when the conversation at PATHNAME holds no message and no turn."
+  (let ((metadata (conversation-picker-metadata-find pathname)))
+    (and metadata
+         (zerop (conversation-picker-metadata-search-message-count metadata))
+         (zerop (conversation-picker-metadata-user-turn-count metadata))
+         t)))
+
 (-> world-session--changes (list list &key (:all-p boolean) (:orphan-p function)) (values list list))
 (defun world-session--changes (identities mappings &key all-p (orphan-p (constantly nil)))
   "Return the conversations to migrate and the mappings whose conversation vanished.
