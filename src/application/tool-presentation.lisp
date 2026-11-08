@@ -810,129 +810,6 @@ structural discriminator as a readable heading instead."
         (error ()
           nil)))))
 
-(-> application--task-run-explicit-mode
-    (json-object)
-    (values keyword boolean))
-(defun application--task-run-explicit-mode (object)
-  "Return OBJECT's explicit task mode and whether it was supplied."
-  (multiple-value-bind (value present-p)
-      (gethash "async" object)
-    (values
-     (cond
-       ((not present-p)
-        ':synchronous)
-       ((eq value t)
-        ':detached)
-       ((json-false-p value)
-        ':synchronous)
-       (t
-        ':invalid))
-     present-p)))
-
-(-> application--task-run-mode
-    (json-object keyword boolean)
-    keyword)
-(defun application--task-run-mode
-    (object inherited-mode inherited-mode-p)
-  "Return OBJECT's explicit mode or its inherited batch mode."
-  (multiple-value-bind (mode present-p)
-      (application--task-run-explicit-mode object)
-    (if present-p
-        mode
-        (if inherited-mode-p inherited-mode ':synchronous))))
-
-(-> application--task-run-prose
-    (json-object string &key (:required boolean))
-    (option string))
-(defun application--task-run-prose (object field &key required)
-  "Return repaired prose FIELD from OBJECT with readable invalid placeholders."
-  (multiple-value-bind (value present-p)
-      (gethash field object)
-    (cond
-      ((and present-p (stringp value))
-       (let ((repaired (task--repair-prose value)))
-         (if (non-empty-string-p repaired)
-             repaired
-             (and required
-                  (format nil "(missing ~A)" field)))))
-      (present-p
-       (format nil "(invalid ~A)" field))
-      (required
-       (format nil "(missing ~A)" field))
-      (t
-       nil))))
-
-(-> application--task-run-items
-    (json-object)
-    (values list boolean boolean))
-(defun application--task-run-items (arguments)
-  "Return raw task items, batch mode, and malformed-batch status."
-  (multiple-value-bind (tasks present-p)
-      (gethash "tasks" arguments)
-    (cond
-      ((not present-p)
-       (values (list arguments) nil nil))
-      ((and (vectorp tasks)
-            (not (stringp tasks))
-            (plusp (length tasks)))
-       (values (coerce tasks 'list) t nil))
-      (t
-       (values nil t t)))))
-
-(-> application--task-run-item
-    (t &key (:index integer)
-            (:inherited-mode keyword)
-            (:inherited-mode-p boolean)
-            (:include-context-p boolean))
-    list)
-(defun application--task-run-item
-    (item &key (index 1) (inherited-mode ':synchronous)
-          inherited-mode-p include-context-p)
-  "Return one best-effort presentation record for raw task ITEM."
-  (if (not (json-object-p item))
-      (list :index      index
-            :name       nil
-            :role       "(invalid role)"
-            :mode       ':invalid
-            :assignment "(invalid task definition)"
-            :context    nil
-            :invalid-p  t)
-      (let* ((name-value (json-get item "name"))
-             (role-value (json-get item "agent"))
-             (name
-               (cond
-                 ((null name-value)
-                  nil)
-                 ((non-empty-string-p name-value)
-                  name-value)
-                 (t
-                  "(invalid name)")))
-             (role
-               (cond
-                 ((null role-value)
-                  "task")
-                 ((non-empty-string-p role-value)
-                  (string-downcase role-value))
-                 (t
-                  "(invalid role)"))))
-        (list :index      index
-              :name       name
-              :role       role
-              :mode       (application--task-run-mode
-                           item inherited-mode inherited-mode-p)
-              :assignment (application--task-run-prose
-                           item "task" :required t)
-              :context    (and include-context-p
-                               (application--task-run-prose item "context"))
-              :invalid-p  nil))))
-
-(-> application--task-run-shared-context
-    (json-object boolean)
-    (option string))
-(defun application--task-run-shared-context (arguments batch-p)
-  "Return top-level context, requiring it only for a task batch."
-  (application--task-run-prose arguments "context" :required batch-p))
-
 (-> application--task-run-summary-text (string) string)
 (defun application--task-run-summary-text (text)
   "Return TEXT as one sanitized whitespace-normalized summary line."
@@ -998,17 +875,6 @@ structural discriminator as a readable heading instead."
           ':dim
           (format nil "~A… +~D more row~:P" indent omitted))))))))
 
-(-> application--task-run-context-rows
-    (application (option string) &key (:label string))
-    list)
-(defun application--task-run-context-rows
-    (application context &key (label "context"))
-  "Return a labeled readable task CONTEXT section when one exists."
-  (when context
-    (append
-     (list (application--tool-section-row label))
-     (application--task-run-prose-rows application context))))
-
 (-> application--task-run-mode-label (keyword) string)
 (defun application--task-run-mode-label (mode)
   "Return one readable presentation label for task MODE."
@@ -1016,9 +882,7 @@ structural discriminator as a readable heading instead."
     (:detached
      "detached")
     (:synchronous
-     "synchronous")
-    (:invalid
-     "(invalid mode)")))
+     "synchronous")))
 
 (-> application--task-run-compact-context-row
     (application string)
@@ -1049,16 +913,14 @@ structural discriminator as a readable heading instead."
                  (list
                   (princ-to-string (getf item :index))
                   (or (getf item :name) "(unnamed)")
-                  (getf item :role)
+                  (getf item :agent)
                   (case (getf item :mode)
                     (:detached
                      "detached")
-                    (:invalid
-                     "invalid")
                     (otherwise
                      ""))
                   (application--task-run-summary-text
-                   (getf item :assignment)))))
+                   (getf item :task)))))
          (columns
            (terminal-columns
             (terminal-ui-terminal (application-ui application))))
@@ -1112,7 +974,7 @@ structural discriminator as a readable heading instead."
       application
       (list
        (list :label "role"
-             :value (getf item :role)
+             :value (getf item :agent)
              :style ':agent-role)
        (list :label "mode"
              :value (application--task-run-mode-label
@@ -1126,66 +988,28 @@ structural discriminator as a readable heading instead."
      (list (application--tool-section-row "assignment"))
      (application--task-run-prose-rows
       application
-      (getf item :assignment)))))
+      (getf item :task)))))
 
 (-> application--task-run-rows
     (application json-object)
     list)
 (defun application--task-run-rows (application arguments)
-  "Return compact or expanded structured rows for task.run ARGUMENTS."
-  (multiple-value-bind (raw-items batch-p malformed-batch-p)
-      (application--task-run-items arguments)
-    (let* ((shared-context
-             (application--task-run-shared-context arguments batch-p))
-           (item-limit (max 1 *task-maximum-batch-size*))
-           (visible-raw-items
-             (subseq raw-items 0 (min item-limit (length raw-items))))
-           (omitted-items
-             (- (length raw-items) (length visible-raw-items))))
-      (multiple-value-bind (inherited-mode inherited-mode-p)
-          (application--task-run-explicit-mode arguments)
-        (let ((items
-                (loop for raw-item in visible-raw-items
-                      for index from 1
-                      collect
-                      (application--task-run-item
-                       raw-item
-                       :index             index
-                       :inherited-mode    inherited-mode
-                       :inherited-mode-p  (and batch-p inherited-mode-p)
-                       :include-context-p batch-p))))
-          (append
-           (application--task-run-context-rows
-            application shared-context)
-           (when (and shared-context
-                      (or malformed-batch-p items))
-             (list nil))
-           (cond
-             (malformed-batch-p
-              (list (application--tool-section-row
-                     "invalid task batch")))
-             ((application-compact-view-p application)
-              (append
-               (when batch-p
-                 (list
-                  (application--tool-section-row
-                   (format nil "tasks · ~D" (length raw-items)))))
-               (application--task-run-compact-item-rows
-                application items)))
-             (t
-              (loop for item in items
-                    for first-p = t then nil
-                    append
-                    (append
-                     (unless first-p (list nil))
-                     (application--task-run-expanded-item-rows
-                      application item)))))
-           (when (plusp omitted-items)
-             (list
-              (list
-               (terminal-span
-                ':dim
-                (format nil "… +~D more task~:P" omitted-items)))))))))))
+  "Lay out the same normalized descriptions used to execute task.run."
+  (handler-case
+      (let* ((definitions
+               (task-discover-agents (application-configuration application)))
+             (items (task-normalize-arguments arguments :definitions definitions)))
+        (if (application-compact-view-p application)
+            (application--task-run-compact-item-rows application items)
+            (loop for item in items
+                  for first-p = t then nil
+                  append (append
+                          (unless first-p (list nil))
+                          (application--task-run-expanded-item-rows
+                           application item)))))
+    (tool-error (condition)
+      (list (application--tool-section-row
+             (format nil "invalid task request: ~A" condition))))))
 
 (defmethod application-tool-call-entry
     ((tool task-run-tool) (application application) (call hash-table))

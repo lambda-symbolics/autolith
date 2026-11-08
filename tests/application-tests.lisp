@@ -7947,6 +7947,87 @@
          (replacement-orchestrator nil))
     (unwind-protect
          (progn
+           (let ((definitions
+                   (list definition
+                         (task-agent-definition-create
+                          :name "forced" :description "Force blocking."
+                          :instructions "Return before the parent continues."
+                          :blocking-p t :source ':test)))
+                 (compact-p (application-compact-view-p application)))
+             (unwind-protect
+                (test-call-with-function-replacements
+                 (list (list 'task-discover-agents
+                             (lambda (configuration)
+                               (declare (ignore configuration))
+                               (values definitions nil))))
+                 (lambda ()
+                    (dolist (case
+                             (list
+                              (list (json-object "task" "Default request") ':detached)
+                              (list (json-object "task" "Explicit detached"
+                                                 "blocking" (json-false)) ':detached)
+                              (list (json-object "task" "Explicit blocking"
+                                                 "blocking" t) ':synchronous)
+                              (list (json-object "task" "Legacy detached"
+                                                 "async" t) ':detached)
+                              (list (json-object "task" "Legacy blocking"
+                                                 "async" (json-false)) ':synchronous)
+                              (list (json-object "task" "Forced blocking"
+                                                 "agent" "forced"
+                                                 "blocking" (json-false)) ':synchronous)
+                              (list (json-object "blocking" t
+                                                 "tasks" (vector
+                                                          (json-object "task" "Inherited blocking")))
+                                    ':synchronous)
+                              (list (json-object "blocking" t
+                                                 "context" "Shared context"
+                                                 "tasks" (vector
+                                                          (json-object "task" "Item override"
+                                                                       "context" "Item context"
+                                                                       "blocking" (json-false))))
+                                    ':detached)))
+                      (let* ((arguments (first case))
+                             (mode      (second case))
+                             (item      (first (task-normalize-arguments
+                                                arguments :definitions definitions)))
+                             (call      (json-object
+                                         "type" "function_call" "namespace" "task" "name" "run"
+                                         "arguments" (json-encode arguments))))
+                        (test-assert (eq mode (getf item :mode))
+                                     "normalized requests include effective role blocking")
+                        (setf (application-compact-view-p application) nil)
+                        (dolist (restored-call (list call (json-decode (json-encode call))))
+                          (let ((text (test-terminal-row-text
+                                       (response-item-entry application restored-call))))
+                            (test-assert
+                             (and (search (application--task-run-mode-label mode) text)
+                                  (search (getf item :task) text)
+                                  (not (search "invalid" text)))
+                             "live and restored transcript modes match execution descriptions")))
+                        (setf (application-compact-view-p application) t)
+                        (test-assert
+                         (search (getf item :task)
+                                 (test-terminal-row-text
+                                  (response-item-entry application call)))
+                         "compact task layout consumes normalized assignments")))
+                    (dolist (arguments
+                             (list (json-object "task" "Conflicting mode" "blocking" t "async" t)
+                                   (json-object "task" "Invalid context" "context" 7)
+                                   (json-object "tasks" #())
+                                   (json-object "task" "Invalid policy"
+                                                "completion-policy" "invalid")
+                                   (json-object "tasks"
+                                                (vector (json-object "task" "Invalid item policy"
+                                                                     "completion-policy" "invalid")))))
+                      (let ((call (json-object "type" "function_call" "namespace" "task"
+                                               "name" "run" "arguments" (json-encode arguments))))
+                        (dolist (restored-call (list call (json-decode (json-encode call))))
+                          (test-assert
+                           (search "invalid task request"
+                                   (test-terminal-row-text
+                                    (response-item-entry application restored-call)))
+                           "live and restored presentations use execution's request validation"))))))
+               (setf (application-compact-view-p application) compact-p)))
            (application-connect-task-presentation application)
            (application-connect-task-presentation application)
            (test-assert

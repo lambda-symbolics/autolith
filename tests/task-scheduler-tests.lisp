@@ -2630,6 +2630,9 @@ exactly that race."
             :name         "usage-child"
             :description  "Exercise child usage accounting."
             :instructions "Report usage independently."
+            :models       (list (if (string= (config :model configuration) "gpt-5.6-luna")
+                                    "@slow"
+                                    "@smol"))
             :source       ':test))
          (primary       (task-tests--primary-agent configuration "usage-primary"))
          (direct        nil)
@@ -2668,6 +2671,39 @@ exactly that race."
              (let* ((expected
                       (usage :input 10 :output 6 :cached 3 :created 1))
                     (failed (task--failed-result direct ':failed "provider failed")))
+                (let ((model (config :model
+                                     (task-configuration-for-definition
+                                      configuration definition))))
+                  (test-assert
+                   (and (string/= model (config :model configuration))
+                        (string= model (getf failed :model))
+                        (string= (getf failed :id) (job-identifier direct))
+                        (string= (getf failed :assignment)
+                                 (getf (task-job-item direct) :task))
+                        (not (minusp (getf failed :duration-ms)))
+                        (= 2 (getf failed :request-count)))
+                   "failed results retain the attempted child's model, identity and accounting")
+                  (dolist (state '(:failed :aborted :cancelled))
+                    (let ((result (task--failed-result direct state "Stopped")))
+                      (test-assert
+                       (and (eq state (getf result :status))
+                            (string= model (getf result :model))
+                            (equal expected (getf result :usage))
+                            (null (getf result :yielded-p))
+                            (null (getf result :structured-output-present-p)))
+                       "failure and cancellation share execution metadata and accounting")))
+                  (let* ((empty      (task-tests--register-job
+                                      orchestrator primary definition :name "no-result"))
+                         (identifier (job-identifier empty))
+                         (assignment (getf (task-job-item empty) :task)))
+                    (task-tests--publish-terminal empty ':failed nil :report "No result")
+                    (let ((result (getf (task-job-snapshot empty) :result)))
+                      (test-assert
+                       (and (string= model (getf result :model))
+                            (string= identifier (getf result :id))
+                            (string= assignment (getf result :assignment))
+                            (eq ':failed (getf result :status)))
+                       "terminal publication attributes an absent result to the attempted child"))))
                (test-assert
                 (and (equal (getf (task-progress-snapshot direct) :usage)
                             expected)

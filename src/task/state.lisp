@@ -328,7 +328,12 @@ nesting depth, and lifecycle listeners."))
     (agent-steering-input-content entry))))
 
 (defclass task-job (session-job)
-  ((telemetry-run
+  ((execution-metadata
+    :initform      nil
+    :accessor      task-job-execution-metadata
+    :type          list
+    :documentation "Portable identity and attempted model captured before child execution.")
+   (telemetry-run
     :initarg       :telemetry-run
     :initform      nil
     :accessor      task-job-telemetry-run

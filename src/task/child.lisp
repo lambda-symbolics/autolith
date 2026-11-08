@@ -675,6 +675,40 @@ continuation, allowing callers to hold a source lock through actual removal."
           (t
            "(no output)"))))
 
+(-> task--execution-metadata
+    (task-job &key (:configuration (option configuration))) list)
+(defun task--execution-metadata (job &key configuration)
+  "Capture JOB's portable identity and attempted model once, before execution."
+  (or (task-job-execution-metadata job)
+      (let* ((definition (task-job-definition job))
+             (parent     (task-job-parent-agent job))
+             (configuration
+               (or configuration
+                   (and parent
+                        (task-configuration-for-definition
+                         (agent-configuration parent) definition)))))
+        (setf (task-job-execution-metadata job)
+              (list :id           (job-identifier job)
+                    :name         (task-job-display-name job)
+                    :agent        (task-agent-definition-name definition)
+                    :agent-source (task-agent-definition-source definition)
+                    :assignment   (getf (task-job-item job) :task)
+                    :model        (and configuration (config :model configuration))
+                    :detached     (task-job-detached-p job))))))
+
+(-> task--terminal-result (task-job list) list)
+(defun task--terminal-result (job outcome)
+  "Combine captured execution metadata, final accounting, and OUTCOME fields."
+  (let ((progress (task-job-progress job)))
+    (append (copy-list (task--execution-metadata job))
+            (list :request-count (task-progress-request-count progress)
+                  :usage         (task-progress--usage-summary (task-progress-usage progress))
+                  :duration-ms
+                  (task--milliseconds-between
+                   (or (job-started-at job) (job-created-at job))
+                   (get-internal-real-time)))
+            outcome)))
+
 (-> task--assemble-child-result
     (task-job &key (:provider-result provider-result)
                    (:child agent)
@@ -683,74 +717,42 @@ continuation, allowing callers to hold a source lock through actual removal."
     list)
 (defun task--assemble-child-result
     (job &key provider-result child conversation completion)
-  "Assemble one portable SingleResult-style plist for a completed child."
-  (let* ((progress (task-job-progress job))
-         (status
-          (if (task-completion-called-p completion)
-              (task-completion-status completion)
-              :failed))
-         (output   (task--result-output completion progress provider-result))
-         (duration
-          (task--milliseconds-between
-           (or (job-started-at job) (job-created-at job))
-           (get-internal-real-time)))
-         (base
-          (list :id (job-identifier job) :name
-                (task-job-display-name job) :agent
-                (task-agent-definition-name (task-job-definition job))
-                :agent-source
-                (task-agent-definition-source (task-job-definition job))
-                :assignment (getf (task-job-item job) :task) :status status
-                :output output :error
-                (or (task-completion-error completion)
-                    (and (not (task-completion-called-p completion))
-                         "Child stopped without calling yield.submit."))
-                :yielded-p (task-completion-called-p completion)
-                :structured-output-present-p
-                (task-completion-data-present-p completion)
-                :structured-output
-                (and (task-completion-data-present-p completion)
-                     (task-json->sexp (task-completion-data completion)))
-                :label
-                (task-completion-label completion) :request-count
-                (task-progress-request-count progress) :usage
-                (task-progress--usage-summary (task-progress-usage progress))
-                :duration-ms duration :model
-                (config :model (agent-configuration child))
-                :conversation-file
-                (namestring (conversation-pathname conversation)) :detached
-                (task-job-detached-p job))))
-    base))
+  "Assemble the child's yielded outcome with shared execution metadata."
+  (task--execution-metadata job :configuration (agent-configuration child))
+  (setf (getf (task-job-execution-metadata job) :conversation-file)
+        (namestring (conversation-pathname conversation)))
+  (task--terminal-result
+   job
+   (list :status                      (if (task-completion-called-p completion)
+                                          (task-completion-status completion)
+                                          ':failed)
+         :output                      (task--result-output completion (task-job-progress job) provider-result)
+         :error                       (or (task-completion-error completion)
+                                          (and (not (task-completion-called-p completion))
+                                               "Child stopped without calling yield.submit."))
+         :yielded-p                   (task-completion-called-p completion)
+         :structured-output-present-p (task-completion-data-present-p completion)
+         :structured-output           (and (task-completion-data-present-p completion)
+                                           (task-json->sexp (task-completion-data completion)))
+         :label                       (task-completion-label completion))))
 
 (-> task--failed-result (task-job keyword (option string)) list)
 (defun task--failed-result (job status message)
-  "Return a portable terminal failure result for JOB."
-  (let* ((parent   (task-job-parent-agent job))
-         (progress (task-job-progress job))
+  "Build JOB's failure or cancellation outcome using the attempted child model."
+  (let* ((progress (task-job-progress job))
          (tail     (with-lock-held ((task-progress-lock progress))
-                     (copy-seq (task-progress-output-tail progress))))
-         (model    (and parent
-                        (config :model (agent-configuration parent)))))
-    (list :id            (job-identifier job)
-          :name          (task-job-display-name job)
-          :agent         (task-agent-definition-name (task-job-definition job))
-          :agent-source  (task-agent-definition-source
-                          (task-job-definition job))
-          :assignment    (getf (task-job-item job) :task)
-          :status        status
-          :output        (if (non-empty-string-p tail)
-                             (task--bounded-output tail)
-                             "(no output)")
-          :error         message
-          :yielded-p     nil
-          :request-count (task-progress-request-count progress)
-          :usage         (task-progress--usage-summary (task-progress-usage progress))
-          :duration-ms
-          (task--milliseconds-between
-           (or (job-started-at job) (job-created-at job))
-           (get-internal-real-time))
-          :model         model
-          :detached      (task-job-detached-p job))))
+                     (copy-seq (task-progress-output-tail progress)))))
+    (task--terminal-result
+     job
+     (list :status                      status
+           :output                      (if (non-empty-string-p tail)
+                                            (task--bounded-output tail)
+                                            "(no output)")
+           :error                       message
+           :yielded-p                   nil
+           :structured-output-present-p nil
+           :structured-output           nil
+           :label                       nil))))
 
 (-> task-child-inherit-reference-history
     (task-job conversation model-provider)
@@ -802,12 +804,18 @@ continuation, allowing callers to hold a source lock through actual removal."
            job (task-configuration-for-definition (agent-configuration parent)
                                                   definition)))
          (conversation
-          (conversation-create
-           configuration
-           :identifier       (task-job-execution-identifier job)
-           :prompt-cache-key (task--child-prompt-cache-key
-                              (task-job-root-conversation-identifier job))
-           :storage-root     (task--artifact-root configuration job)))
+          (progn
+            (task--execution-metadata job :configuration configuration)
+            (let ((conversation
+                    (conversation-create
+                     configuration
+                     :identifier       (task-job-execution-identifier job)
+                     :prompt-cache-key (task--child-prompt-cache-key
+                                        (task-job-root-conversation-identifier job))
+                     :storage-root     (task--artifact-root configuration job))))
+              (setf (getf (task-job-execution-metadata job) :conversation-file)
+                    (namestring (conversation-pathname conversation)))
+              conversation)))
          (worker       (lisp-worker-pool-create configuration))
          (completion   (make-instance 'task-completion))
          (registry
