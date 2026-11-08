@@ -172,16 +172,16 @@ which the channel's parent names."
         unless (eq (image-daemon:daemon-process-state (getf properties :pid)) ':dead)
           collect (getf properties :session-id)))
 
-(-> channel-resource--availability (participant list) string)
+(-> channel-resource--availability (participant list) (option string))
 (defun channel-resource--availability (participant served)
-  "Return whether PARTICIPANT is online, given the SERVED channel identifiers.
+  "Return whether agent PARTICIPANT is online, given the SERVED channel identifiers, or NIL for the person.
 
 An agent is online while a process serves the channel it resides in, and
-parked while it resides nowhere. The person states their own presence."
+parked while it resides nowhere."
   (let ((residence (participant-residence participant)))
     (cond
       ((eq (participant-kind participant) ':human)
-       (string-downcase (symbol-name (participant-presence participant))))
+       nil)
       ((null residence)
        "parked")
       ((member residence served :test #'equal)
@@ -192,7 +192,7 @@ parked while it resides nowhere. The person states their own presence."
 (-> channel-resource--participant-text (participant list) string)
 (defun channel-resource--participant-text (participant served)
   "Return PARTICIPANT's name, kind, identifier and availability on one line, given the SERVED channels."
-  (format nil "~A (~(~A~) ~A, ~A)"
+  (format nil "~A (~(~A~) ~A~@[, ~A~])"
           (participant-name participant)
           (participant-kind participant)
           (conversation-identifier-display (participant-identifier participant))

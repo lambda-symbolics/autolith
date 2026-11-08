@@ -45,10 +45,6 @@ A world the follower returns again unchanged needs no second check.")
   "Whether a person or an agent client operates a participant."
   '(member :human :agent))
 
-(deftype participant-presence ()
-  "A participant's self-declared availability."
-  '(member :present :away :offline))
-
 (defclass participant ()
   ((identifier
     :initarg       :identifier
@@ -83,12 +79,6 @@ A world the follower returns again unchanged needs no second check.")
     :reader        participant-subscriptions
     :type          list
     :documentation "The channels whose future messages reach this participant.")
-   (presence
-    :initarg       :presence
-    :initform      ':offline
-    :reader        participant-presence
-    :type          participant-presence
-    :documentation "The availability the participant's client last declared.")
    (settings
     :initarg       :settings
     :initform      nil
@@ -257,7 +247,6 @@ records stays plain, portable text."
         :parent        (world-portable-string (participant-parent participant))
         :residence     (world-portable-string (participant-residence participant))
         :subscriptions (mapcar #'world-portable-string (participant-subscriptions participant))
-        :presence      (participant-presence participant)
         :settings      (copy-list (participant-settings participant))
         :created-at    (participant-created-at participant)
         :updated-at    (participant-updated-at participant)))
@@ -290,7 +279,6 @@ records stays plain, portable text."
                      (and (null (getf properties :residence))
                           (eq (getf properties :kind) ':agent)))
                  (world--identifier-list-p (getf properties :subscriptions))
-                 (typep (getf properties :presence) 'participant-presence)
                  (world-settings-p (getf properties :settings))
                  (typep (getf properties :created-at) 'timestamp)
                  (typep (getf properties :updated-at) 'timestamp)
@@ -308,7 +296,6 @@ records stays plain, portable text."
                    :parent        (getf properties :parent)
                    :residence     (getf properties :residence)
                    :subscriptions (copy-list (getf properties :subscriptions))
-                   :presence      (getf properties :presence)
                    :settings      (copy-list (getf properties :settings))
                    :created-at    (getf properties :created-at)
                    :updated-at    (getf properties :updated-at))))
@@ -374,7 +361,6 @@ records stays plain, portable text."
                        :parent        (participant-parent participant)
                        :residence     (participant-residence participant)
                        :subscriptions (copy-list (participant-subscriptions participant))
-                       :presence      (participant-presence participant)
                        :settings      (copy-list (participant-settings participant))
                        :created-at    (participant-created-at participant)
                        :updated-at    (participant-updated-at participant)))))
@@ -968,12 +954,11 @@ names the caller in refusals."
 (-> world-participant-create
     (configuration &key (:kind participant-kind) (:name string) (:residence (option string))
                         (:home list) (:parent (option string)) (:settings list)
-                        (:presence participant-presence) (:id (option string))
-                        (:now timestamp))
+                        (:id (option string)) (:now timestamp))
     (values participant channel))
 (defun world-participant-create
     (configuration &key kind name residence home parent (settings nil settings-p)
-                        (presence ':offline) id (now (get-universal-time)))
+                        id (now (get-universal-time)))
   "Create a participant of KIND named NAME and return it with its residence channel.
 
 RESIDENCE names an existing channel. HOME instead describes a new channel the
@@ -1017,7 +1002,6 @@ participant owns and resides in, as a plist of :id, :workspace, :title and
                                                        name ':create-participant)
                                           :parent     parent
                                           :residence  (channel-identifier channel)
-                                          :presence   presence
                                           :settings   (copy-list settings)
                                           :created-at now
                                           :updated-at now)))
@@ -1047,13 +1031,11 @@ return it; a no-op returns the existing participant without appending."
            (values nil participant))))))
 
 (-> world-participant-update
-    (configuration string &key (:settings list) (:presence (option participant-presence))
-                           (:now timestamp))
+    (configuration string &key (:settings list) (:now timestamp))
     participant)
 (defun world-participant-update
-    (configuration identifier &key (settings nil settings-p) presence
-                                   (now (get-universal-time)))
-  "Replace IDENTIFIER's settings or presence and return the participant."
+    (configuration identifier &key (settings nil settings-p) (now (get-universal-time)))
+  "Replace IDENTIFIER's settings and return the participant."
   (world--update-participant
    configuration identifier :operation ':update-participant :now now
    :change (lambda (world participant)
@@ -1066,8 +1048,7 @@ return it; a no-op returns the existing participant without appending."
                       :identifier identifier))
              (list :settings (if settings-p
                                  (copy-list settings)
-                                 (participant-settings participant))
-                   :presence (or presence (participant-presence participant))))))
+                                 (participant-settings participant))))))
 
 (-> world-participant-rename (configuration string string &key (:now timestamp)) participant)
 (defun world-participant-rename (configuration identifier name &key (now (get-universal-time)))
