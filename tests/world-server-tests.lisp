@@ -221,6 +221,32 @@
                          "the channel's inbox holds the message from the person")))))))
   nil)
 
+(-> test-world-server-kill-channel () null)
+(defun test-world-server-kill-channel ()
+  "Test lg kill of a hosted channel succeeds once the channel is gone, though the server keeps running."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry      (world-client-entry configuration))
+            (identifier (getf (rest (world-server-tests--open entry (world-tests--workspace root "kill")))
+                              :session-id)))
+       (test-assert
+        (handler-case
+            (test-call-with-function-replacements
+             (list (list 'localgroup--client-configuration (lambda () configuration)))
+             (lambda ()
+               (let ((command (parse-command-line (main--top-level-command)
+                                                  (list "lg" "kill" identifier))))
+                 (with-output-to-string (*standard-output*)
+                   (funcall (command-handler command) command)))
+               t))
+          (localgroup-error ()
+            nil))
+        "killing a hosted channel confirms its exit")
+       (test-assert (and (null (world-server--find-host server identifier))
+                         (world-client-entry configuration))
+                    "the channel is gone and the world server still runs"))))
+  nil)
+
 (-> test-world-server-hosting () null)
 (defun test-world-server-hosting ()
   "Test opening, sharing, closing and resuming channels through a world server."

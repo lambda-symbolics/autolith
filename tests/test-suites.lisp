@@ -686,6 +686,7 @@
   test-world-server-status-line
   test-world-server-new-channel
   test-world-server-tell
+  test-world-server-kill-channel
   test-world-server-hosting
   test-world-server-checkpoint-quiescence
   test-world-server-restart-marker
