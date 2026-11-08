@@ -1,0 +1,131 @@
+(in-package #:autolith)
+
+;;;; -- Usage Report Formatting --
+
+(-> usage--text (t) string)
+(defun usage--text (value)
+  "Return VALUE as sanitized single-line display text."
+  (sanitize-text (princ-to-string (or value "")) :single-line-p t))
+
+(-> usage--count (t) string)
+(defun usage--count (value)
+  "Format VALUE as a count, preserving unavailable values."
+  (if (integerp value) (format nil "~:D" value) "unavailable"))
+
+(-> usage--bytes (t) string)
+(defun usage--bytes (value)
+  "Format VALUE bytes for a human reader, preserving unavailable values."
+  (if (not (integerp value))
+      "unavailable"
+      (let ((units  '("B" "KiB" "MiB" "GiB" "TiB"))
+            (number (float value))
+            (index  0))
+        (loop while (and (>= number 1024.0) (< index (1- (length units))))
+              do (incf index) (setf number (/ number 1024.0)))
+        (if (zerop index)
+            (format nil "~:D B" value)
+            (format nil "~,1F ~A (~:D B)" number (nth index units) value)))))
+
+(-> usage--wrap (string integer) list)
+(defun usage--wrap (text columns)
+  "Split TEXT into display-width bounded lines without discarding characters."
+  (let ((lines  nil)
+        (start  0)
+        (length (length text)))
+    (loop while (< start length)
+          do (let ((end   start)
+                   (space nil))
+               (loop while (and (< end length)
+                                (<= (text-cell-width (subseq text start (1+ end))) columns))
+                     do (when (char= (char text end) #\Space)
+                          (setf space end))
+                        (incf end))
+               (when (= end start)
+                 (incf end))
+               (when (and (< end length) space (> space start))
+                 (setf end space))
+               (push (subseq text start end) lines)
+               (setf start end)
+               (loop while (and (< start length) (char= (char text start) #\Space))
+                     do (incf start))))
+    (or (nreverse lines) (list ""))))
+
+(-> usage--line (stream list boolean) t)
+(defun usage--line (stream spans styled-p)
+  "Write SPANS as one optionally styled line."
+  (localgroup--write-styled-line stream spans styled-p))
+
+(-> usage--paragraph (stream string &key (:columns integer) (:styled-p boolean) (:style t)) null)
+(defun usage--paragraph (stream text &key columns styled-p (style ':plain))
+  "Write sanitized TEXT wrapped to COLUMNS."
+  (dolist (line (usage--wrap (usage--text text) columns))
+    (usage--line stream (list (terminal-span style line)) styled-p))
+  nil)
+
+(-> usage--field (stream string string &key (:columns integer) (:styled-p boolean) (:style t)) null)
+(defun usage--field (stream label value &key columns styled-p (style ':plain))
+  "Write a label and value, aligning short values on wide terminals."
+  (let* ((label       (usage--text label))
+         (value       (usage--text value))
+         (label-width 24)
+         (value-width (- columns label-width 2)))
+    (if (and (>= columns 52)
+             (<= (text-cell-width label) label-width)
+             (<= (text-cell-width value) value-width))
+        (usage--line stream
+                     (list (terminal-span ':dim (layout-fit-text label label-width))
+                           (terminal-span ':plain "  ")
+                           (terminal-span style
+                                          (format nil "~VA~A"
+                                                  (- value-width (text-cell-width value))
+                                                  "" value)))
+                     styled-p)
+        (progn
+          (usage--paragraph stream label :columns columns :styled-p styled-p :style ':dim)
+          (usage--paragraph stream value :columns columns :styled-p styled-p :style style))))
+  nil)
+
+(-> usage-print-report (usage-report &key (:stream stream) (:styled-p boolean) (:columns integer)) null)
+(defun usage-print-report
+    (report &key (stream *standard-output*)
+                 (styled-p (localgroup--status-output-styled-p stream))
+                 (columns (localgroup--status-output-columns stream)))
+  "Print REPORT as a colored, responsive operating-system usage summary."
+  (let ((columns (max 1 columns)))
+    (flet ((paragraph (text &optional (style ':plain))
+             (usage--paragraph stream text :columns columns :styled-p styled-p :style style))
+           (field (label value &optional (style ':plain))
+             (usage--field stream label value :columns columns :styled-p styled-p :style style)))
+      (paragraph "Autolith usage" ':brand)
+      (terpri stream)
+      (paragraph "Stored data" ':strong)
+      (dolist (entry (usage-report-counts report))
+        (field (first entry) (usage--count (rest entry))))
+      (terpri stream)
+      (paragraph "Disk" ':strong)
+      (field "Logical bytes, union" (usage--bytes (usage-report-disk-bytes report)))
+      (when (usage-report-disk-partial-p report)
+        (paragraph "Disk totals are partial: some entries were inaccessible." ':notice))
+      (paragraph "Root sizes can overlap; the union deduplicates files." ':dim)
+      (dolist (storage (usage-report-storage report))
+        (field (usage-storage-name storage) (usage--bytes (usage-storage-bytes storage)))
+        (field "Files" (usage--count (usage-storage-files storage)))
+        (field "Links" (usage--count (usage-storage-links storage)))
+        (when (plusp (usage-storage-errors storage))
+          (field "Errors (partial root)" (usage--count (usage-storage-errors storage)) ':notice))
+        (field "Path" (namestring (usage-storage-pathname storage))))
+      (terpri stream)
+      (paragraph "RAM" ':strong)
+      (field "Live sessions" (usage--count (usage-report-sessions report)))
+      (field "Session processes" (usage--count (usage-report-processes report)))
+      (field "Session RSS" (usage--bytes (usage-report-resident-bytes report)))
+      (paragraph "Session hosts and descendants; shared pages count per process." ':dim)
+      (field "Reporter RSS" (usage--bytes (usage-report-reporter-bytes report)))
+      (when (plusp (usage-report-resident-missing report))
+        (field "RSS measurements missing" (usage--count (usage-report-resident-missing report)) ':notice))
+      (field "Descendant discovery"
+             (if (usage-report-descendants-available-p report) "available" "unavailable or partial")
+             (if (usage-report-descendants-available-p report) ':plain ':notice))
+      (dolist (warning (usage-report-warnings report))
+        (field "Warning" (usage--text warning) ':notice))))
+  nil)

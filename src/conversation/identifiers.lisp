@@ -145,6 +145,33 @@ chunk files follow in numeric start-sequence order."
   (let ((active (conversation-storage-active-pathname pathname)))
     (or (and active (file-write-date active)) 0)))
 
+(-> conversation-storage-identities (pathname) list)
+(defun conversation-storage-identities (root)
+  "Return candidate stable conversation identities beneath ROOT without reading logs."
+  (let ((identities nil))
+    (when (uiop:directory-exists-p root)
+      (dolist (pathname (uiop:directory-files root "*.sexp"))
+        (pushnew pathname identities :test #'equal))
+      (dolist (directory (uiop:subdirectories root))
+        (let ((identifier (first (last (pathname-directory directory)))))
+          (when (stringp identifier)
+            (pushnew (merge-pathnames (make-pathname :name identifier :type "sexp") root)
+                     identities :test #'equal)))))
+    identities))
+
+(-> conversation-task-pathnames (pathname) list)
+(defun conversation-task-pathnames (data-root)
+  "Return stored task conversation identities beneath DATA-ROOT without replay."
+  (let ((tasks (merge-pathnames "tasks/" data-root)))
+    (when (uiop:directory-exists-p tasks)
+      (loop for group in (uiop:subdirectories tasks)
+            append (loop for execution in (uiop:subdirectories group)
+                         for name = (first (last (pathname-directory execution)))
+                         for identity = (merge-pathnames (make-pathname :name name :type "sexp")
+                                                         execution)
+                         when (conversation-storage-occupied-p identity)
+                           collect identity)))))
+
 
 ;;;; -- Conversation Identifier Allocation --
 

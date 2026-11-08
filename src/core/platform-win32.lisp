@@ -100,6 +100,81 @@
   (name win32-wide-string) (security (* t)))
 (win32--define win32--open-process "OpenProcess" win32-handle
   (access win32-dword) (inherit win32-bool) (process-id win32-dword))
+
+
+;;; Process observation structures use the native Windows x64 ABI.
+(sb-alien:define-alien-type win32-process-memory-counters
+    (sb-alien:struct win32-process-memory-counters
+      (cb win32-dword)
+      (page-fault-count win32-dword)
+      (peak-working-set-size (sb-alien:unsigned 64))
+      (working-set-size (sb-alien:unsigned 64))
+      (quota-peak-paged-pool-usage (sb-alien:unsigned 64))
+      (quota-paged-pool-usage (sb-alien:unsigned 64))
+      (quota-peak-non-paged-pool-usage (sb-alien:unsigned 64))
+      (quota-non-paged-pool-usage (sb-alien:unsigned 64))
+      (pagefile-usage (sb-alien:unsigned 64))
+      (peak-pagefile-usage (sb-alien:unsigned 64))))
+
+(sb-alien:define-alien-type win32-process-entry
+    (sb-alien:struct win32-process-entry
+      (size win32-dword)
+      (usage win32-dword)
+      (process-id win32-dword)
+      (default-heap-id (sb-alien:unsigned 64))
+      (module-id win32-dword)
+      (threads win32-dword)
+      (parent-process-id win32-dword)
+      (priority-base (sb-alien:signed 32))
+      (flags win32-dword)
+      (executable (array (sb-alien:unsigned 16) 260))))
+
+(win32--define win32--get-process-memory-info "K32GetProcessMemoryInfo" win32-bool
+  (process win32-handle) (counters (* win32-process-memory-counters))
+  (size win32-dword))
+(win32--define win32--create-process-snapshot "CreateToolhelp32Snapshot" win32-handle
+  (flags win32-dword) (process-id win32-dword))
+(win32--define win32--process-first "Process32FirstW" win32-bool
+  (snapshot win32-handle) (entry (* win32-process-entry)))
+(win32--define win32--process-next "Process32NextW" win32-bool
+  (snapshot win32-handle) (entry (* win32-process-entry)))
+
+(defmethod platform-process-resident-bytes ((platform win32-platform) process-id)
+  "Return native WorkingSetSize in bytes, or NIL when the process cannot be queried."
+  (when (typep process-id '(integer 1 4294967295))
+    (let ((handle (win32--open-process #x1000 0 process-id)))
+      (unless (zerop handle)
+        (unwind-protect
+             (sb-alien:with-alien ((counters win32-process-memory-counters))
+               (let ((size (sb-alien:alien-size win32-process-memory-counters :bytes)))
+                 (setf (sb-alien:slot counters 'cb) size)
+                 (unless (zerop (win32--get-process-memory-info
+                                 handle (sb-alien:addr counters) size))
+                   (sb-alien:slot counters 'working-set-size))))
+          (win32--close-handle handle))))))
+
+(defmethod platform-process-parent-snapshot ((platform win32-platform))
+  "Return a native Toolhelp PID/PPID snapshot and whether enumeration completed."
+  (let ((handle (win32--create-process-snapshot #x2 0)))
+    (if (= handle -1)
+        (values nil nil)
+        (unwind-protect
+             (sb-alien:with-alien ((entry win32-process-entry))
+               (setf (sb-alien:slot entry 'size)
+                     (sb-alien:alien-size win32-process-entry :bytes))
+               (let ((parents nil))
+                 (if (zerop (win32--process-first handle (sb-alien:addr entry)))
+                     (values nil (= (win32--get-last-error) 18))
+                     (loop
+                       (push (cons (sb-alien:slot entry 'process-id)
+                                   (sb-alien:slot entry 'parent-process-id))
+                             parents)
+                       (when (zerop (win32--process-next handle (sb-alien:addr entry)))
+                         (return (if (= (win32--get-last-error) 18)
+                                     (values (nreverse parents) t)
+                                     (values nil nil))))))))
+          (win32--close-handle handle)))))
+
 (win32--define win32--terminate-process "TerminateProcess" win32-bool
   (handle win32-handle) (code win32-dword))
 (win32--define win32--get-current-process "GetCurrentProcess" win32-handle)

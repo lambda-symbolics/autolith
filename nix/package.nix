@@ -954,7 +954,7 @@ pkgs.writeShellApplication {
     pkgs.gnugrep
     pkgs.perl
     runtime
-  ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
+  ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap pkgs.procps ];
     text = ''
       # shellcheck source=/dev/null
       source "${autolithSystem}/script/launcher-cli.sh"

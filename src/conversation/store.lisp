@@ -3526,22 +3526,9 @@ later picker searches read it without scanning the log."
 (-> conversation-list (configuration) list)
 (defun conversation-list (configuration)
   "Return non-empty stable conversation identities, newest first."
-  (let ((root       (configuration-conversation-root configuration))
-        (identities nil)
-        (summaries  nil))
-    (when (uiop:directory-exists-p root)
-      (dolist (pathname (uiop:directory-files root "*.sexp"))
-        (pushnew pathname identities :test #'equal))
-      (dolist (directory (uiop:subdirectories root))
-        (let ((identifier (first (last (pathname-directory directory)))))
-          (when (stringp identifier)
-            (pushnew
-             (merge-pathnames
-              (make-pathname :name identifier :type "sexp")
-              root)
-             identities
-             :test #'equal)))))
-    (dolist (identity identities)
+  (let ((summaries nil))
+    (dolist (identity (conversation-storage-identities
+                       (configuration-conversation-root configuration)))
       (let ((active (conversation-storage-active-pathname identity)))
         (when (and active
                    (conversation--active-pathname-non-empty-p active))

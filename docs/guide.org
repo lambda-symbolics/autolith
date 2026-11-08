@@ -1447,6 +1447,35 @@ the numbers and quoted values in error text, so the same mistake with different
 arguments counts once per call in one group. Use it to find where a tool
 description or argument rule makes models fail.
 
+** Usage
+
+Inspect stored data, logical disk usage, and process memory from the OS shell:
+
+#+BEGIN_SRC sh
+autolith usage
+#+END_SRC
+
+The report covers all stored workspaces: primary and task conversations, active
+prose memories, agenda items, unretracted fact assertions, knowledge definitions,
+and retained checkpoints. Rule and contract counts include stored proposals.
+Fact assertions may be expired or future-dated; the report counts their stored
+support records. Conversation counts use nonempty log files without reading their
+contents.
+
+Disk figures are logical regular-file bytes under the configured data, state,
+cache, and config roots. Symbolic links are skipped. Root sizes can overlap;
+the combined total counts each file identity once, including hard links.
+Inaccessible or disappearing entries appear as partial observations.
+
+RAM figures cover reachable registered session processes and their descendants.
+The sum is resident set size (RSS), so shared pages can count once per process.
+The reporting process appears separately. Unavailable process discovery or
+measurements are marked explicitly. These are best-effort observations while
+sessions and files may change.
+
+Use a terminal for colored output; redirected output is plain text. Set
+=NO_COLOR= to suppress colors.
+
 ** Local sessions
 
 Every running Autolith session publishes a private authenticated local endpoint.

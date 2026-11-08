@@ -4,6 +4,20 @@
 
 (setf *test-suites* nil)
 
+(define-test-suite usage
+  test-platform-usage
+  test-usage-storage-union
+  test-usage-storage-failures
+  test-usage-storage-root-link
+  test-usage-process-snapshot
+  test-usage-stored-counts
+  test-usage-task-counts
+  test-usage-display-visible-sections
+  test-usage-display-unavailable-is-not-zero
+  test-usage-display-sanitizes-controls-and-fits-width
+  test-usage-display-styling-gate
+  test-usage-display-command)
+
 (define-test-suite context-admission
   test-context-admission-mission-large-budget
   test-context-admission-mission-wire-ceiling

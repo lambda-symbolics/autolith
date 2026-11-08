@@ -89,6 +89,18 @@ Remove this temporary selection marker before 0.68.0.")
 
 ;;;; -- Capabilities and Processes --
 
+
+(defgeneric platform-process-resident-bytes (platform process-id)
+  (:documentation
+   "Return current resident octets for positive PROCESS-ID, or NIL if unavailable.
+A measured zero is distinct from an unavailable or disappeared process."))
+
+(defgeneric platform-process-parent-snapshot (platform)
+  (:documentation
+   "Return two values: an alist of (PID . PARENT-PID) and availability.
+An available empty snapshot returns NIL and T. Failed snapshots return NIL and
+NIL; process creation, exit and reparenting can race with this observation."))
+
 (defgeneric platform-supports-p (platform capability)
   (:documentation
    "Return true when PLATFORM provides CAPABILITY.

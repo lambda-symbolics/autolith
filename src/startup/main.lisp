@@ -1510,6 +1510,7 @@ autolith uninstall removes the installation and keeps user data."
                        (main--update-command)
                        (main--uninstall-command)
                        (main--data-command)
+                       (main--usage-command)
                        (main--run-job-command)
                        (main-localgroup-command))
    :handler

@@ -16,6 +16,68 @@
   (concatenate 'string "file://" (platform--encode-uri-path (uiop:native-namestring pathname))))
 
 
+;;;; -- Process Observations --
+
+(-> posix--process-query (list) (values (option string) boolean))
+(defun posix--process-query (arguments)
+  "Run a ps query, returning its output and whether it completed successfully."
+  (handler-case
+      (multiple-value-bind (output errors status)
+          (uiop:run-program (cons "ps" arguments)
+                            :output ':string :error-output ':string
+                            :ignore-error-status t)
+        (declare (ignore errors))
+        (values output (eql status 0)))
+    (error ()
+      (values nil nil))))
+
+(-> posix--unsigned-field (string) (option (integer 0)))
+(defun posix--unsigned-field (text)
+  "Parse one unsigned decimal field, allowing only surrounding whitespace."
+  (let ((field (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
+    (when (and (plusp (length field))
+               (every (lambda (character) (digit-char-p character 10)) field))
+      (parse-integer field))))
+
+(defmethod platform-process-resident-bytes ((platform posix-platform) process-id)
+  "Observe ps RSS in KiB and return octets; unavailable observations return NIL."
+  (when (typep process-id '(integer 1))
+    (multiple-value-bind (output available-p)
+        (posix--process-query (list "-o" "rss=" "-p" (write-to-string process-id)))
+      (when available-p
+        (let ((kibibytes (posix--unsigned-field output)))
+          (when kibibytes
+            (* kibibytes 1024)))))))
+
+(-> posix--parse-parent-snapshot (string) (values list boolean))
+(defun posix--parse-parent-snapshot (output)
+  "Parse complete ps PID/PPID rows, rejecting malformed or duplicate rows."
+  (let ((parents nil)
+        (seen    (make-hash-table)))
+    (dolist (line (uiop:split-string output :separator '(#\Newline)))
+      (let ((fields (remove "" (uiop:split-string
+                                line :separator '(#\Space #\Tab #\Return))
+                            :test #'string=)))
+        (when fields
+          (unless (= (length fields) 2)
+            (return-from posix--parse-parent-snapshot (values nil nil)))
+          (let ((pid    (posix--unsigned-field (first fields)))
+                (parent (posix--unsigned-field (second fields))))
+            (unless (and pid parent (not (gethash pid seen)))
+              (return-from posix--parse-parent-snapshot (values nil nil)))
+            (setf (gethash pid seen) t)
+            (push (cons pid parent) parents)))))
+    (values (nreverse parents) t)))
+
+(defmethod platform-process-parent-snapshot ((platform posix-platform))
+  "Observe one host-wide ps PID/PPID snapshot, distinguishing failure from empty."
+  (multiple-value-bind (output available-p)
+      (posix--process-query '("-ax" "-o" "pid=" "-o" "ppid="))
+    (if available-p
+        (posix--parse-parent-snapshot output)
+        (values nil nil))))
+
+
 ;;;; -- Failure Translation --
 
 (defmethod platform-permission-error-code-p ((platform posix-platform) (code integer))
