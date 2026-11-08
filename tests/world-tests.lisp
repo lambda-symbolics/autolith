@@ -662,20 +662,24 @@
         (let ((result (world-message-send configuration
                                           :sender   (participant-identifier human)
                                           :channel  "bfirst1"
-                                          :text     "hello @autolith"
+                                          :text     "hello"
                                           :notify-p nil)))
           (test-assert (equal (getf result :channels) '("bfirst1" "bsecnd2"))
                        "a post reaches the channel and each subscriber's residence")
           (let ((post (first (world-inbox-deliveries configuration "bfirst1")))
                 (copy (first (world-inbox-deliveries configuration "bsecnd2"))))
             (test-assert (and (eq (world-delivery-kind post) ':post)
-                              (eq (world-delivery-kind copy) ':subscription)
-                              (string= (world-delivery-identifier post)
+                              (eq (world-delivery-kind copy) ':subscription))
+                         "copies record the delivery route to each channel")
+            (test-assert (and (string= (world-delivery-identifier post)
                                        (world-delivery-identifier copy))
-                              (null (world-delivery-mentions post))
-                              (search "where you reside" (world-delivery-label post))
+                              (string= (world-delivery-identifier post) (getf result :id)))
+                         "the original and subscription copy share the sent identifier")
+            (test-assert (null (world-delivery-mentions post))
+                         "an unmentioned post carries no mention recipients")
+            (test-assert (and (search "where you reside" (world-delivery-label post))
                               (search "which you subscribe to" (world-delivery-label copy)))
-                         "copies share the identifier and are labeled by why they arrived")
+                         "copies are labeled by why they arrived")
             (test-assert (uiop:string-prefix-p "[Message from the person to channel" (world-delivery-label post))
                          "the label says the person sent it")))
         (let ((result (world-message-send configuration
