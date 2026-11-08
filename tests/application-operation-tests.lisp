@@ -535,6 +535,7 @@
                             "arguments" "{\"text\":\"hello\",\"enabled\":false}")))
              (terminal-ui-set-input ui "Why did ")
              (terminal-ui-process-event ui '(:click 4 1))
+             (terminal-ui-process-event ui '(:release 4 1))
              (test-assert (string= "Why did (test-operation.echo :text \"hello\" :enabled nil)"
                                    (line-editor-text (terminal-ui-editor ui)))
                           "clicking a call's header inserts its invocation at the cursor")))
