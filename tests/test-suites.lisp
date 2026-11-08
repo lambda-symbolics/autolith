@@ -229,8 +229,8 @@
 
 (define-test-suite shell-log-resource
   test-shell-log-delivery-backfill
-  test-shell-log-delivery-backfill-retention
-  test-shell-log-backfill-retention-races
+  test-shell-log-delivery-backfill-removal
+  test-shell-log-backfill-removal-races
   test-shell-log-sync-details-shapes
   test-shell-log-sync-details-identities
   test-shell-log-owner-delivery-restart
@@ -240,8 +240,8 @@
   test-shell-log-owner-delivery-boundaries
   test-shell-log-owner-delivery-tagged-details
   test-shell-log-owner-delivery-leases
-  test-shell-log-owner-retention
-  test-shell-log-owner-retention-pressure
+  test-shell-log-owner-removal
+  test-shell-log-owner-removal-pressure
   test-shell-log-receipt-migration
   test-shell-log-receipt-cache
   test-shell-log-receipt-linked-segment
@@ -1425,7 +1425,6 @@
   test-task-default-detachment
   test-task-running-cancellation
   test-task-runtime-deadline
-  test-task-artifact-retention
   test-task-nested-parent-cancellation
   test-task-admission-cancellation-barrier
   test-task-hurry-up-admission-races

@@ -1329,7 +1329,7 @@
   nil)
 
 
-;;;; -- Delivery Authority Across Child Result Retention --
+;;;; -- Delivery Authority Across Child Removal --
 
 (-> shell-log-tests--disk-prunable (configuration shell-log-artifact) boolean)
 (defun shell-log-tests--disk-prunable (configuration artifact)
@@ -1338,130 +1338,108 @@
     (shell-log--prunable-p configuration directory
                           (shell-log--read-manifest configuration directory :measure-p nil))))
 
-(-> shell-log-tests--ordered-artifacts (list list) boolean)
-(defun shell-log-tests--ordered-artifacts (left right)
-  "Give fixture result publications deterministic retention order without sleeps."
-  (string< (namestring (first left)) (namestring (first right))))
-
-(-> shell-log-tests--owner-retention
-    (function &key (:backfill-p boolean) (:around-retention (option function))) null)
-(defun shell-log-tests--owner-retention (check &key backfill-p around-retention)
-  "Publish real child results until retention removes delivered and silent owners."
+(-> shell-log-tests--owner-removal
+    (function &key (:backfill-p boolean) (:around-removal (option function))) null)
+(defun shell-log-tests--owner-removal (check &key backfill-p around-removal)
+  "Remove the storage of a delivered and a silent child owner, then run CHECK."
   (with-test-configuration (configuration)
-    (let* ((*shell-log-active*              (make-hash-table :test #'equal))
-           (*shell-log-capture-byte-limit*  32)
-           (*task-artifact-retention-limit* 2)
-           (runtime                         (task-orchestrator-create))
-           (root                            (conversation-create configuration :identifier "retention-root"))
-           (parent                          (make-instance 'agent :configuration configuration :conversation root))
-           (jobs                            nil)
-           (captures                        nil))
+    (let* ((*shell-log-active*             (make-hash-table :test #'equal))
+           (*shell-log-capture-byte-limit* 32)
+           (runtime                        (task-orchestrator-create))
+           (root                           (conversation-create configuration :identifier "removal-root"))
+           (parent                         (make-instance 'agent :configuration configuration :conversation root))
+           (jobs                           nil)
+           (captures                       nil))
       (unwind-protect
-           (test-call-with-function-replacements
-            (list (list 'task--artifact-record< #'shell-log-tests--ordered-artifacts))
-            (lambda ()
-              (labels ((child (identifier)
-                         (let ((job (task-tests--make-job runtime :identifier identifier
-                                      :root-identifier "retention-root" :parent-agent parent)))
-                           (setf (slot-value job 'execution-identifier) identifier)
-                           job)))
-                (dolist (identifier '("000Owner" "001Control"))
-                  (let* ((job     (child identifier))
-                         (owner   (conversation-create configuration :identifier identifier
-                                    :storage-root                                (task--artifact-root configuration job)))
-                         (context (make-instance 'tool-context :configuration configuration
-                                    :worker nil :conversation owner)))
-                    (conversation-append-user-message owner "Capture fixture output.")
-                    (push job jobs)
-                    (dolist (detached (if (equal identifier "000Owner") '(nil t) '(nil)))
-                      (let ((command (task-tests--make-job runtime :identifier "command"
-                                       :root-identifier "retention-root" :detached-p detached)))
-                        (setf (slot-value command 'completion-owner-conversation) identifier
-                              (slot-value command 'parent-call-id) "retention-call")
-                        (let ((artifact (shell-log-allocate context :job command)))
-                          (shell-log-tests--finish artifact #(65))
-                          (unless (equal identifier "000Owner")
-                            (setf (getf (shell-log-artifact-metadata artifact) :created-at)
-                                  (- (get-universal-time) *shell-log-retention-age* 1))
-                            (shell-log--write-manifest artifact))
-                          (when (equal identifier "000Owner")
-                            (if detached
-                                (shell-log-tests--receipt-append owner
-                                  (task-completion--receipt (session-job-execution-identifier command)))
-                                (conversation-append-record owner
-                                  (list :tool-result :call-id "retention-call" :status :ok
-                                        :details (list :shell-logs
-                                                       (list (shell-log--public-metadata
-                                                              (shell-log-artifact-metadata artifact))))))))
-                          (push artifact captures))))
-                    (conversation-append-summary owner "Owner checkpoint")
-                    (conversation-load (conversation-pathname owner))))
-                (setf captures (nreverse captures))
-                (test-assert (every (lambda (capture)
-                                      (shell-log-tests--disk-prunable configuration capture))
-                                    (subseq captures 0 2))
-                             "Both exact durable delivery paths authorize pruning before retention")
-                (test-assert (not (shell-log-tests--disk-prunable configuration (third captures)))
-                             "Undelivered control has no authority before retention")
-                (when backfill-p
-                  (dolist (job jobs)
-                    (let* ((owner    (session-job-execution-identifier job))
-                           (identity (shell-log--owner-identity configuration "retention-root" owner))
-                           (receipts (merge-pathnames "shell-delivery/"
-                                      (conversation-storage-directory-pathname identity))))
-                      (platform-delete-directory-tree *platform* receipts
-                                                      :validate t :if-does-not-exist ':ignore)))
-                  (test-assert (not (shell-log-tests--disk-prunable configuration (first captures)))
-                               "Pre-index rotated child evidence needs backfill before retention"))
-                (flet ((retain ()
-                         (dolist (job (reverse jobs))
-                            (shell-log-tests--publish-result job (list :status ':success :output "done")))
-                         (dotimes (index 3)
-                            (shell-log-tests--publish-result (child (format nil "100Later~D" index))
-                                                       (list :status ':success :output "later")))))
-                  (if around-retention
-                      (funcall around-retention configuration root #'retain)
-                      (retain)))
-                (dolist (job jobs)
-                  (test-assert (not (probe-file (task--artifact-root configuration job)))
-                               "Actual result retention removed each original owner"))
-                (test-assert (= 2 (length (task--completed-artifact-records
-                                           (task--artifact-group-root configuration "retention-root"))))
-                             "Real publication enforces the fixture retention limit")
-                (test-assert (every (lambda (capture)
-                                      (probe-file (merge-pathnames "output.bin"
-                                                    (shell-log-capture-directory capture)))) captures)
-                             "Separate capture directories survive owner artifact retention")
-                (funcall check configuration root captures))))
+           (flet ((child (identifier)
+                    (let ((job (task-tests--make-job runtime :identifier identifier
+                                 :root-identifier "removal-root" :parent-agent parent)))
+                      (setf (slot-value job 'execution-identifier) identifier)
+                      job)))
+             (dolist (identifier '("000Owner" "001Control"))
+               (let* ((job     (child identifier))
+                      (owner   (conversation-create configuration :identifier identifier
+                                 :storage-root                                (task--artifact-root configuration job)))
+                      (context (make-instance 'tool-context :configuration configuration
+                                 :worker nil :conversation owner)))
+                 (conversation-append-user-message owner "Capture fixture output.")
+                 (push job jobs)
+                 (dolist (detached (if (equal identifier "000Owner") '(nil t) '(nil)))
+                   (let ((command (task-tests--make-job runtime :identifier "command"
+                                    :root-identifier "removal-root" :detached-p detached)))
+                     (setf (slot-value command 'completion-owner-conversation) identifier
+                           (slot-value command 'parent-call-id) "removal-call")
+                     (let ((artifact (shell-log-allocate context :job command)))
+                       (shell-log-tests--finish artifact #(65))
+                       (unless (equal identifier "000Owner")
+                         (setf (getf (shell-log-artifact-metadata artifact) :created-at)
+                               (- (get-universal-time) *shell-log-retention-age* 1))
+                         (shell-log--write-manifest artifact))
+                       (when (equal identifier "000Owner")
+                         (if detached
+                             (shell-log-tests--receipt-append owner
+                               (task-completion--receipt (session-job-execution-identifier command)))
+                             (conversation-append-record owner
+                               (list :tool-result :call-id "removal-call" :status :ok
+                                     :details (list :shell-logs
+                                                    (list (shell-log--public-metadata
+                                                           (shell-log-artifact-metadata artifact))))))))
+                       (push artifact captures))))
+                 (conversation-append-summary owner "Owner checkpoint")
+                 (conversation-load (conversation-pathname owner))))
+             (setf captures (nreverse captures)
+                   jobs     (nreverse jobs))
+             (test-assert (every (lambda (capture)
+                                   (shell-log-tests--disk-prunable configuration capture))
+                                 (subseq captures 0 2))
+                          "Both exact durable delivery paths authorize pruning before removal")
+             (test-assert (not (shell-log-tests--disk-prunable configuration (third captures)))
+                          "Undelivered control has no authority before removal")
+             (when backfill-p
+               (dolist (job jobs)
+                 (let* ((owner    (session-job-execution-identifier job))
+                        (identity (shell-log--owner-identity configuration "removal-root" owner))
+                        (receipts (merge-pathnames "shell-delivery/"
+                                   (conversation-storage-directory-pathname identity))))
+                   (platform-delete-directory-tree *platform* receipts
+                                                   :validate t :if-does-not-exist ':ignore)))
+               (test-assert (not (shell-log-tests--disk-prunable configuration (first captures)))
+                            "Pre-index rotated child evidence needs backfill before removal"))
+             (flet ((remove-owners ()
+                      (dolist (job jobs)
+                        (task-child-delete-storage configuration (session-job-execution-identifier job)))))
+               (if around-removal
+                   (funcall around-removal configuration root #'remove-owners)
+                   (remove-owners)))
+             (dolist (job jobs)
+               (test-assert (not (probe-file (task--artifact-root configuration job)))
+                            "Explicit removal deleted each original owner"))
+             (test-assert (every (lambda (capture)
+                                   (probe-file (merge-pathnames "output.bin"
+                                                 (shell-log-capture-directory capture)))) captures)
+                          "Separate capture directories survive owner removal")
+             (funcall check configuration root captures))
         (task-orchestrator-close runtime))))
   nil)
 
-(-> shell-log-tests--publish-result (task-job list) pathname)
-(defun shell-log-tests--publish-result (job result)
-  "Publish a fixture result, then run the explicit artifact maintenance boundary."
-  (prog1 (task--write-result-artifact job result)
-    (task-maintain-result-artifacts job)))
-
-(-> test-shell-log-owner-retention () null)
-(defun test-shell-log-owner-retention ()
+(-> test-shell-log-owner-removal () null)
+(defun test-shell-log-owner-removal ()
   "Keep synchronous and detached positive delivery authority after owner deletion."
-  (shell-log-tests--owner-retention
+  (shell-log-tests--owner-removal
    (lambda (configuration root captures)
      (declare (ignore root))
      (dolist (capture (subseq captures 0 2))
        (test-assert (shell-log-tests--disk-prunable configuration capture)
-                    "Delivered capture keeps pruning authority after normal owner retention"))
+                    "Delivered capture keeps pruning authority after explicit owner removal"))
      (test-assert (not (shell-log-tests--disk-prunable configuration (third captures)))
                   "Missing owner alone never grants authority")))
-  (dolist (boundary '(:delivery :close))
-    (shell-log-tests--maintenance-boundary boundary))
   nil)
 
-(-> test-shell-log-owner-retention-pressure () null)
-(defun test-shell-log-owner-retention-pressure ()
-  "Exercise age, count and bytes independently after causal owner retention."
+(-> test-shell-log-owner-removal-pressure () null)
+(defun test-shell-log-owner-removal-pressure ()
+  "Exercise age, count and bytes independently after explicit owner removal."
   (dolist (pressure '(:age :count :bytes))
-    (shell-log-tests--owner-retention
+    (shell-log-tests--owner-removal
      (lambda (configuration root captures)
        (let ((*shell-log-retention-age*         (if (eq pressure :age) 1 most-positive-fixnum))
              (*shell-log-retention-count-limit* (if (eq pressure :count) 2 256))
@@ -1610,36 +1588,31 @@
 
 (-> test-shell-log-owner-delivery-failures () null)
 (defun test-shell-log-owner-delivery-failures ()
-  "Keep last owner receipts on hook failure, then retry ordinary retention safely."
+  "Signal a failed owner handoff, keep the owner's receipts, then retry the removal safely."
   (dolist (failure '(:write :read :enumeration :path :size :delete))
     (shell-log-tests--owner-fixture
      (lambda (configuration runtime parent job owner artifact)
-       (declare (ignore owner))
-       (let* ((*task-artifact-retention-limit* 1)
-              (owner-root                      (task--artifact-root configuration job))
-              (later                           (task-tests--make-job runtime :identifier "later" :parent-agent parent
-                                                 :root-identifier "mark-root"))
-              (original-delete                 (symbol-function 'platform-delete-directory-tree))
-              (original-write                  (symbol-function 'shell-log--write-manifest))
-              (original-path                   (symbol-function 'shell-log--safe-path))
-              (target                          (case failure
-                                                 (:write
-                                                  'shell-log--write-manifest)
-                                                 (:read
-                                                  'shell-log--read-manifest)
-                                                 (:enumeration
-                                                  'shell-log--group-directories)
-                                                 (:path
-                                                  'shell-log--safe-path)
-                                                 (:size
-                                                  'shell-log--write-manifest)
-                                                 (:delete
-                                                  'platform-delete-directory-tree))))
-         (setf (slot-value later 'execution-identifier) "100Later")
-         (shell-log-tests--publish-result job (list :status ':success :output "owner done"))
+       (declare (ignore runtime parent owner))
+       (let* ((owner-root      (task--artifact-root configuration job))
+              (original-delete (symbol-function 'platform-delete-directory-tree))
+              (original-write  (symbol-function 'shell-log--write-manifest))
+              (original-path   (symbol-function 'shell-log--safe-path))
+              (target          (case failure
+                                 (:write
+                                  'shell-log--write-manifest)
+                                 (:read
+                                  'shell-log--read-manifest)
+                                 (:enumeration
+                                  'shell-log--group-directories)
+                                 (:path
+                                  'shell-log--safe-path)
+                                 (:size
+                                  'shell-log--write-manifest)
+                                 (:delete
+                                  'platform-delete-directory-tree)))
+              (signalled       nil))
          (test-call-with-function-replacements
-          (list (list 'task--artifact-record< #'shell-log-tests--ordered-artifacts)
-                (list target
+          (list (list target
                   (lambda (&rest arguments)
                     (case failure
                       (:delete
@@ -1657,19 +1630,17 @@
                       (t
                        (error "Injected pre-delete ~A failure." failure))))))
           (lambda ()
-             (shell-log-tests--publish-result later (list :status ':success :output "later done"))))
+            (handler-case (task-child-delete-storage configuration "000Owner")
+              (error (condition)
+                (setf signalled condition)))))
+         (test-assert signalled (format nil "Failed ~A handoff signals to the remover" failure))
          (test-assert (probe-file owner-root) "Failed handoff must retain the last durable owner receipt")
          (test-assert (shell-log-tests--disk-prunable configuration artifact)
                       "Failure never destroys existing positive delivery authority")
          (test-assert (eq (eq failure :delete) (shell-log-tests--marked-p configuration artifact))
                       "Only post-mark deletion failure leaves a positive mark")
-         (let ((retry (task-tests--make-job runtime :identifier "retry" :parent-agent parent
-                        :root-identifier "mark-root")))
-           (setf (slot-value retry 'execution-identifier) "200Retry")
-           (test-call-with-function-replacements
-            (list (list 'task--artifact-record< #'shell-log-tests--ordered-artifacts))
-            (lambda () (shell-log-tests--publish-result retry (list :status ':success :output "retry")))))
-         (test-assert (not (probe-file owner-root)) "A later publication retries and completes retention")
+         (task-child-delete-storage configuration "000Owner")
+         (test-assert (not (probe-file owner-root)) "A retried removal completes")
          (test-assert (shell-log-tests--marked-p configuration artifact)
                       "Successful retry preserves authority outside the deleted owner")))))
   nil)
@@ -1678,14 +1649,13 @@
 (defun test-shell-log-owner-delivery-boundaries ()
   "Require exact child or nested-child authority, excluding foreign and root storage."
   (with-test-configuration (configuration)
-    (let* ((*shell-log-active*              (make-hash-table :test #'equal))
-           (*shell-log-capture-byte-limit*  32)
-           (*task-artifact-retention-limit* 1)
-           (runtime                         (task-orchestrator-create))
-           (root                            (conversation-create configuration :identifier "boundary-root"))
-           (root-agent                      (make-instance 'agent :configuration configuration :conversation root))
-           (parent                          root-agent)
-           (foreign                         (conversation-create configuration :identifier "foreign-root")))
+    (let* ((*shell-log-active*             (make-hash-table :test #'equal))
+           (*shell-log-capture-byte-limit* 32)
+           (runtime                        (task-orchestrator-create))
+           (root                           (conversation-create configuration :identifier "boundary-root"))
+           (parent                         (make-instance 'agent :configuration configuration :conversation root))
+           (foreign                        (conversation-create configuration :identifier "foreign-root"))
+           (owners                         nil))
       (unwind-protect
            (progn
              (let ((capture (shell-log-tests--receipt-capture configuration runtime root :root "boundary-root")))
@@ -1721,16 +1691,17 @@
                  (shell-log-persist-owner-delivery configuration "boundary-root" owner)
                  (test-assert (shell-log-tests--marked-p configuration capture)
                               "Exact durable child or nested-child receipt grants authority")
-                 (shell-log-tests--publish-result job (list :status ':success :output "nested done"))
+                 (push (list owner (task--artifact-root configuration job) capture) owners)
                  (setf parent (make-instance 'task-child-agent :configuration configuration
                                             :conversation conversation :job job :depth (1+ depth)))))
-             ;; A root-parented publication makes both old children eligible, even the ancestor.
-             (let ((later (task-tests--make-job runtime :identifier "later" :root-identifier "boundary-root"
-                            :parent-agent root-agent)))
-                (shell-log-tests--publish-result later (list :status ':success :output "later done")))
-             (test-assert (= 1 (length (task--completed-artifact-records
-                                        (task--artifact-group-root configuration "boundary-root"))))
-                          "Real retention can evict nested owners after marking"))
+             ;; Remove the nested child first, then its ancestor, as child removal does.
+             (loop for (owner directory capture) in owners
+                   do (task-child-delete-storage configuration owner)
+                      (test-assert (not (probe-file directory))
+                                   "Explicit removal deletes each marked nested owner")
+                      (test-assert (and (shell-log-tests--marked-p configuration capture)
+                                        (shell-log-tests--disk-prunable configuration capture))
+                                   "Marked authority survives its nested owner's removal")))
         (task-orchestrator-close runtime))))
   (shell-log-tests--owner-fixture
    (lambda (configuration runtime parent job owner artifact)
@@ -1775,7 +1746,7 @@
                           "Tagged details do not hide a later exact synchronous receipt")
              (shell-log-persist-owner-delivery configuration "tagged-details-root" "tagged-details")
              (test-assert (shell-log-tests--marked-p configuration artifact)
-                          "Exact synchronous delivery persists before owner retention"))
+                          "Exact synchronous delivery persists before owner removal"))
         (task-orchestrator-close runtime))))
   nil)
 
@@ -1818,7 +1789,7 @@
             (progn
               (multiple-value-bind (values child)
                   (test-conversation--worker-eval configuration
-                    (format nil "(progn (defparameter *owner-retention-lease* (lease-acquire ~S)) t)"
+                    (format nil "(progn (defparameter *owner-removal-lease* (lease-acquire ~S)) t)"
                             (merge-pathnames "owner.lock" directory)))
                 (setf worker child)
                 (test-assert (equal values '("T")) "Fresh worker acquired the capture's real lease"))
@@ -1842,53 +1813,45 @@
 
 (-> test-shell-log-owner-delivery-concurrency () null)
 (defun test-shell-log-owner-delivery-concurrency ()
-  "Serialize ordinary retention handoff, a second marker and quota inspection."
+  "Serialize the owner removal handoff, a second marker and quota inspection."
   (shell-log-tests--owner-fixture
    (lambda (configuration runtime parent job owner artifact)
-     (declare (ignore owner))
-     (let* ((*task-artifact-retention-limit* 1)
-            (later                           (task-tests--make-job runtime :identifier "later" :parent-agent parent
-                                               :root-identifier "mark-root"))
-            (entered                         (sb-thread:make-semaphore))
-            (resume                          (sb-thread:make-semaphore))
-            (started                         (sb-thread:make-semaphore))
-            (done                            (sb-thread:make-semaphore))
-            (active                          *shell-log-active*)
-            (original                        (symbol-function 'shell-log--write-manifest))
-            (writes                          0)
-            (threads                         nil)
-            (failures                        nil)
-            (failure-lock                    (make-lock "retention fixture failures")))
-       (setf (slot-value later 'execution-identifier) "100Later")
-       (shell-log-tests--publish-result job (list :status ':success :output "done"))
+     (declare (ignore runtime parent owner))
+     (let* ((entered      (sb-thread:make-semaphore))
+            (resume       (sb-thread:make-semaphore))
+            (started      (sb-thread:make-semaphore))
+            (done         (sb-thread:make-semaphore))
+            (active       *shell-log-active*)
+            (original     (symbol-function 'shell-log--write-manifest))
+            (writes       0)
+            (threads      nil)
+            (failures     nil)
+            (failure-lock (make-lock "removal fixture failures")))
        (test-call-with-function-replacements
-        (list (list 'task--artifact-record< #'shell-log-tests--ordered-artifacts)
-              (list 'shell-log--write-manifest
+        (list (list 'shell-log--write-manifest
                 (lambda (capture)
                   (incf writes)
                   (when (= writes 1)
                     (sb-thread:signal-semaphore entered)
                     (unless (sb-thread:wait-on-semaphore resume :timeout 10)
-                      (error "Timed out waiting to publish the retention mark.")))
+                      (error "Timed out waiting to publish the removal mark.")))
                   (funcall original capture))))
         (lambda ()
           (labels ((start (function)
                      (push (make-thread
                             (lambda ()
-                              (let ((*shell-log-active*              active)
-                                    (*task-artifact-retention-limit* 1))
+                              (let ((*shell-log-active* active))
                                 (unwind-protect
                                      (handler-case (funcall function)
                                        (error (condition)
                                          (with-lock-held (failure-lock) (push condition failures))))
                                   (sb-thread:signal-semaphore done))))
-                            :name "owner retention fixture") threads)))
+                            :name "owner removal fixture") threads)))
             (unwind-protect
                  (progn
-                    (start (lambda () (shell-log-tests--publish-result later
-                                       (list :status :success :output "later"))))
+                   (start (lambda () (task-child-delete-storage configuration "000Owner")))
                    (unless (sb-thread:wait-on-semaphore entered :timeout 10)
-                     (error "Retention did not reach mark publication."))
+                     (error "Removal did not reach mark publication."))
                    (start (lambda ()
                             (sb-thread:signal-semaphore started)
                             (shell-log-persist-owner-delivery configuration "mark-root" "000Owner")))
@@ -1905,11 +1868,11 @@
                    (sb-thread:signal-semaphore resume)
                    (dotimes (index 3)
                      (unless (sb-thread:wait-on-semaphore done :timeout 10)
-                       (error "Retention interleaving failed to complete.")))
+                       (error "Removal interleaving failed to complete.")))
                    (test-assert (null failures) "Controlled concurrent operations complete without error")
                    (test-assert (= writes 1) "Concurrent retries publish one monotonic mark")
                    (test-assert (not (probe-file (task--artifact-root configuration job)))
-                                "Actual retention removes the owner after successful publication")
+                                "Explicit removal deletes the owner after successful publication")
                    (test-assert (shell-log-tests--marked-p configuration artifact)
                                 "Serialized prune observes fresh durable authority"))
               (sb-thread:signal-semaphore resume)
@@ -2068,15 +2031,15 @@
                    "Aged legacy captures are actually reclaimed after backfill")))
   nil)
 
-(-> test-shell-log-delivery-backfill-retention () null)
-(defun test-shell-log-delivery-backfill-retention ()
+(-> test-shell-log-delivery-backfill-removal () null)
+(defun test-shell-log-delivery-backfill-removal ()
   "Recover already-rotated child evidence before real owner storage removal."
   (let ((*shell-log-delivery-index-record-limit* 1))
-    (shell-log-tests--owner-retention
+    (shell-log-tests--owner-removal
      (lambda (configuration root captures)
        (declare (ignore root))
        (test-assert (shell-log-tests--marked-p configuration (first captures))
-                    "Retention stamps the exact historical synchronous capture before deletion")
+                    "Removal stamps the exact historical synchronous capture before deletion")
        (test-assert (shell-log-tests--disk-prunable configuration (first captures))
                     "The positive manifest authority survives removal of its source owner")
        (test-assert (not (shell-log-tests--disk-prunable configuration (third captures)))
@@ -2084,12 +2047,12 @@
      :backfill-p t))
   nil)
 
-(-> shell-log-tests--allocation-retention-race
+(-> shell-log-tests--allocation-removal-race
     (configuration conversation function &key (:during-index-p boolean)) null)
-(defun shell-log-tests--allocation-retention-race
-    (configuration root retain &key during-index-p)
+(defun shell-log-tests--allocation-removal-race
+    (configuration root remove &key during-index-p)
   "Schedule actual owner removal before the index lock or during a historical batch."
-  (let* ((identity         (shell-log--owner-identity configuration "retention-root" "000Owner"))
+  (let* ((identity         (shell-log--owner-identity configuration "removal-root" "000Owner"))
          (owner-directory  (uiop:pathname-directory-pathname identity))
          (source-lock      (conversation-picker-source-lock-pathname identity))
          (context          (make-instance 'tool-context :configuration configuration
@@ -2098,24 +2061,23 @@
          (index-function   (symbol-function 'shell-log--index-segment))
          (delete-function  (symbol-function 'platform-delete-directory-tree))
          (active           *shell-log-active*)
-         (retention-limit  *task-artifact-retention-limit*)
          (allocation-start (sb-thread:make-semaphore))
          (allocation-ready (sb-thread:make-semaphore))
          (allocation-go    (sb-thread:make-semaphore))
-         (retention-start  (sb-thread:make-semaphore))
-         (retention-ready  (sb-thread:make-semaphore))
+         (removal-start    (sb-thread:make-semaphore))
+         (removal-ready    (sb-thread:make-semaphore))
          (deletion-ready   (sb-thread:make-semaphore))
          (deletion-go      (sb-thread:make-semaphore))
          (probe-ready      (sb-thread:make-semaphore))
          (probe-started    (sb-thread:make-semaphore))
          (allocator        nil)
-         (retainer         nil)
+         (remover          nil)
          (probe            nil)
          (paused-p         nil))
     (labels ((wait-for (semaphore)
                (unless (sb-thread:wait-on-semaphore semaphore :timeout 10)
                  (shell-log--fail
-                  (format nil "Timed out synchronizing retention (index ~S, paused ~S, allocation ~A)."
+                  (format nil "Timed out synchronizing removal (index ~S, paused ~S, allocation ~A)."
                           during-index-p paused-p
                           (when (and allocator (not (sb-thread:thread-alive-p allocator)))
                             (sb-thread:join-thread allocator))))))
@@ -2133,8 +2095,8 @@
                      (when (uiop:pathname-equal path source-lock)
                        (cond ((and (eq (current-thread) allocator) (not during-index-p))
                               (pause-allocation))
-                             ((eq (current-thread) retainer)
-                              (sb-thread:signal-semaphore retention-ready))))
+                             ((eq (current-thread) remover)
+                              (sb-thread:signal-semaphore removal-ready))))
                      (funcall lock-function path function :mode mode)))
              (list 'shell-log--index-segment
                    (lambda (source segment cursor)
@@ -2157,24 +2119,23 @@
                        (let ((*shell-log-active* active))
                          (handler-case (shell-log-allocate context)
                            (error (condition) condition))))
-                     :name "allocation racing owner retention"))
+                     :name "allocation racing owner removal"))
               (sb-thread:signal-semaphore allocation-start)
               (wait-for allocation-ready)
               (if during-index-p
                   (progn
-                    (setf retainer
+                    (setf remover
                           (make-thread
                            (lambda ()
-                             (wait-for retention-start)
-                            (let ((*shell-log-active*              active)
-                                  (*task-artifact-retention-limit* retention-limit))
-                               (handler-case (funcall retain)
+                             (wait-for removal-start)
+                             (let ((*shell-log-active* active))
+                               (handler-case (funcall remove)
                                  (error (condition) condition))))
-                           :name "retention racing historical batch"))
-                    (sb-thread:signal-semaphore retention-start)
-                    (wait-for retention-ready)
+                           :name "removal racing historical batch"))
+                    (sb-thread:signal-semaphore removal-start)
+                    (wait-for removal-ready)
                     (test-assert (probe-file owner-directory)
-                                 "Retention cannot delete storage during the allocation's historical batch")
+                                 "Removal cannot delete storage during the allocation's historical batch")
                     (sb-thread:signal-semaphore allocation-go)
                     (wait-for deletion-ready)
                     (setf probe
@@ -2186,41 +2147,41 @@
                            :name "source lock probe during owner deletion"))
                     (wait-for probe-started)
                     (test-assert (not (sb-thread:wait-on-semaphore probe-ready :timeout 0.1))
-                                 "Retention holds the source lock through actual storage deletion")
+                                 "Removal holds the source lock through actual storage deletion")
                     (sb-thread:signal-semaphore deletion-go)
-                    (test-assert (not (typep (sb-thread:join-thread retainer) 'condition))
-                                 "Concurrent result publication completes without an indexing failure")
+                    (test-assert (not (typep (sb-thread:join-thread remover) 'condition))
+                                 "Concurrent owner removal completes without an indexing failure")
                     (wait-for probe-ready)
                     (sb-thread:join-thread probe))
                   (progn
-                    (funcall retain)
+                    (funcall remove)
                     (test-assert (not (probe-file owner-directory))
-                                 "Retention removes the owner before allocation obtains its source lock")
+                                 "Removal deletes the owner before allocation obtains its source lock")
                     (sb-thread:signal-semaphore allocation-go)))
               (let ((result (sb-thread:join-thread allocator)))
                 (test-assert (typep result 'shell-log-artifact)
-                             "Allocation succeeds after concurrent owner retention")
+                             "Allocation succeeds after concurrent owner removal")
                 (when (typep result 'shell-log-artifact)
                   (shell-log-tests--finish result #(65))))))
-        (dolist (semaphore (list allocation-start allocation-go retention-start deletion-go))
+        (dolist (semaphore (list allocation-start allocation-go removal-start deletion-go))
           (sb-thread:signal-semaphore semaphore))
-        (dolist (thread (list allocator retainer probe))
+        (dolist (thread (list allocator remover probe))
           (when thread
             (sb-thread:join-thread thread :timeout 15 :default nil))))))
   nil)
 
-(-> test-shell-log-backfill-retention-races () null)
-(defun test-shell-log-backfill-retention-races ()
+(-> test-shell-log-backfill-removal-races () null)
+(defun test-shell-log-backfill-removal-races ()
   "Allocate successfully across both historical-index and owner-deletion races."
   (dolist (during-index-p '(nil t))
-    (shell-log-tests--owner-retention
+    (shell-log-tests--owner-removal
      (lambda (configuration root captures)
        (declare (ignore root))
        (test-assert (shell-log-tests--marked-p configuration (first captures))
-                    "Concurrent retention preserves the historical positive delivery evidence"))
+                    "Concurrent removal preserves the historical positive delivery evidence"))
      :backfill-p t
-     :around-retention
-     (lambda (configuration root retain)
-       (shell-log-tests--allocation-retention-race configuration root retain
-                                                   :during-index-p during-index-p))))
+     :around-removal
+     (lambda (configuration root remove)
+       (shell-log-tests--allocation-removal-race configuration root remove
+                                                 :during-index-p during-index-p))))
   nil)

@@ -3811,41 +3811,44 @@ Returns the stable removed identity pathname. Signals CONVERSATION-ERROR when
 storage is missing, IDENTIFIER is invalid, or another process owns it."
   (let* ((normalized
            (conversation-identifier-migration-resolve configuration identifier))
-         (task-fragment
-           (or (conversation-identifier-path-fragment normalized)
-               (string-downcase normalized)))
-         (artifact-roots
-           (list
-            (merge-pathnames
-             (format nil "conversation-images/~A/" normalized)
-             (config :data-root configuration))
-            (merge-pathnames
-             (format nil "tasks/~A/" task-fragment)
-             (config :data-root configuration))))
          (lease    (conversation-lease-acquire configuration normalized))
          (pathname nil))
     (unwind-protect
          (progn
            (setf pathname (conversation-delete-history configuration normalized))
-           (handler-case
-               (dolist (root artifact-roots)
-                 (when (probe-file root)
-                   (funcall *conversation-delete-directory-tree-function*
-                            root
-                            :validate          t
-                            :if-does-not-exist ':ignore)))
-             (error (condition)
-               (error 'conversation-invariant-error
-                      :message
-                      (format
-                       nil
-                       "Conversation ~A was deleted, but private artifacts remain: ~A"
-                       (conversation-identifier-display normalized)
-                       condition)
-                      :pathname pathname
-                      :sequence nil))))
+           (conversation-delete-artifacts configuration normalized))
       (conversation-lease-release lease))
     pathname))
+
+(-> conversation-delete-artifacts (configuration string) null)
+(defun conversation-delete-artifacts (configuration identifier)
+  "Delete IDENTIFIER's private artifacts: its prompt images and the conversations of its children.
+
+The caller holds IDENTIFIER's lease and has deleted, or is deleting, its history."
+  (let* ((normalized
+           (conversation-identifier-migration-resolve configuration identifier))
+         (task-fragment
+           (or (conversation-identifier-path-fragment normalized)
+               (string-downcase normalized))))
+    (handler-case
+        (dolist (root (list (merge-pathnames (format nil "conversation-images/~A/" normalized)
+                                             (config :data-root configuration))
+                            (merge-pathnames (format nil "tasks/~A/" task-fragment)
+                                             (config :data-root configuration))))
+          (when (probe-file root)
+            (funcall *conversation-delete-directory-tree-function*
+                     root
+                     :validate          t
+                     :if-does-not-exist ':ignore)))
+      (error (condition)
+        (error 'conversation-invariant-error
+               :message
+               (format nil "Conversation ~A was deleted, but private artifacts remain: ~A"
+                       (conversation-identifier-display normalized)
+                       condition)
+               :pathname (conversation-pathname-for-id configuration normalized)
+               :sequence nil))))
+  nil)
 
 (-> conversation-delete-history (configuration string) pathname)
 (defun conversation-delete-history (configuration identifier)

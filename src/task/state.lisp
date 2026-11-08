@@ -26,9 +26,6 @@
 (defparameter *task-terminal-retention-limit* 64
   "The maximum terminal task summaries retained in one session.")
 
-(defparameter *task-artifact-retention-limit* 64
-  "The maximum completed child artifact directories retained per conversation.")
-
 (defparameter *tool-execution-default-maximum-concurrency* 4
   "The default number of asynchronous tool executions that may run concurrently.")
 
