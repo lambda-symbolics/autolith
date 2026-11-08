@@ -1461,10 +1461,11 @@
   nil)
 
 (-> world-tests--child-conversation
-    (configuration string &key (:root string) (:parent string) (:name string) (:created-at timestamp))
+    (configuration string &key (:root string) (:parent string) (:name string) (:role (option string))
+                               (:created-at timestamp))
     conversation)
-(defun world-tests--child-conversation (configuration identifier &key root parent name created-at)
-  "Create child agent conversation IDENTIFIER named NAME under PARENT, stored below ROOT, with one durable message."
+(defun world-tests--child-conversation (configuration identifier &key root parent name role created-at)
+  "Create child agent conversation IDENTIFIER named NAME in ROLE under PARENT, stored below ROOT, with one durable message."
   (let ((conversation (conversation-create configuration
                                            :identifier        identifier
                                            :storage-root      (merge-pathnames
@@ -1472,7 +1473,8 @@
                                                                (config :data-root configuration))
                                            :created-at        created-at
                                            :parent-identifier parent
-                                           :agent-name        name)))
+                                           :agent-name        name
+                                           :role              role)))
     (conversation-append-user-message conversation (format nil "work for ~A" parent))
     conversation))
 
@@ -1482,11 +1484,14 @@
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "broot11" 1000)
     (world-tests--child-conversation configuration "e5a1b2c3-0000-4000-8000-000000000001"
-                                     :root "broot11" :parent "broot11" :name "helper" :created-at 1500)
+                                     :root "broot11" :parent "broot11" :name "helper" :role "reviewer"
+                                     :created-at 1500)
     (let ((conversation (conversation-load-by-id configuration "e5a1b2c3-0000-4000-8000-000000000001")))
       (test-assert (search "work for broot11"
                            (format nil "~S" (conversation--read-records (conversation-pathname conversation))))
-                   "a child's conversation is found below its root and loads with its history"))
+                   "a child's conversation is found below its root and loads with its history")
+      (test-assert (equal (conversation-role conversation) "reviewer")
+                   "a child's conversation keeps the role it was spawned with"))
     (test-assert (handler-case (progn (conversation-load-by-id configuration "bnone11") nil)
                    (conversation-error () t))
                  "an unknown identifier still does not exist"))
