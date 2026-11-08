@@ -141,6 +141,32 @@ its parent."
       (task-child--delete configuration identifier))
     (length channels)))
 
+(-> task-child-delete-storage (configuration string) null)
+(defun task-child-delete-storage (configuration channel)
+  "Delete the history and run artifacts of the idle child CHANNEL, keeping what its shell logs delivered.
+
+The child's directory goes under its shell logs' source lock, after their
+delivery evidence is saved outside it, so a later sweep of shell logs still
+knows which captures reached their owner. A failure keeps the directory."
+  (let ((pathname (conversation-task-pathname-for-id configuration channel)))
+    (when pathname
+      (let* ((directory (uiop:pathname-directory-pathname pathname))
+             (root      (first (last (pathname-directory
+                                      (uiop:pathname-parent-directory-pathname directory)))))
+             (lease     (handler-case (conversation-lease-acquire configuration channel)
+                          (conversation-in-use ()
+                            (task-child--busy channel "child.remove")))))
+        (unwind-protect
+             (shell-log-persist-owner-delivery
+              configuration root channel
+              :delete-function (lambda ()
+                                 (conversation-delete-artifacts configuration channel)
+                                 (platform-delete-directory-tree *platform* directory
+                                                                 :validate          t
+                                                                 :if-does-not-exist ':ignore)))
+          (conversation-lease-release lease)))))
+  nil)
+
 
 ;;;; -- Private Functions --
 
@@ -234,18 +260,13 @@ its parent."
 (-> task-child--delete (configuration string) null)
 (defun task-child--delete (configuration channel)
   "Delete the child of CHANNEL, none of whose own children remain: its storage, then its place in the world."
-  (let* ((pathname (conversation-task-pathname-for-id configuration channel))
-         (world    (world-load configuration))
-         (doomed   (loop for resident in (world-channel-residents world channel)
-                         append (cons (participant-identifier resident)
-                                      (mapcar #'participant-identifier
-                                              (world-participant-descendants
-                                               world (participant-identifier resident)))))))
-    (when pathname
-      (conversation-delete configuration channel)
-      (platform-delete-directory-tree *platform* (uiop:pathname-directory-pathname pathname)
-                                      :validate          t
-                                      :if-does-not-exist ':ignore))
+  (let* ((world  (world-load configuration))
+         (doomed (loop for resident in (world-channel-residents world channel)
+                       append (cons (participant-identifier resident)
+                                    (mapcar #'participant-identifier
+                                            (world-participant-descendants
+                                             world (participant-identifier resident)))))))
+    (task-child-delete-storage configuration channel)
     (world-channel-delete configuration channel :participants doomed)
     (dolist (participant doomed)
       (world-context-delete configuration participant))

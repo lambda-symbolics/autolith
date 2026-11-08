@@ -382,40 +382,6 @@
           (platform-unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS"))))
   nil)
 
-(-> test-task-artifact-retention () null)
-(defun test-task-artifact-retention ()
-  "Test bounded completed artifacts without deleting live child directories."
-  (let* ((*task-artifact-retention-limit* 2)
-         (configuration                   (test-configuration))
-         (root                            (test-configuration-root configuration))
-         (group-root
-           (merge-pathnames "tasks/retention-test/"
-                            (config :data-root configuration)))
-         (oldest                          (merge-pathnames "artifact-1/" group-root))
-         (middle                          (merge-pathnames "artifact-2/" group-root))
-         (newest                          (merge-pathnames "artifact-3/" group-root))
-         (incomplete                      (merge-pathnames "artifact-live/" group-root)))
-    (unwind-protect
-         (progn
-           (dolist (directory (list oldest middle newest))
-             (task-tests--write-native-form
-              (merge-pathnames "result.sexp" directory)
-              (list :status ':success)))
-           (task-tests--write-native-form
-            (merge-pathnames "conversation.sexp" incomplete)
-            (list :live t))
-           (task--prune-result-artifacts newest)
-           (test-assert
-            (and (not (probe-file oldest))
-                 (probe-file middle)
-                 (probe-file newest)
-                 (probe-file incomplete)
-                 (= (length (task--completed-artifact-records group-root)) 2))
-            "artifact retention removes only the oldest completed child tree"))
-      (platform-delete-directory-tree *platform* root :validate t
-                                           :if-does-not-exist   ':ignore)))
-  nil)
-
 (-> test-task-nested-parent-cancellation () null)
 (defun test-task-nested-parent-cancellation ()
   "Test parent cancellation while its synchronous descendant is running."

@@ -482,86 +482,6 @@ the root's cache key. Siblings with matching prefixes still share one key."
            (task-job-execution-identifier job))
    (config :data-root configuration)))
 
-(-> task--completed-artifact-records (pathname) list)
-(defun task--completed-artifact-records (group-root)
-  "Return completed child artifact directories and result write dates under GROUP-ROOT."
-  (when (uiop:directory-exists-p group-root)
-    (loop for directory in (uiop:subdirectories group-root)
-          for result = (merge-pathnames "result.sexp" directory)
-          when (probe-file result)
-            collect (list directory (or (file-write-date result) 0)))))
-
-(-> task--artifact-record< (list list) boolean)
-(defun task--artifact-record< (left right)
-  "Return true when artifact record LEFT is older than RIGHT."
-  (let ((left-date  (second left))
-        (right-date (second right)))
-    (or (< left-date right-date)
-        (and (= left-date right-date)
-             (string< (namestring (first left))
-                      (namestring (first right)))))))
-
-(-> task--protected-artifact-roots (task-job pathname) list)
-(defun task--protected-artifact-roots (job current-root)
-  "Return artifact roots that remain inspectable after JOB publishes.
-
-The current pool has not yet retained JOB while its terminal-result hook runs.
-Protect JOB plus the newest existing terminals that survive the impending
-retention step."
-  (let* ((pool (task-orchestrator-pool (session-job-orchestrator job)))
-         (survivor-count
-           (max 0 (1- (job-pool-terminal-retention-limit pool))))
-         (terminals
-           (remove-if-not #'job-terminal-p (job-pool-list-jobs pool))))
-    (cons
-     current-root
-     (loop for retained in (last terminals survivor-count)
-           for result = (job-result retained)
-           for output-path = (and (listp result) (getf result :output-path))
-           when output-path
-             collect
-            (uiop:pathname-directory-pathname output-path)))))
-
-(-> task--prune-result-artifacts
-    (pathname &key (:protected-roots list) (:before-delete (option function))
-                   (:around-delete (option function)))
-    null)
-(defun task--prune-result-artifacts
-    (current-root &key (protected-roots (list current-root)) before-delete around-delete)
-  "Remove oldest completed sibling artifacts beyond the retention limit.
-
-PROTECTED-ROOTS preserves artifacts still exposed by the live session. Directories
-without a published result are live or incomplete and are not retention
-candidates. AROUND-DELETE receives the directory and a zero-argument deletion
-continuation, allowing callers to hold a source lock through actual removal."
-  (let* ((group-root
-           (uiop:pathname-parent-directory-pathname current-root))
-         (records
-           (sort (task--completed-artifact-records group-root)
-                 #'task--artifact-record<))
-         (excess
-           (max 0 (- (length records) *task-artifact-retention-limit*))))
-    (dolist (record records)
-      (when (zerop excess)
-        (return))
-      (let ((directory (first record)))
-        (unless (some (lambda (protected-root)
-                        (uiop:pathname-equal directory protected-root))
-                      protected-roots)
-          (handler-case
-                (flet ((delete-owner ()
-                         (when before-delete (funcall before-delete directory))
-                         (platform-delete-directory-tree *platform* directory
-                                                         :validate          t
-                                                         :if-does-not-exist ':ignore)
-                         (decf excess)))
-                  (if around-delete
-                      (funcall around-delete directory #'delete-owner)
-                      (delete-owner)))
-            (error ()
-              nil))))))
-  nil)
-
 (defparameter *task-result-maximum-octets* (* 16 1024 1024)
   "The largest durable child result accepted by task inspection.")
 
@@ -658,22 +578,6 @@ continuation, allowing callers to hold a source lock through actual removal."
                       :tool-name "child.spawn"
                       :task-id   (job-identifier job)))
              (rename-file temporary target)
-             (task--prune-result-artifacts
-              root
-              :protected-roots (task--protected-artifact-roots job root)
-              :around-delete
-              (lambda (directory delete-function)
-                (let ((owner (first (last (pathname-directory directory))))
-                      (group (task--artifact-group-root configuration
-                               (session-job-root-conversation-identifier job))))
-                  (unless (and (task--owner-component-p owner)
-                               (uiop:pathname-equal group
-                                 (uiop:pathname-parent-directory-pathname directory)))
-                    (error 'task-error :message "Invalid retained child artifact identity."
-                                       :tool-name "child.spawn" :task-id (job-identifier job)))
-                  (shell-log-persist-owner-delivery configuration
-                    (session-job-root-conversation-identifier job) owner
-                    :delete-function delete-function))))
              target)
         (when (probe-file temporary)
           (delete-file temporary))))))
