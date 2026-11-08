@@ -247,13 +247,18 @@ well, since the steer persists first and the queued turn then skips."
 (-> world-mention-completion-entries (world string) list)
 (defun world-mention-completion-entries (world token)
   "Return completion entries for the participants of WORLD whose names start with TOKEN."
-  (loop for participant in (sort (copy-list (world-participants world)) #'string-lessp
+  (loop for participant in (sort (world--participants-where
+                                  world
+                                  (lambda (participant)
+                                    (let ((name (participant-name participant)))
+                                      (and (world-handle-p name)
+                                           (uiop:string-prefix-p (string-downcase token)
+                                                                 (string-downcase name))))))
+                                 #'string-lessp
                                  :key #'participant-name)
         for name = (participant-name participant)
-        when (and (world-handle-p name)
-                  (uiop:string-prefix-p (string-downcase token) (string-downcase name)))
-          collect (let* ((residence (participant-residence participant))
-                         (channel   (and residence (world-channel-find world residence))))
+        collect (let* ((residence (participant-residence participant))
+                       (channel   (and residence (world-channel-find world residence))))
                     (list :name        (format nil "@~A" name)
                           :description (if residence
                                            (format nil "~(~A~) in ~A~@[ ~A~]"

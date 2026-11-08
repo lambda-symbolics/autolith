@@ -493,10 +493,7 @@ reaches; see `world-message-parent-recipient'."
              (world-message-parent-recipient world sender))
         (world-participant-find world designator)
         (and canonical (world-participant-find world canonical))
-        (let ((named (remove-if-not (lambda (participant)
-                                      (string-equal (participant-name participant) designator))
-                                    (world-participants world))))
-          (and (= (length named) 1) (first named))))))
+        (world-participant-named world designator))))
 
 (-> world-message-parent-recipient (world participant) (option participant))
 (defun world-message-parent-recipient (world sender)
