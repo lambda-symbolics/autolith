@@ -84,7 +84,6 @@ integers, pathnames, and quoted data directly:
 (mcp :refresh)
 (permissions :ask)
 (tasks :transcript "ID" :offset 0 :limit 4000)
-(tasks :send "ID" :message "Keep the original message intact.")
 #+END_SRC
 
 Omit a switch argument to inspect its value. Pass =t= to enable it or =nil= to
@@ -3054,7 +3053,6 @@ including lineage, timing, reported usage, recent activity and artifact paths:
 (tasks :list :offset 32 :limit 32)
 (tasks :get "JOB-ID")
 (tasks :transcript "JOB-ID" :offset 0 :limit 4000)
-(tasks :send "JOB-ID" :message "Inspect the failing check before continuing.")
 (tasks :cancel "JOB-ID")
 #+END_SRC
 
@@ -3062,8 +3060,10 @@ Lists show 32 tasks per page, with live work first. Use =:offset= and =:limit=
 (up to 64) to navigate.
 
 Transcript bounds are character counts, defaulting to 0 and 4000. Use the
-shown next offset for another window. The =:get=, =:send= and =:cancel= actions
-use the ordinary owned job operations and authorization.
+shown next offset for another window. The =:get= and =:cancel= actions
+use the ordinary owned job operations and authorization. A running child reads
+messages to its channel at its next safe boundary, so =(tell "CHILD" "text")=
+steers it.
 
 Use =job.continuity= with =action= =list= or =get= to classify retained work as
 live detached, completed, reconstructible from a checkpoint, safe to restart,

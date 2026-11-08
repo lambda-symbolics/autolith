@@ -666,14 +666,14 @@ Use =completion-policy: notify= when a result should wait for an ordinary turn.
 Use =job.get= or =job.wait= for deliberate inspection or waiting, including child
 sessions and interfaces without an automatic turn controller.
 
-| Tool          | Use                                                                                                                                               |
-|---------------+---------------------------------------------------------------------------------------------------------------------------------------------------|
-| =child.spawn= | Independent or specialized work that significantly improves correctness or speed. Do not spawn a single child for work you can complete directly. |
-| =child.roles= | Inspect before choosing a role when roles, project or user overrides, or role restrictions matter.                                                |
-| =job.wait=    | Inspect or join a kept job ID.                                                                                                                    |
-| =job.list=    | Rediscover visible IDs.                                                                                                                           |
-| =job.cancel=  | Stop work that is no longer needed.                                                                                                               |
-| =job.send=    | Steer a running child mid-flight: corrections, new constraints, or scope changes it reads at its next safe boundary.                              |
+| Tool           | Use                                                                                                                                               |
+|----------------+---------------------------------------------------------------------------------------------------------------------------------------------------|
+| =child.spawn=  | Independent or specialized work that significantly improves correctness or speed. Do not spawn a single child for work you can complete directly. |
+| =child.roles=  | Inspect before choosing a role when roles, project or user overrides, or role restrictions matter.                                                |
+| =job.wait=     | Inspect or join a kept job ID.                                                                                                                    |
+| =job.list=     | Rediscover visible IDs.                                                                                                                           |
+| =job.cancel=   | Stop work that is no longer needed.                                                                                                               |
+| =channel.send= | Steer a running child mid-flight: send corrections, new constraints, or scope changes to its channel; it reads them at its next safe boundary.    |
 
 Children may post bounded interim notes with =yield.note=; notes
 arrive behind this conversation at your next turn boundary and also

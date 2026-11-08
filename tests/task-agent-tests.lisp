@@ -1863,70 +1863,20 @@
 
 (-> test-task-child-messaging () null)
 (defun test-task-child-messaging ()
-  "Test parent steering through job.send and child notes to the parent."
-  (let* ((configuration  (test-configuration))
-         (root           (test-configuration-root configuration))
-         (definition     (task-agent-definition-create
-                          :name         "messaging-child"
-                          :description  "Exercise child messaging."
-                          :instructions "Note progress, accept steering, yield."
-                          :source       ':test))
-         (fixture        (task-tests--yield-fixture configuration definition
-                                                    "messaging-child-1"))
-         (job            (getf fixture :job))
-         (parent         (task-job-parent-agent job))
-         (orchestrator   (task-job-orchestrator job))
-         (send-tool      (make-instance 'task-job-tool
-                                        :orchestrator orchestrator
-                                        :namespace    "job"
-                                        :name         "send"
-                                        :description  "Test job send."
-                                        :parameters   (tool-object-schema
-                                                       (json-object) '())))
-         (parent-context (make-instance 'tool-context
-                                        :configuration configuration
-                                        :worker        nil
-                                        :conversation
-                                        (agent-conversation parent)
-                                        :registry
-                                        (make-instance 'tool-registry)
-                                        :agent         parent)))
+  "Test child notes to the parent."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (definition    (task-agent-definition-create
+                         :name         "messaging-child"
+                         :description  "Exercise child messaging."
+                         :instructions "Note progress, then yield."
+                         :source       ':test))
+         (fixture       (task-tests--yield-fixture configuration definition
+                                                   "messaging-child-1"))
+         (job           (getf fixture :job))
+         (parent        (task-job-parent-agent job)))
     (unwind-protect
          (progn
-           ;; The fixture job is unregistered; make it findable and counted
-           ;; the way task-tests--attach-job registers pool jobs.
-           (let ((pool (task-orchestrator-pool orchestrator)))
-             (with-lock-held ((cl-jobpond::job-pool--lock pool))
-               (setf (gethash (session-job-identifier job)
-                              (cl-jobpond::job-pool--jobs pool))
-                     job)
-               (incf (cl-jobpond::job-pool--live-count pool))))
-           (let ((result (tool-execute
-                          send-tool parent-context
-                          (json-object "id" (session-job-identifier job)
-                                       "message"
-                                       "steer toward the edge case"))))
-             (test-assert (tool-result-success-p result)
-                          "job.send accepts steering for a running child"))
-           (let ((texts (mapcar (lambda (entry)
-                                  (user-message-input-text
-                                   (agent-steering-input-content entry)))
-                                (task-job-take-steering job))))
-             (test-assert
-              (and (= (length texts) 1)
-                   (uiop:string-prefix-p *task-parent-steering-preamble* (first texts))
-                   (uiop:string-suffix-p (first texts) "steer toward the edge case"))
-              "sent steering reaches the child framed as a refinement of its assignment"))
-           (test-assert
-            (handler-case
-                (progn
-                  (tool-execute send-tool parent-context
-                                (json-object "id" "job-does-not-exist"
-                                             "message" "hello"))
-                  nil)
-              (task-error ()
-                t))
-            "job.send refuses an unknown job identifier")
            (let ((result (tool-registry-execute-call
                           (getf fixture :registry)
                           (json-object "namespace" "yield"

@@ -9,7 +9,7 @@
     "lisp.save-image" "lisp.paren-check" "self.eval" "self.redefine" "self.define" "self.set"
     "self.exercise" "self.commit" "self.diff" "self.discard" "self.status" "self.checkpoint"
     "self.generations" "self.persist-definition" "self.experiment-start" "self.experiment-settle"
-    "self.refine" "self.rollback" "child.spawn" "child.roles" "job.get" "job.wait" "job.send"
+    "self.refine" "self.rollback" "child.spawn" "child.roles" "job.get" "job.wait"
     "job.cancel" "job.list" "job.continuity" "child.worktree" "skill.invoke" "skill.verify"
     "skill.edit" "agenda.transport" "mcp.status" "mcp.refresh" "mcp.resources" "mcp.read-resource"
     "mcp.prompts" "mcp.get-prompt" "yield.note" "yield.submit" "tool_search.tool_search_tool"
