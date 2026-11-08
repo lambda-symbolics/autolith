@@ -3811,11 +3811,6 @@ Returns the stable removed identity pathname. Signals CONVERSATION-ERROR when
 storage is missing, IDENTIFIER is invalid, or another process owns it."
   (let* ((normalized
            (conversation-identifier-migration-resolve configuration identifier))
-         (pathname (conversation-pathname-for-id configuration normalized))
-         (chunk-directory
-           (conversation-storage-directory-pathname pathname))
-         (sidecar-pathnames
-           (conversation-sidecar-pathnames pathname))
          (task-fragment
            (or (conversation-identifier-path-fragment normalized)
                (string-downcase normalized)))
@@ -3827,46 +3822,18 @@ storage is missing, IDENTIFIER is invalid, or another process owns it."
             (merge-pathnames
              (format nil "tasks/~A/" task-fragment)
              (config :data-root configuration))))
-         (lease    nil))
+         (lease    (conversation-lease-acquire configuration normalized))
+         (pathname nil))
     (unwind-protect
          (progn
-           (setf lease (conversation-lease-acquire configuration normalized))
-           (unless (conversation-storage-active-pathname pathname)
-             (error 'conversation-error
-                    :message
-                    (format nil "Conversation ~A does not exist."
-                            (conversation-identifier-display normalized))
-                    :pathname pathname
-                    :sequence nil))
+           (setf pathname (conversation-delete-history configuration normalized))
            (handler-case
-               (progn
-                 (when (probe-file pathname)
-                   (delete-file pathname))
-                 (when (uiop:directory-exists-p chunk-directory)
-                   (platform-delete-directory-tree
-                    *platform*
-                    chunk-directory
-                    :validate          t
-                    :if-does-not-exist ':ignore)))
-             (error (condition)
-               (error 'conversation-invariant-error
-                      :message
-                      (format nil "Could not delete conversation ~A: ~A"
-                              (conversation-identifier-display normalized)
-                              condition)
-                      :pathname pathname
-                      :sequence nil)))
-           (handler-case
-               (progn
-                 (dolist (sidecar-pathname sidecar-pathnames)
-                   (when (probe-file sidecar-pathname)
-                     (delete-file sidecar-pathname)))
-                 (dolist (root artifact-roots)
-                   (when (probe-file root)
-                     (funcall *conversation-delete-directory-tree-function*
-                              root
-                              :validate          t
-                              :if-does-not-exist ':ignore))))
+               (dolist (root artifact-roots)
+                 (when (probe-file root)
+                   (funcall *conversation-delete-directory-tree-function*
+                            root
+                            :validate          t
+                            :if-does-not-exist ':ignore)))
              (error (condition)
                (error 'conversation-invariant-error
                       :message
@@ -3877,6 +3844,45 @@ storage is missing, IDENTIFIER is invalid, or another process owns it."
                        condition)
                       :pathname pathname
                       :sequence nil))))
-      (when lease
-        (conversation-lease-release lease)))
+      (conversation-lease-release lease))
+    pathname))
+
+(-> conversation-delete-history (configuration string) pathname)
+(defun conversation-delete-history (configuration identifier)
+  "Delete IDENTIFIER's conversation segments and sidecars, and return its identity pathname.
+
+The caller holds IDENTIFIER's lease. Private artifacts, such as the
+conversations of its children, stay. Signals CONVERSATION-ERROR when storage
+is missing."
+  (let* ((normalized
+           (conversation-identifier-migration-resolve configuration identifier))
+         (pathname (conversation-pathname-for-id configuration normalized)))
+    (unless (conversation-storage-active-pathname pathname)
+      (error 'conversation-error
+             :message
+             (format nil "Conversation ~A does not exist."
+                     (conversation-identifier-display normalized))
+             :pathname pathname
+             :sequence nil))
+    (handler-case
+        (let ((chunk-directory (conversation-storage-directory-pathname pathname)))
+          (when (probe-file pathname)
+            (delete-file pathname))
+          (when (uiop:directory-exists-p chunk-directory)
+            (platform-delete-directory-tree
+             *platform*
+             chunk-directory
+             :validate          t
+             :if-does-not-exist ':ignore))
+          (dolist (sidecar-pathname (conversation-sidecar-pathnames pathname))
+            (when (probe-file sidecar-pathname)
+              (delete-file sidecar-pathname))))
+      (error (condition)
+        (error 'conversation-invariant-error
+               :message
+               (format nil "Could not delete conversation ~A: ~A"
+                       (conversation-identifier-display normalized)
+                       condition)
+               :pathname pathname
+               :sequence nil)))
     pathname))
