@@ -53,7 +53,7 @@
 (defmethod resource-resolver-read-documentation ((resolver channel-resolver))
   "Document channel: reads."
   (declare (ignore resolver))
-  "channel:current describes the current channel (residents, subscribers, workspace) and then reads its history with the conversation: arguments. channel:id/<id> names another channel; channel:list surveys every channel.")
+  "channel:current describes the current channel (residents, subscribers, workspace, your children and whether each is busy) and then reads its history with the conversation: arguments. channel:id/<id> names another channel; channel:list surveys every channel.")
 
 (-> channel-resource--uri (channel-resolver string) string)
 (defun channel-resource--uri (resolver identifier)
@@ -217,9 +217,9 @@ parked while it resides nowhere."
                 (conversation-identifier-display (participant-identifier owner)))
         (conversation-identifier-display (channel-owner channel)))))
 
-(-> channel-resource--state-text (world channel list) string)
-(defun channel-resource--state-text (world channel served)
-  "Return CHANNEL's identity, relationships and participants, given the SERVED channels."
+(-> channel-resource--state-text (world channel &key (:served list) (:configuration configuration)) string)
+(defun channel-resource--state-text (world channel &key served configuration)
+  "Return CHANNEL's identity, relationships, participants and children, given the SERVED channels of CONFIGURATION."
   (let ((identifier (channel-identifier channel)))
     (with-output-to-string (stream)
       (format stream "Channel ~A~@[ ~S~], workspace ~A, owner ~A~@[, nested under ~A~], created ~A, changed ~A.~%"
@@ -239,10 +239,28 @@ parked while it resides nowhere."
                                                    served))
       (let ((children (world-channel-children world identifier)))
         (when children
-          (format stream "Nested channels: ~{~A~^, ~}.~%"
-                  (mapcar (lambda (child)
-                            (conversation-identifier-display (channel-identifier child)))
-                          children)))))))
+          (format stream "Children, ~D of the ~D an agent may have; send work to one through its channel. A busy child runs or is open, and child.* tools wait until it is idle.~%"
+                  (length children) *task-children-maximum*)
+          (dolist (child children)
+            (write-string (channel-resource--child-text world child configuration) stream)))))))
+
+(-> channel-resource--child-text (world channel configuration) string)
+(defun channel-resource--child-text (world channel configuration)
+  "Return one line naming the child agent in nested CHANNEL, its role, its channel, and whether it is busy."
+  (let* ((identifier (channel-identifier channel))
+         (agent      (find ':agent (world-channel-residents world identifier) :key #'participant-kind))
+         (pathname   (conversation-task-pathname-for-id configuration identifier))
+         (header     (and pathname (rest (conversation-peek-header pathname)))))
+    (format nil "  ~A~@[ (~A)~] channel ~A, ~:[idle~;busy~]~%"
+            (cond
+              (agent
+               (participant-name agent))
+              ((getf header :agent-name))
+              (t
+               "no agent"))
+            (getf header :role)
+            (conversation-identifier-display identifier)
+            (conversation-lease-busy-p configuration identifier))))
 
 (-> channel-resource--list-text (world list) string)
 (defun channel-resource--list-text (world served)
@@ -286,7 +304,9 @@ parked while it resides nowhere."
          (conversation (channel-resource-conversation resource))
          (state        (channel-resource--state-text
                         world channel
-                        (channel-resource--served-channels (tool-context-configuration context)))))
+                        :served        (channel-resource--served-channels
+                                        (tool-context-configuration context))
+                        :configuration (tool-context-configuration context))))
     (if conversation
         (let ((history (resource-tool-read
                         (make-instance 'conversation-resource
