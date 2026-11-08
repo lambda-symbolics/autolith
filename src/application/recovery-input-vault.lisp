@@ -977,20 +977,19 @@ The caller must hold CONTROLLER's lock."
         (return nil))
       (application-present
        application
-       (list
-        (terminal-span
-         (if failure ':failure ':notice)
-         (if failure
-             (format nil "· vault storage error: ~A~%New submissions are blocked.~%" failure)
-             (format nil "· ~D follow-up/steer message~:P saved to vault~%"
+       (append
+        (if failure
+            (application-failure-line
+             (format nil "vault storage error: ~A; new submissions are blocked. " failure))
+            (application-notice-line
+             (format nil "~D follow-up or steering message~:P saved to the vault: "
                      (application-recovery-input-vault--input-count captures))))
-        (terminal-span ':dim "Use ")
-        (terminal-span ':code "(vault)")
-        (terminal-span ':dim " to inspect, ")
-        (terminal-span ':code "(vault-restore)")
-        (terminal-span ':dim " to restore, or ")
-        (terminal-span ':code "(vault-discard)")
-        (terminal-span ':dim " to discard.")))
+        (list (terminal-span ':code "(vault)")
+              (terminal-span ':dim " shows, ")
+              (terminal-span ':code "(vault-restore)")
+              (terminal-span ':dim " restores, ")
+              (terminal-span ':code "(vault-discard)")
+              (terminal-span ':dim " discards"))))
       t)))
 
 (-> application-recovery-input-vault--actions (&key (:restore-p boolean)) list)
