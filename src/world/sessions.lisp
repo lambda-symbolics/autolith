@@ -508,7 +508,6 @@ parent is never left behind its retired children."
                                               :kind       ':human
                                               :name       *world-human-name*
                                               :residence  identifier
-                                              :presence   ':present
                                               :created-at now
                                               :updated-at now)))
                (channel    (world-channel-find preview identifier))
