@@ -641,30 +641,6 @@
                    "a designated fragment resolves like any other")))
   nil)
 
-(-> test-world-channels-command () null)
-(defun test-world-channels-command ()
-  "Test (channels) presents every channel with its residents."
-  (with-test-configuration (configuration)
-    (world-tests--persisted-conversation configuration "b-listed" 1000)
-    (world-server--reconcile configuration)
-    (let* ((terminal    (make-instance 'recording-terminal :columns 80))
-           (ui          (terminal-ui-create :terminal terminal))
-           (application (make-instance 'application
-                                       :configuration configuration
-                                       :ui            ui)))
-      (unwind-protect
-           (progn
-             (terminal-ui-start ui)
-             (test-assert (eq (application-command application "/channels") ':continue)
-                          "/channels remains inside the interactive application")
-             (let ((output (recording-terminal-output terminal)))
-               (test-assert (and (search "channels" output)
-                                 (search "b-listed" output)
-                                 (search "(agent " output))
-                            "/channels shows the channel and its agent resident")))
-        (ignore-errors (terminal-ui-stop ui)))))
-  nil)
-
 (-> world-tests--agents (configuration) (values participant participant participant))
 (defun world-tests--agents (configuration)
   "Return the human and the agents of channels bfirst1 and bsecnd2 after reconciliation."
@@ -2070,8 +2046,7 @@
                 (test-assert (and (string= (getf result :channel) "bfirst1")
                                   parked
                                   (null (participant-residence parked))
-                                  (null (agent-of "bfirst1"))
-                                  (equal (world-parked-agents world) (list parked)))
+                                  (null (agent-of "bfirst1")))
                              "a parked agent keeps its identity, resides in no channel, and leaves its channel without one")
                 (test-assert (and (string= (participant-residence kept) "btask11")
                                   (equal (participant-parent kept) (participant-identifier first-agent)))

@@ -1750,8 +1750,8 @@ and agent. The world lives in =world/= below the data root. One world server
 process hosts the open channels, each with its own endpoint for terminals;
 see Local sessions.
 
-=(channels)= lists every channel with its residents and subscribers, newest
-change first, and then the parked agents. Agents are all one kind of
+The sidebar and the =(switch)= picker show the channels, and the =(move)=
+picker the agents, the parked ones too. Agents are all one kind of
 participant: an agent has a parent and may have children, and any agent,
 a child too, may create child agents. A child agent resides in a channel
 nested under its parent's channel and belongs to its parent agent, so
