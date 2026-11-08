@@ -85,6 +85,71 @@
                     "a channel idle past the idle minutes is unloaded"))))
   nil)
 
+(-> test-world-server-child-maintenance () null)
+(defun test-world-server-child-maintenance ()
+  "Test maintenance releases visited idle children and refuses attached or running hosts."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (declare (ignore root))
+     (let* ((parent  (world-tests--persisted-conversation configuration "bmaint11" 1000))
+            (context (make-instance 'tool-context :configuration configuration :conversation parent
+                                                 :worker nil :agent nil :registry (make-instance 'tool-registry)))
+            (entry   (world-client-entry configuration)))
+       (world-tests--child-conversation configuration "bmaintkid" :root "bmaint11" :parent "bmaint11"
+                                                                :name "helper" :created-at 1500)
+       (world-reconcile-sessions configuration)
+       (flet ((visit ()
+                "Open the child and wait until its host is idle."
+                (localgroup-query-record entry ':open (list :channel "bmaintkid" :switch-p t))
+                (let ((host (world-server--find-host server "bmaintkid")))
+                  (test-assert (task-tests--wait-until (lambda () (world-server--host-idle-p host)) 30)
+                               "the visited finished child has an idle host")
+                  host)))
+         (dolist (operation '("child.reset" "child.compact"))
+           (visit)
+           (test-assert (conversation-lease-busy-p configuration "bmaintkid")
+                        "visiting holds the child's conversation lease")
+           (let ((called nil))
+             (task-child--call-with-lease
+              context "bmaintkid"
+              (lambda ()
+                (setf called t)
+                (test-assert (null (world-server--find-host server "bmaintkid"))
+                             "maintenance waits until the idle host has ended")
+                (test-assert (conversation-lease-busy-p configuration "bmaintkid")
+                             "maintenance holds the child's lease"))
+              :tool-name operation)
+             (test-assert called "reset and compaction can operate on a visited child")))
+         (let* ((host        (visit))
+                (application (world-host-application host))
+                (controller  (application-input-controller application))
+                (terminal    (terminal-ui-terminal (application-ui application)))
+                (attachment  (make-instance 'image-daemon:attachment :socket nil
+                                                                    :stream (make-broadcast-stream) :mode ':control)))
+           (image-daemon:relay-attach terminal attachment :rows 24 :columns 80 :styled-p nil
+                                                         :session-id "bmaintkid")
+           (unwind-protect
+                (test-assert
+                 (handler-case (progn (channel-remove configuration '("bmaintkid")) nil)
+                   (task-error (condition) (search "terminal" (autolith-error-message condition))))
+                 "removing an attached child refuses with an attachment-specific reason")
+             (image-daemon:relay-detach terminal attachment))
+           (with-lock-held ((application-input-controller-lock controller))
+             (setf (application-input-controller-active-p controller) t))
+           (unwind-protect
+                (test-assert
+                 (handler-case (progn (channel-remove configuration '("bmaintkid")) nil)
+                   (task-error (condition) (search "running" (autolith-error-message condition))))
+                 "removing a running child refuses without cancelling it")
+             (with-lock-held ((application-input-controller-lock controller))
+               (setf (application-input-controller-active-p controller) nil)))
+           (test-assert (world-host-live-p host) "refused maintenance keeps the host alive"))
+         (test-assert (= 1 (channel-remove configuration '("bmaintkid")))
+                      "an idle visited child can be removed immediately")
+         (test-assert (null (world-channel-find (world-load configuration) "bmaintkid"))
+                      "removal deletes the visited child's world channel")))))
+  nil)
+
 (-> test-world-server-wake-channel () null)
 (defun test-world-server-wake-channel ()
   "Test a message serves the unserved channel its agent resides in, and nothing else."

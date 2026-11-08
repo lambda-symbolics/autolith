@@ -535,6 +535,8 @@ REASON, when given, is what each attached terminal is told before it lets go."
     (:close
      (world-server-close server (getf arguments :channel)
                          :unattached-only-p (not (null (getf arguments :unattached-only-p)))))
+    (:quiesce
+     (world-server-quiesce server (getf arguments :channels)))
     (:move
      (world-server-move server (getf arguments :participant) (getf arguments :channel)))
     (:dismiss
@@ -688,6 +690,60 @@ started must not end one another terminal attached to since."
                  (close-host)
                  (list :ok :operation ':close :session-id (world-host-channel host)
                            :closed-p nil)))))))))
+
+(-> world-server-quiesce (world-server list) list)
+(defun world-server-quiesce (server channels)
+  "Close idle unattended hosts in CHANNELS and wait for their leases to be released.
+
+Return channel/state pairs. Attached, running and unavailable hosted channels
+are refused without cancelling their work. Admission and shutdown share the
+endpoint and controller locks; opening another host waits until this batch ends."
+  (with-lock-held ((world-server-open-lock server))
+    (when (world-server-checkpointing-p server)
+      (error 'world-error :message   "The world is checkpointing; retry after it resumes."
+                          :operation ':checkpointing))
+    (let* ((hosts  (loop for channel in channels
+                         for host = (world-server--find-host server channel)
+                         when host collect host))
+           (states (mapcar (lambda (host)
+                             (cons (world-host-channel host)
+                                   (cond
+                                     ((world-host-attached-p host)
+                                      ':attached)
+                                     ((world-server--host-idle-p host)
+                                      ':idle)
+                                     (t
+                                      ':running))))
+                           hosts)))
+      (when (every (lambda (state) (eq (rest state) ':idle)) states)
+        (dolist (host hosts)
+          (let* ((application (world-host-application host))
+                 (session     (application-localgroup-session application))
+                 (controller  (application-input-controller application))
+                 (state       (assoc (world-host-channel host) states :test #'string=)))
+            (setf (rest state)
+                  (if (and session controller)
+                      (with-lock-held ((image-daemon:daemon-runtime-lock session))
+                        (cond
+                          ((world-host-attached-p host)
+                           ':attached)
+                          ((not (world-server--host-idle-p host))
+                           ':running)
+                          ((application-input-controller--request-idle-exit controller)
+                           (setf (localgroup-session-closing-p session) t)
+                           ':closing)
+                          (t
+                           ':hosted)))
+                      ':hosted))))
+        (dolist (host hosts)
+          (let ((state (assoc (world-host-channel host) states :test #'string=)))
+            (when (eq (rest state) ':closing)
+              (let ((thread (world-host-thread host)))
+                (when thread
+                  (sb-thread:join-thread thread :timeout 10 :default nil))
+                (setf (rest state)
+                      (if (and thread (thread-alive-p thread)) ':hosted ':closed)))))))
+      (list :ok :states states))))
 
 
 ;;;; -- Moves --
