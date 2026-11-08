@@ -109,6 +109,10 @@ subsequent events after its bounded history snapshot."
                       #'agentcomms:acp-update-user-message
                       #'agentcomms:acp-update-agent-message)
                   (agentcomms:acp-text-content (getf fields :content)))))
+      (:side-status
+       (agentcomms:acp-update-agent-message
+        (agentcomms:acp-text-content
+         (format nil "~{~A~}" (mapcar #'terminal-span-text (getf fields :spans))))))
       (:provider-item
        (let* ((item (json-decode (getf fields :wire-json)))
               (type (json-get item "type")))

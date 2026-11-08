@@ -316,20 +316,24 @@ fragments that providers interleave with empty content deltas."
 
 (-> acp-session--record (acp-session t) null)
 (defun acp-session--record (session record)
-  "Show user messages except live prompts already displayed by this editor."
-  (when (and (consp record)
-             (eq (first record) ':message)
-             (eq (getf (rest record) :role) ':user)
-             (not (getf (rest record) :automatic-p)))
-    (let* ((fields     (rest record))
-           (submission (getf fields :submission))
-           (content    (getf fields :content)))
-      (unless (and (equal (getf submission :client) (acp-session-client-identifier session))
-                   (equal (getf submission :source) "prompt"))
-        (when (stringp content)
-          (with-lock-held ((acp-session-lock session))
-            (acp-session--send session (agentcomms:acp-update-user-message
-                                        (agentcomms:acp-text-content content))))))))
+  "Present durable user input and informational output without echoing the live prompt."
+  (cond
+    ((eq (first record) ':side-status)
+     (let ((update (acp-replay--record-update record (acp-session-turn-sequence session))))
+       (with-lock-held ((acp-session-lock session))
+         (acp-session--send session update))))
+    ((and (eq (first record) ':message)
+          (eq (getf (rest record) :role) ':user)
+          (not (getf (rest record) :automatic-p)))
+     (let* ((fields     (rest record))
+            (submission (getf fields :submission))
+            (content    (getf fields :content)))
+       (unless (and (equal (getf submission :client) (acp-session-client-identifier session))
+                    (equal (getf submission :source) "prompt"))
+         (when (stringp content)
+           (with-lock-held ((acp-session-lock session))
+             (acp-session--send session (agentcomms:acp-update-user-message
+                                         (agentcomms:acp-text-content content)))))))))
   nil)
 
 (-> acp-session--work-started (acp-session list) null)
