@@ -701,6 +701,7 @@
   test-world-server-starting-host
   test-world-server-launch-options
   test-world-server-close-unattached
+  test-world-server-close-ownership
   test-world-server-attachment-moves-nobody
   test-world-server-person-unread
   test-world-server-open-before-checkpoint

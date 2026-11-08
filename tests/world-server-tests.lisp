@@ -1051,6 +1051,62 @@ run once the wake has."
                       "the committed close ends the channel")))))
   nil)
 
+(-> test-world-server-close-ownership () null)
+(defun test-world-server-close-ownership ()
+  "Test a closing host retains exclusive ownership until its serving thread retires."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry       (world-client-entry configuration))
+            (identifier  (getf (rest (world-server-tests--open
+                                      entry (world-tests--workspace root "closing")))
+                               :session-id))
+            (host        (world-server--find-host server identifier))
+            (application (world-host-application host))
+            (lease       (application-conversation-lease application))
+            (releasing   (sb-thread:make-semaphore))
+            (release     (sb-thread:make-semaphore))
+            (original    (symbol-function 'conversation-lease-release)))
+       (conversation-append-user-message (application-conversation application) "persist before close")
+       (test-call-with-function-replacements
+        (list (list 'conversation-lease-release
+                    (lambda (candidate)
+                      (when (eq candidate lease)
+                        (sb-thread:signal-semaphore releasing)
+                        (sb-thread:wait-on-semaphore release))
+                      (funcall original candidate))))
+        (lambda ()
+          (unwind-protect
+               (progn
+                 (localgroup-query-record entry ':close (list :channel identifier))
+                 (test-assert (sb-thread:wait-on-semaphore releasing :timeout 20)
+                              "the closing host reaches ownership release")
+                 (test-assert (and (null (world-server--find-host server identifier))
+                                   (thread-alive-p (world-host-thread host))
+                                   (member host (world-server--hosts server)))
+                              "a channel leaves routing before its host retires")
+                 (test-assert (and (conversation-lease-held-p lease)
+                                   (conversation-lease-busy-p configuration identifier))
+                              "a closing host keeps its lease until release completes")
+                 (test-assert (handler-case
+                                  (let ((unexpected (conversation-lease-acquire configuration identifier)))
+                                    (conversation-lease-release unexpected)
+                                    nil)
+                                (conversation-in-use (condition)
+                                  (eql (conversation-in-use-owner-pid condition) (current-process-id))))
+                              "admission identifies the closing host's process as the owner"))
+            (sb-thread:signal-semaphore release))
+          (sb-thread:join-thread (world-host-thread host) :default nil :timeout 20)
+          (test-assert (and (not (thread-alive-p (world-host-thread host)))
+                            (not (conversation-lease-held-p lease))
+                            (not (member host (world-server--hosts server)))
+                            (not (conversation-lease-busy-p configuration identifier)))
+                       "retiring the serving thread releases ownership and removes its host")
+          (let ((opened (localgroup-query-record entry ':open (list :channel identifier))))
+            (test-assert (and (getf (rest opened) :started-p)
+                              (string= identifier (getf (rest opened) :session-id)))
+                         "the retired channel can be opened under a new owner")))))))
+  nil)
+
 (-> test-world-server-attachment-moves-nobody () null)
 (defun test-world-server-attachment-moves-nobody ()
   "Test a terminal taking control of a hosted channel maps its channel and leaves the person in the inbox."
@@ -1529,7 +1585,17 @@ run once the wake has."
                   (refused-p (participant channel)
                     "Return whether moving PARTICIPANT into CHANNEL is refused."
                     (handler-case (progn (move participant channel) nil)
-                      (localgroup-error () t))))
+                      (localgroup-error () t)))
+
+                  (close-channel (identifier)
+                    "Close IDENTIFIER and wait for its ownership to retire."
+                    (let ((thread (world-host-thread (world-server--find-host server identifier))))
+                      (localgroup-query-record entry ':close (list :channel identifier))
+                      ;; Routing ends as soon as close is requested, before
+                      ;; APPLICATION-SERVE releases the conversation lease.
+                      (sb-thread:join-thread thread :default nil :timeout 20)
+                      (test-assert (not (thread-alive-p thread))
+                                   "the closed channel's serving thread retires"))))
            (test-assert (and agent-a agent-b)
                         "both hosted channels have agents once their conversations persist")
            (test-assert (and (refused-p (participant-name agent-a) id-b)
@@ -1563,11 +1629,7 @@ run once the wake has."
                                 (not (application-world-agent-present-p app-b))
                                 (not (application-localgroup-paused-p app-a)))
                            "a destination that cannot start the agent's runtime refuses the move and leaves the agent working where it was")))
-           (localgroup-query-record entry ':close (list :channel id-b))
-           (test-assert (task-tests--wait-until
-                         (lambda () (null (world-server--find-host server id-b)))
-                         20)
-                        "the channel without an agent closes like any other")
+           (close-channel id-b)
            (let* ((controller (application-input-controller app-a))
                   (answer     nil)
                   (thread     nil))
@@ -1731,8 +1793,7 @@ run once the wake has."
                                                    (values (world-reconcile-sessions configuration))
                                                    id-d)
                                           :key #'participant-kind))))
-               (localgroup-query-record entry ':close (list :channel id-d))
-               (task-tests--wait-until (lambda () (null (world-server--find-host server id-d))) 20)
+               (close-channel id-d)
                (move (participant-identifier agent-a) id-d)
                (test-call-with-function-replacements
                 (list (list 'application-world-install-agent
