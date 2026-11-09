@@ -516,15 +516,17 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
 Entries past the rows available are counted on the last row they would take.
 Each action is NIL or a plist of :OPEN, the channel a click switches to, and
 :TOGGLE, the tree node a click on the marker opens or closes."
-  (let* ((limit      (max 0 (- height 2)))
-         (overflow-p (> (length entries) limit))
-         (kept       (if overflow-p (max 0 (1- limit)) (length entries)))
+  (let* ((heading    (subseq (list (list (terminal-span ':brand " CHANNELS")) nil)
+                            0 (min 2 (max 0 (1- height)))))
+         (limit      (max 0 (- height (length heading) 1)))
+         (overflow-p (and (plusp limit) (> (length entries) limit)))
+         (kept       (if overflow-p (1- limit) (min limit (length entries))))
          (shown      (subseq entries 0 kept))
-         (rows       (append (list (list (terminal-span ':brand " Channels")))
+         (rows       (append heading
                              (mapcar #'world-sidebar--entry-spans shown)
                              (when overflow-p
                               (list (list (terminal-span ':notice (format nil " … ~D more · open picker" (- (length entries) kept))))))))
-         (actions    (append (list nil)
+         (actions    (append (make-list (length heading) :initial-element nil)
                              (mapcar #'world-sidebar--entry-action shown)
                              (when overflow-p
                               (list (list :picker-p t)))))
@@ -533,7 +535,7 @@ Each action is NIL or a plist of :OPEN, the channel a click switches to, and
                          (list (terminal-span ':legend-dim
                                               " ↑↓ select · Enter opens · ←→ tree · Esc closes"))
                          (list (terminal-span ':legend-accent " Ctrl-T")
-                               (terminal-span ':legend-dim " toggle sidebar")))))
+                               (terminal-span ':legend-dim " toggle")))))
     (values (subseq (append rows (make-list filler :initial-element nil) (list legend)) 0 height)
             (subseq (append actions (make-list filler :initial-element nil) (list nil)) 0 height))))
 
@@ -561,7 +563,7 @@ then its agent's name and its title; a closed node shows what it hides."
      (append
       (list (world-sidebar--current-span entry)
             (terminal-span ':plain " ")
-            (terminal-span ':legend-accent "inbox"))
+            (terminal-span ':user "inbox"))
       (when (plusp (getf entry :unread))
         (list (terminal-span ':notice (format nil " ~D unread" (getf entry :unread)))))))
     (:workspace
