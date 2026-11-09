@@ -50,11 +50,174 @@ context. This local admission estimate is independent of paid usage. Methods
 may use provider token counts when available; the default is not a tokenizer."))
 
 (defmethod provider-request-input-token-estimate ((provider model-provider) (request hash-table))
-  "Estimate the actual encoded prompt at four characters per text token."
+  "Use matched ordinary usage, otherwise estimate the final encoded prompt."
+  (multiple-value-bind (tokens matched-p uncertain-p)
+      (provider-context--matched-input provider request)
+    (if matched-p
+        (values tokens uncertain-p)
+        (multiple-value-bind (characters non-text-p)
+            (provider-context--request-characters request)
+          (values (ceiling characters 4) non-text-p)))))
+
+(-> provider-context--soft-header (model-provider vector) (option list))
+(defun provider-context--soft-header (provider tools)
+  "Fingerprint prompt policy and tools when the provider owns a configuration."
+  (let ((configuration (and (compute-applicable-methods #'provider-configuration (list provider))
+                            (provider-configuration provider))))
+    (when configuration
+      (provider-cache-prefix--entry
+       (vector (symbol-name (class-name (class-of provider)))
+               (config :model configuration) (config :model-provider configuration)
+               (config :reasoning-effort configuration)
+               (system-prompt configuration) tools)))))
+
+(-> provider-context--history (model-provider conversation) list)
+(defun provider-context--history (provider conversation)
+  "Fingerprint compatible retained history without storing prompt bodies."
+  (mapcar #'provider-cache-prefix--entry
+          (conversation-input-items-for-family conversation (provider-family provider)
+                                               :include-ephemeral-p nil)))
+
+(-> provider-context--extends-p (list list) boolean)
+(defun provider-context--extends-p (previous current)
+  "Return whether CURRENT preserves every entry of PREVIOUS, including empty items."
+  (and (<= (length previous) (length current))
+       (equal previous (subseq current 0 (length previous))) t))
+
+(-> provider-context-request-create (model-provider conversation vector) list)
+(defun provider-context-request-create (provider conversation tools)
+  "Start ordinary request-local evidence; ephemera require the unmeasured fallback."
+  (let ((header (provider-context--soft-header provider tools)))
+    ;; Preallocate mutable fields to preserve the shared evidence plist head.
+    (list :provider provider :conversation conversation
+          :history     (and header (provider-context--history provider conversation))
+          :soft-header header
+          :eligible-p  (and header (null (conversation-ephemeral-input-entries conversation)) t)
+          :encoder nil :projection nil :tools nil :wire-provider nil :wire nil)))
+
+(-> provider-context--wire-body (hash-table) hash-table)
+(defun provider-context--wire-body (request)
+  "Return the token-bearing request inside an optional routing envelope."
+  (let ((inner (json-get request "request")))
+    (if (json-object-p inner) inner request)))
+
+(-> provider-context--wire-plan (hash-table) list)
+(defun provider-context--wire-plan (request)
+  "Reuse wire fingerprints, ignoring cache annotations and output-only controls."
+  (labels ((copy-value (value)
+             (typecase value
+               (hash-table
+                (let ((copy (json-object)))
+                  (maphash (lambda (key item)
+                             (unless (equal key "cache_control")
+                               (setf (gethash key copy) (copy-value item))))
+                           value)
+                  copy))
+               (string
+                value)
+               (vector
+                (map 'vector #'copy-value value))
+               (t
+                value))))
+    (let ((body (copy-value (provider-context--wire-body request))))
+      (dolist (field '("stream" "stream_options" "store" "max_output_tokens"
+                       "max_completion_tokens" "max_tokens" "prompt_cache_key"
+                       "prompt_cache_retention"))
+        (remhash field body))
+      (provider-cache-wire-plan body))))
+
+(-> provider-context--matched-input (model-provider hash-table)
+    (values (integer 0) boolean boolean))
+(defun provider-context--matched-input (provider request)
+  "Return measured input plus new encoded items when the complete covered prefix matches."
   (declare (ignore provider))
-  (multiple-value-bind (characters non-text-p)
-      (provider-context--request-characters request)
-    (values (ceiling characters 4) non-text-p)))
+  (let* ((context      *provider-context-request*)
+         (conversation (getf context :conversation))
+         (sample       (and conversation (conversation-context-usage-sample conversation)))
+         (covered      (getf sample :wire)))
+    (when (and sample covered
+               (getf context :eligible-p)
+               (eq (getf sample :provider) (getf context :provider))
+               (equal (getf sample :soft-header) (getf context :soft-header))
+               (provider-context--extends-p (getf sample :history) (getf context :history)))
+      (let* ((current (provider-context--wire-plan request))
+             (change  (provider-cache-wire-change covered current)))
+        (when (and change (null (getf change :fields))
+                   (null (getf change :first-changed-item)))
+          (let* ((body  (provider-context--wire-body request))
+                 (field (find-if (lambda (name)
+                                   (provider-cache-wire--array-p (json-get body name)))
+                                 *provider-cache-wire-sequence-fields*))
+                 (items (and field (json-get body field)))
+                 (count (length (getf covered :items))))
+            (when items
+              (multiple-value-bind (characters uncertain-p)
+                  (if (= count (length items))
+                      (values 0 nil)
+                      (provider-context--request-characters (subseq items count)))
+                (return-from provider-context--matched-input
+                  (values (+ (getf sample :tokens) (ceiling characters 4)) t uncertain-p))))))))
+    (values 0 nil nil)))
+
+(-> provider-context--response-entries-p (list list) boolean)
+(defun provider-context--response-entries-p (entries output)
+  "Require every added entry to be a distinct ordered response item, excluding concurrent input."
+  (loop with remaining = output
+        for entry in entries
+        always (let ((tail (member entry remaining :test #'equal)))
+                 (when tail
+                   (setf remaining (rest tail))
+                   t))))
+
+(-> provider-context-note-response (list provider-result) null)
+(defun provider-context-note-response (context result)
+  "Anchor ordinary usage after persistence, before locally generated tool evidence.
+
+Re-encode the measured projection through its original encoder, with its
+persisted response and no temporary suffix. Retain fingerprints only. Merged
+messages that later change fail closed."
+  (let* ((conversation (getf context :conversation))
+         (provider     (getf context :provider))
+         (adapter      (getf context :encoder))
+         (projection   (getf context :projection))
+         (usage        (provider-usage-normalize (provider-result-usage result)))
+         (input        (and (json-object-p usage) (json-get usage "input_tokens")))
+         (output       (and (json-object-p usage) (json-get usage "output_tokens")))
+         (total        (and (json-object-p usage) (json-get usage "total_tokens"))))
+    (when conversation
+      (setf (conversation-context-usage-sample conversation) nil)
+      (when (and (getf context :eligible-p) adapter projection
+                 (getf context :wire)
+                 (typep input '(integer 1)) (typep output '(integer 0))
+                 (or (plusp output) (null (provider-result-output-items result)))
+                 (let ((cached (json-get usage "cached_input_tokens")))
+                   (or (null cached) (and (typep cached '(integer 0)) (<= cached input))))
+                 (or (null total) (and (typep total '(integer 0)) (>= total (+ input output)))))
+        (let* ((history (conversation-input-items-for-family
+                         conversation (provider-family provider) :include-ephemeral-p nil))
+               (entries (mapcar #'provider-cache-prefix--entry history))
+               (before  (getf context :history)))
+          (when (and (provider-context--extends-p before entries)
+                     (provider-context--response-entries-p
+                      (nthcdr (length before) entries)
+                      (mapcar #'provider-cache-prefix--entry (provider-result-output-items result))))
+            (let* ((options                          (copy-list (cl-llm-provider-api:wire-request-options projection)))
+                   (*provider-context-request*       nil)
+                   (*provider-cache-prefix-function* nil)
+                   (covered
+                     (make-instance 'cl-llm-provider-api:wire-request
+                                    :model   (cl-llm-provider-api:wire-request-model projection)
+                                    :prefix  (cl-llm-provider-api:wire-request-prefix projection)
+                                    :items   (append (cl-llm-provider-api:wire-request-items projection)
+                                                     (nthcdr (length before) history))
+                                    :options options))
+                   (wire                             (provider-context--wire-plan
+                                                      (provider-request-object adapter covered (getf context :tools)))))
+              (when (equal (getf wire :fields) (getf (getf context :wire) :fields))
+                (setf (conversation-context-usage-sample conversation)
+                      (list :provider provider :soft-header (getf context :soft-header)
+                            :history entries :wire wire :tokens (max (+ input output) (or total 0)))))))))))
+  nil)
 
 (-> provider-context--request-characters (t) (values (integer 0) boolean))
 (defun provider-context--request-characters (value)
@@ -142,8 +305,12 @@ may use provider token counts when available; the default is not a tokenizer."))
 (defmethod provider-open-response-stream :before
     ((provider model-provider) (request hash-table) &key credentials conversation)
   "Admit the fully encoded streaming request after provider-specific modifications."
-  (declare (ignore credentials conversation))
+  (declare (ignore credentials))
   (provider-context--admit-request provider request)
+  (when (and conversation *provider-context-request*
+             (eq conversation (getf *provider-context-request* :conversation)))
+    (setf (getf *provider-context-request* :wire-provider) provider
+          (getf *provider-context-request* :wire) (provider-context--wire-plan request)))
   (provider-consume-compaction-recovery-permit provider)
   (when *provider-context-admission-state*
     (setf (first *provider-context-admission-state*) :entered

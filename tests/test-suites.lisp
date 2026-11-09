@@ -32,6 +32,10 @@
   test-context-admission-mission-handoff-reasons
   test-context-admission-boundary
   test-context-admission-fresh-projection
+  test-context-admission-measured-reasoning
+  test-context-admission-measured-request-tails
+  test-context-admission-measured-invalidation
+  test-context-admission-measured-high-usage
   test-context-admission-final-request
   test-context-admission-images
   test-context-admission-checkpoint-transaction)

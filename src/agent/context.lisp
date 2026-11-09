@@ -561,29 +561,40 @@ stays cached across midnight; this separate block carries the change instead."
 (-> context-estimate-known-tokens
     (configuration conversation
      &key (:tool-registry (option tool-registry)) (:hurry-up-p boolean)
-          (:family (option keyword)))
+          (:family (option keyword)) (:provider (option model-provider)))
     (integer 0))
 (defun context-estimate-known-tokens
-    (configuration conversation &key tool-registry hurry-up-p family)
-  "Estimate known request context before provider usage is available.
+    (configuration conversation &key tool-registry hurry-up-p family provider)
+  "Estimate current known input using matched ordinary usage when available.
 
-The portable fallback uses four characters per token for the system prompt,
-mutable session state, compatible retained input, and known tool schemas. Do not
-invoke request-local contributors merely to display idle context usage."
-  (let ((characters
-          (+ (length (system-prompt configuration))
-             (length (request-context-session-state
-                      configuration :hurry-up-p hurry-up-p))
-             (context--known-value-character-count
-              (conversation-input-items-for-family
-               conversation
-               (or family (model-family (config :model configuration)
-                                        (config :model-provider configuration)))))
-             (if tool-registry
-                 (context--known-value-character-count
-                  (tool-registry-provider-schemas tool-registry))
-                 0))))
-    (ceiling characters 4)))
+New history and current session state are charged before the next response.
+Request-local contributors are resolved only at the final admission boundary."
+  (let* ((tools   (if tool-registry (tool-registry-provider-schemas tool-registry) #()))
+         (items   (conversation-input-items-for-family
+                   conversation
+                   (or family (model-family (config :model configuration)
+                                            (config :model-provider configuration)))))
+         (session (request-context-session-state configuration :hurry-up-p hurry-up-p))
+         (sample  (conversation-context-usage-sample conversation)))
+    (when (and provider sample
+               (eq provider (getf sample :provider))
+               (null (conversation-ephemeral-input-entries conversation))
+               (equal (getf sample :soft-header) (provider-context--soft-header provider tools))
+               (provider-context--extends-p
+                (getf sample :history) (mapcar #'provider-cache-prefix--entry items)))
+      (let ((new (nthcdr (length (getf sample :history)) items)))
+        (return-from context-estimate-known-tokens
+          (+ (getf sample :tokens)
+             (ceiling (+ (if new
+                             (provider-context--request-characters (coerce new 'vector))
+                             0)
+                         (provider-context--request-characters session))
+                      4)))))
+    (ceiling (+ (length (system-prompt configuration))
+                (length session)
+                (context--known-value-character-count items)
+                (context--known-value-character-count tools))
+             4)))
 
 (-> context--render (list) (option string))
 (defun context--render (contributions)
