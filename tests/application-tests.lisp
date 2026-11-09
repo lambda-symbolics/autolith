@@ -2863,7 +2863,7 @@
            (text   (test-terminal-row-text entry)))
       (test-assert
        (and (string= (first (uiop:split-string text :separator '(#\Newline)))
-                     "▸ (self.eval :restart CONTINUE)")
+                     "▸ (self.eval :restart \"CONTINUE\")")
             (search "│ form-line-1" text))
        "provider calls fold short arguments into their header above body rows")
       (test-assert (and (search "form-line-1" text)
@@ -2908,7 +2908,7 @@
       (let ((lines (uiop:split-string text :separator '(#\Newline))))
         (test-assert
          (and (string= (first lines)
-                       "▸ (shell.run :directory /tmp/work :timeout-seconds 30)")
+                       "▸ (shell.run :directory \"/tmp/work\" :timeout-seconds 30)")
               (search "$ printf" (second lines)))
          "shell source begins immediately after the inline arguments")))
     (dolist (columns '(24 40 100))
@@ -3152,8 +3152,8 @@
 (-> test-tool-call-inline-arguments () null)
 (defun test-tool-call-inline-arguments ()
   "Fit complete arguments by terminal cells and retain wrapped argument tables."
-  (dolist (value '("sample" "界é" ""))
-    (let* ((expected (format nil "▸ (odd.tool :value ~A)" value))
+  (dolist (value '("sample" "界é" "" "a\"b\\c"))
+    (let* ((expected (format nil "▸ (odd.tool :value ~S)" value))
            (width    (text-cell-width expected)))
       (dolist (fits-p '(nil t))
         (let* ((columns (+ width (if fits-p 1 0)))

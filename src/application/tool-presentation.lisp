@@ -482,16 +482,17 @@ structural discriminator as a readable heading instead."
     (json-object &key (:excluded-keys list))
     list)
 (defun application--argument-fields (arguments &key excluded-keys)
-  "Flatten bounded ARGUMENTS into fields sharing one aligned value column."
-  (labels ((field (label value)
+  "Flatten bounded ARGUMENTS into aligned fields, quoting string literals."
+  (labels ((field (label value &key (literal-p t))
              "Return one bounded scalar or summary field."
-             (list (list :label label
-                         :value (bounded-string
-                                 (application--presentation-value value)
-                                 :limit 2000)
-                         :style (if (string= label "restart")
-                                    ':notice
-                                    (application--structured-value-style label value)))))
+             (let ((text (bounded-string (application--presentation-value value) :limit 2000)))
+               (list (list :label label
+                           :value (if (and literal-p (stringp value))
+                                      (prin1-to-string text)
+                                      text)
+                           :style (if (string= label "restart")
+                                      ':notice
+                                      (application--structured-value-style label value))))))
 
            (expand-value (label value depth)
              "Expand VALUE beneath LABEL within the nesting and item limits."
@@ -511,7 +512,8 @@ structural discriminator as a readable heading instead."
                      (when (> (length value) *application-tool-structure-items*)
                        (field label (format nil "… +~D more items"
                                             (- (length value)
-                                               *application-tool-structure-items*)))))
+                                               *application-tool-structure-items*))
+                               :literal-p nil)))
                     (field label value)))
                (t
                 (field label value))))
@@ -533,7 +535,8 @@ structural discriminator as a readable heading instead."
                                            (gethash key object) depth))
                 (when (> (length keys) count)
                   (field (or prefix "arguments")
-                         (format nil "… +~D more fields" (- (length keys) count))))))))
+                         (format nil "… +~D more fields" (- (length keys) count))
+                         :literal-p nil))))))
     (expand-object arguments nil *application-tool-structure-depth*)))
 
 (-> application--generic-argument-rows
@@ -620,7 +623,7 @@ structural discriminator as a readable heading instead."
      :header "▸ papercut.report"
      :rows   (when title
                (application--tool-field-rows
-                application (list (list :label "title" :value title :style ':strong)))))))
+                application (list (list :label "title" :value (prin1-to-string title) :style ':strong)))))))
 
 
 ;;; Tool call specializations
