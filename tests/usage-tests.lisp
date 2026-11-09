@@ -90,47 +90,60 @@
 
 (-> test-usage-process-snapshot () null)
 (defun test-usage-process-snapshot ()
-  "Deduplicate session hosts and descendants, retaining missing RSS measurements."
+  "Count channels independently of shared world owners, including an empty world."
   (with-test-configuration (configuration)
-    (let ((measured nil)
-          (report   (make-usage-report)))
-      (test-call-with-function-replacements
-       (list
-        (list 'current-process-id (lambda () 99))
-        (list 'localgroup-endpoint-records
-              (lambda (configuration)
-                (declare (ignore configuration))
-                (list (cons #P"/one" '(:registry :session-id "one" :pid 10))
-                      (cons #P"/two" '(:registry :session-id "two" :pid 10)))))
-        (list 'localgroup-owner-reachability
-              (lambda (path identifier pid)
-                (declare (ignore path identifier pid))
-                ':reachable))
-        (list 'platform-process-parent-snapshot
-              (lambda (platform)
-                (declare (ignore platform))
-                (values '((10 . 12) (11 . 10) (11 . 10) (12 . 11)
-                          (99 . 10) (100 . 99))
-                        t)))
-        (list 'platform-process-resident-bytes
-              (lambda (platform pid)
-                (declare (ignore platform))
-                (push pid measured)
-                (case pid (10
-                           1024)
-                          (11
-                           0)
-                          (99
-                           4096)))))
-       (lambda () (usage--collect-processes configuration report)))
-      (test-assert (= (usage-report-sessions report) 1) "duplicate registry PIDs are one host")
-      (test-assert (= (usage-report-processes report) 3) "cyclic descendants are unique, reporter excluded")
-      (test-assert (= (usage-report-resident-bytes report) 1024) "RSS uses measured bytes including real zero")
-      (test-assert (= (usage-report-resident-missing report) 1) "missing process is explicit")
-      (test-assert (= (usage-report-reporter-bytes report) 4096) "reporter RSS is separate")
-      (test-assert (not (member 100 measured)) "reporter descendants are excluded")
-      (test-assert (= (length measured) (length (remove-duplicates measured)))
-                   "each PID is queried once")))
+    (dolist (channel-count '(2 0))
+      (let ((measured nil)
+            (report   (make-usage-report)))
+        (test-call-with-function-replacements
+         (list
+          (list 'current-process-id (lambda () 99))
+          (list 'localgroup-endpoint-records
+                (lambda (configuration)
+                  (declare (ignore configuration))
+                  (append (when (plusp channel-count)
+                            (list (cons #P"/one" '(:registry :session-id "one" :pid 10))
+                                  (cons #P"/one-again" '(:registry :session-id "one" :pid 10))
+                                  (cons #P"/two" '(:registry :session-id "two" :pid 10))))
+                          (list (cons #P"/stale" '(:registry :session-id "stale" :pid 20))))))
+          (list 'image-daemon:daemon-registry-discover
+                (lambda (directory)
+                  (test-assert (equal directory (localgroup-world-directory configuration))
+                               "the world endpoint directory is observed separately")
+                  (list (cons #P"/world" '(:registry :session-id "world" :pid 10)))))
+          (list 'localgroup-owner-reachability
+                (lambda (path identifier pid)
+                  (declare (ignore path pid))
+                  (if (string= identifier "stale") ':unreachable ':reachable)))
+          (list 'platform-process-parent-snapshot
+                (lambda (platform)
+                  (declare (ignore platform))
+                  (values '((10 . 12) (11 . 10) (11 . 10) (12 . 11)
+                            (99 . 10) (100 . 99))
+                          t)))
+          (list 'platform-process-resident-bytes
+                (lambda (platform pid)
+                  (declare (ignore platform))
+                  (push pid measured)
+                  (case pid
+                    (10
+                     1024)
+                    (11
+                     0)
+                    (99
+                     4096)))))
+         (lambda () (usage--collect-processes configuration report)))
+        (test-assert (= (usage-report-channels report) channel-count)
+                     "each channel counts independently of its shared owner")
+        (test-assert (= (usage-report-processes report) 3)
+                     "world owner and cyclic descendants count once without the reporter")
+        (test-assert (= (usage-report-resident-bytes report) 1024)
+                     "world RSS includes measured zero even without open channels")
+        (test-assert (= (usage-report-resident-missing report) 1) "missing process is explicit")
+        (test-assert (= (usage-report-reporter-bytes report) 4096) "reporter RSS is separate")
+        (test-assert (not (member 100 measured)) "reporter descendants are excluded")
+        (test-assert (= (length measured) (length (remove-duplicates measured)))
+                     "each PID is queried once"))))
   nil)
 
 (-> test-usage-stored-counts () null)

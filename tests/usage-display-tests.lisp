@@ -11,7 +11,7 @@
    :storage          (list (make-usage-storage :name "data" :pathname (pathname path)
                                                :bytes 2048 :files 3 :links 1
                                                :errors (if partial-p 1 0)))
-   :disk-bytes 2048 :disk-partial-p partial-p :sessions 1 :processes 2
+   :disk-bytes 2048 :disk-partial-p partial-p :channels 1 :processes 2
    :resident-bytes   resident-bytes
    :resident-missing (if partial-p 1 0)
    :descendants-available-p (not partial-p) :reporter-bytes 1024
@@ -23,8 +23,8 @@
   (let ((output (with-output-to-string (stream)
                   (usage-print-report (test-usage-display--report)
                                       :stream stream :styled-p nil :columns 80))))
-    (dolist (text '("Autolith usage" "Stored data" "Disk" "RAM" "Live sessions"
-                    "Session hosts and descendants" "shared pages" "Reporter RSS"
+    (dolist (text '("Autolith usage" "Stored data" "Disk" "RAM" "Live channels"
+                    "World owners and descendants" "shared pages" "Reporter RSS"
                     "Logical bytes" "Root sizes can overlap"))
       (test-assert (search text output) text)))
   nil)
