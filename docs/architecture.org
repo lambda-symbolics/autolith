@@ -445,6 +445,12 @@ bottom. Plain mode uses the primary screen and leaves finalized output in
 normal scrollback. The persistent setting is stored in the global preferences
 record; =--fullscreen= and =--plain= override it for one launch.
 
+Application presentation records carry an explicit entry kind, spacing group,
+and optional tool outcome state. Producers choose spacing; terminal renderers
+format spans and widgets. Resident invocation records retain their original
+group and prefix through result and job completion updates. History replay
+merges outcome fields into invocation metadata before rendering.
+
 - Reasoning previews enter scrollback only once finalized
 - Autolith provides semantic styling, candidate policy, terminal mode, and
   emits OSC 133 prompt blocks

@@ -345,6 +345,7 @@
 (define-test-suite fullscreen
   test-fullscreen-transcript-residency
   test-fullscreen-outcome-batch
+  test-transcript-entry-semantics
   test-fullscreen-outcome-deferred-order
   test-fullscreen-outcome-retag
   test-fullscreen-outcome-publication-retry

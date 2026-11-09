@@ -2428,131 +2428,14 @@ while output is deferred and otherwise dropped."
   (terminal-ui--paint-live ui)
   nil)
 
-(-> terminal-ui--compact-success-p ((or string list)) boolean)
-(defun terminal-ui--compact-success-p (entry)
-  "Recognize a single-row success header naming a qualified tool."
-  (and (consp entry)
-       (not (termdown:widget-p (first entry)))
-       (eq (terminal-span-style (first entry)) ':success)
-       (let* ((header (terminal-span-text (first entry)))
-              (text   (terminal--spans-text entry))
-              (end    (position #\Space header :start (min 2 (length header))))
-              (name   (and (uiop:string-prefix-p "✓ " header)
-                           (subseq header 2 end))))
-         (and name
-              (or (position #\. name) (position #\/ name))
-              (not (find #\Newline text))
-              (not (find #\Return text))
-              t))))
-
-(-> terminal-ui--compact-call-tool ((or string list)) (option string))
-(defun terminal-ui--compact-call-tool (entry)
-  "Return the full tool name of a single-line call, or NIL for other entries.
-
-A call's header spans may be widgets inserting its invocation when clicked."
-  (when (and (consp entry)
-             (eq (terminal-span-style (first entry)) ':tool))
-    (let* ((header    (terminal-span-text (first entry)))
-           (text      (terminal--spans-text entry))
-           (last-span (first (last entry)))
-           (inline-p  (and (not (eq (first entry) last-span))
-                           (eq (terminal-span-style last-span) ':tool)
-                           (string= (terminal-span-text last-span) ")"))))
-      (when (and (uiop:string-prefix-p "▸ (" header)
-                 (> (length header) 3)
-                 (not (find #\Newline text))
-                 (not (find #\Return text)))
-        (let* ((end  (if inline-p
-                         (length header)
-                         (and (char= (char header (1- (length header))) #\))
-                              (1- (length header)))))
-               (name (and end (subseq header 3 end))))
-          (and (non-empty-string-p name) name))))))
-
-(-> terminal-ui--compact-handoff-group ((or string list)) (option string))
-(defun terminal-ui--compact-handoff-group (entry)
-  "Return a per-tool group for a single-line background handoff."
-  (when (and (consp entry)
-             (not (termdown:widget-p (first entry)))
-             (eq (terminal-span-style (first entry)) ':notice))
-    (let ((header (terminal-span-text (first entry)))
-          (text   (terminal--spans-text entry)))
-      (when (and (uiop:string-prefix-p "↪ " header)
-                 (> (length header) 2)
-                 (not (char= (char header (1- (length header))) #\…))
-                 (not (find #\Newline text))
-                 (not (find #\Return text)))
-        header))))
-
-(-> terminal-ui--compact-entry-group
-    ((or string list))
-    (or null (member :success :lisp-result) string))
-(defun terminal-ui--compact-entry-group (entry)
-  "Group single-line successes, calls, handoffs, and inline Lisp results."
-  (if (terminal-ui--compact-success-p entry)
-      ':success
-      (or (terminal-ui--compact-call-tool entry)
-          (terminal-ui--compact-handoff-group entry)
-          (when (and (consp entry)
-                     (not (termdown:widget-p (first entry)))
-                     (eq (terminal-span-style (first entry)) ':lisp-prompt)
-                     (some (lambda (span)
-                             (and (not (termdown:widget-p span))
-                                  (eq (terminal-span-style span) ':success)
-                                  (string= (terminal-span-text span) " => ")))
-                           entry)
-                     (let ((text (terminal--spans-text entry)))
-                       (not (or (find #\Newline text) (find #\Return text)))))
-            ':lisp-result))))
-
-(-> terminal-ui--attached-entry-p ((or string list)) boolean)
-(defun terminal-ui--attached-entry-p (entry)
-  "Return true when ENTRY is a single-line annotation of the call above it."
-  (and (consp entry)
-       (not (termdown:widget-p (first entry)))
-       (eq (terminal-span-style (first entry)) ':annotation)
-       (let ((text (terminal--spans-text entry)))
-         (not (or (find #\Newline text) (find #\Return text))))
-       t))
-
-(-> terminal-ui--call-entry-p ((or string list)) boolean)
-(defun terminal-ui--call-entry-p (entry)
-  "Return true when ENTRY presents a tool call, on one row or several."
-  (and (consp entry)
-       (eq (terminal-span-style (first entry)) ':tool)
-       (uiop:string-prefix-p "▸ (" (terminal-span-text (first entry)))
-       t))
-
-(-> terminal-ui--separation-group
-    ((or string list))
-    (or null (member :success :lisp-result :call :attached) string))
-(defun terminal-ui--separation-group (entry)
-  "Return the group deciding the blank rows around ENTRY, or NIL for a plain block.
-
-Compact entries share their group without blank rows. A multi-row call is a
-:CALL whose blank row waits for the next entry, so an :ATTACHED annotation of
-that call, such as its permission decision, can follow it directly. Every
-other entry ends with its own blank row."
-  (cond
-    ((terminal-ui--attached-entry-p entry)
-     ':attached)
-    ((terminal-ui--compact-entry-group entry))
-    ((terminal-ui--call-entry-p entry)
-     ':call)
-    (t
-     nil)))
-
 (-> terminal-ui--finalized-content
-    (terminal-ui (or string list) &key (:separation-entry (or string list)))
+    (terminal-ui (or string list) &key (:group t))
     (values string string list))
-(defun terminal-ui--finalized-content (ui entry &key (separation-entry entry))
-  "Return finalized ENTRY as plain text, styled text, and click regions.
+(defun terminal-ui--finalized-content (ui entry &key group)
+  "Return ENTRY as plain text, styled text, and click regions.
 
-SEPARATION-ENTRY supplies the semantic spacing identity when ENTRY is a
-recolored tool invocation with an optional outcome body. Compact calls,
-handoffs, successes, multi-row calls, and annotations end with one newline;
-other entries include a blank separator row. Regions index the plain text.
-This formatter does not change UI."
+GROUP is the producer's spacing identity. NIL denotes a standalone block;
+other groups end with one newline. This formatter does not change UI."
   (let* ((terminal (terminal-ui-terminal ui))
          (spans    (if (stringp entry)
                        (list (terminal-span ':plain entry))
@@ -2564,7 +2447,7 @@ This formatter does not change UI."
                  (char= (char plain (1- (length plain))) #\Newline))
       (setf plain (concatenate 'string plain (string #\Newline))
             display (concatenate 'string display (string #\Newline))))
-    (if (terminal-ui--separation-group separation-entry)
+    (if group
         (values plain display regions)
         (values (concatenate 'string plain (string #\Newline))
                 (concatenate 'string display (string #\Newline))
@@ -3070,26 +2953,23 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
   (with-terminal-ui-locked (ui)
     (multiple-value-bind (text display)
         (terminal-ui--finalized-content ui entry)
-      (let ((group (terminal-ui--separation-group entry)))
-        (terminal-ui--append-output ui text display
-                                    :compact-first-group group
-                                    :compact-last-group  group))))
+      (terminal-ui--append-output ui text display)))
   nil)
 
-(-> terminal-ui-append-finalized (terminal-ui t (or string list)) boolean)
-(defun terminal-ui-append-finalized (ui identifier entry)
-  "Append finalized transcript ENTRY once for IDENTIFIER and return true when emitted."
+(-> terminal-ui-append-finalized
+    (terminal-ui t (or string list) &key (:group t)) boolean)
+(defun terminal-ui-append-finalized (ui identifier entry &key group)
+  "Append ENTRY once for IDENTIFIER, using its producer's spacing GROUP."
   (with-terminal-ui-locked (ui)
     (block nil
       (when (terminal-ui--finalized-p ui identifier)
         (return nil))
       (handler-case
           (multiple-value-bind (text display regions)
-              (terminal-ui--finalized-content ui entry)
-            (let ((group (terminal-ui--separation-group entry)))
-              (terminal-ui--append-output
-               ui text display :regions regions
-               :compact-first-group group :compact-last-group group))
+              (terminal-ui--finalized-content ui entry :group group)
+            (terminal-ui--append-output
+             ui text display :regions regions
+             :compact-first-group group :compact-last-group group)
             (terminal-ui--remember-finalized ui (list identifier)))
         (error (condition)
           (terminal-ui--forget-finalized ui identifier)
@@ -3098,18 +2978,18 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
 
 (-> terminal-ui-append-finalized-batch (terminal-ui list) (integer 0))
 (defun terminal-ui-append-finalized-batch (ui entries)
-  "Append ordered (IDENTIFIER ENTRY) pairs with one terminal-region update."
+  "Append (IDENTIFIER ENTRY [METADATA]) records with one terminal-region update."
   (with-terminal-ui-locked (ui)
     (let ((pending        nil)
           (seen           (make-hash-table :test #'equal))
           (previous-group nil))
       (dolist (pair entries)
-        (destructuring-bind (identifier entry) pair
+        (destructuring-bind (identifier entry &optional metadata) pair
           (unless (or (terminal-ui--finalized-p ui identifier)
                       (gethash identifier seen))
             (multiple-value-bind (text display regions)
-                (terminal-ui--finalized-content ui entry)
-              (let ((group (terminal-ui--separation-group entry)))
+                (terminal-ui--finalized-content ui entry :group (getf metadata :group))
+              (let ((group (getf metadata :group)))
                 (when (and pending (terminal-ui--separated-p previous-group group))
                   (setf text (concatenate 'string (string #\Newline) text)
                         display (concatenate 'string (string #\Newline) display)
@@ -3157,8 +3037,9 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
   (:documentation
    "Present ordered (IDENTIFIER ENTRY METADATA) transcript records.
 
-METADATA is NIL for ordinary records or a presentation plist understood by a
-specialized UI.  ENTRY may be NIL for records hidden by compact presentation.
+METADATA carries :ENTRY-KIND and :GROUP plus optional lifecycle fields.
+A NIL group denotes a standalone block; equal compact groups share rows.
+ENTRY may be NIL for records hidden by compact presentation.
 Return the number of records emitted or used."))
 
 (defmethod terminal-ui-present-records ((ui terminal-ui) presentations)
@@ -3166,10 +3047,9 @@ Return the number of records emitted or used."))
   (terminal-ui-append-finalized-batch
    ui
    (loop for presentation in presentations
-         for identifier = (first presentation)
          for entry = (second presentation)
          when entry
-           collect (list identifier entry))))
+           collect presentation)))
 
 (-> terminal-ui-set-preview-rows (terminal-ui list) terminal-ui)
 (defun terminal-ui-set-preview-rows (ui rows)

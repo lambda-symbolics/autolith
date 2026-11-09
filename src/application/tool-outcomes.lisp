@@ -60,7 +60,8 @@
                                (handoff
                                 (cons (terminal-span ':plain (string #\Newline)) entry))
                                ((and (eq state ':success) entry
-                                     (not (eq (terminal-span-style (first entry)) ':success)))
+                                     (typep (application--find-tool application (getf properties :tool))
+                                            'papercut-report-tool))
                                 ;; Prominent notices, such as papercut reports, retain their heading.
                                 (cons (terminal-span ':plain (string #\Newline)) entry))
                                (t

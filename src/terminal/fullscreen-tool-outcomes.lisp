@@ -69,7 +69,7 @@
     (fullscreen-terminal-ui t (or string list) &key (:metadata list)) string)
 (defun terminal-ui-fullscreen--append-entry (ui identifier entry &key metadata)
   "Append and tag one resident ENTRY, retaining original call spans when supplied."
-  (let* ((group  (terminal-ui--separation-group entry))
+  (let* ((group  (getf metadata :group))
          (prefix (if (terminal-ui--separated-p (terminal-ui-compact-tail-group ui) group)
                      (string #\Newline)
                      "")))
@@ -80,12 +80,12 @@
                  entry (getf metadata :state)
                  (when (getf metadata :retain-output-p) (getf metadata :body)))
                 entry)
-         :separation-entry entry)
+         :group group)
       (when (eq (getf metadata :kind) ':call)
         (terminal-ui-fullscreen--index-record
-         ui (list :identifier identifier :entry entry :prefix prefix :tag (list identifier)
-                  :call-key (getf metadata :call-key) :job-key (getf metadata :job-key)
-                  :identifiers (list identifier))))
+         ui (append (list :identifier identifier :entry entry :prefix prefix
+                          :tag (list identifier) :identifiers (list identifier))
+                    metadata)))
       (clinedi:transcript-viewport-append
        (fullscreen-terminal-ui-viewport ui)
        (concatenate 'string prefix text) (concatenate 'string prefix display)
@@ -107,10 +107,12 @@
          (next   (copy-list record)))
     (setf (getf next :identifiers) (cons identifier (getf record :identifiers))
           (getf next :job-key) (or (getf metadata :job-key) (getf record :job-key)))
+    (dolist (key '(:state :retain-output-p :body))
+      (setf (getf next key) (getf metadata key)))
     ;; Install the new immutable index value before replacement can evict its chunk.
     (terminal-ui-fullscreen--index-record ui next)
     (multiple-value-bind (text display regions)
-        (terminal-ui--finalized-content ui entry :separation-entry (getf record :entry))
+        (terminal-ui--finalized-content ui entry :group (getf record :group))
       (if (clinedi:transcript-viewport-replace
            (fullscreen-terminal-ui-viewport ui) (getf record :tag)
            :text    (concatenate 'string prefix text)

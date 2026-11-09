@@ -746,7 +746,8 @@
             (test-call-with-function-replacements
              (list
               (list 'application-present
-                    (lambda (candidate entry) (declare (ignore candidate entry)) t))
+                    (lambda (candidate entry &key group)
+                      (declare (ignore candidate entry group)) t))
               (list 'application-publish-recovery-session
                     (lambda (candidate) (declare (ignore candidate)) nil))
               (list 'application-reset-history-pagination
@@ -1609,7 +1610,7 @@
     (let ((ui (terminal-ui-create
                :terminal (make-instance 'recording-terminal :columns 200))))
       (test-assert
-       (string= (terminal-ui--finalized-content ui entry)
+       (string= (terminal-ui--finalized-content ui entry :group ':lisp-result)
                 (concatenate 'string text (string #\Newline)))
        "each setting change occupies one finalized row without a blank separator")))
   nil)
@@ -1633,9 +1634,9 @@
          (test-call-with-function-replacements
           (list
            (list 'terminal-ui-append-finalized
-                 (lambda (candidate identifier entry)
+                 (lambda (candidate identifier entry &key group)
                    (push entry presented)
-                   (funcall finalize candidate identifier entry)))
+                   (funcall finalize candidate identifier entry :group group)))
            (list 'application--pick-identifier
                  (lambda (candidate &rest arguments)
                    (declare (ignore candidate arguments))

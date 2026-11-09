@@ -15,7 +15,7 @@
 (-> test-application-tool-outcomes-spacing () null)
 (defun test-application-tool-outcomes-spacing ()
   "Keep clickable invocation groups compact through live completion and history replay."
-  (dolist (compact-p '(t nil))
+  (loop for compact-p in '(t nil) for reference = nil do
     (dolist (mode '(:live :batch :replay))
       (with-test-configuration (configuration)
         (let* ((application (application-tool-outcome-tests--application
@@ -49,6 +49,17 @@
                              "completion preserves the original call's spacing identity")
                 (test-assert (eql (not compact-p) (not (null (search "second row" text))))
                              "expanded results retain their multiline body inside the call group")))
+            (let ((snapshot
+                    (list (tool-outcome-test--text ui)
+                          (loop for index below 3
+                                for call-key = (list :call "outcomes" (format nil "spacing-~D" index))
+                                for resident = (gethash call-key (fullscreen-terminal-ui-presentation-records ui))
+                                collect (loop for key in '(:entry-kind :group :prefix :state)
+                                              collect (getf resident key))))))
+              (when reference
+                (test-assert (equal reference snapshot)
+                             "live, batched, and replayed outcomes retain identical entry semantics and text"))
+              (setf reference snapshot))
             (test-assert
              (let ((action (terminal-ui-fullscreen--click-action ui 4 1)))
                (and (eq (first action) ':insert) (search "resource.read" (second action))))
