@@ -888,6 +888,7 @@
   test-switch-command-direct
   test-rename-command
   test-application-codex-fast-mode-command
+  test-application-compact-setting-transitions
   test-application-settings-command
   test-application-mcp-reload-capability-change
   test-command-view-fields-and-mcp

@@ -834,8 +834,17 @@
            (let ((saved
                    (uiop/stream:read-file-string
                     (configuration-preferences-path configuration))))
-             (application-operation-call application name)
-             (application-operation-call application name ':status)
+              (let ((receipts 0))
+                (test-call-with-function-replacements
+                 (list (list 'application-present
+                             (lambda (candidate entry)
+                               (declare (ignore candidate entry))
+                               (incf receipts))))
+                 (lambda ()
+                   (application-operation-call application name)
+                   (test-assert (= receipts 1) "an omitted boolean action reports once")
+                   (application-operation-call application name ':status)
+                   (test-assert (= receipts 2) "explicit boolean status reports once"))))
              (dolist (invalid '("on" 42 :unknown))
                (test-assert
                 (handler-case
@@ -853,6 +862,49 @@
            (application-command application (format nil "/~A off" name))
            (test-assert (null (config setting configuration))
                         "slash off parses to a native action"))))))
+  nil)
+
+(-> test-application-compact-setting-transitions () null)
+(defun test-application-compact-setting-transitions ()
+  "Test command/settings parity for compact view pagination and recovery."
+  (test-call-with-typed-control-application
+   (lambda (application root observations)
+     (declare (ignore root observations))
+     (let ((configuration (application-configuration application))
+           (resets        0)
+           (publications  0))
+       (test-call-with-function-replacements
+        (list
+         (list 'application-reset-history-pagination
+               (lambda (candidate)
+                 (declare (ignore candidate))
+                 (incf resets)))
+         (list 'application-publish-recovery-session
+               (lambda (candidate)
+                 (declare (ignore candidate))
+                 (incf publications))))
+        (lambda ()
+          (dolist (path '(:command :setting))
+            (dolist (transition '((nil t) (t nil) (t t) (nil nil)))
+              (destructuring-bind (before after) transition
+                (setf (config :compact-view-p configuration) before
+                      resets 0
+                      publications 0)
+                (ecase path
+                  (:command
+                   (application-operation-call application "compact-tool" after))
+                  (:setting
+                   (application-apply-setting application ':compact-view-p after)))
+                (test-assert (eq after (config :compact-view-p configuration))
+                             "both controls apply the compact view value")
+                (test-assert (= resets (if (eq before after) 0 1))
+                             "either compact view transition resets pagination exactly once")
+                (test-assert (= publications 1)
+                             "compact view mutations publish recovery once"))))
+          (setf resets 0 publications 0)
+          (application-operation-call application "compact-tool")
+          (test-assert (and (zerop resets) (zerop publications))
+                       "compact view status has no runtime side effects"))))))
   nil)
 
 (-> test-application-codex-fast-mode-command () null)

@@ -784,30 +784,26 @@ the effort with the same model even when the model was never chosen."
   (application-publish-recovery-session application)
   nil)
 
+(-> application--boolean-setting-command (application keyword t) null)
+(defun application--boolean-setting-command (application name argument)
+  "Report NAME or apply ARGUMENT through the setting's runtime policy."
+  (let* ((mode          (application--boolean-control argument))
+         (configuration (application-configuration application))
+         (setting       (configuration-setting configuration name)))
+    (unless (eq mode ':status)
+      (application-apply-setting application name (eq mode ':on)))
+    (application-present
+     application
+     (format nil "~A: ~A (~A)."
+             (setting-label setting)
+             (setting-render-value setting (configuration-setting-value configuration setting))
+             (application--setting-source-text configuration setting))))
+  nil)
+
 (-> application-trace-command (application &optional t) null)
 (defun application-trace-command (application &optional (argument ':status))
   "Show or change APPLICATION's visible reasoning-summary setting."
-  (let ((mode (application--boolean-control argument)))
-    (cond
-      ((eq mode ':status)
-       (application-present
-        application
-        (format nil
-                "Reasoning summaries are ~:[hidden~;shown~]. This setting ~
-                 persists across restarts."
-                (application-reasoning-traces-p application))))
-      ((eq mode ':on)
-       (application-set-reasoning-traces application t)
-       (application-present
-        application
-        "Visible reasoning summaries are enabled and saved."))
-      ((eq mode ':off)
-       (application-set-reasoning-traces application nil)
-       (application-present application "Reasoning summaries are hidden and saved."))
-      (t
-       (error 'configuration-error
-              :message "Usage: (trace t) or (trace nil)."))))
-  nil)
+  (application--boolean-setting-command application ':reasoning-traces-p argument))
 
 (-> application-set-turn-timestamps (application boolean) null)
 (defun application-set-turn-timestamps (application enabled-p)
@@ -821,24 +817,7 @@ the effort with the same model even when the model was never chosen."
 (-> application-turn-timestamps-command (application &optional t) null)
 (defun application-turn-timestamps-command (application &optional (argument ':status))
   "Show or change APPLICATION's optional turn-timestamp presentation."
-  (let ((mode (application--boolean-control argument)))
-    (cond
-      ((eq mode ':status)
-       (application-present
-        application
-        (format nil
-                "Turn timestamps are ~:[hidden~;shown~]. This setting persists across restarts."
-                (application-turn-timestamps-p application))))
-      ((eq mode ':on)
-       (application-set-turn-timestamps application t)
-       (application-present application "Turn timestamps are enabled and saved."))
-      ((eq mode ':off)
-       (application-set-turn-timestamps application nil)
-       (application-present application "Turn timestamps are hidden and saved."))
-      (t
-       (error 'configuration-error
-              :message "Usage: (timestamps t) or (timestamps nil)."))))
-  nil)
+  (application--boolean-setting-command application ':turn-timestamps-p argument))
 
 (-> application-set-cache-miss-notices (application boolean) null)
 (defun application-set-cache-miss-notices (application enabled-p)
@@ -849,112 +828,24 @@ the effort with the same model even when the model was never chosen."
 (-> application-cache-miss-notices-command (application &optional t) null)
 (defun application-cache-miss-notices-command (application &optional (argument ':status))
   "Show or change APPLICATION's optional prompt-cache miss notices."
-  (let ((mode (application--boolean-control argument)))
-    (cond
-      ((eq mode ':status)
-       (application-present
-        application
-        (format nil
-                "Prompt-cache miss notices are ~:[off~;on~]. This setting persists across restarts."
-                (application-cache-miss-notices-p application))))
-      ((eq mode ':on)
-       (application-set-cache-miss-notices application t)
-       (application-present
-        application
-        "Prompt-cache miss notices are on and saved. Requests that re-read uncached context will be reported."))
-      ((eq mode ':off)
-       (application-set-cache-miss-notices application nil)
-       (application-present application "Prompt-cache miss notices are off and saved."))
-      (t
-       (error 'configuration-error
-              :message "Usage: (cache-misses t) or (cache-misses nil)."))))
-  nil)
+  (application--boolean-setting-command application ':cache-miss-notices-p argument))
 
 (-> application-simple-technical-english-command
     (application &optional t)
     null)
 (defun application-simple-technical-english-command (application &optional (argument ':status))
   "Show or change APPLICATION's Simple Technical English response style."
-  (let* ((configuration (application-configuration application))
-         (mode          (application--boolean-control argument)))
-    (cond
-      ((eq mode ':status)
-       (application-present
-        application
-        (format nil
-                "Simple Technical English is ~:[disabled~;enabled~]. This ~
-                 setting persists across restarts."
-                (config :simple-technical-english-p configuration))))
-      ((eq mode ':on)
-       (setf (config :simple-technical-english-p configuration) t)
-       (application-present
-        application
-        "Simple Technical English is enabled and saved."))
-      ((eq mode ':off)
-       (setf (config :simple-technical-english-p configuration) nil)
-       (application-present
-        application
-        "Simple Technical English is disabled and saved."))
-      (t
-       (error 'configuration-error
-              :message "Usage: (ste t) or (ste nil)."))))
-  nil)
+  (application--boolean-setting-command application ':simple-technical-english-p argument))
 
 (-> application-session-titles-command (application &optional t) null)
 (defun application-session-titles-command (application &optional (argument ':status))
   "Show or change automatic provider-generated session-title refreshes."
-  (let* ((configuration (application-configuration application))
-         (mode          (application--boolean-control argument)))
-    (cond
-      ((eq mode ':status)
-       (application-present
-        application
-        (format nil
-                "Provider-generated session titles are ~:[disabled~;enabled~]. This setting persists across restarts."
-                (config :session-title-generation-p configuration))))
-      ((eq mode ':on)
-       (setf (config :session-title-generation-p configuration) t)
-       (application-present
-        application
-        "Provider-generated session titles are enabled and saved."))
-      ((eq mode ':off)
-       (setf (config :session-title-generation-p configuration) nil)
-       (application-present
-        application
-        "Provider-generated session titles are disabled and saved."))
-      (t
-       (error 'configuration-error
-              :message "Usage: (titles t) or (titles nil)."))))
-  nil)
+  (application--boolean-setting-command application ':session-title-generation-p argument))
 
 (-> application-compact-tool-command (application &optional t) null)
 (defun application-compact-tool-command (application &optional (argument ':status))
   "Persist and apply APPLICATION's compact tool presentation mode."
-  (let ((mode (application--boolean-control argument)))
-    (cond
-      ((eq mode ':status)
-       (application-present
-        application
-        (format nil "Compact tool presentation is ~:[disabled~;enabled~]."
-                (application-compact-view-p application))))
-      ((eq mode ':on)
-       (setf (application-compact-view-p application) t)
-       (application-publish-recovery-session application)
-       (application-present
-        application
-        "Compact tool presentation is enabled and saved."))
-      ((eq mode ':off)
-       (when (application-compact-view-p application)
-         (setf (application-compact-view-p application) nil)
-         (application-reset-history-pagination application))
-       (application-publish-recovery-session application)
-       (application-present
-        application
-        "Compact tool presentation is disabled and saved."))
-      (t
-       (error 'configuration-error
-              :message "Usage: (compact-tool t) or (compact-tool nil)."))))
-  nil)
+  (application--boolean-setting-command application ':compact-view-p argument))
 
 (-> application--credentialed-provider-names (application) list)
 (defun application--credentialed-provider-names (application)
