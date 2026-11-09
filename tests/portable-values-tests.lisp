@@ -83,7 +83,7 @@
                       (eq 'character (array-element-type (first copy))))
                  "task string leaves are fresh character arrays")
     (test-assert (and (eq vector (second copy)) (eq hash (third copy))
-                      (eq opaque (cdddr copy)))
+                      (eq opaque (nthcdr 3 copy)))
                  "task vectors, hashes and opaque dotted tails are leaves")
     (let ((*read-eval* nil))
       (test-assert (equal '("text" . :tail)
@@ -139,7 +139,7 @@
                             (eq ':cycle (portable-value-error-reason failure)))
                        "traversed containers and mixed cycles signal typed cycle failures"))))
     (test-assert (eq ':cycle (portable-value-error-reason
-                             (portable-tests--failure #'client-portable key-cycle)))
+                              (portable-tests--failure #'client-portable key-cycle)))
                  "client object keys participate in cycle checks")
     (test-assert (and (eq vector (task--character-strings vector))
                       (eq hash (task--character-strings hash)))
