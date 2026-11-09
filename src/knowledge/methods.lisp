@@ -2,21 +2,6 @@
 
 ;;;; -- Task Methods --
 
-;;; A method says how to do a task when facts allow it:
-;;;
-;;;   (:method :id "prepare-appointment"
-;;;    :task ("prepare" "?event")
-;;;    :when (("event.start" "?event" "?start"))
-;;;    :steps ((:task ("check-route" "?event"))
-;;;            (:step "Leave at {?leave}"
-;;;             :requires (("event.departure" "?event" "?leave")))))
-;;;
-;;; Expanding a task tries its methods in order, each with the solutions of its
-;;; conditions, and expands subtasks the same way, until only plain steps
-;;; remain. The search is bounded in depth and in expanded tasks. Its outcome
-;;; distinguishes a task no method describes, a task whose methods do not
-;;; apply to the current facts, and a search that ran out of budget.
-
 (defparameter *knowledge-method-depth-limit* 8
   "The deepest nesting of subtasks one expansion follows.")
 

@@ -2,14 +2,8 @@
 
 ;;;; -- Structured Knowledge Resources --
 
-;;; Structured knowledge is read and written through memory: resources, so the
-;;; model meets one memory system. memory:facts lists the facts holding in this
-;;; workspace and accepts fact, predicate, and rule operations; memory:claim/ID
-;;; explains one claim; memory:predicates and memory:rules list the vocabulary
-;;; and the rules. Every read evaluates locally and costs no model request.
-
 (defparameter *memory-knowledge-default-results* 16
-  "The facts one memory:facts read lists unless max-results asks for more.")
+  "The default result limit for memory:facts.")
 
 (defparameter *memory-knowledge-maximum-results* 50
   "The most facts one memory:facts read lists.")
@@ -251,13 +245,13 @@ Conflicted facts come first, then the rest by predicate and text."
                        (getf entry :admitted))
                   (getf entry :runs) (getf entry :failures))
           (when (getf version :examples)
-            (format stream "  learned from ~D turns, ~D model requests and ~D tokens each on average; each turn is reproduced by the procedure learned from the others~%"
+            (format stream "  learned from ~D turns averaging ~D model requests and ~D tokens per turn; each turn is reproduced by the procedure learned from the other turns~%"
                     (length (getf version :examples))
                     (getf (getf version :baseline) :requests)
                     (getf (getf version :baseline) :tokens)))
           (let ((counterexamples (getf (getf version :evaluation) :counterexamples)))
             (when (and counterexamples (plusp counterexamples))
-              (format stream "  not offered: ~D other request~:P with the same wording did something else~%"
+              (format stream "  procedure not offered: ~D other request~:P with the same wording led to different behavior~%"
                       counterexamples)))
           (format stream "~@[  parameters: ~{~A~^, ~}~%~]~@[  request: ~A~%~]"
                   (mapcar (lambda (parameter)
@@ -279,7 +273,7 @@ Conflicted facts come first, then the rest by predicate and text."
       (knowledge-viewer-changes configuration viewer view)
     (cond
       (first-p
-       (format nil "First look: ~D fact~:P hold now. Later reads of memory:changes report what changed since this one."
+       (format nil "First look: ~D current fact~:P. Later reads of memory:changes report what changed since this read."
                (length (knowledge-view-snapshot view))))
       (changes
        (format nil "Changes since ~A:~%~{~A~%~}"

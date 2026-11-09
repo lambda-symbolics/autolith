@@ -105,13 +105,13 @@
 ;;;; -- Skill Authoring Tool --
 
 (defparameter *skill-edit-maximum-content-characters* (* 256 1024)
-  "The maximum source text accepted by one skill.edit call.")
+  "The maximum source length, in characters, accepted by one skill.edit call.")
 
 (defclass skill-edit-tool (tool) ()
   (:documentation "Create or replace one validated global Autolith skill."))
 
 (defmethod tool-execute ((tool skill-edit-tool) (context tool-context) (arguments hash-table))
-  "Validate then atomically replace one global SKILL.md source file."
+  "Validate the source, then atomically create or replace one global SKILL.md file."
   (declare (ignore tool))
   (let* ((name          (tool-argument arguments "name" :required t))
          (content       (tool-argument arguments "content" :required t))

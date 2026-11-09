@@ -2,10 +2,6 @@
 
 ;;;; -- Complete Editable Input History --
 
-;;; Editable inputs stream from a regenerable input-only sidecar. If its cache
-;;; storage is unavailable, stream authoritative conversation records instead.
-;;; Neither path retains the history after the call.
-
 (-> conversation-map-input-history (conversation function) null)
 (defun conversation-map-input-history (conversation function)
   "Call FUNCTION with each editable input of CONVERSATION, oldest first.
@@ -49,12 +45,12 @@ a nonlocal exit."
                   (:start (option (integer 0))))
     (values list (integer 0)))
 (defun conversation-input-history-page (conversation &key (skip 0) limit start)
-  "Return a bounded page, oldest first, and the total consecutive-deduplicated count.
+  "Return an oldest-first page and the total count, merging consecutive duplicates.
 
-By default return up to LIMIT inputs just older than the newest SKIP. With
-START, read from that absolute oldest-based index instead. Absolute indices
-remain stable when inputs are appended. The sidecar streams twice, once to
-count and once to collect; only the requested page is held."
+Skip the newest SKIP inputs and return up to LIMIT earlier inputs. If START is
+supplied, use that absolute index from the oldest input instead. Appending inputs
+does not change existing indices. Read the sidecar twice to count and collect
+inputs, keeping only the requested page in memory."
   (flet ((map-recalled (function)
            (let ((previous nil))
              (conversation-map-input-history

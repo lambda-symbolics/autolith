@@ -73,7 +73,7 @@ token that starts with @ is returned."
 
 (-> terminal-path--safe-relative-p (string) boolean)
 (defun terminal-path--safe-relative-p (relative)
-  "Return true when RELATIVE stays under the completion root."
+  "Reject RELATIVE when it is .., starts with ../, or contains /../."
   (not (or (string= relative "..")
            (uiop:string-prefix-p "../" relative)
            (search "/../" relative))))

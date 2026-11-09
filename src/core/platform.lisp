@@ -2,12 +2,6 @@
 
 ;;;; -- Platform Adapter Protocol --
 
-;;; Autolith keeps every operating-system dependency behind this protocol.
-;;; The generic functions below are the contract; platform-posix.lisp and
-;;; platform-win32.lisp implement it, and autolith.asd loads exactly one of
-;;; them for the host. Callers pass *PLATFORM* and never use host reader
-;;; conditionals themselves.
-
 (defclass platform ()
   ()
   (:documentation
@@ -533,13 +527,9 @@ nothing is listening there, and PLATFORM-CAPABILITY-UNAVAILABLE without the
 
 ;;;; -- Shared File Methods --
 
-;;; File status, opening, listing, publication, and link resolution are the
-;;; same protocol on every host through ls-compat, whose POSIX and Win32
-;;; backends carry the host differences. Each adapter inherits these methods.
-
 (-> platform--file-status (file-information) platform-file-status)
 (defun platform--file-status (information)
-  "Return the platform file status ls-compat observation INFORMATION describes."
+  "Convert ls-compat INFORMATION to a platform file status."
   (make-instance 'platform-file-status
                  :kind              (file-information-kind information)
                  :identity          (file-information-identity information)

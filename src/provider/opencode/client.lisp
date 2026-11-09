@@ -2,16 +2,12 @@
 
 ;;;; -- OpenCode Chat Completions Provider --
 
-;;; Go and Zen share the streaming Chat Completions client. Their catalogs,
-;;; model namespaces, credentials and endpoints are independent. The historic
-;;; opencode/ namespace and OPENCODE_API_KEY belong to Go.
-
 (defparameter *opencode-model-prefix* "opencode/"
-  "The namespace distinguishing OpenCode models from other provider models.")
+  "Prefix for OpenCode Go model names.")
 
 (-> opencode--model-name (string &optional keyword) non-empty-string)
 (defun opencode--model-name (wire-name &optional (family ':opencode))
-  "Return the tier-specific user-visible name for WIRE-NAME."
+  "Prefix WIRE-NAME with FAMILY's model namespace."
   (concatenate 'string (ecase family
                          (:opencode
                           *opencode-model-prefix*)
@@ -21,7 +17,7 @@
 
 (-> opencode--wire-model-name (non-empty-string &optional keyword) non-empty-string)
 (defun opencode--wire-model-name (model &optional (family ':opencode))
-  "Return the wire identifier encoded by MODEL in FAMILY's namespace."
+  "Return MODEL without FAMILY's namespace prefix."
   (let ((prefix (opencode--model-name "" family)))
     (unless (and (uiop:string-prefix-p prefix model)
                  (< (length prefix) (length model)))
@@ -46,12 +42,12 @@
 
 (-> opencode--fetch-models (configuration) list)
 (defun opencode--fetch-models (configuration)
-  "Discover OpenCode Go models in the historic opencode/ namespace."
+  "Discover OpenCode Go models in the opencode/ namespace."
   (opencode--discover-models configuration ':opencode))
 
 (-> opencode-zen--fetch-models (configuration) list)
 (defun opencode-zen--fetch-models (configuration)
-  "Discover OpenCode Zen models in its independent namespace."
+  "Discover OpenCode Zen models in the opencode-zen/ namespace."
   (opencode--discover-models configuration ':opencode-zen))
 
 (defclass opencode-chat-completions-provider (openai-compatible-provider)
@@ -63,7 +59,7 @@
     ((family (eql ':opencode))
      (configuration configuration)
      &key reasoning-summaries-p)
-  "Create the OpenCode Chat Completions provider; summaries always stream when served."
+  "Create the OpenCode Chat Completions provider."
   (declare (ignore reasoning-summaries-p))
   (opencode-provider-create configuration))
 
@@ -78,7 +74,7 @@
 (-> opencode-provider-create
     (configuration &key (:family keyword)) opencode-chat-completions-provider)
 (defun opencode-provider-create (configuration &key (family ':opencode))
-  "Create one OpenCode tier's client with a stable caching session header."
+  "Create an OpenCode client with a stable session header for caching."
   (let ((session-id (make-identifier))
         (zen-p      (eq family ':opencode-zen)))
     (make-instance 'opencode-chat-completions-provider

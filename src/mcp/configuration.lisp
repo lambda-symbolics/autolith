@@ -30,13 +30,13 @@
   "The maximum exact tool names trusted for read-only MCP annotations.")
 
 (defparameter *mcp-default-startup-timeout-seconds* 15
-  "The default deadline for MCP initialization and discovery.")
+  "The default timeout for MCP initialization and discovery, in seconds.")
 
 (defparameter *mcp-default-tool-timeout-seconds* 60
-  "The default deadline for one MCP tool call.")
+  "The default timeout for an MCP tool call, in seconds.")
 
 (defparameter *mcp-maximum-timeout-seconds* 3600
-  "The maximum configurable MCP transport or operation deadline.")
+  "The maximum configurable MCP transport or operation timeout, in seconds.")
 
 (defparameter *mcp-approval-policies*
   '(:read-only :prompt :allow :deny)

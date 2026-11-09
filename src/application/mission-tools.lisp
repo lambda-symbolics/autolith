@@ -75,7 +75,7 @@
 
 (-> mission--read-data (string) t)
 (defun mission--read-data (text)
-  "Read exactly one data form at the slash boundary without read-time evaluation."
+  "Read exactly one data form with read-time evaluation disabled."
   (handler-case
       (let ((*read-eval* nil) (*package* (find-package '#:autolith))
             (end (gensym "END")))
@@ -89,7 +89,7 @@
 
 (-> application-mission-slash-arguments (string) list)
 (defun application-mission-slash-arguments (remainder)
-  "Parse legacy mission text into semantic arguments at the slash boundary."
+  "Parse legacy /mission command text into action arguments."
   (let* ((text     (string-trim '(#\Space #\Tab #\Newline #\Return) remainder))
          (space    (position-if (lambda (character) (find character '(#\Space #\Tab #\Newline #\Return))) text))
          (name     (subseq text 0 space))
@@ -114,7 +114,7 @@
 
 (-> mission--command-specification-p (t) boolean)
 (defun mission--command-specification-p (specification)
-  "Check finite native specification shapes before the existing policy validator."
+  "Check for proper lists and valid property lists before policy validation."
   (labels ((plist-p (value)
              (and (proper-list-p value) (evenp (length value))
                   (let ((keys (plist-keys value)))
@@ -175,7 +175,7 @@
     (:name              "/mission"
      :argument          "[OPERATION DATA]"
      :description       "configure, run and verify an explicitly budgeted session mission"
-     :tip               "start with objective, criteria and turn/token/wall budgets; use status for durable gate evidence."
+     :tip               "start with an objective, criteria and budgets for turns, tokens and wall-clock time; use status to see saved gate evidence."
      :busy-behavior     :hold
      :terminal-behavior :shared
      :slash-parser      application-mission-slash-arguments

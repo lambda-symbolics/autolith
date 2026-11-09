@@ -8,7 +8,7 @@
   (:documentation "The public OpenAI Responses API with private API-key authentication."))
 
 (defmethod provider-account-label ((provider openai-api-provider))
-  "Identify the private API-key service, independently of ChatGPT subscriptions."
+  "Identify the API-key service separately from ChatGPT subscriptions."
   (declare (ignore provider))
   "openai-api")
 

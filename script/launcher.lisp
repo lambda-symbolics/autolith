@@ -2,17 +2,6 @@
 
 ;;; The stable launcher for hosts without Bash.
 
-;;; bin/autolith is Bash. bin/autolith.ps1 runs this script instead, through
-;;; bin/autolith-runtime.ps1, which has already selected the runtime and set
-;;; AUTOLITH_SBCL and AUTOLITH_SBCL_SOURCE_ROOT. The script does what the Bash
-;;; launcher does: it separates launcher options from application arguments,
-;;; runs the preloaded active image or the source loader, offers a bootstrap
-;;; when the image is missing, restores the console afterwards, and enters
-;;; pristine recovery when a session ends with a crash status.
-;;;
-;;; The console section binds kernel32 directly because this script runs
-;;; before the Autolith system, and with it the platform adapter, is loaded.
-
 (require :asdf)
 (require :sb-posix)
 (load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
@@ -88,11 +77,9 @@
   (format t "Usage: autolith uninstall [--yes] [--help]~%~%Remove the Autolith installation, managed runtimes, built images, and caches~%without starting a session. User data stays: conversations, memories, agendas,~%image commits, settings, credentials, and configuration.~%"))
 
 (defun launcher-uninstall-instructions ()
-  "Print the manual Windows removal steps to standard error.
-
-The running runtime lives inside the trees to remove, and Windows refuses to
-delete an executable in use, so the launcher names the exact folders instead
-of deleting them, as the Windows update path also hands off to the user."
+  "Print manual Windows removal steps to standard error.
+Windows cannot delete the running executable, so the user must close Autolith
+before deleting the listed directories."
   (format *error-output*
           "Uninstall is manual on Windows. Close every Autolith session, then delete:~%  %LOCALAPPDATA%\\autolith\\installation~%  %LOCALAPPDATA%\\autolith\\bin (and remove it from your user Path)~%  %LOCALAPPDATA%\\autolith\\data\\runtimes, active, recovery, generations, lisp-images, release-images~%  %LOCALAPPDATA%\\autolith\\cache~%  .autolith-images beside an extracted release~%Keep %LOCALAPPDATA%\\autolith\\data (conversations, memories, agendas, image commits),~%%LOCALAPPDATA%\\autolith\\state (settings, credentials, mutation history), and %APPDATA%\\autolith.~%"))
 
@@ -677,8 +664,6 @@ boot therefore leaves the generation identity available to recovery."
               (cond
                 ((zerop status)
                  0)
-                ;; A detached session relays its exit to the attached terminal,
-                ;; whose own launcher updates, rolls back, or recovers.
                 ((or (launcher-request-acp-p request)
                      (launcher-request-data-p request)
                      (launcher-request-localgroup-handoff-p request)
@@ -695,8 +680,6 @@ boot therefore leaves the generation identity available to recovery."
 (uiop:quit
  (handler-bind ((sb-sys:interactive-interrupt
                   (lambda (condition)
-                    ;; The session owns the console; Ctrl-C reaches it directly,
-                    ;; and the launcher keeps waiting for its status.
                     (declare (ignore condition))
                     (let ((restart (find-restart 'continue)))
                       (when restart

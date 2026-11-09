@@ -2,10 +2,6 @@
 
 ;;;; -- Built-in Static API-Key Providers --
 
-;;; Every provider that authenticates with one static API key is described here
-;;; as data; DEFINE-STATIC-API-KEY-PROVIDER generates its credential classes,
-;;; factory, key validation, and login.
-
 (define-static-api-key-provider anthropic
   :display-name         "Anthropic"
   :environment-variable "ANTHROPIC_API_KEY"
@@ -29,9 +25,6 @@
   :key-headers          (lambda (key)
                           (list (cons "Authorization" (concatenate 'string "Bearer " key)))))
 
-;; OpenCode's model list is public, so login cannot validate a key without a
-;; real chat request; a rejected key fails on its first provider request with
-;; the normal static-key authentication error.
 (define-static-api-key-provider opencode
   :display-name         "OpenCode Go"
   :environment-variable "OPENCODE_API_KEY"

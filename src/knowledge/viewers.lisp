@@ -2,21 +2,15 @@
 
 ;;;; -- Knowledge Viewers --
 
-;;; A viewer is someone who looks at knowledge repeatedly: a person through
-;;; (what-changed), or a conversation through recall and memory:changes. The
-;;; last snapshot each viewer saw in each workspace is kept, so changes are
-;;; reported once, when that viewer next looks. Snapshots are derived state:
-;;; a damaged file is replaced, losing only the record of what was last seen.
-
 (defparameter *knowledge-viewer-format-version* 1
   "The readable knowledge viewer state format version.")
 
 (defparameter *knowledge-viewer-limit* 32
-  "The most viewer snapshots retained, the least recently seen dropped first.")
+  "Maximum viewer snapshots retained; least recently viewed are dropped first.")
 
 (-> configuration-knowledge-viewers-path (configuration) pathname)
 (defun configuration-knowledge-viewers-path (configuration)
-  "Return the pathname of the last knowledge snapshot each viewer saw."
+  "Return the pathname storing viewers' last knowledge snapshots."
   (merge-pathnames "knowledge-viewers.sexp" (config :state-root configuration)))
 
 (-> knowledge-viewer--entry-p (t) boolean)

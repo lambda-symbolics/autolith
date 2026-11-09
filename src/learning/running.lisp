@@ -2,13 +2,6 @@
 
 ;;;; -- Running Procedures --
 
-;;; A run calls the procedure's tools one after another through the tool
-;;; registry, exactly as if the model had made each call: every call asks for
-;;; its own authorization and passes its contracts. Arguments come from the
-;;; run's parameters and the earlier calls' results. The first failing call
-;;; stops the run, which is recorded in the ledger, and the failure is
-;;; reported so the model can continue the work with ordinary calls.
-
 (defparameter *procedure-run-argument-excerpt-limit* 200
   "The most characters of a call's arguments a run report shows.")
 
@@ -18,13 +11,11 @@
 
 ;;;; -- Tool Calls --
 
-;; TOOL-RESULT is defined later. Require its value explicitly so SBCL does not
-;; infer an optional value while the result type is unknown.
 (-> procedure--call
     (tool-context string &key (:arguments (satisfies argo:json-object-p)) (:index integer))
     (values tool-result &rest t))
 (defun procedure--call (context tool-name &key arguments index)
-  "Make call number INDEX of a run: TOOL-NAME with ARGUMENTS through CONTEXT's registry."
+  "Execute step INDEX: call TOOL-NAME with ARGUMENTS through CONTEXT's registry."
   (let ((tool (find tool-name (tool-registry-tools (tool-context-registry context))
                     :key #'tool-canonical-name :test #'string=)))
     (if (null tool)
@@ -46,12 +37,12 @@
 (defun procedure-run (context identifier &key parameters (caller ':model))
   "Run procedure IDENTIFIER with PARAMETERS, an alist of names and values, under CONTEXT.
 
-A learned procedure that was never admitted is admitted first: by the user's
-own (run-procedure) call, or for the model by command authorization. Invalid
-parameters, a retired, suspended, or declined procedure, and a call whose
-contract requirements do not hold signal KNOWLEDGE-ERROR before any call. Otherwise return a plist of :STATUS (:OK or
-:FAILED), :VERSION, :STEPS (each :TOOL, :ARGUMENTS, :SUCCESS-P, :OUTPUT),
-:TOTAL, and :FAILURE, after recording the run in the ledger."
+Admit a candidate first, either through the user's (run-procedure) command or
+command authorization for a model call. Before executing tools, signal
+KNOWLEDGE-ERROR for invalid parameters, retired or suspended procedures,
+declined admission, or unmet contract requirements. Record the run and return
+:STATUS (:OK or :FAILED), :VERSION, :STEPS (each with :TOOL, :ARGUMENTS,
+:SUCCESS-P, and :OUTPUT), :TOTAL, and :FAILURE in a plist."
   (let* ((configuration (tool-context-configuration context))
          (entry         (procedure--runnable-entry context identifier caller))
          (version       (procedure-entry-version entry (getf entry :admitted)))

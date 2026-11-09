@@ -439,11 +439,11 @@
                                 (:endpoint (or null acp-endpoint)))
     null)
 (defun acp-run (configuration &key (permission-mode ':ask) pristine-p endpoint)
-  "Bootstrap a headless ACP process and serve its clients until they leave or Ctrl-C.
+  "Serve ACP clients until they disconnect or the user presses Ctrl-C.
 
-Without ENDPOINT, the one client is the editor on UTF-8 standard I/O. With
-ENDPOINT, remote clients connect over the network. Every client gets its own
-service, and all of them share the process's one primary operation."
+Without ENDPOINT, communicate with one editor over UTF-8 standard I/O.
+With ENDPOINT, accept remote clients over the network. Each client has a
+separate service; primary operations are serialized across all services."
   (let* ((channel           (and (null endpoint) (agentcomms:acp-standard-io-channel)))
          (gate              (make-instance 'acp-operation-gate))
          (*standard-output* *error-output*)

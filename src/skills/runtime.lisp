@@ -77,16 +77,15 @@
 
 (-> skill--logical-turn-record (skill-metadata) boolean)
 (defun skill--logical-turn-record (metadata)
-  "Record exact skill NAME from METADATA in the active logical turn.
+  "Record the skill named in METADATA for the active logical turn.
 
-Return true only when its name was newly added. Signal SKILL-SELECTION-ERROR
-when there is no active logical turn in which request-local selection can
-survive."
+Return true only if the name is newly added. Signal SKILL-SELECTION-ERROR if no
+logical turn is active or adding the name would exceed the selection limit."
   (let ((state *skill-logical-turn-state*))
     (unless state
       (error 'skill-selection-error
              :message
-             "A skill can be selected only while an agent turn is active."
+             "A skill can be selected only during an active logical user turn."
              :name   (skill-metadata-name metadata)
              :reason ':inactive-turn))
     (let ((name (skill-metadata-name metadata)))
@@ -126,7 +125,7 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
   (unless *skill-logical-turn-state*
     (error 'skill-selection-error
            :message
-           "A skill can be selected only while an agent turn is active."
+           "A skill can be selected only during an active logical user turn."
            :name   name
            :reason ':inactive-turn))
   (let ((metadata

@@ -62,7 +62,7 @@
 
 (defmethod provider-stream-turn :around
     ((provider t) (conversation conversation) &key &allow-other-keys)
-  "Refuse a request past the cost limit, then record and optionally export a successful call."
+  "Check the cost limit, then record and optionally export successful requests."
   (provider-cost-check provider)
   (let* ((destination (llm-usage--destination))
          (started     (get-internal-real-time))

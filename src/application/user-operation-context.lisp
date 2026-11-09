@@ -209,7 +209,7 @@ Oversized text ends with an explicit truncation marker whenever LIMIT permits it
     null)
 (defun application-user-operation-record-command-outcome
     (application invocation &key action condition)
-  "Persist a final failed or aborted registered interactive command."
+  "Persist the final outcome of a registered interactive command that failed or was aborted."
   (when (and (member action '(:aborted :failed) :test #'eq)
              (application-command-invocation-command invocation)
              (not (application-side-status-command-p
@@ -237,7 +237,7 @@ Oversized text ends with an explicit truncation marker whenever LIMIT permits it
     ((command application-command)
      application
      (invocation application-command-invocation))
-  "Persist one successful registered interactive command without nested calls."
+  "Persist a successful registered interactive command without recording nested calls separately."
   (if (and *application-command-interactive-p*
            (not (application-side-status-command-p command))
            (not *application-user-operation-recording-suppressed-p*)

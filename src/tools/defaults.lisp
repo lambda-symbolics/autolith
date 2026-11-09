@@ -66,10 +66,10 @@
 
 (-> default-tools--resource-operation-schema (&key (:knowledge-p boolean)) json-object)
 (defun default-tools--resource-operation-schema (&key (knowledge-p t))
-  "Return the closed workspace, scratchpad, agenda, memory, and papercut resource.edit variants.
+  "Return closed resource.edit schemas for workspace, scratchpad, agenda, memory,
+and papercut resources.
 
-KNOWLEDGE-P adds the memory:facts operations defining predicates, asserting and
-retracting facts, and proposing rules."
+KNOWLEDGE-P adds structured knowledge operations on memory:facts."
   (labels ((line-property (description)
              "Return one positive original-snapshot line schema."
              (let ((schema (tool-integer-property description)))
@@ -127,7 +127,7 @@ retracting facts, and proposing rules."
                         "quote" (tool-string-property
                                  "The exact supporting passage of the file or page; a file quote must occur in the file now."))
                        nil)
-                      "Optional evidence the memory was written from; each object names one of file, url, or user. A memory whose quoted file text changes is reported stale. Replacing without sources keeps the recorded ones, so a stale memory stays stale until current sources are supplied; empty removes them.")))
+                      "Optional supporting evidence; each object names one of file, url, or user. A memory is reported stale if its quoted file text changes. Replacing a memory without sources keeps the recorded sources; supply current sources to clear staleness, or an empty array to remove the sources.")))
                (setf (gethash "maxItems" schema) *memory-source-count-limit*)
                schema))
 
@@ -136,7 +136,7 @@ retracting facts, and proposing rules."
              (let ((schema
                      (cl-llm-provider-api:provider-array-schema
                       (tool-string-property "One premise memory identifier.")
-                      "Optional memories this one is derived from; it is reported stale when one changes. Replacing without premises keeps the recorded premise versions; supply them again only after checking the memory still follows from them.")))
+                      "Optional premise memories. When a premise changes, this memory is reported stale. Replacing without premises keeps the recorded premise versions. Supply premise identifiers again only after checking that this memory still follows from the premises.")))
                (setf (gethash "maxItems" schema) *memory-premise-count-limit*)
                schema))
 
@@ -147,12 +147,7 @@ retracting facts, and proposing rules."
                                 "enum" (vector name)))
              (let ((schema (tool-object-schema properties (cons "op" required))))
                (when any-required
-                 ;; Each anyOf variant must declare its object type: bare
-                 ;; {"required": [...]} subschemas are rejected by the
-                 ;; Fireworks JSON Schema validator ("could not understand the
-                 ;; instance"), which fails the whole request. The validated
-                 ;; instance is always an object here, so the type check does
-                 ;; not change the accepted operations.
+                 ;; Fireworks requires an explicit object type in each anyOf variant.
                  (setf (gethash "anyOf" schema)
                        (map 'vector
                             (lambda (field)
@@ -179,7 +174,7 @@ retracting facts, and proposing rules."
                           "type" (cl-llm-provider-api:provider-enum-schema
                                   *memory-knowledge-type-names* "The argument's value type.")
                           "unit" (tool-string-property
-                                  "For a quantity, a unit whose dimension values must have."))
+                                  "For a quantity, a unit defining the required dimension."))
                          '("name" "type"))
                         "Typed arguments in order.")
            "key" (cl-llm-provider-api:provider-array-schema
@@ -464,7 +459,7 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1. Only line-windowed resources accept start-line and line-count; the others reject them.")
              "line-count" (tool-integer-property
-                           "How many lines to return; default 400, maximum 1000. One result holds about 7,600 characters, so long lines end it sooner; only the lines it shows can be edited, and its Visible lines field says which. Accepted only where start-line is.")
+                            "Number of lines requested; default 400, maximum 1000. Results are limited to about 7,600 characters, so fewer lines may be returned. Only lines listed in the Visible lines field can be edited. Accepted only for resources that support start-line.")
              "byte-offset" (tool-integer-property
                             "Zero-based byte offset for a shell-log: range or search page; defaults to 0.")
              "byte-count" (tool-integer-property
@@ -624,7 +619,7 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
                    "file-offset" (tool-integer-property
                                   "Pagination cursor from next-file-offset; default 0.")
                    "max-results" (tool-integer-property
-                                  "Matches per page from 1 to 100; default 20. A page keeps one file's matches together, so it can exceed this by up to max-matches-per-file.")
+                                  "Target number of matches per page, from 1 to 100; default 20. All retained matches for a file appear on the same page, so the total may exceed this target by up to max-matches-per-file.")
                    "max-matches-per-file" (tool-integer-property
                                            "Matches retained per file from 1 to 100; default 20. The result names files that had more.")
                    "context" (tool-integer-property
@@ -724,7 +719,7 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
      registry
      (list 'diagnosis-run-tool
            "diagnosis" "run"
-           "Find which of up to 4 hypotheses explains a failure before repairing it. Each hypothesis predicts facts; each probe is a tool call whose contract observes facts from its result (define contracts with contract-define on memory:facts). Known facts are checked first, then the probe telling apart the most remaining hypotheses per cost runs, at most 3, with no model request between them. A hypothesis is ruled out only by a fact contradicting its prediction. Reports the remaining hypothesis and its repair, or what is still open, and which facts decided."
+           "Diagnose a failure from up to 4 hypotheses before repairing it. Each hypothesis predicts facts; each probe is a tool call with a contract that observes result facts (define contracts with contract-define on memory:facts). Known facts are checked first. At most 3 probes are then run, ranked by remaining hypotheses distinguished per unit of cost, without intervening model requests. A hypothesis is ruled out only by a contradictory fact. Report the surviving hypothesis and repair, or unresolved possibilities, with the deciding facts."
            (tool-object-schema
             (json-object
              "diagnosis" (tool-string-property "The name of a saved diagnosis to run.")
@@ -776,7 +771,7 @@ them."
           (list
            'plan-update-tool
            "plan" "update"
-           (format nil "Replace the current workspace plan with ordered steps, or clear it with an empty steps array. Each step has text and status pending, doing, or done. Optional explanation summarizes the plan.~:[~; A step may name the facts it requires: their variables fill {?var} in its text from current facts, and the plan reports a step blocked while nothing satisfies them or done on facts that later stopped holding.~]"
+           (format nil "Replace the current workspace plan with ordered steps, or clear it with an empty steps array. Each step has text and status pending, doing, or done. An optional explanation summarizes the plan.~:[~; A step may name the facts it requires; current facts fill {?var} in the step text. The plan reports a step as blocked when no facts satisfy the requirements, and flags completed steps whose supporting facts no longer hold.~]"
                    knowledge-p)
            (tool-object-schema
             (json-object

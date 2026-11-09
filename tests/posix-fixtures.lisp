@@ -372,8 +372,6 @@
                     (funcall holder-function)
                     (posix-fixture--write-byte ready-write)
                     (posix-fixture--read-byte release-read)
-                    ;; Exit without unwinding so the parent observes kernel
-                    ;; cleanup after a dead holder.
                     (sb-posix:_exit 0))
                 (serious-condition ()
                   (sb-posix:_exit 1))))

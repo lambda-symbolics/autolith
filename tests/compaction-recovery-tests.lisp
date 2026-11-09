@@ -1518,8 +1518,6 @@
          (escaped nil) (result nil) (work nil) (ticket nil) (service nil) (completion-id nil))
     (ecase phase
       (:before
-       ;; Native local exhaustion permits portable recovery.  The newest
-       ;; summary source exchange is itself too large to drop or admit.
        (conversation-append-user-message conversation (make-string 600000 :initial-element #\a))
        (conversation-append-provider-item conversation (agent-test-message "Old protected user exchange completed."))
        (conversation-append-user-message
@@ -1845,8 +1843,6 @@
                   :content "Perform scheduled work." :at 100 (unless one-shot-p (list :interval 10)))
            (setf ticket (mission-schedule-tests--ticket
                          (first (application-mission-schedules-wake application)))))
-         ;; Only inert transport and original-once observations are replaced.
-         ;; NOTE-ORIGINAL persists decoded usage before the canonical arrival.
          (test-call-with-function-replacements
           (list
            (list 'credential-manager-credentials
@@ -1965,8 +1961,6 @@
                           :controller-active-p (application-input-controller-active-p controller)
                           :prompt-status       (application-input-controller-prompt-marker-status controller)
                           :input-count         (count "Actual terminal user work." (conversation-input-history loaded) :test #'equal))))
-            ;; The same credential fixture encloses the complete later lifecycle.
-            ;; A new explicit user message does not alter any prior durable item.
             (when reuse-p
               (setf (expanded-native-results provider)
                     (list (agent-test-result "reuse-summary" (list (agent-test-compaction-message))
@@ -2278,8 +2272,6 @@
                      (setf (getf snapshot :repeat-cycle-opens) (- (length (expanded-native-input-snapshots provider)) before))))
                  (when reuse-p
                    (setf reuse-started-p t)
-                   ;; Only an ordinary answer is queued. A summary accidentally used as
-                   ;; an answer cannot satisfy this independently fitting-history control.
                    (setf (expanded-native-results provider)
                          (list (agent-test-result "matrix-later-answer" (list (agent-test-message "Matrix later ordinary answer."))
                                                   :usage (json-object "input_tokens" 20 "output_tokens" 10))))
@@ -2441,8 +2433,6 @@
             (list (list 'application--note-goal-turn
                         (lambda (owner value)
                           (setf noted value)
-                          ;; NIL has no provider-result parser. Observe the owner's primary
-                          ;; selection independently; real results use original goal handling.
                           (when value (funcall note-original owner value))))
                   (list 'application--maybe-refresh-conversation-title
                         (lambda (owner) (incf titles) (funcall title-original owner))))

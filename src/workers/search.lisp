@@ -6,9 +6,9 @@
 (defun search-worker--source-root (configuration)
   "Return the tracked source root that holds the helper script.
 
-CONFIGURATION carries the root the launcher supplied. Without one, the ASDF
-source directory serves, which inside a saved image names the tree the image
-was built from and may no longer exist."
+Use the launcher-supplied root in CONFIGURATION when available. Otherwise, use
+ASDF's source directory. In a saved image, that directory names the build tree,
+which may no longer exist."
   (if configuration
       (config :source-root configuration)
       (asdf:system-source-directory :autolith)))
@@ -63,7 +63,7 @@ was built from and may no longer exist."
 
 (-> search-worker-file-count (worker configuration string) (integer 0))
 (defun search-worker-file-count (worker configuration glob)
-  "Return how many files CONFIGURATION's workspace index holds that match GLOB."
+  "Return the number of indexed files matching GLOB in CONFIGURATION's workspace."
   (handler-case
       (worker-file-count
        worker glob

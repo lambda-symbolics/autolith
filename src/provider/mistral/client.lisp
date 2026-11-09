@@ -13,7 +13,7 @@
   "Mistral")
 
 (defmethod provider-family ((provider mistral-api-key-provider))
-  "The Mistral provider serves the Mistral model family."
+  "Return the Mistral model family."
   (declare (ignore provider))
   ':mistral)
 

@@ -6,7 +6,7 @@
     (cl-rfc8628:device-authentication-error authentication-error)
   ()
   (:documentation
-   "A device authentication failure joined to Autolith's condition hierarchy."))
+   "A device authentication failure in Autolith's condition hierarchy."))
 
 
 ;;;; -- ChatGPT Device Authentication State --
@@ -30,7 +30,7 @@
 (defclass openai-device-authentication-client (device-authentication-client)
   ()
   (:documentation
-   "The proprietary OpenAI device authorization client behind ChatGPT logins."))
+   "Client for OpenAI's proprietary ChatGPT device authorization."))
 
 (defmethod device-authentication-request-code
     ((client openai-device-authentication-client))
@@ -73,7 +73,7 @@
     ((client openai-device-authentication-client)
      (authorization device-authorization)
      (manager credential-manager))
-  "Poll AUTHORIZATION, exchange its code, and securely publish the result."
+  "Poll AUTHORIZATION, exchange the code, and save the credentials."
   (call-with-secret-use
    (lambda ()
      (let* ((authorization-code
@@ -120,7 +120,7 @@
        (clock-function #'device-authentication-monotonic-seconds)
        (browser-function #'device-authentication-open-browser)
        (poll-timeout *device-authentication-timeout*))
-  "Create a ChatGPT device client, optionally replacing every external effect."
+  "Create a ChatGPT device client with optional I/O and timing overrides."
   (unless (and (non-empty-string-p issuer)
                (non-empty-string-p client-id)
                (plusp poll-timeout))
@@ -240,7 +240,7 @@
     oauth-credentials)
 (defun device-authentication--exchange-code
     (&key client authorization-code source-path)
-  "Exchange AUTHORIZATION-CODE and return credentials attributed to SOURCE-PATH."
+  "Exchange AUTHORIZATION-CODE and record SOURCE-PATH in the credentials."
   (let* ((redirect-url
            (device-authentication-issuer-url client "/deviceauth/callback"))
          (content

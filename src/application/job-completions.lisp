@@ -43,9 +43,9 @@
 (defun application-job-completions-awaited-p (application)
   "Return true while a pending result or unfinished job will wake APPLICATION.
 
-Goal continuations defer to that wakeup instead of urging the model on while
-its own jobs run; the completion turn resumes the goal afterwards. Without a
-connected wakeup nothing would resume it, so nothing is awaited."
+Goal continuations defer while a pending result or unfinished job is expected to
+trigger a completion turn. That turn resumes the goal. Without a connected
+wakeup, no completion turn is expected."
   (let ((agent (and (slot-boundp application 'agent) (application-agent application))))
     (flet ((admissible-p (notice)
              (application-job-completions--notice-admissible-p application notice)))
@@ -195,7 +195,7 @@ snapshot cannot change the meaning of an already finalized transcript entry."
            (values "the mission is blocked"
                    "Review the result and resolve the stated blocker, then use (mission :resume)."))
           ((and (mission-goal-p goal) (eq status ':paused))
-           (values "the mission is paused" "Use (mission :resume) to continue it."))
+           (values "the mission is paused" "Use (mission :resume) to continue the mission."))
           ((and (mission-goal-p goal) (not (eq status ':active)))
            (values (format nil "the mission is ~A" status) new-budget))
           ((mission-goal-p goal)
@@ -203,7 +203,7 @@ snapshot cannot change the meaning of an already finalized transcript entry."
           ((eq status ':complete)
            (values "the session goal is complete" "Set new work with (goal \"OBJECTIVE\")."))
           ((eq status ':paused)
-           (values "the session goal is paused" "Use (goal :resume) to continue it."))
+           (values "the session goal is paused" "Use (goal :resume) to continue the goal."))
           ((and goal (not (eq status ':active)))
            (values (format nil "the session goal is ~A" status) review))
           ((and goal (application--goal-continuations-exhausted-p application goal))

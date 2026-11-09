@@ -2,11 +2,6 @@
 
 ;;;; -- Provider Registry --
 
-;;; Provider registrations, their source layers, model discovery and the model
-;;; cache live in cl-llm-provider-api/registry. Autolith owns one registry, the
-;;; extension source a load binds, the private cache file, the configuration
-;;; condition protocol, and the legacy model tables kept in step with it.
-
 (defparameter *provider-registration-sources*
   '(:builtin :site :user :runtime)
   "The provider registration sources ordered from lowest to highest precedence.")
@@ -30,7 +25,7 @@
    :change-function           (lambda (registry)
                                 (declare (ignore registry))
                                 (provider--refresh-model-settings)))
-  "Every provider registration layer of this image and its model metadata.")
+  "This image's provider registry and model metadata.")
 
 (setf *provider-registry-error-class* 'provider-registry-configuration-error)
 
@@ -69,8 +64,9 @@ return a MODEL-PROVIDER. MODEL-DISCOVERY, when supplied, receives CONFIGURATION
 and returns model strings or metadata property lists. The optional endpoint
 resolver returns the current model-discovery cache identity. AUTHENTICATOR, when
 supplied, receives the provider and the keyword arguments STREAM and
-OPEN-BROWSER-P. Site, user, and live runtime registrations replace only the
-same source and shadow lower-precedence registrations with the same name."
+OPEN-BROWSER-P. Site, user, and runtime registrations replace only registrations
+with the same name and source. Registrations with that name from lower-precedence
+sources are shadowed."
   (provider-registry-register
    *provider-registry* (provider--canonical-name name)
    :description                       description
@@ -212,10 +208,11 @@ are normalized after executable init and cache loading establish their provider.
 
 (-> provider--cache-with-selection-hint (configuration t) t)
 (defun provider--cache-with-selection-hint (configuration form)
-  "Restore only a durable Go selection from the old mixed-tier cache at startup.
+  "Restore a saved OpenCode Go selection from the old mixed-tier cache at startup.
 
-Do not copy metadata or persist the projection. Fresh discovery replaces this
-unspecified-context discovered model. Remove this compatibility path at 0.68.0."
+Do not copy metadata or write the added entry to disk. The added model has no
+specified context window and is replaced after fresh discovery. Remove this
+compatibility path at 0.68.0."
   (let* ((registration (provider-registration-find "opencode-go"))
          (model        (config :model configuration))
          (provider     (config :model-provider configuration)))
@@ -271,9 +268,9 @@ unspecified-context discovered model. Remove this compatibility path at 0.68.0."
 (defun provider--read-model-cache (configuration)
   "Move legacy metadata once, then read only the cache-root copy.
 
-Remove the source under both writer locks only after atomic publication. An
-existing target wins, including when retrying interrupted source cleanup.
-Failed publication uses legacy metadata offline. Remove the branch at 0.68.0."
+Delete the source only after atomic publication, while both writer locks are
+held. Use an existing target, even when retrying interrupted source cleanup.
+If publication fails, use legacy metadata offline. Remove this branch at 0.68.0."
   (block nil
     (let ((target (configuration-provider-model-cache-path configuration))
           (legacy (merge-pathnames "provider-models.sexp" (config :state-root configuration))))
@@ -528,13 +525,13 @@ contradictory provider prefixes still signal their selection errors."
 
 (-> provider-model-context-window-for (string &key (:provider (option string))) (option integer))
 (defun provider-model-context-window-for (model &key provider)
-  "Return MODEL's metadata from the selected provider."
+  "Return MODEL's context window from the selected provider."
   (let ((metadata (provider-model-for model :provider provider)))
     (and metadata (provider-model-context-window metadata))))
 
 (-> provider-model-reasoning-efforts-for (string &key (:provider (option string))) (option list))
 (defun provider-model-reasoning-efforts-for (model &key provider)
-  "Return MODEL's metadata from the selected provider."
+  "Return MODEL's reasoning efforts from the selected provider."
   (let ((metadata (provider-model-for model :provider provider)))
     (and metadata (copy-list (provider-model-reasoning-efforts metadata)))))
 

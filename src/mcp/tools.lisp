@@ -60,13 +60,13 @@
   "Exact binding and value pairs resolved once for the active MCP operation.")
 
 (defvar *mcp-active-environment-missing-condition* nil
-  "The first unavailable binding in the active MCP environment snapshot.")
+  "The condition for the first unavailable binding in the active MCP environment snapshot.")
 
 (defvar *mcp-stdio-launch-environment-observed-p* nil
   "True when the active operation launched one MCP standard-input process.")
 
 (defvar *mcp-stdio-launch-environment-fingerprint* nil
-  "The keyed digest of the exact mapped environment last launched.")
+  "The keyed digest of the exact mapped environment used for the last process launch.")
 
 (defvar *mcp-environment-fingerprint-key* nil
   "The process-local key protecting mapped-environment digests.")
@@ -767,7 +767,7 @@ retained value is credential-redacted or projected."
     (mcp-server-runtime function)
     t)
 (defun mcp-tools--call-with-runtime-secret-use (runtime function)
-  "Call FUNCTION while containing raw server values to one secret scope."
+  "Call FUNCTION with raw server values confined to one secret scope."
   (mcp-tools--call-with-server-secret-use
    (mcp-server-runtime-configuration runtime)
    (lambda ()

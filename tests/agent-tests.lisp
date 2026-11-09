@@ -1300,8 +1300,6 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
              (conversation-append-record
               conversation
               (list :provider-item :wire-json (json-encode call)))
-             ;; A successful result keeps the call through resume precompaction,
-             ;; which drops failed exchanges from the first request.
              (conversation-append-tool-result
               conversation
               "legacy-malformed-call"

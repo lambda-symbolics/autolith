@@ -242,7 +242,7 @@ concealed signals AUTHENTICATION-ERROR before anything is read."
               *api-key-input-file-descriptor*))
        (stream *standard-output*)
        note)
-  "Clearly prompt for PROVIDER-NAME's API key and read it without terminal echo."
+  "Prompt for PROVIDER-NAME's API key and read it without terminal echo."
   (fresh-line stream)
   (api-key--write-prompt-span
    stream ':brand (format nil "╭─ ~A authentication" provider-name))
@@ -281,7 +281,7 @@ concealed signals AUTHENTICATION-ERROR before anything is read."
 
 (defmethod credential-manager-credential-description
     ((manager api-key-credential-manager))
-  "Describe static API-key credentials precisely."
+  "Return the API-key credential label."
   (declare (ignore manager))
   "API key")
 
@@ -301,7 +301,7 @@ concealed signals AUTHENTICATION-ERROR before anything is read."
      (:pathname pathname))
     api-key-credential-manager)
 (defun api-key-credential-manager-create (&key provider-name pathname)
-  "Create an API-key manager backed by PROVIDER-NAME in PATHNAME."
+  "Create a manager for PROVIDER-NAME's API key stored in PATHNAME."
   (let ((source
           (make-instance
            'api-key-credential-source
@@ -315,7 +315,7 @@ concealed signals AUTHENTICATION-ERROR before anything is read."
     (api-key-credential-manager non-empty-string)
     oauth-credentials)
 (defun api-key-credential-manager-save-key (manager api-key)
-  "Save API-KEY for MANAGER and return request-scoped credential metadata."
+  "Save API-KEY for MANAGER and return request-scoped credentials."
   (call-with-secret-use
    (lambda ()
      (let* ((source (credential-manager-primary-source manager))

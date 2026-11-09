@@ -28,7 +28,7 @@
 
 (-> usage--wrap (string integer) list)
 (defun usage--wrap (text columns)
-  "Split TEXT into display-width bounded lines without discarding characters."
+  "Wrap TEXT at spaces or the display width, omitting spaces at line breaks."
   (let ((lines  nil)
         (start  0)
         (length (length text)))

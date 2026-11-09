@@ -2,34 +2,14 @@
 
 ;;;; -- Diagnosis --
 
-;;; A diagnosis says what may be wrong and how to find out:
-;;;
-;;;   (:diagnosis :id "remote-service" :parameters ("?service")
-;;;    :hypotheses ((:id "unavailable"
-;;;                  :predicts (("service.reachable" "?service" :false))
-;;;                  :repair "Restart the service.")
-;;;                 (:id "stale-endpoint"
-;;;                  :predicts (("service.reachable" "?service" :true)
-;;;                             ("endpoint.current" "?service" :false))))
-;;;    :probes ((:tool "service.ping" :arguments (("service" "?service")) :cost 1)))
-;;;
-;;; Each hypothesis predicts facts. A probe is a tool call whose action
-;;; contracts observe facts from its result. A diagnosis checks known facts,
-;;; then ranks available probes by their prediction differences and cost.
-;;; It runs at most three probes, stopping when at most one hypothesis remains
-;;; or no eligible probe has a positive score. A hypothesis is eliminated only
-;;; when an admissible fact contradicts one of its predictions. Probes run as
-;;; ordinary tool calls without a model request between them. Each case
-;;; records the observations and facts used to eliminate hypotheses.
-
 (defparameter *knowledge-diagnosis-hypothesis-limit* 4
-  "The most hypotheses one diagnosis weighs.")
+  "Maximum hypotheses per diagnosis.")
 
 (defparameter *knowledge-diagnosis-probe-limit* 8
-  "The most probes one diagnosis lists.")
+  "Maximum probes per diagnosis.")
 
 (defparameter *knowledge-diagnosis-run-limit* 3
-  "The most probes one case runs before reporting what remains open.")
+  "Maximum probes per case.")
 
 
 ;;;; -- Validation --
@@ -224,12 +204,11 @@ Return its ID and whether the definition changed."
 (defun knowledge-prediction-status (view prediction)
   "Return whether ground PREDICTION is :CONFIRMED, :CONTRADICTED, or :UNKNOWN in VIEW.
 
-The second value is the fact that decided it. Only admissible facts decide:
-undisputed observations or the user's statements, never predictions,
-assumptions, or conflicted facts. A positive prediction is contradicted by its
-explicit negation or, for a keyed predicate, by a fact giving its key another
-value; a negated one is contradicted by the fact it denies. Absence of a fact
-never contradicts."
+Return the deciding fact as the second value. Use only undisputed observations
+or user statements, excluding predictions, assumptions, and conflicted facts.
+A positive prediction is contradicted by an explicit negation or a different
+value for the same predicate key. A negated prediction is contradicted by the
+fact it denies. Missing facts do not contradict predictions."
   (if (knowledge-negation-p prediction)
       (let ((denied    (first (knowledge--established view (second prediction))))
             (confirmed (first (knowledge--established view prediction))))

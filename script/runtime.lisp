@@ -2,13 +2,6 @@
 
 ;;; Runtime provisioning shared by the PowerShell launchers.
 
-;;; bin/autolith-runtime.ps1 selects an SBCL that satisfies sbcl.version and
-;;; runs this script in it. The script mirrors the rest of bin/autolith-runtime:
-;;; it records the runtime command for later launches, installs the matching
-;;; SBCL source tree when asked, exports AUTOLITH_SBCL and
-;;; AUTOLITH_SBCL_SOURCE_ROOT, and then loads the requested Lisp entry point
-;;; with the remaining arguments as its command line.
-;;;
 ;;; Usage: sbcl --script script/runtime.lisp [--install] --script PATH [ARGUMENT...]
 
 (require :asdf)

@@ -115,9 +115,6 @@
   (let* ((source-root     (asdf:system-source-directory :autolith))
          (home            (user-homedir-pathname))
          (direct-variable "AUTOLITH_TEST_XDG_DIRECTORY")
-         ;; Each case names the variable, the root it selects, and the
-         ;; directory the XDG convention chooses without it; the host's own
-         ;; fallback is observed with the variable absent.
          (cases
            (list
             (list "XDG_CONFIG_HOME"
@@ -196,9 +193,6 @@
                           (config :state-root configuration)
                           (config :cache-root configuration)))
                    "new XDG application roots are private to the user")
-                  ;; A file that plain OPEN creates below a private root
-                  ;; must stay usable by its creator: Windows gives it the
-                  ;; root's inheritable entries, POSIX the process umask.
                   (let ((created (merge-pathnames "created-inside.txt"
                                                   (config :state-root configuration))))
                     (with-open-file (stream created

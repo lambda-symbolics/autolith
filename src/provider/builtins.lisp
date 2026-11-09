@@ -6,7 +6,7 @@
     (configuration &key (:reasoning-summaries-p boolean))
     model-provider)
 (defun provider--codex-registration-factory (configuration &key reasoning-summaries-p)
-  "Create the built-in ChatGPT provider from registry metadata."
+  "Create the built-in ChatGPT provider."
   (provider-family-create ':codex
                            configuration
                            :reasoning-summaries-p reasoning-summaries-p))
@@ -15,7 +15,7 @@
     (configuration &key (:reasoning-summaries-p boolean))
     model-provider)
 (defun provider--grok-registration-factory (configuration &key reasoning-summaries-p)
-  "Create the built-in Grok provider from registry metadata."
+  "Create the built-in Grok provider."
   (declare (ignore reasoning-summaries-p))
   (provider-family-create ':grok configuration))
 
@@ -44,7 +44,7 @@
     model-provider)
 (defun provider--nous-registration-factory
     (configuration &key reasoning-summaries-p)
-  "Create the built-in Nous Research provider from registry metadata."
+  "Create the built-in Nous Research provider."
   (declare (ignore reasoning-summaries-p))
   (provider-family-create ':nous configuration))
 
@@ -63,7 +63,7 @@
     model-provider)
 (defun provider--fireworks-registration-factory
     (configuration &key reasoning-summaries-p)
-  "Create the built-in Fireworks provider from registry metadata."
+  "Create the built-in Fireworks provider."
   (declare (ignore reasoning-summaries-p))
   (provider-family-create ':fireworks configuration))
 
@@ -72,7 +72,7 @@
     model-provider)
 (defun provider--opencode-registration-factory
     (configuration &key reasoning-summaries-p)
-  "Create the built-in OpenCode provider from registry metadata."
+  "Create the built-in OpenCode provider."
   (declare (ignore reasoning-summaries-p))
   (provider-family-create ':opencode configuration))
 
@@ -80,7 +80,7 @@
     (configuration &key (:reasoning-summaries-p boolean)) model-provider)
 (defun provider--opencode-zen-registration-factory
     (configuration &key reasoning-summaries-p)
-  "Create the built-in OpenCode Zen provider from registry metadata."
+  "Create the built-in OpenCode Zen provider."
   (provider-family-create ':opencode-zen configuration
                           :reasoning-summaries-p reasoning-summaries-p))
 
@@ -104,7 +104,7 @@
     model-provider)
 (defun provider--openrouter-registration-factory
     (configuration &key reasoning-summaries-p)
-  "Create the built-in OpenRouter provider from registry metadata."
+  "Create the built-in OpenRouter provider."
   (declare (ignore reasoning-summaries-p))
   (provider-family-create ':openrouter configuration))
 
@@ -123,7 +123,7 @@
     model-provider)
 (defun provider--mistral-registration-factory
     (configuration &key reasoning-summaries-p)
-  "Create the built-in Mistral provider from registry metadata."
+  "Create the built-in Mistral provider."
   (declare (ignore reasoning-summaries-p))
   (provider-family-create ':mistral configuration))
 
@@ -152,7 +152,7 @@
     model-provider)
 (defun provider--anthropic-registration-factory
     (configuration &key reasoning-summaries-p)
-  "Create the built-in Anthropic provider from registry metadata."
+  "Create the built-in Anthropic provider."
   (declare (ignore reasoning-summaries-p))
   (provider-family-create ':anthropic configuration))
 

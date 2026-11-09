@@ -14,11 +14,11 @@
 
 (defmethod provider-prompt-cache-retention-estimate
     ((provider anthropic-api-key-provider))
-  "Schedule idle compaction using Anthropic's requested cache lifetime."
+  "Return the cache lifetime used to schedule idle compaction."
   (provider-prompt-cache-lifetime provider))
 
 (defmethod provider-prompt-cache-lifetime ((provider anthropic-api-key-provider))
-  "Return Anthropic's declared lifetime from the requested wire TTL."
+  "Return the requested cache lifetime in seconds."
   (let ((ttl (config :prompt-cache-ttl (provider-configuration provider))))
     (if (stringp ttl)
         (cond
@@ -31,12 +31,12 @@
         nil)))
 
 (defmethod provider-account-label ((provider anthropic-api-key-provider))
-  "Name the Anthropic account service in user-visible failures."
+  "Return the Anthropic service name for user-visible errors."
   (declare (ignore provider))
   "Anthropic")
 
 (defmethod provider-family ((provider anthropic-api-key-provider))
-  "The Anthropic provider serves the Anthropic model family."
+  "Return the Anthropic model family."
   (declare (ignore provider))
   ':anthropic)
 
@@ -44,7 +44,7 @@
     ((family (eql ':anthropic))
      (configuration configuration)
      &key reasoning-summaries-p)
-  "Create the Anthropic API key provider; reasoning stays provider-internal."
+  "Create the Anthropic API key provider."
   (declare (ignore reasoning-summaries-p))
   (anthropic-provider-create configuration))
 

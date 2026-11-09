@@ -185,8 +185,6 @@
                (test-assert (application-mission-review-current-p application ':final-acceptance)
                             "current completed adjudicated review is acceptable")
                (setf (getf run :findings) nil)
-               ;; Inject the concurrent actor's effects immediately after the first
-               ;; checkpoint passes, before verification takes its request lock.
                (setf (symbol-function 'application-mission-review-checkpoint)
                      (lambda (target phase)
                        (let ((accepted-p (funcall original-checkpoint target phase)))

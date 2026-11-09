@@ -104,7 +104,7 @@
   (:documentation "Merge family INITARGS into equivalent retained STATE.")
   (:method ((state resource-observation-state)
             (observation resource-observation) &rest initargs)
-    "Return an equivalent general STATE without additional retained metadata."
+    "Return STATE unchanged without retaining additional metadata."
     (declare (ignore observation initargs))
     state))
 
@@ -123,10 +123,9 @@
     (conversation resource-observation &rest t)
     resource-observation-state)
 (defun resource-observation-state-ensure (conversation observation &rest initargs)
-  "Return or retain CONVERSATION's exact OBSERVATION with family INITARGS.
-
-An equivalent retained observation keeps its alias and becomes the newest, so
-the revision just handed to the model is the last one its family evicts."
+  "Return CONVERSATION's retained state for OBSERVATION, creating it if needed.
+Use family-specific INITARGS to create or merge the state. Reusing an
+observation preserves its alias and makes it the newest state in its family."
   (with-recursive-lock-held
       ((conversation-resource-observation-lock conversation))
     (multiple-value-bind (family key)
@@ -197,9 +196,10 @@ often base strings while the same text built elsewhere is not."
   (:documentation
    "Return RESOURCE's complete current text under CONTEXT for a whole-text consumer.
 
-Consumers such as recursive inference take inputs larger than an editing
-observation retains, so this reads without establishing one. MAXIMUM-BYTES
-bounds the UTF-8 octets the consumer accepts, and TOOL-NAME names it in errors."))
+Whole-text consumers may accept more text than editing observations retain.
+Implementations may read without establishing an editing observation.
+MAXIMUM-BYTES limits the accepted UTF-8 byte count; TOOL-NAME identifies the
+consumer in errors."))
 
 (defmethod resource-whole-text (resource context &key maximum-bytes tool-name)
   "Return RESOURCE's ordinary observation text within the consumer's UTF-8 limit."
@@ -226,7 +226,7 @@ bounds the UTF-8 octets the consumer accepts, and TOOL-NAME names it in errors."
 
 (defmethod resource-resolver-child-safe-p
     ((resolver resource-resolver) context)
-  "Default resource resolvers closed for task child agents."
+  "Disallow resource resolution for task child agents by default."
   (declare (ignore resolver context))
   nil)
 
@@ -250,10 +250,8 @@ bounds the UTF-8 octets the consumer accepts, and TOOL-NAME names it in errors."
 
 (-> resource-registry-documentation (resource-registry function) string)
 (defun resource-registry-documentation (registry documentation-function)
-  "Join DOCUMENTATION-FUNCTION's sentences for REGISTRY's resolvers in scheme order.
-
-Resource tool descriptions are composed this way, so they name exactly the
-schemes their registry resolves."
+  "Compose resource tool descriptions by joining DOCUMENTATION-FUNCTION's sentences
+for REGISTRY's resolvers in scheme order."
   (format nil "~{~A~^ ~}"
           (loop for scheme in (cl-resources:resource-registry-schemes registry)
                 for text = (funcall documentation-function

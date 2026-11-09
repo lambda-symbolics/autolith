@@ -2,12 +2,6 @@
 
 ;;;; -- Win32 Platform Adapter --
 
-;;; This file implements the platform protocol for Windows 10 and 11 on
-;;; x86-64. It binds the wide kernel32 and advapi32 entry points it needs
-;;; with SB-ALIEN, avoiding dependencies on SBCL's internal SB-WIN32 package.
-;;; Descriptors are HANDLE values, which is also what SBCL's Windows
-;;; fd-streams report.
-
 (defclass win32-platform (platform)
   ()
   (:documentation "The adapter for Windows hosts built on the Win32 API."))
@@ -363,10 +357,8 @@
 
 (-> win32--namestring (pathname) string)
 (defun win32--namestring (pathname)
-  "Return PATHNAME as the native namestring the wide entry points expect.
-
-A directory pathname loses its trailing separator, since object handles are
-opened by the directory's own name."
+  "Return PATHNAME's native namestring without a trailing directory separator.
+Keep the separator on drive roots."
   (let ((native (uiop:native-namestring pathname)))
     (if (and (> (length native) 3)
              (char= (char native (1- (length native))) #\\))
@@ -515,7 +507,7 @@ opened by the directory's own name."
 
 (-> win32--job-kill-on-close (integer t) null)
 (defun win32--job-kill-on-close (job enabled-p)
-  "Make JOB die with its launch owner until ownership is explicitly released."
+  "Enable or disable termination of JOB when its last handle is closed."
   (sb-alien:with-alien ((limits (sb-alien:array (sb-alien:unsigned 8) 144)))
     (let ((sap (sb-alien:alien-sap limits)))
       (dotimes (index 144) (setf (sb-sys:sap-ref-8 sap index) 0))
@@ -526,11 +518,9 @@ opened by the directory's own name."
 (defmethod platform-launch-detached-process
     ((platform win32-platform) arguments
      &key directory output ticket)
-  "Create a suspended replacement, assign its entire tree, then release it.
-
-The suspended initial thread is the Windows startup gate. The job owns every
-child before any user code runs. Kill-on-close covers abandonment; a successful
-handoff explicitly releases ownership without terminating the detached session."
+  "Create a suspended process and assign it to a job before running user code.
+Terminate the job on abandonment. After a successful handoff, release
+ownership without terminating the detached session."
   (declare (ignore platform))
   (let ((launcher-pid-pathname
           (and ticket

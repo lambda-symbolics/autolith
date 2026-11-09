@@ -16,13 +16,13 @@
 
 (defmethod rfc8628-device-authentication-authorization-class
     ((client nous-device-authentication-client))
-  "Use Nous's named RFC 8628 authorization state."
+  "Return Nous's RFC 8628 authorization class."
   (declare (ignore client))
   'nous-device-authorization)
 
 (defmethod rfc8628-device-authentication-validate-token-response
     ((client nous-device-authentication-client) (document hash-table))
-  "Require a Nous access JWT authorized for inference invocation."
+  "Require a Nous access JWT with the inference:invoke scope."
   (declare (ignore client))
   (let ((access-token (json-get document "access_token")))
     (unless (and (non-empty-string-p access-token)
@@ -51,7 +51,7 @@
     ((client nous-device-authentication-client)
      (manager nous-credential-manager)
      (credentials oauth-credentials))
-  "Publish Nous CREDENTIALS while holding the process-shared rotation lock."
+  "Save Nous CREDENTIALS under the process-shared rotation lock."
   (declare (ignore client))
   (credential-manager-call-with-refresh-lock
    manager
@@ -80,7 +80,7 @@
        (clock-function #'device-authentication-monotonic-seconds)
        (browser-function #'device-authentication-open-browser)
        (poll-timeout *device-authentication-timeout*))
-  "Create a Nous device client, optionally replacing every external effect."
+  "Create a Nous device client with optional I/O and timing overrides."
   (unless (and (non-empty-string-p portal-url)
                (non-empty-string-p client-id)
                (plusp poll-timeout))

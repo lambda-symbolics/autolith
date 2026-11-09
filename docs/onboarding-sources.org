@@ -365,9 +365,8 @@ The agent uses *fff* indexed search to find files, identifiers, or path patterns
 
 *In the prompt: type @ and part of a path, then press Tab.* Choose a fuzzy match to insert its path.
 
-These are just tools available to the model - they are also available to you to call.
-In fullscreen mode, you can click on toolcalls to paste them into your prompt so you can either
-repeat them or do similar ones.
+You and the model can call these tools.
+In fullscreen mode, you can click a tool call to paste it into your prompt, then repeat or modify the call.
 
 * Configuration
 :PROPERTIES:
@@ -394,7 +393,7 @@ State root:  {{{:state-root}}}@@
 :SETTING: activity-line-p
 :CHOICES: t nil
 :END:
-You have a turn timer in the modeline, along with other useful pieces of info, and a small decoration activity line below it:
+The turn timer and other information are in the modeline. A small decorative activity line appears below the modeline:
 
 @@dim:REPL  ∙ 00:04  gpt-6.1-sol · high@@
 @@brand:∙@@ @@dim:pondering@@
@@ -409,7 +408,7 @@ Some people hate this Claudism, so you can disable it in =(settings)=.
 :SETTING: transcript-style
 :CHOICES: :labels :repl
 :END:
-Decided if you want labeled headers:
+Decide if you want labeled headers:
 
 @@user:❯ you@@
   hi!
@@ -425,7 +424,7 @@ Or Lisp REPL prompts:
 @@dim:  2026-10-26 21:30@@
 @@brand:<@@ Hello, I am Autolith. How can I help you today?
 
-The time timestamps you see in this example are configurable in =(settings)=.
+The timestamps you see in this example are configurable in =(settings)=.
 
 * Detached sessions
 :PROPERTIES:
@@ -442,10 +441,10 @@ Use =(detach)= to disconnect your terminal while Autolith keeps working.
 =autolith localgroup detach [SESSION-ID]=
 =autolith localgroup kill   [SESSION-ID]=
 
-To watch a session, you can use =attach --read-only=, if you also want to control it (full re-attachment), use =attach --take-over=.
+Use =attach --read-only= to watch a session. To watch and control the session (full re-attachment), use =attach --take-over=.
 
 You can use =autolith lg= as a shorthand for =autolith localgroup=.
-With one active session, you can omit =SESSION-ID=, otherwise, use a uniquely identifying prefix.
+With one active session, you can omit =SESSION-ID=. Otherwise, use a uniquely identifying prefix.
 
 * Give Autolith an objective
 :PROPERTIES:
@@ -620,7 +619,7 @@ You can also register servers in =init.lisp=. Use =(mcp)= for configuration and 
 
 @@code:Config root: {{{:config-root}}}@@
 
-* Save instructions as a skills
+* Save instructions as a skill
 :PROPERTIES:
 :ID: skills
 :VERSION: 4

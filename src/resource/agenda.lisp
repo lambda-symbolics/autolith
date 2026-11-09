@@ -7,7 +7,7 @@
     :initarg       :identifier
     :reader        agenda-resource-identifier-unsupported-identifier
     :type          non-empty-string
-    :documentation "The agenda resource identifier that is not yet supported."))
+    :documentation "The unsupported agenda resource identifier."))
   (:default-initargs :message "The agenda resource identifier is not supported.")
   (:documentation "An agenda: URI names something other than the current workspace agenda.")
   (:report (lambda (condition stream)
@@ -20,7 +20,7 @@
 ;;;; -- Agenda Resources --
 
 (defparameter *agenda-resource-maximum-observations* 16
-  "The transient agenda observations retained by one conversation.")
+  "The maximum number of agenda observations retained per conversation.")
 
 (defvar *agenda-resource-digest-key* (random-data 16)
   "The process-local key identifying exact current-workspace agenda snapshots.")
@@ -30,8 +30,8 @@
     :initarg       :directory
     :reader        agenda-resource-directory
     :type          non-empty-string
-    :documentation "The canonical current workspace directory resolved under authority."))
-  (:documentation "The canonical current workspace agenda exposed as agenda:current."))
+    :documentation "The current workspace's canonical directory, resolved under authority."))
+  (:documentation "The current workspace's canonical agenda, exposed as agenda:current."))
 
 (defclass agenda-resolver (resource-resolver)
   ()
@@ -63,7 +63,7 @@
                                          (agenda-observation-snapshot observation))))
 
 (defmethod resource-observation-state-class ((resource agenda-resource))
-  "Record agenda observations under the agenda state family."
+  "Return the state class for agenda observations."
   (declare (ignore resource))
   'agenda-observation-state)
 
@@ -85,7 +85,7 @@
 
 (-> agenda-resource--current-directory (tool-context) non-empty-string)
 (defun agenda-resource--current-directory (context)
-  "Return CONTEXT's canonical current workspace agenda directory."
+  "Return the canonical agenda directory for CONTEXT's current workspace."
   (let ((configuration (tool-context-configuration context)))
     (agenda-directory-name configuration
                            (config :working-directory configuration)
@@ -113,7 +113,7 @@
 
 (defmethod resource-capabilities
     ((resource agenda-resource) (context tool-context))
-  "Return current agenda operations only while RESOURCE matches CONTEXT's workspace."
+  "Return agenda capabilities only if RESOURCE matches CONTEXT's current workspace."
   (if (string= (agenda-resource-directory resource)
                (agenda-resource--current-directory context))
       '(:read :edit)
@@ -133,7 +133,7 @@
 
 (-> agenda-resource--render-record ((option workspace-agenda)) string)
 (defun agenda-resource--render-record (record)
-  "Return the complete model-visible agenda RECORD."
+  "Return the complete model-visible text for agenda RECORD."
   (if (and record (workspace-agenda-items record))
       (format nil "workspace: ~A~%~{~A~^~%~}"
               (workspace-agenda-directory record)
@@ -240,16 +240,14 @@
 
 (-> agenda-resource--text (json-object &key (:required boolean)) (option string))
 (defun agenda-resource--text (operation &key required)
-  "Return OPERATION's agenda text, cut at a word boundary with a note when over the limit.
-
-Agenda text is the model's own status note, so a few characters too many are
-better cut than refused; the note says how much was kept."
+  "Return OPERATION's agenda text, truncating overlong text at a word boundary when possible.
+When truncating, report how many characters were kept."
   (let ((text (agenda-resource--string-argument operation "text" "resource.edit"
                                                 :required required)))
     (if (and text (> (length text) *agenda-item-text-limit*))
         (let* ((space (position #\Space text :end *agenda-item-text-limit* :from-end t))
                (cut   (if (and space (plusp space)) space *agenda-item-text-limit*)))
-          (resource-tool-note "Agenda text had ~D characters; it was cut to the first ~D, within the ~D-character limit."
+          (resource-tool-note "Agenda text had ~D characters; the first ~D were kept to stay within the ~D-character limit."
                               (length text) cut *agenda-item-text-limit*)
           (subseq text 0 cut))
         text)))
@@ -259,7 +257,7 @@ better cut than refused; the note says how much was kept."
     (option string))
 (defun agenda-resource--string-argument
     (arguments name tool-name &key required)
-  "Return the optional string NAME in ARGUMENTS for TOOL-NAME."
+  "Return the string argument named NAME from ARGUMENTS for TOOL-NAME."
   (multiple-value-bind (value present-p)
       (gethash name arguments)
     (when (and required (not present-p))
@@ -276,7 +274,7 @@ better cut than refused; the note says how much was kept."
     (json-object string)
     (values list boolean))
 (defun agenda-resource--memory-identifiers (arguments tool-name)
-  "Return TOOL-NAME's memory-ids array and whether it was supplied."
+  "Return memory-ids as a list and indicate whether the argument was supplied to TOOL-NAME."
   (multiple-value-bind (value present-p)
       (gethash "memory-ids" arguments)
     (cond

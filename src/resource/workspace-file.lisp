@@ -3,10 +3,10 @@
 ;;;; -- Workspace File Resources --
 
 (defparameter *workspace-file-resource-maximum-observations* 16
-  "The transient resource observations retained by one conversation.")
+  "The maximum number of workspace-file observations retained per conversation.")
 
 (defparameter *workspace-file-resource-maximum-bytes* (* 4 1024 1024)
-  "The largest exact workspace-file snapshot retained for revision-gated editing.")
+  "The maximum workspace-file snapshot size in UTF-8 bytes for revision-gated editing.")
 
 (defparameter *workspace-file-resource-maximum-retained-bytes* (* 16 1024 1024)
   "The maximum UTF-8 bytes retained by workspace observations per conversation.")
@@ -88,7 +88,7 @@
     (workspace-file-observation)
     (integer 0))
 (defun workspace-file--observation-retained-bytes (observation)
-  "Return the UTF-8 bytes retained by OBSERVATION's exact snapshot."
+  "Return the number of UTF-8 bytes retained by OBSERVATION's exact snapshot."
   (length (utf8-string-to-octets
            (resource-observation-content observation))))
 
@@ -546,7 +546,7 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
 
 (-> workspace-file--link-new-target (pathname pathname) null)
 (defun workspace-file--link-new-target (source target)
-  "Atomically publish SOURCE as absent TARGET without overwriting a race."
+  "Atomically publish SOURCE at the absent TARGET without overwriting a concurrently created file."
   (platform-publish-new-file *platform* source target)
   (when (probe-file source)
     (delete-file source))

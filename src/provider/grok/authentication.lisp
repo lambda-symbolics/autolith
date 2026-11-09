@@ -29,12 +29,12 @@
   (declare (ignore source))
   "Grok Build")
 
-;; The rotating refresh token is deliberately never imported. Spending it
-;; would invalidate Grok Build's own copy and can revoke the whole token
-;; family, so Autolith only copies the bounded access token and obtains its
-;; own renewable credentials through device authentication.
 (defmethod credential-source-load ((source grok-bootstrap-credential-source))
-  "Load one non-renewable Grok bootstrap credential without modifying Grok Build."
+  "Load a non-renewable Grok Build access token without modifying its store.
+
+Never import Grok Build's rotating refresh token: using it could invalidate
+Grok Build's copy or revoke the token family. Use device authentication for
+renewable credentials."
   (let ((pathname (credential-source-pathname source)))
     (when (probe-file pathname)
       (handler-case
@@ -108,11 +108,11 @@
                              configuration))))
 
 (defmethod credential-manager-token-endpoint ((manager grok-credential-manager))
-  "Refresh Grok credentials at the xAI OAuth token endpoint."
+  "Return the xAI OAuth token endpoint for credential refresh."
   (declare (ignore manager))
   (grok-oauth-token-endpoint))
 
 (defmethod credential-manager-client-id ((manager grok-credential-manager))
-  "Refresh as the first-party xAI OAuth client."
+  "Return the first-party xAI OAuth client ID for credential refresh."
   (declare (ignore manager))
   *grok-oauth-client-id*)

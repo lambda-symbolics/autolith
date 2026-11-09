@@ -3,7 +3,7 @@
 ;;;; -- Active Image Inspection --
 
 (defvar *exploratory-definitions* (make-hash-table :test #'equal)
-  "Complete source forms installed exploratorily in the active image.")
+  "Complete source forms installed in the active image for trial.")
 
 (defvar *exploratory-undo-actions* (make-hash-table :test #'equal)
   "Exact in-memory undo actions for this process's pending mutations.")
@@ -337,11 +337,10 @@ match worker rendering. Conditions and nonlocal exits propagate unchanged."
 (defun self-call-with-restarts (thunk &key restart-name restart-value-source)
   "Call THUNK, invoking the chosen restart or describing the available ones.
 
-With RESTART-NAME, the first matching non-ABORT restart is invoked while the
-signaling operation is still live, optionally passing the evaluated
-RESTART-VALUE-SOURCE. Without a match, a condition that offers selectable
-restarts becomes a SELF-CORRECTABLE-ERROR whose report teaches the retry
-protocol."
+Invoke the first matching non-ABORT restart named by RESTART-NAME while the
+signaling operation is live, passing the evaluated RESTART-VALUE-SOURCE when
+supplied. If a condition offers selectable restarts but none matches, signal
+SELF-CORRECTABLE-ERROR with the available choices and retry instructions."
   (handler-case
       (call-with-restart-choice
        thunk
@@ -1079,10 +1078,8 @@ A failed read is remembered and signaled again for every later lookup."
 
 (-> self-source--component-pathnames (t) list)
 (defun self-source--component-pathnames (component)
-  "Return every existing Common Lisp source file beneath ASDF COMPONENT.
-
-A component whose :IF-FEATURE this image lacks is not part of the system here,
-and its file may not even read on this host, so it contributes nothing."
+  "Return existing Common Lisp source files beneath ASDF COMPONENT.
+Exclude components whose :IF-FEATURE expression is false on this host."
   (let ((feature (asdf/component:component-if-feature component)))
     (cond ((and feature (not (uiop:featurep feature)))
            nil)

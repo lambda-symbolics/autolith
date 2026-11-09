@@ -147,7 +147,7 @@
 
 (-> lsp-register-semantic-tools (tool-registry lsp-manager) tool-registry)
 (defun lsp-register-semantic-tools (registry manager)
-  "Register semantic operations on the existing shared language server manager."
+  "Register semantic operations in REGISTRY using the shared language server MANAGER."
   (tool-registry-register
    registry
    (make-instance

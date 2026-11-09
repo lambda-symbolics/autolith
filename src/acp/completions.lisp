@@ -4,7 +4,7 @@
 
 (-> acp-completion-wake (acp-session) null)
 (defun acp-completion-wake (session)
-  "Signal SESSION's controller without doing wire or durable work in a job callback."
+  "Wake SESSION's controller without sending protocol messages or writing durable state."
   (with-lock-held ((acp-session-lock session))
     (setf (acp-session-completion-wakeup-p session) t)
     (condition-notify (acp-session-completion-condition session)))
@@ -164,7 +164,7 @@
 
 (-> acp-completion--run (acp-session) null)
 (defun acp-completion--run (session)
-  "Own the session's wakeup loop, pausing on failure rather than retrying inference."
+  "Run the session's wakeup loop; pause on failure without retrying inference."
   (let* ((*standard-output* *error-output*)
          (*trace-output*    *error-output*)
          (*standard-input*  (make-string-input-stream ""))

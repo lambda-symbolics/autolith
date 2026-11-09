@@ -2,11 +2,6 @@
 
 ;;;; -- Nous OAuth Credential Management --
 
-;;; Nous refresh tokens rotate on every exchange and are single-use. Autolith
-;;; therefore serializes refresh and login publication across processes sharing
-;;; one state root, and always reloads the latest credential record while the
-;;; filesystem lock is held.
-
 (defclass nous-credential-manager (oauth-credential-manager)
   ((refresh-request-function
     :initarg       :refresh-request-function
@@ -137,7 +132,10 @@
 
 (defmethod credential-manager-call-with-refresh-lock
     ((manager nous-credential-manager) (function function))
-  "Serialize Nous rotation and publication across processes sharing the state root."
+  "Serialize Nous token rotation and login publication across processes.
+
+Refresh tokens are single-use. Reload the credentials while holding the
+filesystem lock before each exchange."
   (nous-authentication--call-with-store-lock
    (credential-source-pathname (credential-manager-primary-source manager))
    function))
@@ -155,12 +153,12 @@
 ;;;; -- Refresh Exchange --
 
 (defmethod credential-manager-token-endpoint ((manager nous-credential-manager))
-  "Refresh Nous credentials at the portal's OAuth token endpoint."
+  "Return the Nous Portal OAuth token endpoint."
   (declare (ignore manager))
   (concatenate 'string (nous-portal-url) "/api/oauth/token"))
 
 (defmethod credential-manager-client-id ((manager nous-credential-manager))
-  "Refresh as the Hermes CLI OAuth client."
+  "Return the Hermes CLI OAuth client ID."
   (declare (ignore manager))
   *nous-oauth-client-id*)
 

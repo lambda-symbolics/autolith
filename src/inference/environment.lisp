@@ -435,8 +435,6 @@ configuration before per-call model routing, so routing copies share its pool."
                            :provider          provider
                            :configuration     configuration
                            :budget            budget
-                           ;; Metadata records are replay-safe, so the root trace
-                           ;; itself carries the run's invocation tree.
                            :ledger
                            (lambda (record)
                              (conversation-append-provider-metadata
@@ -482,8 +480,6 @@ configuration before per-call model routing, so routing copies share its pool."
                    (handler-case
                        (prime (list (rlm--environment-reprime endpoint)))
                      (error ()
-                       ;; A wedged reused environment falls back to a fresh
-                       ;; worker instead of failing the whole run.
                        ; mallet:suppress no-ignore-errors -- stopping a discarded worker is best-effort cleanup
                        (ignore-errors (lisp-worker-stop worker))
                        (setf worker nil

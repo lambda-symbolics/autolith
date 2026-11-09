@@ -2,10 +2,6 @@
 
 ;;;; -- Nous Research Provider --
 
-;;; Nous Portal exposes one authenticated catalog over two streaming protocols:
-;;; anthropic/* identifiers use the native Messages API, while every other model
-;;; uses OpenAI-compatible Chat Completions.
-
 (defclass nous-provider-mixin ()
   ()
   (:documentation "Shared Nous OAuth behavior across its two wire protocols."))
@@ -26,7 +22,7 @@
   "Nous Research")
 
 (defmethod provider-family ((provider nous-provider-mixin))
-  "The Nous provider serves the Nous conversation family."
+  "Return the Nous conversation family."
   (declare (ignore provider))
   ':nous)
 
@@ -64,7 +60,7 @@
      &key (:registration (option provider-registration)))
     model-provider)
 (defun nous-provider--make (configuration manager session-id &key registration)
-  "Create the Nous wire implementation selected by CONFIGURATION's model."
+  "Create a Nous Messages client for anthropic/* models, or a Chat Completions client."
   (if (nous-provider--messages-model-p (config :model configuration))
       (make-instance
        'nous-messages-provider

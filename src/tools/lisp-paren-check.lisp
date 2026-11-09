@@ -24,20 +24,21 @@
 (defmethod tool-execute ((tool lisp-paren-check-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Check one recognized Lisp-family file or a directory tree."
+  "Check one recognized Lisp-family file or a directory tree.
+
+An approved path outside the workspace is readable for this check; only the
+requested tree is checked."
   (declare (ignore tool))
   (let ((requested (tool-argument arguments "path" :required t)))
     (unless (non-empty-string-p requested)
       (error 'tool-error
-             :message   "lisp.paren-check requires a non-empty string path."
+             :message   "lisp.paren-check requires a non-empty path string."
              :tool-name "lisp.paren-check"))
     (let* ((path  (workspace-tool-path context requested :tool-name "lisp.paren-check"))
            (roots (workspace-tool-readable-roots context)))
       (multiple-value-bind (success-p content)
           (lisp-paren-check-path
            path
-           ;; An approved outside path is readable for this check, as it is for
-           ;; resource.read; the check still stays inside the requested tree.
            :readable-roots (if (workspace-tool--read-path-allowed-p path roots)
                                roots
                                (cons (lisp-paren-check-tool--root path) roots)))
@@ -47,6 +48,6 @@
 
 (-> lisp-paren-check-tool--root (pathname) pathname)
 (defun lisp-paren-check-tool--root (path)
-  "Return the directory that makes approved PATH readable: itself, or the file's directory."
+  "Return approved PATH if it is a directory; otherwise, return its containing directory."
   (or (uiop:directory-exists-p path)
       (uiop:pathname-directory-pathname path)))

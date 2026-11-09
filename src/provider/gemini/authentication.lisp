@@ -163,7 +163,7 @@
 
 (-> gemini-oauth--credentials-from-document (credential-manager json-object) oauth-credentials)
 (defun gemini-oauth--credentials-from-document (manager document)
-  "Validate login token DOCUMENT and return persisted Gemini credentials."
+  "Validate token response DOCUMENT and return Gemini credentials."
   (let* ((access-token  (json-get document "access_token"))
          (refresh-token (json-get document "refresh_token"))
          (id-token      (json-get document "id_token"))
@@ -210,12 +210,12 @@
       client :code code :verifier verifier :redirect-uri redirect-uri))))
 
 (defmethod credential-manager-token-endpoint ((manager gemini-credential-manager))
-  "Refresh Gemini credentials at Google's installed-app OAuth token endpoint."
+  "Return Google's installed-app OAuth token endpoint for credential refresh."
   (declare (ignore manager))
   *gemini-oauth-token-endpoint*)
 
 (defmethod credential-manager-client-id ((manager gemini-credential-manager))
-  "Refresh as the configured Gemini installed-app client."
+  "Return the configured Gemini installed-app client ID."
   (declare (ignore manager))
   (gemini-oauth-client-id))
 

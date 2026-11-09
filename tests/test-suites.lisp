@@ -1454,8 +1454,6 @@
   test-cli-detached-receipt-cleanup
   test-cli-detached-process)
 
-;;; The release scripts and the release server that drives them deploy to
-;;; POSIX hosts, so their suites exist only where the POSIX shell does.
 (when (test-fixture-available-p *platform* ':posix-shell)
   (define-test-suite release-script
     test-build-sandbox-packaged-helpers

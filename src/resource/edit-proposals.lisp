@@ -73,13 +73,13 @@
 
 (-> edit-proposal-retain (edit-proposal-store tool-context edit-proposal) edit-proposal)
 (defun edit-proposal-retain (store context proposal)
-  "Admit PROPOSAL atomically, evicting oldest idle entries within owner budgets.
-A proposal can be assigned to exactly one retention store for its lifetime."
+  "Retain PROPOSAL atomically, evicting the oldest idle entries as needed to meet STORE's limits.
+Once assigned to a retention store, a proposal cannot change stores."
   (with-lock-held (*edit-proposal-ownership-lock*)
     (when (and (edit-proposal-store proposal)
                (not (eq (edit-proposal-store proposal) store)))
       (edit-proposal-fail store ':proposal-owned
-                          "Proposal is already retained by another owner."))
+                          "Proposal is already assigned to another retention store."))
     (with-lock-held ((edit-proposal-store-lock store))
       (when (edit-proposal-consumed-p proposal)
         (edit-proposal-fail store ':unknown-proposal
@@ -150,7 +150,7 @@ A proposal can be assigned to exactly one retention store for its lifetime."
 (-> edit-proposal-apply
     (edit-proposal-store tool-context edit-proposal &key (:before (option function))) list)
 (defun edit-proposal-apply (store context proposal &key before)
-  "Publish once; failed validation or publication retains an inspectable, retryable proposal."
+  "Publish PROPOSAL successfully at most once; retain it for inspection and retry if validation or publication fails."
   (sb-sys:without-interrupts
     (edit-proposal--reserve store context proposal)
     (unwind-protect

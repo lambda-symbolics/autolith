@@ -110,8 +110,6 @@
                           (lambda (result &key artifact-available-p)
                             (let ((compact (funcall compact-result-function result
                                                     :artifact-available-p artifact-available-p)))
-                              ;; Exercise missing retained usage independently of
-                              ;; the bounded summary normally kept by compaction.
                               (when omit-usage-p
                                 (remf compact :usage))
                               (setf usage-omitted-p (null (getf compact :usage)))

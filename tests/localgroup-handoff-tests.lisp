@@ -684,8 +684,6 @@
            (setf application new-application
                  controller new-controller
                  session (localgroup-start new-application)))
-         ;; An outer pause keeps the reader stopped across the handoff's own
-         ;; pause, as a pausing caller would.
          (application-input-controller-call-with-reader-paused
           controller
           (lambda ()

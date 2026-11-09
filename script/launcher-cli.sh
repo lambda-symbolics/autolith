@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
 
-# Shared preflight for source, Nix, and packaged launchers. Application command
-# validation belongs to Clingon; this boundary only selects a launch or update.
-
 autolith_update_usage()
 {
   printf 'Usage: autolith update [--help]\n       autolith --update [--help]\n'
@@ -71,8 +68,6 @@ autolith_launcher_parse()
       --permissions|--image|-i|--site-config-root|--model|--provider|--id|--input|--output|\
       --events|--generation|--status|--capsule|--original-argument|--workspace|--token|\
       --days|--examples)
-        # Forward a value verbatim, even when it resembles a launcher flag.
-        # These are arities only, not a second application option parser.
         take_value=true
         remaining_arguments+=("$argument")
         ;;
@@ -103,9 +98,6 @@ autolith_launcher_parse()
   done
 
   if [[ $uninstall_requested == true ]]; then
-    # An uninstall is a standalone operation with one optional confirmation
-    # flag. The launcher performs it before any Lisp starts, so nothing here
-    # depends on a runnable image.
     set -- "${original_arguments[@]}"
     if [[ $# -gt 1 && ${!#} == -- ]]; then
       set -- "${original_arguments[@]:0:$#-1}"
@@ -131,8 +123,6 @@ autolith_launcher_parse()
   fi
 
   if [[ $update_requested == true ]]; then
-    # An update is a standalone operation, never a session option. A final --
-    # ends option parsing; anything after it would be an unexpected operand.
     set -- "${original_arguments[@]}"
     if [[ $# -gt 1 && ${!#} == -- ]]; then
       set -- "${original_arguments[@]:0:$#-1}"

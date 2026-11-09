@@ -2,12 +2,6 @@
 
 ;;;; -- Structured Knowledge Fixture Families --
 
-;;; Each family runs ten scenarios in two variants through the same tool
-;;; operations a model uses, against local files and replayed observations,
-;;; with no provider. Expected values are computed independently here, so
-;;; the engine is checked against plain arithmetic, and every scenario
-;;; asserts that it made no provider request.
-
 (defparameter *knowledge-fixture-day* (encode-universal-time 0 0 0 22 10 2026 0)
   "Midnight UTC of the day the fixtures' events take place.")
 

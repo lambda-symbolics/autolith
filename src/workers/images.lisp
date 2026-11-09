@@ -5,9 +5,9 @@
 (defparameter *lisp-worker-protocol-version* 3
   "The worker protocol version Autolith workers announce and require.
 
-Version 3 sends evaluation requests as a :FORMS list. Saved worker images keep
-the protocol runtime they were saved with, so an older image fails its
-handshake instead of misreading requests.")
+Version 3 sends evaluation requests as a :FORMS list. A saved worker image keeps
+its protocol runtime. Images with an incompatible protocol version fail the
+handshake before reading requests.")
 
 (-> pristine-lisp-image-identifier () string)
 (defun pristine-lisp-image-identifier ()

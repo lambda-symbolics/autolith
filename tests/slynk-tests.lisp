@@ -2,10 +2,6 @@
 
 ;;;; -- Slynk Test Support --
 
-;;; A stub Slynk exposes the handful of symbols the endpoint uses and records
-;;; how it was called, so the lifecycle is checked without a real sly. One
-;;; case loads the real Slynk when this host has a sly checkout.
-
 (defparameter *slynk-test-stub-system*
   "(asdf:defsystem \"slynk\" :components ((:file \"slynk\")))
 "

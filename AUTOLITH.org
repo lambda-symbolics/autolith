@@ -147,8 +147,9 @@ a user-local init.lisp change, or a private image commit.
 
 ** Recent child coordination notes
 
-- Problem: Long live child output became an omitted-field descriptor in =job.get=,
-  hiding the newest source-freeze and Git-index coordination notes.
+- Problem: When live child output was long, =job.get= returned an omitted-field
+  descriptor instead, hiding the newest source-freeze and Git-index coordination
+  notes.
 - Behavior: Retain a bounded newest-tail preview for =:progress-output= in native
   job records, including a count of omitted leading characters.
 - Scope and location: private =task--artifact-field= definition, image commit
@@ -292,10 +293,11 @@ a user-local init.lisp change, or a private image commit.
 - Behavior: =github.wait-workflows= polls Actions runs for one repository and
   commit through Dexador, optionally filters by workflow and event, uses
   =GH_TOKEN= or =GITHUB_TOKEN= when available, requires two stable completed
-  observations, and returns one compact terminal summary. Its bounded timeout
-  retries transport failures and explicitly transient HTTP statuses. Permanent
-  API failures, including unauthenticated HTTP 401 and 403 responses, stop after
-  the first request without exposing credentials.
+  observations, and returns one compact terminal summary. Within a bounded
+  timeout, the tool retries requests after transport failures or responses with
+  explicitly transient HTTP statuses. On permanent API failures, including
+  unauthenticated HTTP 401 and 403 responses, the tool stops after the first
+  request without exposing credentials.
 - Scope and location: private image commits
   =2dcb8218-a80b-4672-aa6e-b34dbeaf5086= and
   =823c003e-aa27-42b8-aa99-521606752548=; private Git commits
@@ -317,11 +319,12 @@ a user-local init.lisp change, or a private image commit.
   failures after the finite 1, 2, 4, 8, and 16 second waits, ending active goals
   and requiring manual =resume= operations.
 - Behavior: Provider transport normalization now wraps the complete logical
-  attempt, including credential acquisition and request construction. DNS,
-  socket, pre-response TLS syscall, and provider retryable conditions preserve
-  the in-flight turn and retry indefinitely with exponential jitter. Delays
-  begin near one second and cap in the 40 to 60 second range. Authentication and
-  definitive TLS failures retain bounded or immediate failure behavior.
+  attempt, including credential acquisition and request construction. For DNS,
+  socket, pre-response TLS syscall, and provider retryable conditions, Autolith
+  preserves the in-flight turn and retries indefinitely with exponential jitter.
+  Delays begin near one second and cap in the 40 to 60 second range.
+  Authentication and definitive TLS failures retain bounded or immediate
+  failure behavior.
 - Scope and location: tracked project work in =src/provider/client.lisp= and
   =tests/provider-tests.lisp=, committed as =2dbdbad=.
 - Verification: focused provider tests passed for successful continuation beyond
@@ -657,10 +660,10 @@ a user-local init.lisp change, or a private image commit.
   still blocked in =script/check.lisp= after 40 minutes, preventing both v0.23.2
   and v0.23.3 archive publication even though the updater and server had already
   activated v0.23.2.
-- Behavior: each managed release container has a unique name and a generous
-  30-minute deadline. Failure or timeout prints bounded process and log
-  diagnostics, then force-removes the complete container before the polling loop
-  retries. The deadline is configurable with
+- Behavior: each managed release container has a unique name and a 30-minute
+  deadline. On failure or timeout, bounded process and log diagnostics are
+  printed and the complete container is then force-removed before the polling
+  loop retries. The deadline is configurable with
   =AUTOLITH_RELEASE_CONTAINER_TIMEOUT_SECONDS=.
 - Scope and location: tracked project work in =server/release-builder.lisp= and
   release-server regressions.

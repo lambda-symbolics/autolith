@@ -1893,8 +1893,6 @@
                                         :agent         parent)))
     (unwind-protect
          (progn
-           ;; The fixture job is unregistered; make it findable and counted
-           ;; the way task-tests--attach-job registers pool jobs.
            (let ((pool (task-orchestrator-pool orchestrator)))
              (with-lock-held ((cl-jobpond::job-pool--lock pool))
                (setf (gethash (session-job-identifier job)

@@ -308,11 +308,7 @@ conversation transaction can roll back before releasing either lease."
 
 (-> localgroup--attach-expected-p (list) boolean)
 (defun localgroup--attach-expected-p (startup-values)
-  "Return true when STARTUP-VALUES promise a controlling client attaches promptly.
-
-Client-first launches and take-over replacements are started for a
-terminal that connects right away; a detach handoff is started to live
-without one."
+  "Return true when a controlling client is expected to attach at startup."
   (or (not (null (getf startup-values :attach-expected-p)))
       (eq (getf startup-values :mode) ':take-over)))
 
@@ -350,14 +346,8 @@ without one."
 
 (-> localgroup--controller-lost (localgroup-session) boolean)
 (defun localgroup--controller-lost (session)
-  "Handle SESSION losing its controlling client and report whether it exits.
-
-A session with no connection left lingers only when its controller left
-through an explicit detach. A closed window, a dropped connection, or a
-client that ended without detaching exits the session instead, so
-abandoned launches never accumulate as idle background processes. The
-exit persists pending input and cancels an active turn the way any
-forced shutdown does; the conversation stays resumable."
+  "Request SESSION's exit if the controlling client disconnected without detaching.
+Pending input is saved and any active turn is cancelled. Return true when requested."
   (let ((exit-p
          (with-lock-held ((image-daemon:daemon-runtime-lock session))
            (not (localgroup-session-detached-explicitly-p session)))))

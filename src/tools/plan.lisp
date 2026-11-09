@@ -4,22 +4,22 @@
 
 (defclass plan-tool (tool)
   ()
-  (:documentation "A tool reading or updating the current workspace plan."))
+  (:documentation "A tool for reading or updating the current workspace plan."))
 
 (defclass plan-list-tool (plan-tool)
   ()
-  (:documentation "A tool reading the current workspace plan."))
+  (:documentation "A tool for reading the current workspace plan."))
 
 (defclass plan-update-tool (plan-tool)
   ()
-  (:documentation "A tool replacing the current workspace plan."))
+  (:documentation "A tool for replacing the current workspace plan."))
 
 (defclass plan-expand-tool (plan-tool)
   ()
-  (:documentation "A tool replacing the plan with a task expanded by its methods."))
+  (:documentation "A tool for expanding a task and replacing the plan with the result."))
 
 (defmethod tool-execution-policy ((tool plan-expand-tool))
-  "Serialize plan replacement against the rest of one provider batch."
+  "Serialize plan replacement with other tool calls in the provider batch."
   (declare (ignore tool))
   ':exclusive)
 
@@ -28,7 +28,7 @@
   t)
 
 (defmethod tool-execution-policy ((tool plan-update-tool))
-  "Serialize plan replacement against the rest of one provider batch."
+  "Serialize plan replacement with other tool calls in the provider batch."
   (declare (ignore tool))
   ':exclusive)
 
@@ -63,7 +63,7 @@
 
 (-> plan-tool--patterns (t function) list)
 (defun plan-tool--patterns (value schema-function)
-  "Return the fact patterns in JSON array VALUE, read by their predicates' schemas."
+  "Return the fact patterns in JSON array VALUE, parsed using their predicates' schemas."
   (unless (vectorp value)
     (error 'tool-error :message   "requires must be an array of fact patterns."
                        :tool-name "plan.update"))
@@ -92,9 +92,9 @@
 (defun plan-tool--receipts (steps previous view)
   "Return STEPS with a receipt on each structured step newly marked done.
 
-A step keeps the receipt it had under the same id; a step done now records the
-bindings and facts satisfying its requirements at this moment, so a later
-change to those facts can be reported without repeating the step."
+Reuse existing receipts for completed steps with unchanged ids. For newly
+completed steps, record the bindings and facts that satisfy the requirements.
+Later changes to those facts can be reported without rerunning the step."
   (mapcar
    (lambda (step)
      (let* ((identifier (getf step :id))
@@ -199,7 +199,7 @@ change to those facts can be reported without repeating the step."
                               (getf details :unmet)))))
             (:exhausted
              (tool-success
-              (format nil "Expanding ~A tried ~D tasks without finishing; the plan is unchanged. The methods may recurse or branch too widely."
+              (format nil "Could not finish expanding ~A after trying ~D tasks; the plan is unchanged. The methods may recurse or branch too widely."
                       (knowledge-pattern-text task) (getf details :nodes)))))))
     (knowledge-error (condition)
       (error 'tool-error :message (autolith-error-message condition) :tool-name "plan.expand"))

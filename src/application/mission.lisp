@@ -169,7 +169,7 @@
 
 (-> mission-task-job-unknown-usage (task-job) unsigned-byte)
 (defun mission-task-job-unknown-usage (child)
-  "Read CHILD's durable UNKNOWN audit, including reservation-settled requests."
+  "Read CHILD's durable unknown-usage count, including requests settled against reservations."
   (getf (mission-task-job-accounting-summary child) :unknown-usage))
 
 (-> mission--present-terminal-notice (mission-context keyword t) null)
@@ -239,8 +239,8 @@
 
 (-> mission--admit (mission-context &key (:inference-p boolean) (:new-work-p boolean)) null)
 (defun mission--admit (context &key (inference-p t) new-work-p)
-  "Admit active work or bounded continuation of an already started quarantined child.
-NEW-WORK-P always requires an active mission. Hard budgets apply to both paths."
+  "Admit work in an active mission or let an admitted child finish during quarantine.
+NEW-WORK-P requires an active mission. Hard budgets apply to both paths."
   (let* ((goal        (mission-context-goal context))
          (application (mission-context-application context)))
     (unless (eq goal (application-goal application))
@@ -268,8 +268,8 @@ NEW-WORK-P always requires an active mission. Hard budgets apply to both paths."
 
 (-> mission--supervise (mission-context string function &key (:timeout integer)) t)
 (defun mission--supervise (context name function &key timeout)
-  "Run FUNCTION inline through cl-jobpond under the mission's remaining deadline.
-The calling thread preserves provider bindings and authorization callbacks."
+  "Run FUNCTION inline through cl-jobpond within the mission's remaining time,
+preserving the calling thread's provider bindings and authorization callbacks."
   (let* ((terminal-condition nil)
          (milliseconds       (mission--remaining-milliseconds context))
          (pool               (make-job-pool :name name :maximum-concurrency 1
@@ -319,7 +319,7 @@ The calling thread preserves provider bindings and authorization callbacks."
 
 (-> mission--conversation-context (conversation) (option mission-context))
 (defun mission--conversation-context (conversation)
-  "Prefer primary work's admitted identity over a replacement conversation mission."
+  "Prefer the mission context admitted for primary work over the conversation's replacement context."
   (let* ((context     (mission-context-find conversation))
          (application (and context (mission-context-application context)))
          (agent       (and application (application-agent application))))
@@ -352,7 +352,7 @@ The calling thread preserves provider bindings and authorization callbacks."
 
 (-> mission--unknown-usage-blocks-p (list) boolean)
 (defun mission--unknown-usage-blocks-p (goal)
-  "Require a new budget for unknown usage unless GOAL explicitly records it only."
+  "Require a new budget for unknown usage unless GOAL's unknown-usage policy is :record."
   (and (plusp (getf goal :unknown-usage 0))
        (not (eq (getf goal :unknown-usage-policy) ':record))))
 
@@ -363,7 +363,7 @@ The calling thread preserves provider bindings and authorization callbacks."
                (consp (getf specification :criteria))
                (every (lambda (key) (typep (getf specification key) '(integer 1)))
                       '(:turn-limit :token-limit :wall-seconds)))
-    (mission--reject ':invalid "A mission requires objective, criteria and positive turn-limit, token-limit and wall-seconds."))
+    (mission--reject ':invalid "A mission requires an objective, criteria, and positive values for turn-limit, token-limit and wall-seconds."))
   (unless (member (getf specification :unknown-usage-policy ':block) '(:block :record))
     (mission--reject ':invalid "Unknown usage policy must be :block or :record."))
   (let* ((gates                 (mapcar #'mission-gate-normalize (getf specification :gates)))
@@ -381,7 +381,7 @@ The calling thread preserves provider bindings and authorization callbacks."
                    (every (lambda (id) (member id gate-identifiers :test #'equal))
                           (getf criterion :gates))
                    (not (member (getf criterion :id) criterion-identifiers :test #'equal)))
-        (mission--reject ':invalid "Criteria require unique IDs, descriptions and existing gate IDs."))
+        (mission--reject ':invalid "Each criterion requires a unique ID and a description. Any gate IDs must refer to existing gates."))
       (push (getf criterion :id) criterion-identifiers))
     (unless (= (length gate-identifiers) (length (remove-duplicates gate-identifiers :test #'equal)))
       (mission--reject ':invalid "Gate IDs must be unique."))
@@ -446,7 +446,7 @@ The calling thread preserves provider bindings and authorization callbacks."
                  (member (getf goal :status) '(:paused :blocked)))
       (mission--reject ':invalid "Only paused or blocked missions can resume."))
     (when (mission--unknown-usage-blocks-p goal)
-      (mission--reject ':unknown-usage "Unknown token usage requires a new mission budget, not resume."))
+      (mission--reject ':unknown-usage "Cannot resume: unknown token usage requires a new mission budget."))
     (mission--transition context ':active "User resumed the mission without resetting budgets.")
     (mission--admit context :inference-p nil))
   nil)
@@ -514,8 +514,8 @@ A quarantined child with live admitted identity may finish its bounded task."
 
 (-> mission--stopped-tool-result ((option mission-context)) tool-result)
 (defun mission--stopped-tool-result (context)
-  "Explain a refused tool using only allowlisted exact-context state.
-Report identity relative to the guarded goal, never arbitrary goal evidence."
+  "Explain a tool refusal using only allowlisted state from the associated mission context.
+Report whether the guarded goal is current or replaced; omit arbitrary goal evidence."
   (if (null context)
       (tool-failure "Mission work stopped; its associated context is unavailable. No tool ran."
                     :code ':mission-stopped)
@@ -673,11 +673,11 @@ Report identity relative to the guarded goal, never arbitrary goal evidence."
 (defmethod provider-attempt-native-compaction :around
     ((provider codex-subscription-provider) (conversation conversation)
      &key tool-namespaces force-refresh event-callback)
-  "Account detached native views at real attempts, not at unsupported capability probes."
+  "Account for detached native views when native compaction is attempted, not during unsupported capability probes."
   (declare (ignore tool-namespaces force-refresh event-callback))
   (let ((context (and (eq conversation (first *mission-native-compaction-view*))
                       (rest *mission-native-compaction-view*))))
-    ;; Already bound conversations are accounted by the outer native generic.
+    ;; Already bound conversations are accounted for by the outer native generic.
     (if (and context (not (mission-context-find conversation)))
         (mission-call-with-request-view
          context conversation

@@ -335,9 +335,8 @@
     (source target entries &key write-date)
   "Copy SOURCE to TARGET while rewriting one readable form at a time.
 
-The durable log may contain a very large conversation. Processing one top-level
-form at a time keeps migration stack-safe while preserving readable arrays and
-shared structure. An incomplete final form remains ignored, as in log-read."
+Processing one form at a time bounds stack use and preserves readable arrays
+and shared structure. Ignore an incomplete final form, as LOG-READ does."
   (let ((changed-p nil))
     (publish-file
      target
@@ -362,8 +361,6 @@ shared structure. An incomplete final form remains ignored, as in log-read."
                         (terpri output)))))))
      :publish-function
      (lambda (temporary final)
-       ;; An unchanged file rewritten onto itself keeps its current content;
-       ;; the temporary is still cleaned up by the publication.
        (when (or changed-p (not (equal source final)))
          (platform-make-private *platform* temporary)
          (platform-replace-file *platform* temporary final)

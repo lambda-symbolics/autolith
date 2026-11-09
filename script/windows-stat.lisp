@@ -123,8 +123,6 @@ extended prefix. Already extended/device paths retain their native semantics."
                                   (string= full "\\\\" :end1 2))
                              (concatenate 'string "\\\\?\\UNC\\" (subseq full 2))
                              (concatenate 'string "\\\\?\\" full))))))
-      ;; Match SBCL's directory separator tolerance without removing the
-      ;; separator required by a drive, volume GUID or UNC share root.
       (let ((end      (length native))
             (root-end (autolith-windows--path-root-end native)))
         (loop while (and (> end root-end)
@@ -191,8 +189,6 @@ inode, uid, gid, block-size and block-count results are zero."
                         (sb-alien:slot result 'creation-time)
                         0 0)))))))
 
-  ;; LOAD-SHARED-OBJECT records the DLL for reopening when a saved core starts.
-  ;; No foreign function address or module handle is retained in the heap.
   (sb-alien:load-shared-object "ucrtbase.dll")
   (assert (= 56 (sb-alien:alien-size autolith-windows--stat64 :bytes)))
   (sb-ext:with-unlocked-packages (sb-unix)

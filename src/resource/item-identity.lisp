@@ -2,11 +2,6 @@
 
 ;;;; -- Identified Item Resource Machinery --
 
-;;; Memory, papercut, and agenda resources share one shape: a URI scheme
-;;; with reserved collection names and revision-gated observations of
-;;; exact items. The scheme-independent machinery lives here once; each
-;;; resource supplies its identity protocol methods and nouns.
-
 (-> resource-uri-unreserved-octet-p ((unsigned-byte 8)) boolean)
 (defun resource-uri-unreserved-octet-p (octet)
   "Return true when OCTET is an RFC 3986 unreserved ASCII character."
@@ -155,7 +150,7 @@
     (string json-object &key (:allowed list) (:required list))
     null)
 (defun resource-item-validate-operation-fields (noun operation &key allowed required)
-  "Require OPERATION to contain exactly ALLOWED fields and every REQUIRED field."
+  "Require OPERATION to contain only ALLOWED fields and every REQUIRED field."
   (loop for name being the hash-keys of operation
         unless (member name allowed :test #'string=)
           do
@@ -175,7 +170,7 @@
 
 (-> resource-item-read-result (resource-observation-state) non-empty-string)
 (defun resource-item-read-result (state)
-  "Return one explicit model-facing complete item observation result."
+  "Return STATE's observation as model-facing text with its URI, revision alias and full content."
   (let ((observation (resource-observation-state-observation state)))
     (format nil "URI: ~A~%Revision: ~A~%Content:~%~A"
             (resource-observation-uri observation)

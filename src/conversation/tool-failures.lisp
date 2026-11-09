@@ -2,11 +2,6 @@
 
 ;;;; -- Failed Tool Call Survey --
 
-;;; Pair each failed tool result with the call that produced it, so tool
-;;; descriptions and ergonomics can be judged from real sessions. Segments are
-;;; read one form at a time and only when written since the cutoff, so a long
-;;; history costs only its recent part. Nothing is written or repaired.
-
 (defparameter *tool-failure-text-limit* 600
   "Maximum characters kept from one failure's arguments or error text.")
 

@@ -1098,8 +1098,6 @@
                      (error "Daemon timer did not reach occurrence publication."))
                    (test-assert (and timer-thread (not (eq primary timer-thread)))
                                 "the real daemon timer runs independently of primary recovery")
-                   ;; Resolution mutates the scheduler before synchronous daemon notification.
-                   ;; Release the timer at that boundary, then perform the real notification.
                    (let ((notify (symbol-function 'mission-schedule--notify)))
                      (test-call-with-function-replacements
                       (list (list 'mission-schedule--notify

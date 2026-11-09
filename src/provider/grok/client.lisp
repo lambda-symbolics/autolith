@@ -2,20 +2,6 @@
 
 ;;;; -- Grok Subscription Provider --
 
-;;; The Grok subscription proxy speaks the standard streaming Responses API,
-;;; as read from grok-build 1.0.13, reference commit bb7f39d5. Tools ride in the
-;;; request's flat tools array and function calls return one flat wire name, so
-;;; this provider joins Autolith's namespaced tool names with a dot on the way
-;;; out and splits them again on completed items. Conversations persist in the
-;;; same namespaced shape regardless of the serving provider.
-;;;
-;;; Grok generation loops are stochastic, so the proxy offers a server-side
-;;; detector: the x-grok-doom-loop-check request header opts in, and the
-;;; stream then reports cumulative trigger labels through non-standard
-;;; response.doom_loop_check events. Confident thinking-channel triggers
-;;; abandon the looping stream for an immediate resample within a bounded
-;;; per-turn budget; once the budget is spent the response is accepted as-is.
-
 (defparameter *grok-doom-loop-window-tokens* 1024
   "The doom-loop detector window sent as the opt-in header value.")
 
@@ -39,7 +25,7 @@
   "Grok")
 
 (defmethod provider-family ((provider grok-subscription-provider))
-  "The Grok provider serves the Grok model family."
+  "Return the Grok model family."
   (declare (ignore provider))
   ':grok)
 
@@ -47,7 +33,7 @@
     ((family (eql ':grok))
      (configuration configuration)
      &key reasoning-summaries-p)
-  "Create the direct Grok subscription provider, which has no summary switch."
+  "Create the direct Grok subscription provider."
   (declare (ignore reasoning-summaries-p))
   (grok-provider-create configuration))
 
@@ -229,11 +215,10 @@ user's to judge."
     ((provider grok-subscription-provider)
      (conversation conversation)
      &key compaction-p &allow-other-keys)
-  "Retry a Grok response that completed without any visible output.
+  "Reject responses with no assistant message or tool call, except during compaction.
 
-Grok Build treats a reasoning-only or truncated empty completion as a
-transient failure, so an empty result becomes a bounded retryable error
-instead of an empty assistant turn. Validation runs inside attempt outcome wrappers."
+Treat reasoning-only or truncated empty completions as transient failures with
+bounded retries. Validate results inside attempt outcome wrappers."
   (let ((result (call-next-method)))
     (when (and (not compaction-p)
                (grok--empty-response-p result))

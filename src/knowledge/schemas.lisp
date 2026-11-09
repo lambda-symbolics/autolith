@@ -2,12 +2,6 @@
 
 ;;;; -- Predicate Schemas and Propositions --
 
-;;; A schema declares one predicate: its qualified name, typed arguments, the
-;;; argument positions identifying its subject, and a sentence template. A
-;;; proposition applies a predicate to canonical terms, or negates one. Claims
-;;; are identified by their scope and canonical proposition, so one fact
-;;; stated twice is one claim with two supports.
-
 (defparameter *knowledge-argument-limit* 8
   "The maximum arguments of one predicate.")
 

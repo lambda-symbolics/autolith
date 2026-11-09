@@ -305,10 +305,6 @@
      (test-assert
       (= 3 (getf (test-check--call "CHECK--PARSE-ARGUMENTS" '("--jobs" "3")) ':jobs))
       "explicit concurrency overrides CPU detection")))
-  ;; Windows publishes the count in the environment; the utilities are the
-  ;; path every host takes without it. Windows 11 answers the variable from
-  ;; the processor count itself whatever the environment block holds, so the
-  ;; utility path is only reachable where removing it actually removes it.
   (with-test-environment (("NUMBER_OF_PROCESSORS" nil))
     (if (uiop:getenv "NUMBER_OF_PROCESSORS")
         (test-withheld ':removable-processor-count

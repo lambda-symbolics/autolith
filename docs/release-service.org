@@ -244,10 +244,10 @@ curl -fsSIL https://sh.lambda-symbolics.com/releases/latest
 curl -fsSL https://sh.lambda-symbolics.com/autolith | sh -n
 #+END_SRC
 
-An empty publication root publishes only the newest remote tag, and only after
-GitHub has its Linux archive. After the first successful publication, the
-builder processes every newer missed tag in order and merges later platform
-files into already-published tags.
+If the publication root is empty, the builder publishes only the newest remote
+tag, and only after that tag's Linux archive is available on GitHub. After the
+first successful publication, the builder processes every newer missed tag in
+order and merges later platform files into already-published tags.
 
 The updater independently chooses the newest release-host tag. It clones into a
 same-filesystem incoming path, verifies the exact direct tag and commit, renames
@@ -264,9 +264,10 @@ Promotion first writes a =:prepared= native sexp transaction, updates the
 =previous= and =current= symlinks atomically, and writes =:selected=. It then
 drives the old server fully down and the selected server up. The selected
 process must answer =/health/TAG/COMMIT= before the builder is similarly cycled
-and verified up. Only then does the transaction become =:active=. A crash in
-any intermediate phase is completed on the next updater start. Activation
-failure restores =previous= and cycles both services against that source.
+and verified up. Only then does the transaction become =:active=. After a crash
+in any intermediate phase, the transaction is completed when the updater next
+starts. If activation fails, =previous= is restored and both services are
+cycled against that source.
 Generic =/health= is accepted only when rolling back to the legacy 0.16.0
 deployment, which predates source-specific health.
 
@@ -274,7 +275,7 @@ Release artifacts remain immutable across host implementation updates.
 
 Installed clients use the =latest= redirect only for bounded availability
 requests and again after an attended update choice. The background request
-updates private cached metadata but cannot install anything. After the terminal
-interface exits cleanly for an accepted update, the selected release launcher
-uses its own bundled installer to fetch the archive and checksum from this
-service, verify them, atomically select the release, and restart.
+updates private cached metadata but cannot install anything. After an update
+is accepted and the terminal interface exits cleanly, the selected release
+launcher uses its own bundled installer to fetch the archive and checksum from
+this service, verify them, atomically select the release, and restart.

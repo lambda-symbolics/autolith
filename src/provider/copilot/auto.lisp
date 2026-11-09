@@ -13,10 +13,10 @@
     :accessor      copilot-auto-provider-preferred-model
     :type          (option string)
     :documentation "The last successful concrete model ID, without credentials."))
-  (:documentation "Resolve Copilot Auto to an entitled wire adapter for each request."))
+  (:documentation "Copilot Auto provider with per-request model and protocol selection."))
 
 (defmethod copilot-provider-protocol ((provider copilot-auto-provider))
-  "Resolve the Auto pseudomodel before projecting a wire request."
+  "Return the Auto protocol marker."
   (declare (ignore provider))
   ':auto)
 
@@ -31,7 +31,7 @@
 
 (-> copilot-auto--session (copilot-auto-provider oauth-credentials) json-object)
 (defun copilot-auto--session (provider credentials)
-  "Acquire a request-scoped Auto token without retaining secret-bearing failures."
+  "Request an Auto session without retaining secrets in errors."
   (handler-case
       (multiple-value-bind (body status)
           (provider-call-with-response-deadline
@@ -67,7 +67,7 @@
 
 (-> copilot-auto--catalog (configuration) json-object)
 (defun copilot-auto--catalog (configuration)
-  "Read secret-free metadata for hidden models which Auto may select."
+  "Read secret-free metadata for hidden Auto models."
   (handler-case
       (let* ((catalog  (read-portable-form (copilot--catalog-path configuration)))
              (document (and (equal (getf catalog :domain) (copilot--domain))
@@ -84,7 +84,7 @@
 (-> copilot-auto--model
     (copilot-auto-provider json-object &key (:vision-p boolean)) (values list string))
 (defun copilot-auto--model (provider session &key vision-p)
-  "Resolve an entitled concrete model, refreshing stale catalog metadata once."
+  "Select an authorized model, refreshing a stale catalog once."
   (let ((configuration (provider-configuration provider)))
     (labels ((resolve-model ()
                (copilot-auto-session-model
@@ -97,12 +97,12 @@
           (handler-case (resolve-model)
             (cl-llm-provider-api:provider-error ()
               (error 'configuration-error
-                     :message "Copilot Auto returned no usable tool-capable model or a malformed session."))))))))
+                    :message "Copilot Auto returned a malformed session or no usable model with tool support."))))))))
 
 (defmethod provider-call-with-request-adapter
     ((provider copilot-auto-provider) (credentials oauth-credentials) (function function)
      &key conversation)
-  "Project Auto through the selected protocol with request-scoped session credentials."
+  "Call FUNCTION with the selected protocol adapter and request-scoped credentials."
   (multiple-value-bind (model token)
       (copilot-auto--model
        provider (copilot-auto--session provider credentials)

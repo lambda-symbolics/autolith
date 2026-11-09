@@ -2,17 +2,9 @@
 
 ;;;; -- Emacs Tools --
 
-;;; Two tools act in the person's Emacs through its server: showing them a
-;;; place in a file and evaluating elisp for them. What they see and their
-;;; buffers' live text are emacs: resources, read and edited through
-;;; resource.read and resource.edit. Tools and scheme are registered only while
-;;; EMACS-SERVER-AVAILABLE-P holds, so a session without Emacs never sees them.
-;;; Evaluation is as powerful as a shell command and asks the same command
-;;; authorization.
-
 (defclass emacs-tool (tool)
   ()
-  (:documentation "A tool answered by the configured Emacs server."))
+  (:documentation "A tool backed by the configured Emacs server."))
 
 (defclass emacs-visit-tool (emacs-tool)
   ()
@@ -23,7 +15,7 @@
   (:documentation "Evaluate authorized Emacs Lisp in the person's Emacs."))
 
 (defparameter *emacs-eval-value-limit* 16384
-  "The most characters of a printed emacs.eval value returned.")
+  "Maximum number of characters in the printed value returned by emacs.eval.")
 
 
 ;;;; -- Elisp --
@@ -54,7 +46,7 @@
       (list :value (if (> (length text) limit) (substring text 0 limit) text)
             :truncated (if (> (length text) limit) t :false)))
   (error (list :error (error-message-string failure))))"
-  "Elisp evaluating form text A0 and printing at most A1 characters of its value.")
+  "Elisp that evaluates form text A0 and returns at most A1 characters of its printed value.")
 
 
 ;;;; -- Methods --
@@ -77,7 +69,7 @@
         (line   (or (tool-argument arguments "line") 1))
         (column (or (tool-argument arguments "column") 0)))
     (unless (and (integerp line) (plusp line) (integerp column) (not (minusp column)))
-      (error 'tool-error :message   "line must be positive and column non-negative."
+      (error 'tool-error :message   "line must be a positive integer and column a non-negative integer."
                          :tool-name "emacs.visit"))
     (emacs-server-call (tool-context-configuration context) *emacs-visit-elisp*
                        (uiop:native-namestring
@@ -110,15 +102,15 @@
   (dolist (specification
            (list
             (list 'emacs-visit-tool "emacs" "visit"
-                  "Show the person a place: open PATH in a file window of their selected frame and move to LINE and COLUMN. It changes what they see, nothing else."
+                  "Show PATH at LINE and COLUMN in a file window of the person's selected frame, without editing the buffer."
                   (tool-object-schema
                    (json-object
                     "path" (tool-string-property "The file to show.")
-                    "line" (tool-integer-property "The line, from 1; defaults to 1.")
-                    "column" (tool-integer-property "The column, from 0; defaults to 0."))
+                    "line" (tool-integer-property "The 1-based line number; defaults to 1.")
+                    "column" (tool-integer-property "The 0-based column number; defaults to 0."))
                    '("path")))
             (list 'emacs-eval-tool "emacs" "eval"
-                  "Evaluate one Emacs Lisp form in the person's Emacs and return its printed value or error. As powerful as a shell command, it asks the same command authorization. Prefer emacs: resources and emacs.visit when they suffice."
+                  "Evaluate one Emacs Lisp form in the person's Emacs and return its printed value or error. Execution is as powerful as a shell command and requires the same command authorization. Prefer emacs: resources and emacs.visit when they suffice."
                   (tool-object-schema
                    (json-object "form" (tool-string-property "One Emacs Lisp form, as text."))
                    '("form")))))

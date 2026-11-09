@@ -397,8 +397,6 @@ A task's own :MODEL and :EFFORT win over the call's in ARGUMENTS."
                                              (rlm-endpoint--handles arguments))))
          (:finish
           (with-lock-held ((rlm-endpoint--lock endpoint))
-            ;; The first finish wins, atomically with the admission check, so
-            ;; no operation can start after the terminal state commits.
             (when (rlm-endpoint--final-p endpoint)
               (error 'rlm-inference-error
                      :message "The run already recorded its final value."))

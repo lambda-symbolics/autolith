@@ -2,24 +2,20 @@
 
 ;;;; -- Slynk Endpoint --
 
-;;; Slynk lets a person's sly session use this very image for their own Common
-;;; Lisp development, beside the agent. Slynk comes from the person's own sly
-;;; installation, named by :SLYNK-DIRECTORY, so its protocol matches the sly
-;;; they run. The endpoint is process-wide: an ACP process serves several
-;;; sessions from one image, and every one of them shares it.
+;; Use Slynk from the person's sly installation so the protocols match.
 
 (defclass slynk-endpoint ()
   ((directory
     :initarg       :directory
     :reader        slynk-endpoint-directory
     :type          pathname
-    :documentation "The slynk/ directory whose slynk.asd was loaded.")
+    :documentation "The slynk/ directory from which to load slynk.asd.")
    (port-file
     :initarg       :port-file
     :initform      nil
     :reader        slynk-endpoint-port-file
     :type          (option pathname)
-    :documentation "The file receiving the port or the failure for an editor.")
+    :documentation "The file where the editor reads the port or an error message.")
    (port
     :initarg       :port
     :initform      nil
@@ -66,7 +62,7 @@
     :initform      nil
     :accessor      slynk-endpoint-message
     :type          (option string)
-    :documentation "Why the endpoint failed, when it did."))
+    :documentation "The endpoint's failure message, or NIL."))
   (:documentation "The process-wide Slynk server serving this image on loopback."))
 
 (defvar *slynk-endpoint* nil
@@ -76,7 +72,7 @@
   "Serializes the entire endpoint lifecycle, including checkpoint callbacks.")
 
 (defvar *slynk-quiesced-p* nil
-  "Bound while the lifecycle lock protects a checkpoint; reentrant starts defer.")
+  "True while the lifecycle lock protects a checkpoint; reentrant starts are deferred.")
 
 (defvar *slynk-observation-lock* (make-lock "Autolith Slynk closed threads")
   "Protects close-hook observations without blocking Slynk's sentinel.")
@@ -154,14 +150,12 @@ otherwise the call returns once the endpoint is :RUNNING or :FAILED."
 (defun slynk-call-quiesced (function)
   "Call FUNCTION with Slynk stopped, then serve again on the same port.
 
-Checkpoints call this so no sly evaluation runs while the image is saved. sly
-loses its connection and reconnects to the unchanged port."
+Checkpoints use this function to prevent sly evaluations during image saving.
+The sly connection is dropped; sly can reconnect once serving resumes."
   (with-recursive-lock-held (*slynk-lock*)
     (if *slynk-quiesced-p*
         (funcall function)
         (let ((*slynk-quiesced-p* t))
-          ;; A queued startup cannot load or bind until this lock is released.
-          ;; A startup already holding it finishes before we enter here.
           (when *slynk-endpoint*
             (slynk--stop-endpoint *slynk-endpoint*))
           (unwind-protect
@@ -486,4 +480,4 @@ reach a sly connection."
     :reader        slynk-error-reason
     :type          keyword
     :documentation "Why: :MISSING-SYSTEM, :INCOMPATIBLE, :BIND or :TIMEOUT."))
-  (:documentation "Slynk could not be loaded, listen or finish shutting down."))
+  (:documentation "Slynk failed to load, listen or finish shutting down."))

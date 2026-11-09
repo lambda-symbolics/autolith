@@ -32,7 +32,7 @@
 ;;;; -- Papercut Resources --
 
 (defparameter *papercut-resource-maximum-observations* 16
-  "The transient papercut observations retained by one conversation.")
+  "The maximum number of papercut observations retained per conversation.")
 
 (defparameter *papercut-resource-excerpt-limit* 240
   "The maximum report characters shown for one collection entry.")
@@ -101,16 +101,16 @@
                                            (papercut-observation-snapshot observation))))
 
 (defmethod resource-observation-state-class ((resource papercut-resource))
-  "Record papercut observations under the papercut state family."
+  "Return the papercut observation-state class."
   (declare (ignore resource))
   'papercut-observation-state)
 
 (defmethod resource-item-identity ((resource papercut-resource))
-  "Compare papercut observations by collection or stable identifier."
+  "Return RESOURCE's collection name or stable report identifier."
   (papercut-resource-identifier resource))
 
 (defmethod resource-observation-identity ((observation papercut-observation))
-  "Compare papercut observations by collection or stable identifier."
+  "Return OBSERVATION's collection name or stable report identifier."
   (papercut-observation-identifier observation))
 
 (defmethod resource-observation-state-maximum ((state papercut-observation-state))

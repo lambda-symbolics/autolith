@@ -2,19 +2,8 @@
 
 ;;;; -- Action Traces --
 
-;;; An action trace is what one user turn did: the tool calls in order, each
-;;; with its arguments, status, and output, and the model requests and tokens
-;;; the turn used. Traces are read from conversation logs and kept only in
-;;; memory, so the transcript stays the one durable record of what happened.
-;;;
-;;; Residency is bounded. A turn that can no longer be learned from drops its
-;;; payload at once, each conversation keeps only its newest accepted traces
-;;; and its newest measured procedure runs, and the whole cache keeps a
-;;; character budget. An evicted conversation is simply read again from its
-;;; log, so eviction never changes what a query finds.
-
 (defparameter *action-trace-call-limit* 32
-  "The most tool calls a trace may have to be used for learning.")
+  "Maximum calls in a trace eligible for learning.")
 
 (defparameter *action-trace-limit* 20
   "The most recent traces one learning pass reads, and the most each conversation keeps.")

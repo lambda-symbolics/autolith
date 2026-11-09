@@ -144,8 +144,6 @@
                    "recent accepted traces of the workspace come newest first")))
   nil)
 
-;; Long sessions must not grow the trace cache: the newest accepted turns,
-;; a bounded open turn, and a cache-wide budget are all it may hold.
 (-> test-action-trace-residency () null)
 (defun test-action-trace-residency ()
   "Bound cached trace payload independently of conversation age, releasing unlearnable turns."

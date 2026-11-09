@@ -5,7 +5,7 @@
 
 (-> provider-effective-context-window (model-provider) (integer 1))
 (defun provider-effective-context-window (provider)
-  "Return the configured window or this request's unspent recovery allowance."
+  "Return the larger of the configured window and any eligible recovery window."
   (let ((configured (config :context-window (provider-configuration provider)))
         (permit     *provider-compaction-recovery-permit*))
     (if (and permit (eq provider (first permit))
@@ -15,7 +15,7 @@
 
 (-> provider-consume-compaction-recovery-permit (model-provider &key (:native-p boolean)) null)
 (defun provider-consume-compaction-recovery-permit (provider &key native-p)
-  "Consume an admitted allowance, retaining native provenance for an unsupported handoff."
+  "Consume the allowance, allowing portable fallback if native compaction is unsupported."
   (when (and *provider-compaction-recovery-permit*
              (eq provider (first *provider-compaction-recovery-permit*))
              (member (third *provider-compaction-recovery-permit*)
@@ -32,17 +32,14 @@
   nil)
 
 (defparameter *provider-context-admission-state* nil
-  "Request-local proof shared with mission accounting during supervised execution.
+  "Request-local admission state shared with mission accounting.
 
-When bound, FIRST is :PENDING until a provider boundary admits a request, then
-:ENTERED permanently. REST holds the exact condition from a local admission
-refusal. Neither function entry nor a condition's class proves zero usage.")
+FIRST is :PENDING until a provider admits the request, then :ENTERED.
+REST holds the condition from a local refusal. Function entry and condition
+class do not establish zero usage.")
 
 (defparameter *provider-image-token-estimate* 16384
-  "Portable admission allowance per image when a provider supplies no token count.
-
-This deliberately avoids counting base64 bytes or URL length as image tokens;
-provider-specific token accounting may refine the estimate.")
+  "Token allowance per image when provider token counts are unavailable.")
 
 (defgeneric provider-request-input-token-estimate (provider request)
   (:documentation
@@ -61,7 +58,7 @@ may use provider token counts when available; the default is not a tokenizer."))
 
 (-> provider-context--request-characters (t) (values (integer 0) boolean))
 (defun provider-context--request-characters (value)
-  "Count encoded VALUE with bounded image allowances and flag opaque/media estimates."
+  "Count encoded characters, using image allowances, and flag non-text estimates."
   (typecase value
     (hash-table
      (if (provider-context--image-p value)
@@ -102,7 +99,7 @@ may use provider token counts when available; the default is not a tokenizer."))
 
 (-> provider-request-output-ceilings (hash-table &key (:enclosed-p boolean)) list)
 (defun provider-request-output-ceilings (request &key enclosed-p)
-  "Return positive caller and wire ceilings, optionally inside routing envelopes."
+  "Return positive caller and request output limits, including envelopes if requested."
   (let ((generation (json-get request "generationConfig"))
         (inner      (json-get request "request")))
     (append
@@ -114,7 +111,7 @@ may use provider token counts when available; the default is not a tokenizer."))
             (json-get request "max_tokens")
             (and (json-object-p generation)
                  (json-get generation "maxOutputTokens"))))
-     ;; Code Assist carries the GenerateContent policy inside its routing envelope.
+     ;; GenerateContent policy is nested in the Code Assist routing envelope.
      (when (and enclosed-p (json-object-p inner))
        (provider-request-output-ceilings inner :enclosed-p t)))))
 
@@ -126,7 +123,7 @@ may use provider token counts when available; the default is not a tokenizer."))
 
 (-> provider-check-request-context (model-provider hash-table) null)
 (defun provider-check-request-context (provider request)
-  "Reject an oversized final projection before network I/O, without consuming context."
+  "Reject an oversized encoded request before network I/O."
   (multiple-value-bind (input non-text-p)
       (provider-request-input-token-estimate provider request)
     (let ((reserve (provider-request-output-reserve provider request))
@@ -154,9 +151,9 @@ may use provider token counts when available; the default is not a tokenizer."))
 
 (defmethod provider-open-native-compaction :before
     ((provider model-provider) (request hash-table) &key credentials conversation)
-  "Apply context admission to native compaction requests as well as ordinary turns."
+  "Check native compaction requests against the context budget."
   (declare (ignore credentials conversation))
-  ;; The unsupported handoff belongs to the summary, never another native attempt.
+  ;; Portable fallback allowance cannot be reused for native compaction.
   (let ((*provider-compaction-recovery-permit*
           (unless (eq :portable-ready (third *provider-compaction-recovery-permit*))
             *provider-compaction-recovery-permit*)))
@@ -176,7 +173,7 @@ may use provider token counts when available; the default is not a tokenizer."))
     :initarg       :output-reserve
     :reader        provider-context-budget-error-output-reserve
     :type          (integer 1)
-    :documentation "Output allowance reserved beside the input.")
+    :documentation "Tokens reserved for output.")
    (context-window
     :initarg       :context-window
     :reader        provider-context-budget-error-context-window
@@ -191,7 +188,7 @@ may use provider token counts when available; the default is not a tokenizer."))
 
 (-> provider-context--admit-request (model-provider hash-table) null)
 (defun provider-context--admit-request (provider request)
-  "Check a real provider boundary and retain its exact local refusal condition."
+  "Check the request budget and retain any context-budget error."
   (handler-bind
       ((provider-context-budget-error
          (lambda (condition)
@@ -202,12 +199,10 @@ may use provider token counts when available; the default is not a tokenizer."))
 
 (-> provider-call-with-mission-output-allowance (model-provider hash-table function) t)
 (defun provider-call-with-mission-output-allowance (provider request continuation)
-  "Bound internal mission headroom at the final encoded request boundary.
+  "Limit mission output tokens to the available context before calling CONTINUATION.
 
-Validate the original caller policy first. Only the mission-derived allowance
-may shrink to the context envelope. Re-estimate after adding the wire field,
-then recheck the actual final request. A nonmonotonic custom estimator may
-refuse the reduced candidate, but cannot bypass ordinary admission."
+Check caller limits before reducing the mission allowance, then recheck the
+encoded request."
   (if (null *provider-mission-output-allowance*)
       (funcall continuation request)
       (let ((ceilings (provider-request-output-ceilings request :enclosed-p t)))

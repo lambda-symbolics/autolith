@@ -2,21 +2,11 @@
 
 ;;;; -- Knowledge Evaluation --
 
-;;; Evaluation turns the stored base into a VIEW for one workspace at one time.
-;;; A stored claim is supported when one of its supports applies now. Admitted
-;;; rules then derive conclusions from supported claims, in an order where
-;;; every predicate a rule reads is complete before the rule runs; rules are
-;;; acyclic, so one pass suffices. A derived conclusion carries a
-;;; justification naming its rule version, premises, and bindings, and is
-;;; supported exactly while its premises are. Nothing derived is stored: the
-;;; view is a function of the log, the cited files, and the time, so a restart
-;;; reproduces it and recomputation needs no model.
-
 (defparameter *knowledge-match-limit* 4096
-  "The most rule conclusions one evaluation derives before it is incomplete.")
+  "Maximum rule conclusions before evaluation is marked incomplete.")
 
 (defparameter *knowledge-step-limit* 250000
-  "The most candidate claims one evaluation examines before it is incomplete.")
+  "Maximum candidate claims examined before evaluation is marked incomplete.")
 
 (defparameter *knowledge-error-limit* 32
   "The most rule evaluation errors one view retains.")
@@ -288,8 +278,6 @@ alternatives; a disputed derivation does not disqualify a clean observation."
                  (if known-p
                      (eq state ':accepted)
                      (progn
-                       ;; A proof cannot justify itself. Admitted rules are acyclic,
-                       ;; but guard the traversal if a malformed view contains a cycle.
                        (setf (gethash candidate states) ':visiting)
                        (let ((admitted-p
                                (and (knowledge-node-supported-p candidate)
@@ -702,14 +690,13 @@ A negated PATTERN matches supported explicit negations."
 (-> knowledge-view-solve (knowledge-view list &key (:limit integer) (:test (option function)))
     (values list boolean))
 (defun knowledge-view-solve (view patterns &key (limit *knowledge-solution-limit*) test)
-  "Return the ways VIEW's supported facts satisfy PATTERNS together.
+  "Return joint solutions for PATTERNS using VIEW's supported facts.
 
-Each solution is (BINDINGS . NODES): an alist of variables to terms and the
-facts used, those matching the positive patterns in order followed by the
-explicit negations the negated patterns required, as in rules. When TEST is
-given, only facts it accepts are used. The second value is true when the
-limit or the view's step limit cut the search short, so absent solutions are
-unknown rather than impossible."
+Each solution is (BINDINGS . NODES). BINDINGS is an alist mapping variables to
+terms. NODES lists the facts matching positive patterns in order, then the explicit
+negations required by negative patterns. If TEST is supplied, use only facts it accepts.
+The second value is true if a result or step limit stopped the search; further
+solutions may then exist."
   (let ((positive  (remove-if #'knowledge-negation-p patterns))
         (negative  (remove-if-not #'knowledge-negation-p patterns))
         (solutions nil)

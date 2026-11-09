@@ -4,17 +4,17 @@
 
 (defclass diagnosis-run-tool (tool)
   ()
-  (:documentation "A tool testing hypotheses about a failure with probe tool calls."))
+  (:documentation "A tool for probing possible causes of a failure."))
 
 (defmethod tool-execution-policy ((tool diagnosis-run-tool))
-  "Run probes apart from the rest of one provider batch."
+  "Run probes separately from other tool calls in the provider batch."
   (declare (ignore tool))
   ':exclusive)
 
 (defmethod tool-execute ((tool diagnosis-run-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Run a saved or given diagnosis and report what its probes ruled out."
+  "Run a saved or supplied diagnosis and report which causes were ruled out."
   (declare (ignore tool))
   (handler-case
       (let* ((configuration (tool-context-configuration context))

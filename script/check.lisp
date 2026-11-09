@@ -196,8 +196,6 @@ that is running this check, since the launcher is a Bash script."
   "Kill PROCESS's process group where the host has process groups."
   #-win32
   (let ((pid (uiop:process-info-pid process)))
-    ;; SBCL gives noninteractive children a separate process group on both
-    ;; Linux and macOS. UIOP's terminate-process only signals the leader.
     (handler-case (sb-posix:kill (- pid) sb-posix:sigkill)
       (sb-posix:syscall-error (condition)
         (unless (= (sb-posix:syscall-errno condition) sb-posix:esrch)
@@ -353,8 +351,6 @@ that start fresh Autolith processes. Private XDG roots isolate user preferences.
                            :label       (format nil "Test worker ~D" index)
                            :names names :result-path result
                            :output      (merge-pathnames "output.log" directory)
-                           ;; Give default-root configurations private preferences,
-                           ;; state and model caches. Share data for the runtime launcher.
                            :environment (check--environment-with
                                          (append
                                           (list (format nil "XDG_CONFIG_HOME=~Aconfig/" directory)

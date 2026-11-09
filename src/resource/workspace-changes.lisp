@@ -313,18 +313,18 @@
 
 (defmethod cl-resources:prepared-change-finalize
     ((change workspace-prepared-change) context)
-  "Release undo storage after the complete change set publishes."
+  "Release undo storage after the entire change set has been published."
   (declare (ignore context))
   (workspace-prepared-change--release change))
 
 (-> workspace-change-set-apply (tool-context list) list)
 (defun workspace-change-set-apply (context requests)
-  "Apply revisioned REQUESTS through the staged library transaction protocol.
+  "Apply revisioned REQUESTS through the staged cl-resources transaction protocol.
 
-Backend publication is atomic per file. On failure, retain the change-set in
-CL-RESOURCES:CHANGE-SET-ERROR for explicit recovery if undo or cleanup failed.
-Defer interruption through staging ownership transfer; an interrupted commit
-compensates under the library lifecycle protocol."
+Backend publication is atomic per file. If undo or cleanup fails,
+CL-RESOURCES:CHANGE-SET-ERROR retains the change set for explicit recovery.
+Defer interruption until ownership of the staged change set has transferred;
+interrupted commits are compensated under the library lifecycle protocol."
   (sb-sys:without-interrupts
     (let ((set (cl-resources:change-set-stage requests context)))
       (unwind-protect

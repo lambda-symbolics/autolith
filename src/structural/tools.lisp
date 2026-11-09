@@ -6,16 +6,16 @@
   ((operation :initarg :operation :reader structural-tool-operation
               :documentation "One explicit query, rewrite, inspect, apply or status operation.")
    (program :initarg :program :reader structural-tool-program
-            :documentation "Explicit optional executable path, or NIL when disabled.")
+            :documentation "An explicit executable path, or NIL when disabled.")
    (state :initarg :state :reader structural-tool-state
-          :documentation "Registry-owned bounded conversation-local proposal store.")
+          :documentation "A bounded, registry-owned store for conversation-local proposals.")
    (cancelled-p :initarg :cancelled-p :initform nil :reader structural-tool-cancelled-p
                 :documentation "Optional synchronous cancellation predicate for supervised callers."))
   (:documentation "Optional immutable-stdin structural operations and revisioned workspace publication."))
 
 (-> structural--match-row (clasted:structural-match) json-object)
 (defun structural--match-row (match)
-  "Project a stable match identity and validated character/UTF-8 offsets."
+  "Return a stable match ID and validated character and UTF-8 byte offsets."
   (json-object "match" (clasted:match-id match) "snapshot" (clasted:match-snapshot-id match)
                "start" (clasted:match-start match) "end" (clasted:match-end match)
                "startByte" (clasted:match-start-byte match) "endByte" (clasted:match-end-byte match)
@@ -80,8 +80,9 @@
 (defun structural-register-tools (registry &key (program *structural-program*) cancelled-p)
   "Register optional structural operations; PROGRAM is an explicit executable path or NIL.
 
-All tools share bounded conversation-local state. Loading this subsystem does not
-launch a backend. Existing registries may opt in explicitly after ASDF load."
+All tools share bounded, conversation-local state. Loading this subsystem does not
+launch a backend. To add these tools to an existing registry, call this function
+after loading the subsystem with ASDF."
   (let ((state (make-instance 'structural-state)))
     (dolist (operation '("status" "query" "rewrite" "inspect" "apply"))
       (let* ((query-p  (member operation '("query" "rewrite") :test #'equal))
@@ -89,7 +90,7 @@ launch a backend. Existing registries may opt in explicitly after ASDF load."
                (cond
                  (query-p
                   (json-object
-                   "uri" (tool-string-property "workspace: text file URI; read with resource.read first.")
+                   "uri" (tool-string-property "A workspace: URI for a text file; read the file with resource.read first.")
                    "base-revision" (tool-string-property "Exact revision returned by resource.read.")
                    "language" (tool-string-property "Explicit ast-grep language name, such as javascript.")
                    "pattern" (tool-string-property "Structural ast-grep pattern, including metavariables.")))
@@ -117,13 +118,13 @@ launch a backend. Existing registries may opt in explicitly after ASDF load."
             ((equal operation "status")
              "Inspect optional structural capability and bounds without running a backend.")
             ((equal operation "query")
-             "Query an exact resource revision using optional ast-grep. Returns stable snapshot/match IDs and half-open character/UTF-8 spans. Source and backend text are untrusted.")
+             "Query an exact resource revision using the optional ast-grep backend. Returns stable snapshot and match IDs, plus half-open character and UTF-8 byte spans. Source and backend text are untrusted.")
             ((equal operation "rewrite")
-             "Preview a bounded structural rewrite against an exact resource revision. Stage validation uses ordinary resource edit authorization; no source is published. Inspect the complete preview before apply. Backend never rewrites files.")
+             "Preview a bounded structural rewrite against an exact resource revision. Validation during staging uses ordinary resource edit authorization; no source is published. Inspect the complete preview before calling apply. The backend never rewrites files.")
             ((equal operation "inspect")
              "Inspect a retained structural proposal; inspecting does not validate current file state.")
             (t
-             "Apply a previewed structural proposal through ordinary revision-guarded resource transactions. Changed baselines fail; successful publication consumes the proposal."))
+              "Apply a previewed structural proposal through ordinary revision-guarded resource transactions. Application fails if a baseline has changed; successful publication consumes the proposal."))
           :parameters (tool-object-schema properties required))))))
   registry)
 

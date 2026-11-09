@@ -134,8 +134,6 @@ exit 64
            (dolist (invalid '("" "relative/xdg-home"))
              (platform-setenv "XDG_DATA_HOME" invalid)
              (platform-setenv "XDG_STATE_HOME" invalid)
-             ;; The platform adapter applies the same rule, so its roots are
-             ;; the host's defaults once the variables are ignored.
              (let ((context    (recovery-context-create source-root))
                    (data-root  (platform-application-root *platform* ':data))
                    (state-root (platform-application-root *platform* ':state)))

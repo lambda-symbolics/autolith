@@ -65,10 +65,7 @@
 
 (serapeum:-> recovery-generation-property (recovery-generation symbol) t)
 (defun recovery-generation-property (generation key)
-  "Return GENERATION's manifest property KEY.
-
-The Autolith fields live in the manifest properties rather than in slots, because
-the library that reads a generation owns only the fields every host shares."
+  "Return GENERATION's manifest property KEY."
   (getf (sbcl-generations:generation-metadata generation) key))
 
 (serapeum:-> recovery-generation-reconstruction-pathname
@@ -395,11 +392,9 @@ field must be present."
     (recovery-context &key (:expected-identifier t))
     sbcl-generations:generation-store)
 (defun recovery-generation-store (context &key expected-identifier)
-  "Return the generation store this image reads CONTEXT's generations through.
-
-The store keeps the library's plain-Lisp record reader rather than the active
-image's, so recovery needs no foreign-function or filesystem library to read a
-generation. Its validator carries this image's own stricter checks."
+  "Return a generation store for CONTEXT using recovery's reader and validator.
+The plain-Lisp reader needs no foreign-function or filesystem library.
+The validator applies recovery's stricter checks to each manifest."
   (sbcl-generations:make-generation-store
    :root                       (recovery-context-generation-root context)
    :current-pathname           (recovery-context-current-pathname context)

@@ -110,8 +110,8 @@ unfinished lessons. Later launches show only new or revised lessons. Evaluate
 =(onboard)= to replay the whole tour.
 
 Disable automatic tours with =(settings :onboarding-p nil)= or set
-=AUTOLITH_ONBOARDING= to =off=. If you disable the boot screen, enter the tour
-directly without its opening animation.
+=AUTOLITH_ONBOARDING= to =off=. Disabling the boot screen skips the tour's opening
+animation.
 
 * Goals and verified missions
 
@@ -127,9 +127,9 @@ limit, or =(settings :goal-continuation-limit :unlimited)= to remove it. The
 setting is durable. A completed lightweight goal permits ordinary session-owned
 job-completion wakeups without restarting that goal.
 
-Queued commands and Lisp forms run between goal turns. The goal continues after
-that input only when its loop yielded to it. Send a message to continue after
-interrupting goal work.
+Queued commands and Lisp forms run between goal turns. The goal continues
+only if the goal loop yielded to the queued input. Send a message to continue
+after interrupting goal work.
 
 For externally verifiable work, install explicit acceptance policy with
 =(mission :start specification)=:
@@ -277,11 +277,11 @@ Attach a reviewer to an active mission with =mission-review.configure=, or evalu
    :turn-limit 4 :token-limit 16000 :run-limit 3))
 #+END_SRC
 
-Declare the complete relevant file set. The reviewer receives an independent
-snapshot and background, returns contracted findings, and has no tools or spawning
-permission. Reviewer call and token allowances are cumulative across changed
-snapshots and also count against the mission allowances. =:run-limit= bounds the
-number of distinct snapshots reviewed.
+Declare all relevant files. The reviewer receives an independent snapshot and
+background and returns findings in the required form. The reviewer has no tools
+or spawning permission. Reviewer calls and tokens count against both the
+cumulative reviewer allowances and the mission allowances, including reviews of
+changed snapshots. =:run-limit= bounds the number of distinct snapshots reviewed.
 
 Use =mission-review.trigger= with =id= to review a checkpoint and
 =mission-review.inspect= to read its durable findings, decisions and usage.
@@ -314,10 +314,10 @@ For recurring wakeups, choose =missed-policy= =latest= (the default), =all=, or
 =skip=. These select the newest missed occurrence, every missed occurrence, or
 only an occurrence due at exactly the current time. Use =mission-schedule.event=
 with an event name and stable external event =id=; repeated delivery of that ID
-is deduplicated. The local daemon listener hosts time wakeups. Due work enters
-the ordinary primary command queue as a persisted =(mission-wakeup ticket)=
-command, with a structured ticket, and runs as a mission continuation under the
-existing turn, token, and wall-clock budgets.
+is deduplicated. The local daemon listener hosts time wakeups. Due work is
+persisted in the ordinary primary command queue as =(mission-wakeup ticket)=,
+where =ticket= is structured data. The command runs as a mission continuation
+under the existing turn, token, and wall-clock budgets.
 
 Only the primary agent may use the =mission-schedule= tools. Each wakeup keeps
 its exact mission identity and version. Both are checked at admission and
@@ -330,13 +330,14 @@ replayed, including one-shot wakeups and deduplicated events. With the default
 =:block= policy, unknown usage prevents mission resume. =:record= does not prevent
 an independent pause or blocker from resuming.
 
-Replacement, a version change, or a terminal mission (verified, exhausted,
-cancelled, failed or legacy complete) cancels the schedule. Skips and automatic
-cancellations produce persisted user notices. Use =mission-schedule.inspect= to
-read schedules, occurrence IDs, claim tokens and outcomes: skipped occurrences
-have =state= =cancelled= with =result= =(:skipped <mission-status>)=; obsolete
-mission work has =result= =:stale-mission= and a cancelled schedule. Use
-=mission-schedule.cancel= with the schedule =id= to cancel future and pending work.
+The schedule is cancelled when the mission is replaced, its version changes,
+or it reaches a terminal state (verified, exhausted, cancelled, failed or legacy
+complete). Skips and automatic cancellations produce persisted user notices. Use
+=mission-schedule.inspect= to read schedules, occurrence IDs, claim tokens and
+outcomes: skipped occurrences have =state= =cancelled= with
+=result= =(:skipped <mission-status>)=; obsolete mission work has
+=result= =:stale-mission= and a cancelled schedule. Use =mission-schedule.cancel=
+with the schedule =id= to cancel future and pending work.
 
 Interrupted admissions and executions restore as uncertain outcomes. Inspect the
 external effects before calling =mission-schedule.resolve= with the readable
@@ -469,8 +470,7 @@ an inference failure pauses continuation; submit an explicit prompt to resume.
 Autolith's image can be your Common Lisp development image. =emacs/autolith.el=
 in the source tree sets up one frame with three windows: your code, a sly REPL
 connected to Autolith's own image, and an agent-shell conversation with the same
-Autolith. What you define in the REPL lives beside the agent, which can inspect
-it and advise.
+Autolith. The agent can inspect your REPL definitions and advise.
 
 The sly REPL spans the bottom quarter of the whole frame. Above it, edit code
 on the left and converse in the right third.
@@ -516,7 +516,7 @@ configured server socket exists:
 - =emacs:buffer/NAME= is a live buffer's text, unsaved edits included, with the
   buffer name percent-encoded. =resource.edit= applies line operations to the
   buffer itself: the change stays unsaved and undoable, and is refused as stale
-  when you edited the buffer since the agent read it. A buffer visiting a file
+  if you have edited the buffer since the agent read it. A buffer visiting a file
   outside the workspace and source roots asks the same permission as that path.
 - =emacs.visit= shows a file position in a file window of the selected frame.
 - =emacs.eval= evaluates Emacs Lisp. It asks command authorization for
@@ -528,7 +528,7 @@ can evaluate in the image. Your code shares the agent's heap: a fatal error or
 
 Slynk's debugger and output hooks stay off for Autolith's own threads, so your
 REPL sees only your evaluations. A checkpoint stops Slynk and closes sly
-connections, then serves the same port again. Reconnect with
+connections, then restarts Slynk on the same port. Reconnect with
 =M-x autolith-ide-reconnect=. A checkpoint waits for in-flight sly evaluations
 and fails if they exceed the shutdown timeout.
 
@@ -562,10 +562,10 @@ not the terminal emulator's native scrollback. The viewport keeps about four
 million characters of recent output in memory. At the oldest retained row, the
 legend shows =(history)=. Run =(history)= to load a page of older output.
 
-For input with matching saved memories, a dim =@ N relevant memories exist= line
-appears below your message. Its count is the number offered to the model for that
-request, followed by how many of them are stale or unverified (see the Memories section).
-Each input gets one notice across tool calls and provider retries.
+When saved memories match your input, a dim =@ N relevant memories exist= line
+appears below your message. It shows how many memories were offered to the model
+for that request, followed by how many of them are stale or unverified (see the
+Memories section). Each input gets one notice across tool calls and provider retries.
 
 Input recall includes every user message, command, and Lisp submission in the
 conversation. Automatic messages and assistant output are excluded. On first use,
@@ -632,9 +632,9 @@ waiting boot screen halts the session. Turn the wait off for future launches
 with =(setf (config :boot-screen-linger-p) nil)= or for one launch with
 =AUTOLITH_BOOT_LINGER=off=, and change the rotation with
 =(setf (config :boot-screen-tip-seconds) 30)= or =AUTOLITH_BOOT_TIP_SECONDS=.
-The animation takes =(config :boot-screen-seconds)= in total, 3.5 by default
-and also set by =AUTOLITH_BOOT_DURATION=, shared evenly by its phases. Skip the
-boot screen entirely with =(setf (config :boot-screen-p) nil)= or
+The animation lasts =(config :boot-screen-seconds)= seconds (3.5 by default),
+divided evenly among its phases. =AUTOLITH_BOOT_DURATION= also sets the duration.
+Skip the boot screen entirely with =(setf (config :boot-screen-p) nil)= or
 =AUTOLITH_BOOT_SCREEN=off=; =(settings)= lists all four.
 
 ** Almighty theme
@@ -678,13 +678,13 @@ The installer verifies the release archive's SHA-256 before extraction. The
 checksum must identify that exact archive; malformed or missing checksums abort
 installation. The initial shell script is fetched over HTTPS.
 
-Read [[https://sh.lambda-symbolics.com/autolith][the installer]] before piping it to a shell, or use Nix if that
-tradeoff is unwelcome. Linux binary releases require OpenSSL and Bubblewrap.
-Bubblewrap provides the filesystem and network isolation used for sandboxed
-command execution. The installer names the missing dependency instead of
-installing a release that cannot offer sandboxed or safe automatic execution.
-The launcher uses the installation layout, rather than an environment marker
-alone, to distinguish binary, Nix, and source starts.
+Read [[https://sh.lambda-symbolics.com/autolith][the installer]] before piping it to a shell, or use Nix.
+Linux binary releases require OpenSSL and Bubblewrap. Bubblewrap provides the
+filesystem and network isolation used for sandboxed command execution. The
+installer names missing dependencies and refuses to install without them, since
+the release needs them for sandboxed or safe automatic execution. The launcher
+distinguishes binary, Nix, and source starts by installation layout, not an
+environment marker alone.
 
 Autolith automatically checks for updates at most once every 20 hours.
 To install the latest binary release and exit without starting a session:
@@ -699,8 +699,8 @@ equivalent update-and-exit alias. Run =autolith= afterward to start the new
 release. Both spellings accept =--help= or =-h=; extra arguments exit with status
 64 before checking for updates. Use your flake or Nix profile to update Nix
 installations; update the checkout and run =./script/bootstrap= for source
-installations. These installations explain their update mechanism without
-building or starting Lisp images.
+installations. On Nix and source installations, the command explains how to
+update without building or starting Lisp images.
 
 To update from a session and restart it with its original command arguments:
 
@@ -827,10 +827,10 @@ autolith uninstall
 #+END_SRC
 
 The launcher lists what it will remove, asks for confirmation, and exits without
-starting a session; =--yes= skips the prompt, which is required when no terminal
-is attached. It removes the packaged installation and its command link, managed
-SBCL runtimes, the active and recovery images, retained generation cores, saved
-worker images, Nix image trees, release markers, crash capsules, launcher
+starting a session. =--yes= skips confirmation and is required when no terminal
+is attached. The launcher removes the packaged installation and its command link,
+managed SBCL runtimes, the active and recovery images, retained generation cores,
+saved worker images, Nix image trees, release markers, crash capsules, launcher
 pointers, session sockets and leases, provider caches, and the cache root.
 
 User data stays in place: conversations, inference traces, memories, papercuts,
@@ -941,7 +941,7 @@ spaces, tabs, and line breaks after =?= select asynchronous Lisp. Continue an
 incomplete form on another line as with ordinary Lisp input.
 
 Inspect or cancel the returned =exec:N= job with =job.get=, =job.wait=, or
-=job.cancel=. The bare number works too, as in =(job.cancel :id 1)=, while
+=job.cancel=. The bare number works too, as in =(job.cancel :id 1)=, if
 exactly one visible job ends in =:1=; otherwise the error lists the candidates.
 Standard output, error output, and Lisp diagnostic streams are
 captured with bounded retention and rate-limited, sanitized terminal display.
@@ -1178,9 +1178,8 @@ in the conversation changes, the next turn includes an explanation once, and
 and goes stale when the fact stops holding; a fact can cite a memory as evidence.
 
 Autolith keeps every current fact, its sources, and the 1,024 most recently
-retracted sources in memory. Older retractions stay in the knowledge log, so
-=(why "ID")= still explains a long-retracted fact, reading its history from the
-log.
+retracted sources in memory. For older retractions, =(why "ID")= reads the
+fact's history from the knowledge log.
 
 The model reads =memory:facts=, =memory:claim/ID=, =memory:predicates=,
 =memory:rules=, =memory:procedures=, and =memory:changes=, and edits =memory:facts= with
@@ -1812,11 +1811,11 @@ when the tool runtime is retired.
 
 ** Active-image management endpoint
 
-The management REPL is a separate opt-in subsystem for trusted programs that
-must evaluate Common Lisp in the running =AUTOLITH= image. It is image-daemon's
-evaluation endpoint, whose =eval-connect= and =eval-call= form a complete Lisp
-client, and does not use the localgroup protocol, Swank, or Slynk. It is
-disabled unless =AUTOLITH_MANAGEMENT_REPL= is set to =on=.
+The management REPL is an opt-in endpoint for trusted programs to evaluate
+Common Lisp in the running =AUTOLITH= image. It uses image-daemon's evaluation
+protocol, with =eval-connect= and =eval-call= as a complete Lisp client. It does
+not use the localgroup protocol, Swank, or Slynk. It is disabled unless
+=AUTOLITH_MANAGEMENT_REPL= is set to =on=.
 
 Every connection authenticates with a fresh random nonce and HMAC-SHA-256. The
 client never sends the reusable token. Put a nonempty token in a regular file
@@ -2107,9 +2106,9 @@ for precompaction and the estimate for idle compaction. An explicit
 policies. OpenRouter requests carry the conversation's cache key as their
 session identifier for upstream routing affinity from the first request.
 
-Use =(status)= to inspect this process's model-request costs. A request is priced
-by the charge its provider reports, as OpenRouter does, else by a price
-snapshot for its model: the built-in Anthropic API list prices, or
+Use =(status)= to inspect this process's model-request costs. Autolith uses
+reported charges when available, as with OpenRouter. Otherwise it uses a
+model-price snapshot: the built-in Anthropic API list prices, or
 =(settings :model-prices "{\"model\": {\"input\": 2, \"cache_read\": 0.2, \"output\": 10}}")=
 in US dollars per million tokens, keyed by the model name from =(model)=. A
 missing cache_write rate charges cache writes as input. Requests without a
@@ -2471,8 +2470,8 @@ turn.
 Put user commands in =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp=, or load
 a user-owned Lisp file from there. Autolith loads those definitions after the
 tracked system on each startup, including after a source update or an installed
-upgrade. Use the existing =define-application-command= form; Lisp names, slash
-aliases, completion, and busy/terminal policy share its registration.
+upgrade. Register commands with =define-application-command=, which defines
+Lisp names, slash aliases, completion, and busy/terminal policy.
 
 #+BEGIN_SRC lisp
 (define-application-command my-version-command
@@ -2507,9 +2506,9 @@ aliases, completion, and busy/terminal policy share its registration.
   error immediately instead of being scheduled.
 - Terminal behavior is =:shared=, =:exclusive=, or
   =:exclusive-without-arguments=. It declares which invocations open a modal
-  picker so active work keeps them off the immediate reader path. A modal
-  picker requires exclusive terminal input when open. The responsive reader
-  continues animating until then.
+  picker. During active work, these invocations wait rather than running on the
+  immediate reader path. An open modal picker requires exclusive terminal input.
+  The responsive reader continues animating until the picker opens.
 - =:static-options= replaces =:argument= for one finite positional parameter.
   Supply native strings, keywords, or booleans to derive the help hint and
   completions. Use =(t nil)= for boolean controls. Define a slash parser to
@@ -2517,11 +2516,11 @@ aliases, completion, and busy/terminal policy share its registration.
 
 ** Live definitions
 
-Use =self.redefine= to install loaded Lisp definitions, new or replacing,
-including functions and methods outside the Autolith package. =self.define=
-names the same tool. Qualify the target symbol in the source,
-or supply the =package= argument to select its reader package. Use qualified
-symbols with =self.set= for foreign global bindings.
+Use =self.redefine= to add or replace loaded Lisp definitions, including
+functions and methods outside the Autolith package. =self.define= names the
+same tool. Qualify the target symbol in the source, or supply the =package=
+argument to select its reader package. Use qualified symbols with =self.set=
+for foreign global bindings.
 
 Installation, discard and replay temporarily unlock the reader and target
 packages, then restore their locks. New definition records include the target's
@@ -2536,7 +2535,7 @@ or appeared since publication. One startup notice lists every skip, grouped by
 reason. Skipped definitions are left out of the next =self.commit=.
 
 For commits published before this record was introduced, tracked overrides replay
-only while the image runs the source revision the lineage was published against.
+only while the image runs the source revision used to publish the lineage.
 
 To restore a skipped definition, reapply it against the current source. Or use
 =(fix-skipped-definitions)= to give the model every skipped definition, along
@@ -2929,9 +2928,9 @@ Sandboxed commands in an isolated child may write its owned checkout and the
 repository's Git administrative directories, including a linked worktree's common
 Git directory. Integration requires authorization for the target workspace.
 
-The child edits and tests in its detached checkout. Before it starts, persist the
-source repository, exact resolved baseline, isolated path and conversation-qualified
-owner. Stage new files before yielding.
+The child edits and tests in its detached checkout. Before the child starts, the
+source repository, exact resolved baseline, isolated path and
+conversation-qualified owner are persisted. Stage new files before yielding.
 
 A patch includes committed and uncommitted tracked changes. A commit range
 requires a clean checkout and an ancestor baseline.
@@ -2965,9 +2964,9 @@ chooses integration order and resolves conflicts deliberately.
 
 Primary shell and Lisp executions and child agents appear as live rows with
 spinners and elapsed time. The command and agent strips share a viewport bound,
-and provider activity remains visible below them. You can supply a short
-=:description= in a =shell.run= call to set its row label. Otherwise, the label
-is derived from the command.
+with provider activity visible below them. Supply a short =:description= in a
+=shell.run= call to set its row label. Otherwise, the label is derived from the
+command.
 
 Use POSIX shell syntax for commands on POSIX hosts and PowerShell syntax on
 Windows. Both Windows authorization modes use native PowerShell. MSYS/Git Bash

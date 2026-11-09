@@ -850,8 +850,6 @@
                                   "repl" name
                                   "async" t))
                       (job (execution-job result "lisp.eval")))
-                 ;; A fresh SBCL worker takes tens of seconds to start on
-                 ;; Windows while the parallel check loads the host.
                  (test-assert
                   (and job
                        (task-tests--wait-until

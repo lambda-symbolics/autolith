@@ -31,7 +31,7 @@
 (defmethod tool-execute ((tool web-gist-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Fetch one page and identify its retrieved content separately from its bounded presentation."
+  "Fetch a page and record retrieval metadata."
   (declare (ignore tool))
   (let ((url (tool-argument arguments "url" :required t)))
     (unless (non-empty-string-p url)

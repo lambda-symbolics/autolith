@@ -2,12 +2,6 @@
 
 ;;;; -- Knowledge Usage Attribution --
 
-;;; Structured knowledge makes no provider requests of its own; it costs
-;;; tokens inside ordinary requests: recalled facts, change explanations, and
-;;; the model's memory:facts tool calls. For each request where knowledge took
-;;; part, a provider metadata record attributes that share and copies the
-;;; request's usage, so the overhead can be measured instead of assumed.
-
 (defparameter *knowledge-usage-characters-per-token* 4
   "Characters per token used to estimate the tokens of recalled knowledge text.")
 
@@ -44,10 +38,10 @@
 (-> knowledge-usage-capture
     (conversation &key (:calls list) (:request-number (integer 1)) (:usage t)) null)
 (defun knowledge-usage-capture (conversation &key calls request-number usage)
-  "Attribute knowledge's share of one completed request to CONVERSATION durably.
+  "Record knowledge usage for one completed request in CONVERSATION.
 
-CALLS are the request's function calls and USAGE its provider usage. Nothing
-is recorded for a request knowledge did not take part in."
+CALLS contains the request's function calls; USAGE contains provider usage.
+Record nothing if the request included no recalled knowledge or knowledge calls."
   (let* ((identifier (conversation-identifier conversation))
          (note       (gethash identifier *knowledge-usage-notes*))
          (tool-calls (count-if #'knowledge-usage--tool-call-p calls)))

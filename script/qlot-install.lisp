@@ -56,8 +56,6 @@ loaded by Autolith."
        (script-directory (uiop:pathname-directory-pathname script-path))
        (source-root      (uiop:pathname-parent-directory-pathname script-directory))
        (arguments        (uiop:command-line-arguments))
-       ;; The optional first argument names another qlot project, such as
-       ;; checks/. Names after --update refresh those projects instead.
        (updates          (rest (member "--update" arguments :test #'string=)))
        (project-root     (let ((argument (and (not (equal (first arguments) "--update"))
                                               (first arguments))))
@@ -83,8 +81,6 @@ loaded by Autolith."
   (when (uiop:os-windows-p)
     (qlot-install--tolerate-windows-unsafe-tar-entries)
     (qlot-install--use-windows-directory-cleanup script-directory)
-    ;; trivial-glob's fixtures contain a circular directory link. Qlot's
-    ;; metadata walkers follow it on Windows, where enumeration fails.
     (let ((exclusions (find-symbol "*EXCLUDE-DIRECTORIES*" "QLOT/UTILS/ASDF")))
       (unless (and exclusions (boundp exclusions))
         (error "The loaded Qlot does not expose its metadata directory exclusions."))

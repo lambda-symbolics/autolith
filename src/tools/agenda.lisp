@@ -4,11 +4,11 @@
 
 (defclass agenda-tool (tool)
   ()
-  (:documentation "A tool transporting persistent workspace agendas."))
+  (:documentation "A tool for managing persistent workspace agendas."))
 
 (defclass agenda-transport-tool (agenda-tool)
   ()
-  (:documentation "A tool inspecting, copying, or moving workspace agendas."))
+  (:documentation "A tool for inspecting, copying, or moving workspace agendas."))
 
 (defmethod tool-execute ((tool agenda-transport-tool)
                          (context tool-context)
@@ -38,7 +38,7 @@
                 (record    (agenda-find state directory)))
            (if record
                (tool-success (agenda-resource--render-record record))
-               (tool-failure (format nil "No agenda is keyed by ~A." directory)))))
+              (tool-failure (format nil "No agenda found for ~A." directory)))))
         ((or (string-equal operation "copy")
              (string-equal operation "move"))
          (unless source

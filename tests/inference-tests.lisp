@@ -2267,8 +2267,6 @@ A frame sends its shared views and its task as consecutive user messages."
                           :name      "eval"
                           :arguments (json-encode
                                       (json-object "form" code))))))))
-          ;; Exactly one root request plus four sub-inferences: a finish on
-          ;; the last remaining call must end the run without another request.
          (budget        (rlm-budget-create :calls 5 :tokens 100000 :depth 2))
          (activities    nil))
     (test-assert (= (length corpus) 160000)
@@ -2636,8 +2634,6 @@ A frame sends its shared views and its task as consecutive user messages."
                           :arguments (json-encode
                                       (json-object "form" code))))))))
          (budget        (rlm-budget-create :calls 12 :tokens 100000 :depth 2)))
-    ;; Plant markers straddling the naive 40000-character boundaries; the
-    ;; base corpus pads block edges with dots, so the splice is exact.
     (replace corpus "XYZZY" :start1 39998)
     (replace corpus "XYZZY" :start1 79998)
     (let ((expected (rlm-litmus--count-occurrences "XYZZY" corpus))

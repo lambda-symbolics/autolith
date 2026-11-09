@@ -460,8 +460,6 @@ stale. A premise forgotten since then stays recorded and keeps it stale."
                            (or knowledge
                                (setf knowledge (knowledge-base-read configuration)))
                            (getf premise :id)))))
-        ;; A derived claim premise has no stored owner; only global memories
-        ;; are restricted, and they may cite only global stored claims.
         (when (or (and memory (not (memory--premise-visible-p memory scope workspace)))
                   (and (eq scope ':global)
                        (eq (getf premise :kind) ':claim)

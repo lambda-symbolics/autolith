@@ -46,10 +46,9 @@
 
 (-> lsp-tool--root-boundary (tool-context pathname) pathname)
 (defun lsp-tool--root-boundary (context path)
-  "Return the directory above which PATH's project-root search never climbs.
-
-That is the workspace for a file inside it, and the filesystem root of PATH for
-an authorized file elsewhere, as an editor opening that file would search."
+  "Return the directory PATH's project-root search cannot climb above:
+the workspace for files within it, or PATH's filesystem root for authorized files
+outside the workspace."
   (let ((workspace (workspace-tool--canonical-path
                     (config :working-directory (tool-context-configuration context)))))
     (if (workspace-tool--read-path-allowed-p path (list workspace))
@@ -82,7 +81,7 @@ an authorized file elsewhere, as an editor opening that file would search."
     (t &key (:string-limit integer) (:item-limit integer) (:node-limit integer))
     (values t boolean))
 (defun lsp-tool--bounded-value (value &key string-limit item-limit node-limit)
-  "Copy VALUE within finite traversal bounds and report any omitted data."
+  "Copy VALUE within traversal limits and report whether any data was truncated."
   (let ((remaining   node-limit)
         (truncated-p nil))
     (labels ((project (item depth)
@@ -128,10 +127,8 @@ an authorized file elsewhere, as an editor opening that file would search."
 
 (-> lsp-tool--render (t &optional integer) string)
 (defun lsp-tool--render (value &optional (limit *lsp-tool-result-limit*))
-  "Return complete JSON, fitting structured data before serializing it.
-
-The shared tool-success bound is 8000 characters. Never let that outer bound
-clip JSON. Truncated documents retain a bounded result plus an explicit note."
+  "Return complete JSON within the shared 8000-character tool-success bound.
+Bound data before serialization and retain a result and truncation note when space permits."
   (let ((limit (max 4 (min 8000 limit))))
     (loop for size = 8000 then (floor size 2)
           do (multiple-value-bind (copy truncated-p)

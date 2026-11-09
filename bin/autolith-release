@@ -100,8 +100,6 @@ say_done()
   printf '%s%s%s\n' "$style_good" "$1" "$style_reset" >&2
 }
 
-# Rail every line of standard input under the current section, keeping only
-# the final redraw of carriage-return progress and dimming compiler notes.
 say_railed()
 {
   local line

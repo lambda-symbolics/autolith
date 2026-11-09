@@ -2,11 +2,6 @@
 
 ;;;; -- Memory Status --
 
-;;; A memory's status is recomputed from its recorded evidence, current files,
-;;; and current knowledge claims; it is not persisted. A memory is current
-;;; when each memory premise is current and unchanged, each claim premise is
-;;; supported, and, if it cites files, at least one file still supports it.
-
 (defparameter *memory-premise-depth-limit* 16
   "The deepest premise chain followed when assessing one memory.")
 
@@ -125,8 +120,6 @@ the same time, so memories derived from claims follow those claims."
                             (list :kind ':file-missing :path path))
                            (otherwise
                             (list :kind ':file-unchecked :path path :why why))))))
-      ;; Statements and web pages are records of what was seen; they are
-      ;; never refetched, so they continue to hold.
       (list :source source :outcome ':holds :reason nil)))
 
 (-> memory-assessor--premise-outcome (memory-assessor list integer) list)
@@ -203,9 +196,6 @@ the same time, so memories derived from claims follow those claims."
                         (mapcar (lambda (premise)
                                   (memory-assessor--premise-outcome assessor premise depth))
                                 (memory-premises memory)))
-                      ;; Only files can be checked again. Statements and web
-                      ;; pages record provenance, so they decide nothing
-                      ;; while checkable evidence exists.
                       (checked
                         (remove-if-not (lambda (outcome)
                                          (eq (first (getf outcome :source)) :file))

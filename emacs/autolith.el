@@ -10,23 +10,6 @@
 
 ;;; Commentary:
 
-;; `autolith-ide' opens one frame with three windows: your code, a sly
-;; REPL connected to Autolith's own Lisp image, and an agent-shell
-;; conversation with the same Autolith.  Whatever you define in the REPL
-;; lives in the image the agent runs in, so it can inspect and advise on it.
-;;
-;; Autolith is started by agent-shell as `autolith acp' with three
-;; environment variables:
-;;
-;;   AUTOLITH_SLYNK_DIRECTORY  this sly's own slynk/ directory, so the
-;;                             server matches the client exactly
-;;   AUTOLITH_SLYNK_PORT_FILE  where Autolith writes the Slynk port
-;;   AUTOLITH_EMACS_SERVER     this Emacs's server socket, which lets
-;;                             Autolith read and edit your buffers
-;;
-;; Requires sly and agent-shell.  `autolith-agent-shell' starts only the
-;; conversation, with the Emacs tools but without Slynk.
-
 ;;; Code:
 
 (require 'cl-lib)

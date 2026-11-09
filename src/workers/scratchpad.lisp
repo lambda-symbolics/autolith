@@ -255,7 +255,7 @@
                                              :if-does-not-exist ':error))
             (:missing
              (error 'tool-error
-                    :message   "Cannot delete an observed missing scratchpad resource."
+                    :message   "Cannot delete a scratchpad resource observed as missing."
                     :tool-name "resource.edit")))
           (let ((published (workspace-file--observe-path resource context)))
             (unless (eq (workspace-file-observation-kind published) ':missing)

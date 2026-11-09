@@ -76,7 +76,8 @@
   (-> application-command--lambda-list-arity (list)
       (values (integer 0) (option (integer 0))))
   (defun application-command--lambda-list-arity (lambda-list)
-    "Return minimum and maximum counts, or NIL for an open keyword/rest tail."
+    "Return minimum and maximum argument counts.
+The maximum is NIL for &REST or &KEY."
     (let ((minimum 0)
           (maximum 0)
           (state   ':required)
@@ -271,7 +272,7 @@
       (when (and (= argument-count 1) static-options)
         (application-command--definition-error
          definition-name
-         "Application command ~S cannot duplicate static options in :ARGUMENT."
+         "Application command ~S cannot specify both :ARGUMENT and :STATIC-OPTIONS."
          definition-name))
       (unless (and (proper-list-p lambda-list)
                    (plusp (length lambda-list))
@@ -1078,10 +1079,11 @@ turn's next safe provider boundary, and :HOLD waits for the idle queue."))
      (invocation application-command-invocation))
   "Resolve COMMAND's declared busy policy for INVOCATION.
 
-An argument-free :INSPECT or :APPLY invocation only displays state, so it
-executes immediately unless it owns the terminal for a modal picker, which
-must wait for the idle queue. Supplied arguments make :APPLY defer the
-change to the next safe boundary and make :INSPECT wait for the idle queue."
+With no arguments, :INSPECT executes immediately. :APPLY waits for the idle queue
+if it requires exclusive terminal input; otherwise it executes immediately.
+
+With arguments, :APPLY defers the change to the next safe provider boundary,
+and :INSPECT waits for the idle queue."
   (ecase (application-command-busy-behavior command)
     (:hold
      ':hold)
@@ -1143,8 +1145,8 @@ change to the next safe boundary and make :INSPECT wait for the idle queue."
 (defun application-command-alias-completion-entries ()
   "Return completion entries for every command alias in registry order.
 
-Each alias names its canonical command as :PRIMARY, so it appears only once
-the typed text stops matching the canonical name."
+Each entry's :PRIMARY value is the canonical command name. Alias entries appear
+only when the typed text no longer matches that name."
   (loop for command in (application-command-list)
         for name = (application-command-name command)
         for argument = (application-command-argument command)
@@ -1174,8 +1176,8 @@ the typed text stops matching the canonical name."
 (defun application-command-option-completion-entries ()
   "Return slash completion entries for every command's finite options.
 
-Each entry names its command as :PRIMARY, so the options appear only after the
-typed text passes the command name."
+Each entry's :PRIMARY value is the command name. Option entries appear only
+when the typed text extends beyond that name."
   (loop for command in (application-command-list)
         append
         (loop for option in (application-command-static-options command)

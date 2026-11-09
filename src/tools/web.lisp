@@ -134,19 +134,19 @@ Responses may not excessively quote or draw on a specific source. There are seve
 
 (-> web--search-query-schema () json-object)
 (defun web--search-query-schema ()
-  "Return the exact query object accepted by Codex's web.run tool."
+  "Return the schema for a Codex web.run search query."
   (web--object-schema
    (json-object
     "q"       (tool-string-property "Search query.")
     "recency" (tool-integer-property
-                "Whether to filter by recency, as a number of recent days.")
+                "Recency filter, expressed as a number of recent days.")
     "domains" (web--string-array-schema
-                "Whether to filter by a specific list of domains."))
+                "Domains to restrict the search to."))
    :required '("q")))
 
 (-> web--open-operation-schema () json-object)
 (defun web--open-operation-schema ()
-  "Return the exact open-page object accepted by Codex's web.run tool."
+  "Return the schema for a Codex web.run open-page command."
   (web--object-schema
    (json-object
     "ref_id" (tool-string-property "Reference id or URL to open.")
@@ -155,16 +155,16 @@ Responses may not excessively quote or draw on a specific source. There are seve
 
 (-> web--click-operation-schema () json-object)
 (defun web--click-operation-schema ()
-  "Return the exact link-click object accepted by Codex's web.run tool."
+  "Return the schema for a Codex web.run link-click command."
   (web--object-schema
    (json-object
-    "ref_id" (tool-string-property "Reference id containing the numbered link.")
+    "ref_id" (tool-string-property "Reference ID of the page containing the numbered link.")
     "id"     (tool-integer-property "Numbered link id to open."))
    :required '("ref_id" "id")))
 
 (-> web--find-operation-schema () json-object)
 (defun web--find-operation-schema ()
-  "Return the exact find-in-page object accepted by Codex's web.run tool."
+  "Return the schema for a Codex web.run find-in-page command."
   (web--object-schema
    (json-object
     "ref_id"  (tool-string-property "Reference id or URL to search within.")
@@ -173,7 +173,7 @@ Responses may not excessively quote or draw on a specific source. There are seve
 
 (-> web--screenshot-operation-schema () json-object)
 (defun web--screenshot-operation-schema ()
-  "Return the exact PDF screenshot object accepted by Codex's web.run tool."
+  "Return the schema for a Codex web.run PDF screenshot command."
   (web--object-schema
    (json-object
     "ref_id" (tool-string-property "Reference id or URL to screenshot.")
@@ -182,7 +182,7 @@ Responses may not excessively quote or draw on a specific source. There are seve
 
 (-> web--finance-operation-schema () json-object)
 (defun web--finance-operation-schema ()
-  "Return the exact finance lookup object accepted by Codex's web.run tool."
+  "Return the schema for a Codex web.run finance lookup."
   (web--object-schema
    (json-object
     "ticker" (tool-string-property "Ticker symbol to look up.")
@@ -194,7 +194,7 @@ Responses may not excessively quote or draw on a specific source. There are seve
 
 (-> web--weather-operation-schema () json-object)
 (defun web--weather-operation-schema ()
-  "Return the exact weather lookup object accepted by Codex's web.run tool."
+  "Return the schema for a Codex web.run weather lookup."
   (web--object-schema
    (json-object
     "location" (tool-string-property "Location in Country, Area, City format.")
@@ -204,7 +204,7 @@ Responses may not excessively quote or draw on a specific source. There are seve
 
 (-> web--sports-operation-schema () json-object)
 (defun web--sports-operation-schema ()
-  "Return the exact sports lookup object accepted by Codex's web.run tool."
+  "Return the schema for a Codex web.run sports lookup."
   (web--object-schema
    (json-object
     "tool"      (web--enum-schema '("sports") "Tool name for sports requests.")

@@ -16,8 +16,6 @@
            (test-telemetry-hooks--capture
             configuration
             (lambda ()
-              ;; Only provider-attempt-turn is scripted. The streaming and recovery
-              ;; methods are the real inherited subscription-provider protocol.
               (provider-stream-turn provider conversation
                                     :tool-namespaces #() :event-callback #'identity)))
          (test-assert (eq (first results) result) "Recovery returns the original provider result.")

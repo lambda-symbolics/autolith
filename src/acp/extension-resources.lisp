@@ -13,7 +13,7 @@
     value))
 
 (defgeneric acp-extension-resource--read (resource context params)
-  (:documentation "Project an authorized resource as bounded content and exact window metadata.")
+  (:documentation "Return resource content and metadata for the requested window.")
   (:method ((resource resource) (context tool-context) params)
     "Reject resources without a structured projection."
     (declare (ignore resource context params))
@@ -21,7 +21,7 @@
 
 (defmethod acp-extension-resource--read
     ((resource workspace-file-resource) (context tool-context) params)
-  "Project one authoritative snapshot without a second read or prose parsing."
+  "Read the requested lines from a single resource snapshot."
   (when (or (nth-value 1 (gethash "byteOffset" params))
             (nth-value 1 (gethash "byteCount" params)))
     (agentcomms:acp-invalid-params "Workspace resources require line windows."))
@@ -37,8 +37,6 @@
          (characters  0))
     (unless (eq (workspace-file-observation-kind observation) ':file)
       (error 'acp-extension-unavailable :reason "ACP workspace reads require a regular text file."))
-    ;; Whole lines preserve paging semantics. Reject a single oversized line
-    ;; rather than returning unbounded content or silently omitting text.
     (loop while (< last (min total (+ first count)))
           for size = (+ (length (aref lines last)) (if (= last first) 0 1))
           while (<= (+ characters size) 65536)

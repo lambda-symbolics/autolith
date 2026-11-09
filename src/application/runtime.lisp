@@ -691,10 +691,10 @@ exchange without scrolling through reasoning and tool activity.")
 (defun application--create-tool-registry (configuration &key shared-mcp-manager)
   "Create one complete registry and close its base runtimes on later failure.
 
-The registry binds SHARED-MCP-MANAGER instead of connecting its servers again
-when that manager still serves CONFIGURATION. The second value lists the shared
-runtimes the registry did not create, which its owner must neither close nor
-lose: an empty list, or SHARED-MCP-MANAGER alone."
+When SHARED-MCP-MANAGER serves CONFIGURATION, the registry reuses it rather than
+reconnecting its servers. The second value lists shared runtimes the registry did
+not create: either an empty list or SHARED-MCP-MANAGER alone. The registry's owner
+must neither close nor lose those shared runtimes."
   (let ((registry    nil)
         (retained    nil)
         (completed-p nil))
@@ -800,10 +800,10 @@ lose: an empty list, or SHARED-MCP-MANAGER alone."
     (values nil &optional))
 (defun application--raise-runtime-replacement-error
     (&key operation stage cause rollback-causes)
-  "Signal a structured runtime replacement failure for OPERATION and STAGE.
+  "Signal a structured runtime replacement error for OPERATION and STAGE.
 
-The message ends with CAUSE's report, so the user sees why the replacement
-failed, such as another live session owning the conversation."
+The message includes CAUSE's report, for example that another live session owns
+the conversation. A warning follows if the previous runtime was not fully restored."
   (error
    'application-runtime-replacement-error
    :message
@@ -1599,13 +1599,11 @@ changes also invalidate the cache. External files are sampled at these boundarie
 
 (-> application--agent-adopt-runtime (application agent) null)
 (defun application--agent-adopt-runtime (application agent)
-  "Let running AGENT adopt APPLICATION's replaced runtime at a safe boundary.
+  "Update running AGENT from APPLICATION between provider requests.
 
-Boundary-applied commands install a fresh configuration, provider, or tool
-registry on APPLICATION while AGENT still executes the current turn. Adoption
-between provider requests lets the change reach the very next request. The
-running turn owns its conversation, so adoption is skipped entirely when a
-command replaced the active conversation."
+Commands may replace APPLICATION's configuration, provider, or tool registry
+during a turn. These changes take effect on the next request only if AGENT
+still uses APPLICATION's active conversation."
   (when (eq (agent-conversation agent)
             (application-conversation application))
     (let ((configuration (application-configuration application))
@@ -1624,11 +1622,11 @@ command replaced the active conversation."
     (values model-provider tool-registry agent list))
 (defun application--prepare-runtime-replacement
     (application configuration conversation &key share-mcp-p)
-  "Prepare a fresh provider, registry, and agent without touching APPLICATION.
+  "Prepare a new provider, registry, and agent without changing APPLICATION.
 
-With SHARE-MCP-P, the new registry shares the current registry's MCP manager
-when it still serves CONFIGURATION. The fourth value lists such shared
-runtimes, which the replacement must retain while retiring the old registry."
+With SHARE-MCP-P, reuse the current registry's MCP manager if the manager still
+serves CONFIGURATION. The fourth value lists shared runtimes to retain when
+retiring the old registry."
   (let ((registry    nil)
         (retained    nil)
         (completed-p nil))
@@ -3856,8 +3854,6 @@ checked."
                            stream-started-at (get-universal-time)
                            stream-renderer (application--markdown-renderer
                                             application))
-                     ;; The streaming text shows the response arriving, so the
-                     ;; phase only times the modeline.
                      (application-set-activity application "receiving response"
                                                :label-p nil)
                      (if (application--repl-transcript-p application)
@@ -4396,8 +4392,8 @@ refusal, as a secondary value."
                       pending-operations-function)
   "Run bounded automatic continuation turns while the session goal is active.
 
-The turns stop, leaving the goal active, while a job whose completion will
-wake the model is still queued, running or undelivered."
+The goal stays active, but continuation turns stop while a job that will wake
+the model is queued or running, or its completion notice awaits delivery."
   (setf (application-deferred-goal-continuation application) nil)
   (loop
     (let ((goal (application-goal application)))
@@ -4468,9 +4464,8 @@ wake the model is still queued, running or undelivered."
           tool-allowlist (tool-restriction-p nil) (goal-continuations-p t))
   "Run one user turn for CONTENT with optional tools and goal continuations.
 
-A turn without explicit steering hooks still consumes terminal steering
-through the input controller, so command-driven messages steer instead
-of quietly queueing prose as follow-up work."
+When an input controller is present and no steering function is supplied, use
+the controller's steering hooks for command-driven messages."
   (let ((goal (application-goal application)))
     (when (and goal (eq (getf goal :status) ':active))
       (setf (getf (application-goal application) :continuations) 0)))

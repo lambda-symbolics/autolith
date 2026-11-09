@@ -101,8 +101,6 @@
   (with-test-configuration (source root)
     (dolist (workspace (list nil (config :working-directory source)))
       (with-test-configuration (target target-root)
-        ;; Archive names carry pathname metacharacters where the host allows
-        ;; them in file names, and stay plain elsewhere.
         (let* ((path        (merge-pathnames
                              (uiop:parse-native-namestring
                               (if (test-fixture-available-p *platform* ':wildcard-file-names)
@@ -744,8 +742,6 @@
                  (test-call-with-function-replacements
                   (list (list 'data-transfer--check-path
                               (lambda (trusted pathname)
-                                ;; Each destination is checked when planned, staged,
-                                ;; published, and restored, in that order.
                                 (let ((calls (incf (gethash (namestring pathname) seen 0))))
                                   (when (= calls 3)
                                     (if (equal pathname (configuration-agenda-path target))

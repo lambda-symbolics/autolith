@@ -316,7 +316,7 @@ matches of an ambiguous prefix."
         (first-p
          (list (terminal-span
                 ':hint
-                (format nil "~D fact~:P hold now. (what-changed) will report changes from here on."
+                (format nil "Starting with ~D fact~:P. Run (what-changed) again to see changes."
                         (length (knowledge-view-snapshot view))))))
         ((null changes)
          (list (terminal-span ':hint

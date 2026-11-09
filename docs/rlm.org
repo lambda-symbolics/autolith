@@ -147,13 +147,12 @@ the recorded Lisp value plus the root trace identifier.
 The model reaches the same operation through the =rlm.complete= tool.
 
 Every proxied operation also appends one replay-safe =:rlm-call=
-metadata record to the root trace, carrying the operation, the child
-trace identifiers, each child's settled billable token spend, and the
-remaining budget, so cost reporting can split a conversation's own
-usage from its recursive spend. The root trace therefore
-holds the run's machine-readable invocation tree even when
-environment code discards the trace identifiers it receives, which is
-what trace-driven policy distillation reads.
+metadata record to the root trace. The record contains the operation,
+child trace identifiers, each child's settled billable token spend, and
+the remaining budget. Cost reporting can then separate a conversation's own
+usage from its recursive spend. Trace-driven policy distillation reads
+the run's machine-readable invocation tree in the root trace, even when
+environment code discards the trace identifiers it receives.
 
 The defining litmus property is tested end to end: an input larger
 than the provider window is processed almost completely, with the
@@ -252,11 +251,9 @@ ever sees the returned value. The trace answers "why did this
 inference conclude that" after the fact: task, views with digests,
 model parameters, raw exchanges, and usage are all in the file.
 
-Traces stay addressable after the fact: =inference:<trace-id>= URIs
-read a bounded trace log back through =resource.read=, and the
-compaction instructions tell summaries to reference frames by trace
-identifier instead of restating their content, so compaction keeps
-evidence reachable instead of inlining it.
+Read bounded trace logs with =resource.read= at =inference:<trace-id>= URIs.
+The compaction instructions call for trace identifiers in summaries instead
+of inline frame content, so the evidence can be read after compaction.
 
 * Recursion surfaces
 
@@ -329,11 +326,11 @@ than any safe cancellation.
 ** Context objects live in the heap
 
 Interning and the environment's context functions materialize whole
-objects in memory. This is a documented capacity bound, not a design
-error: the RLM property only requires the content to stay outside
-model contexts, and content addressing already provides stable
-identity. Streaming, mmap, or indexes arrive when a workload actually
-exceeds the heap, not before.
+objects in memory. Context size is therefore bounded by the heap.
+The RLM property only requires content to stay outside model
+contexts, and content addressing provides stable identity.
+Streaming, mmap, or indexes are deferred until a workload exceeds
+the heap.
 
 That heap bound is also the only size limit on a root context. The
 =rlm.complete= tool reads a workspace file named by its context URI

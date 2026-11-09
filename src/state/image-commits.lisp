@@ -825,16 +825,11 @@ A definition entry that already records its tracked base keeps it."
 
 (defparameter *image-commit-surface-classes*
   '(agent conversation configuration tool tool-registry)
-  "The load-bearing classes a replayed image must keep defined.")
+  "Core classes required after private replay.")
 
 (-> image-commit-surface-verify () null)
 (defun image-commit-surface-verify ()
-  "Signal when the live image is missing part of its core surface.
-
-A replayed mutation may remove or rename definitions the launcher and
-host protocols depend on. The battery asserts the load-bearing
-functions and classes survived, so a clean replay probe fails before a
-broken commit becomes selectable."
+  "Signal an error if required core functions or classes are missing."
   (let ((missing
           (append
            (loop for name in *image-commit-surface-functions*
@@ -891,11 +886,7 @@ definitions against, so the probe skips exactly what a later boot skips."
 
 (-> image-commit--output-excerpt (string (integer 2)) string)
 (defun image-commit--output-excerpt (output limit)
-  "Return OUTPUT bounded to LIMIT characters, keeping its head and tail.
-
-A failing probe's condition report leads the output while the disabled
-debugger's backtrace can run to megabytes behind it, so both ends carry
-signal and the middle is the safe part to drop."
+  "Return up to LIMIT characters from OUTPUT's head and tail, plus a truncation marker."
   (let ((trimmed (string-right-trim '(#\Newline #\Return) output)))
     (if (<= (length trimmed) limit)
         trimmed
@@ -910,9 +901,8 @@ signal and the middle is the safe part to drop."
 (defun image-commit-replay-probe (configuration script identifier)
   "Require SCRIPT to load successfully in a clean pinned Autolith process.
 
-A failing probe keeps its complete output beside SCRIPT in
-replay-probe.log and carries the output tail in the signaled error, so
-the failure stays diagnosable after the tool call ends."
+Save failed probe output beside SCRIPT in replay-probe.log and include an
+excerpt in the error report."
   (let* ((expected     (image-commit-replay-probe-output identifier))
          (log-pathname (merge-pathnames
                         "replay-probe.log"
@@ -1068,10 +1058,6 @@ the failure stays diagnosable after the tool call ends."
                        *exploratory-undo-actions*))
             commit))
       (image-commit-error (condition)
-        ;; A replay-probe failure keeps its artifacts: the script and the
-        ;; probe log beside it are the only diagnosable evidence, and the
-        ;; directory stays inert because the current-commit pointer is
-        ;; written only after a passing probe.
         (unless (eq (image-commit-error-stage condition) ':replay-probe)
           (when (probe-file directory)
             (platform-delete-directory-tree *platform* directory
@@ -1107,11 +1093,10 @@ the failure stays diagnosable after the tool call ends."
 (defun image-commit-replay (configuration commit)
   "Load COMMIT's reconstruction script over the tracked system.
 
-Stale definitions are judged against CONFIGURATION's tracked source, the source
-revision COMMIT's lineage was published against, and the revision this image
-runs, then skipped into *IMAGE-REPLAY-SKIPS*. Startup and the clean replay probe
-both replay through this function, so a commit the probe accepts boots. The
-tracked source is read once for the whole replay."
+Check definitions against CONFIGURATION's tracked source, COMMIT's source
+revision, and the running image's revision. Skip stale definitions and record
+them in *IMAGE-REPLAY-SKIPS*. Read tracked source once per replay.
+Startup and the clean replay probe both use this function."
   (let ((*package* (find-package '#:autolith))
         (*image-replay-context*
           (make-instance 'image-replay-context

@@ -184,8 +184,8 @@ accent, and cyan secondary on a blue canvas.")
   "Return the Almighty Lisp style table.
 
 Plain text keeps the terminal default, which the theme sets to the site's
-near-white; emphasis wears the yellow accent, code and strings the cyan
-secondary, and quiet text the soft blue."
+near-white. Strong text uses the yellow accent, code and strings use cyan, and
+quiet text uses soft blue."
   (let ((ink           (almighty-color ':ink))
         (soft          (almighty-color ':soft))
         (accent        (almighty-color ':accent))

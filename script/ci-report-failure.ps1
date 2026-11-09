@@ -1,13 +1,6 @@
 # Publish a failed CI step's output as check annotations.
 #
 # Usage: ci-report-failure.ps1 -Title TEXT -Log PATH [-Status N]
-#
-# GitHub Actions job logs need authentication, while check annotations are
-# readable through the public API. A failing Windows step therefore reports
-# the first error report, the log lines that mention errors, and the bounded
-# tail of its log as ::error annotations, the way the Nix smoke step reports
-# its first run. SBCL backtrace frames print whole forms on one line each and
-# would crowd out the messages around them, so they are dropped first.
 param(
   [Parameter(Mandatory=$true)][string]$Title,
   [Parameter(Mandatory=$true)][string]$Log,

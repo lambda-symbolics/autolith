@@ -3,11 +3,11 @@
 ;;;; -- Primary Schedule Operations --
 
 (defclass mission-schedule-tool (tool) ()
-  (:documentation "Explicit primary-owned mission scheduling operations."))
+  (:documentation "Mission scheduling tools restricted to the primary agent."))
 
 (-> mission-schedule--application (tool-context) application)
 (defun mission-schedule--application (context)
-  "Require the current primary application, excluding delegated agents."
+  "Return the owning application only for the primary agent; reject delegated agents."
   (let* ((mission     (mission-context-find (tool-context-conversation context)))
          (application (and mission (mission-context-application mission))))
     (unless application

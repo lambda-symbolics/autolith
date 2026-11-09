@@ -1894,8 +1894,6 @@
                 (next-turn-finished-observed-p    nil)
                 (producer-condition               nil)
                 (producer                         nil))
-           ;; A fresh test-worker cache may need to compile the native syntax
-           ;; highlighter. Finish presentation setup before the bounded gate wait.
            (application-tool-call-entry tool application
                                         (agent-test-call :name "gate"))
            (tool-registry-register registry tool)
@@ -6500,8 +6498,6 @@
               "failed inherited configuration restores the prior runtime")))
       (when pool
         (lisp-worker-pool-stop-all pool))
-      ;; A workspace switch installs a replacement registry owning task
-      ;; threads. Leaving them alive breaks a later test that forks.
       (when closable-application
         (ignore-errors
           (tool-registry-close-runtime-state
@@ -7440,9 +7436,6 @@
                  (job-pool-lifecycle-state (task-orchestrator-pool old-orchestrator))
                  ':open)
                 (if (eq operation ':working-directory)
-                    ;; Workspace switches quiesce the old runtime before
-                    ;; preparing a replacement, so a retirement failure never
-                    ;; creates or closes the candidate registry.
                     (and
                      (eq
                       (job-pool-lifecycle-state (task-orchestrator-pool new-orchestrator))
@@ -9109,8 +9102,6 @@
                      (string= (getf (rest form) :snapshot-identifier)
                               snapshot-identifier))
                 "one pending collection keeps a stable snapshot identifier"))
-             ;; Simulate a crash after the first append but before its observer
-             ;; acknowledgement updates the pending snapshot.
              (conversation-append-user-message
               conversation
               (agent-steering-input-content first-entry)
@@ -9134,8 +9125,6 @@
             "restored active work dispatches before queued follow-ups")
            (let ((active-identifier
                    (application-input-controller-active-work-identifier restored)))
-             ;; Simulate the corresponding active-message append before its
-             ;; acknowledgement callback can publish the cleared snapshot.
              (conversation-append-user-message
               conversation
               "active turn"
@@ -9154,8 +9143,6 @@
             (null (application-input-controller--state
                    restored-after-append :steering-items))
             "steering becomes ordinary ordered work when its old turn is durable")
-           ;; Reproduce a publisher delayed until ordinary shutdown has persisted
-           ;; and cleared the process-local queues.
            (application-input-controller--prepare-shutdown
             restored-after-append ':interrupt)
            (application-input-controller--publish-counts restored-after-append)

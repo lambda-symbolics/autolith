@@ -128,12 +128,12 @@
                   (third record) (workspace-file-observation-kind observation)))))))
 
 (defmethod edit-proposal-store-limits ((store lsp-semantic-state))
-  "Preserve semantic entry, snapshot-count and byte budgets."
+  "Return the semantic limits for entry count, snapshot count and retained snapshot bytes."
   (values *lsp-semantic-maximum-entries* *lsp-semantic-maximum-snapshots*
           *lsp-semantic-maximum-snapshot-bytes*))
 
 (defmethod edit-proposal-fail ((store lsp-semantic-state) code message)
-  "Preserve semantic policy conditions."
+  "Signal proposal-store failures as semantic policy errors."
   (declare (ignore code))
   (lsp-semantic--fail message))
 
@@ -149,7 +149,7 @@
 
 (-> lsp-semantic--store (lsp-semantic-state tool-context lsp-semantic-entry) string)
 (defun lsp-semantic--store (state context entry)
-  "Validate semantic payload limits and admit it to the common bounded store."
+  "Enforce semantic payload limits and retain ENTRY in the common bounded store."
   (when (> (length (json-encode (lsp-semantic-entry-value entry)))
            *lsp-semantic-maximum-characters*)
     (lsp-semantic--fail "Semantic proposal exceeds the retained choice limit; narrow the request."))
@@ -169,7 +169,7 @@
     entry))
 
 (defmethod edit-proposal-validate :after ((context tool-context) (entry lsp-semantic-entry))
-  "Reject server restarts and synchronized-document version drift."
+  "Reject choices if the server has restarted or a synchronized document's version has changed."
   (let ((client (lsp-semantic-entry-client entry)))
     (unless (eq (lsp-semantic-entry-transport entry) (lsp-client-transport client))
       (lsp-semantic--fail "Language server restarted; request a fresh proposal."))

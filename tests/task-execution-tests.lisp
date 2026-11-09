@@ -563,8 +563,6 @@
                  (and identifier
                       (task-orchestrator-find-visible-job
                        orchestrator identifier :viewer child :tool-name "lisp.eval")))
-           ;; The evaluation starts a fresh SBCL worker, which takes tens of
-           ;; seconds on Windows while the parallel check loads the host.
            (test-assert
             (and execution
                  (task-tests--wait-until (lambda () (probe-file marker)) 90))
@@ -587,13 +585,9 @@
         (task-job-cancel-execution-descendants job ':test-cleanup))
       (when (and execution (not (job-terminal-p execution)))
         (job-cancel execution :reason ':test-cleanup))
-      ;; Terminal publication precedes the pool worker's lifecycle callbacks.
-      ;; Join those writers before removing their configuration directory.
       (test-assert (task-orchestrator-close orchestrator)
                    "The fixture joins execution-pool writers before deleting their state")
       (ignore-errors (lisp-worker-pool-stop-all worker-pool))
-      ;; Pool listeners publish the durable completion record after the
-      ;; execution turns terminal; joining the pools ends that write.
       (unless (task-orchestrator-close orchestrator)
         (error 'task-error
                :message   "Task job pools did not stop before test cleanup."

@@ -138,7 +138,7 @@
   "Google Code Assist")
 
 (defmethod provider-family ((provider gemini-code-assist-provider))
-  "Use a dedicated family for Gemini wire history."
+  "Return the Gemini Code Assist conversation family."
   (declare (ignore provider))
   ':gemini-code-assist)
 
@@ -262,7 +262,7 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
     (gemini-code-assist-provider oauth-credentials non-empty-string)
     (values string integer t))
 (defun gemini-code-assist--get-once (provider credentials operation)
-  "Perform one non-streaming Code Assist long-running operation request."
+  "Fetch a Code Assist long-running operation once, without streaming."
   (handler-case
       (provider-call-with-response-deadline
        300
@@ -386,7 +386,7 @@ propagates."
 (-> gemini-code-assist--project-required
     (json-object keyword) null)
 (defun gemini-code-assist--project-required (load-response stage)
-  "Signal a structured missing-project or ineligibility failure."
+  "Signal a structured error for a missing project or an ineligible account."
   (let* ((tiers      (json-get load-response "ineligibleTiers"))
          (first-tier (and (vectorp tiers) (plusp (length tiers)) (aref tiers 0)))
          (reason     (and (json-object-p first-tier)

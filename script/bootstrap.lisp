@@ -109,10 +109,8 @@ BOOTSTRAP-RUN-RAILED, whose pipe captures every writer."
         "")))
 
 (defun bootstrap-run-railed (command)
-  "Run COMMAND with its output railed and fail loudly on a bad exit.
-
-The subprocess writes into a pipe, so threads, captured streams, and
-grandchild processes all land under the rail."
+  "Run COMMAND with output under the section rail; signal an error on nonzero exit.
+The output pipe also captures threads and grandchild processes."
   (let* ((process (uiop:launch-program command
                                        :input        nil
                                        :output       ':stream

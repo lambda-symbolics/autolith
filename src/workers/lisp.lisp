@@ -39,7 +39,7 @@
 
 (-> lisp-worker--call (function) t)
 (defun lisp-worker--call (function)
-  "Call FUNCTION with isolated worker stderr and translate library conditions."
+  "Call FUNCTION with stderr suppressed and translate library conditions."
   (let ((*error-output* (make-broadcast-stream)))
     (handler-case
         (funcall function)
@@ -117,7 +117,7 @@
     (lisp-worker configuration)
     lisp-worker)
 (defun lisp-worker-change-working-directory (worker configuration)
-  "Move WORKER to CONFIGURATION's workspace without discarding its heap."
+  "Set WORKER's working directory to CONFIGURATION's workspace without discarding its heap."
   (lisp-worker--call
    (lambda ()
      (sbcl-worker-change-working-directory
@@ -193,7 +193,7 @@
     (lisp-worker-pool configuration)
     lisp-worker-pool)
 (defun lisp-worker-pool-change-working-directory (pool configuration)
-  "Move every REPL in POOL to CONFIGURATION with rollback on failure."
+  "Set each REPL's working directory from CONFIGURATION; roll back on failure."
   (lisp-worker--call
    (lambda ()
      (sbcl-worker-pool-change-working-directory
@@ -205,7 +205,7 @@
 
 (-> lisp-worker-manager-change-working-directory (t configuration) t)
 (defun lisp-worker-manager-change-working-directory (manager configuration)
-  "Move MANAGER's current and future REPLs to CONFIGURATION's workspace."
+  "Set the working directory for MANAGER's current and future REPLs to CONFIGURATION's workspace."
   (lisp-worker--call
    (lambda ()
      (sbcl-worker-manager-change-working-directory
@@ -303,8 +303,6 @@
            (when (and form-count (> form-count 1))
              (format stream "Form ~D of ~D failed: " (getf properties :form-index) form-count))
            (format stream "~A" (or message "Worker operation failed."))
-           ;; Compiler diagnostics and test reports are printed before the
-           ;; error, so they explain a failed load or test run.
            (when (non-empty-string-p output)
              (format stream "~%~%Output:~%~A" output))
            (when (non-empty-string-p backtrace)

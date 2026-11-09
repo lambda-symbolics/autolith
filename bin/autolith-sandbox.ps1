@@ -1,5 +1,3 @@
-# Shared by source bootstrap, source launch, and packaged releases.
-# Keep built-in modules consistent in this host and its PowerShell children.
 $AutolithSandboxHostModules = Join-Path $PSHOME 'Modules'
 $env:PSModulePath = (@($AutolithSandboxHostModules) + @(
   $env:PSModulePath -split [IO.Path]::PathSeparator |

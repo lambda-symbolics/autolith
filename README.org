@@ -14,7 +14,7 @@ Autolith, or AL, is a terminal agent inside a live Common Lisp image. It can
 observe, self-modify, discover, introspect its own code, its live state and what
 it's doing. This lets Autolith adapt to the user's preferences or to what is needed
 for the task. This may sound unstable, but Autolith creates generations of this
-image your or it can rollback to. Even a full frontal lobotomy is not a showstopper
+image that you or AL can roll back to. Even a full frontal lobotomy is not a showstopper
 as AL will just reload into a recovery image and diagnose and optionally fix the
 issue.
 

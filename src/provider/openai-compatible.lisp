@@ -172,7 +172,9 @@ service accepts."))
     list)
 (defun openai-compatible--authenticated-headers
     (credentials &key accept content-type custom)
-  "Return authenticated JSON HTTP headers with CUSTOM overrides."
+  "Return authenticated HTTP headers with non-reserved CUSTOM headers.
+
+Ignore CUSTOM overrides for Authorization, Content-Type, Accept and User-Agent."
   (let ((default
           (remove nil
                   (list
@@ -208,7 +210,7 @@ advertises one, :CONTEXT-WINDOW."
     null)
 (defun openai-compatible--signal-model-discovery-status
     (provider-name manager status)
-  "Signal the typed model-discovery failure for provider HTTP STATUS."
+  "Signal the appropriate model discovery error for HTTP STATUS."
   (if (= status 401)
       (error 'authentication-error
              :message

@@ -31,7 +31,7 @@
 
 (-> acp-endpoint-parse (keyword (or null string) &key (:token (or null string))) acp-endpoint)
 (defun acp-endpoint-parse (transport text &key token)
-  "Return the TRANSPORT endpoint TEXT names as [HOST:]PORT.
+  "Parse TEXT as [HOST:]PORT for TRANSPORT.
 
 Without TEXT, or without a host, the endpoint is loopback only. An IPv6
 address goes in brackets, as in [::1]:8737."
@@ -107,9 +107,8 @@ address goes in brackets, as in [::1]:8737."
 
 (-> acp-serve-remote (acp-endpoint function) null)
 (defun acp-serve-remote (endpoint serve-function)
-  "Serve remote clients at ENDPOINT, calling SERVE-FUNCTION with each client's channel, until interrupted.
-
-Stopping waits until every client released its sessions."
+  "Serve ENDPOINT until interrupted, calling SERVE-FUNCTION with each client's channel.
+Shutdown waits until all clients have released their sessions."
   (let* ((http-p (eq (acp-endpoint-transport endpoint) ':http))
          (server (handler-case
                      (agentcomms:acp-remote-server-start

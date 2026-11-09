@@ -2,7 +2,7 @@
 #+STARTUP: content
 
 Autolith is a terminal agent in a live Common Lisp image. The running
-system can be inspected and changed by both the agent, and the user.
+system can be inspected and changed by both the agent and the user.
 
 All application definitions live in the single =autolith= package,
 which may be considered non-standard or unwise by some Common Lisp
@@ -42,9 +42,9 @@ developers, but I consider correct for self-modifiability.
 - *Durable records* live under reasonable XDG folders. This roughly includes
   conversations, memories, agendas, images, and credentials
 - The *recovery image* is a separately built pristine core, which Autolith
-  will reboot into in case the current image is FUBAR. Autolith can work
-  using the recovery image to either fix figure out the issue with your
-  current image, or try to finish your task if that's a priority.
+  will reboot into in case the current image is FUBAR. Autolith can use the
+  recovery image to figure out or fix the issue with your current image, or
+  try to finish your task if that's a priority.
 
 * Configuration layers
 
@@ -85,8 +85,8 @@ terminal prompt          local Lisp result       finalized scrollback
 - =src/agent/runtime.lisp= runs one model turn at a time
 - User input is persisted first before we do anything else
 - Context pressure triggers inline durable compaction
-- Local operations that dont conflict with a turn can run immediately
-- Modal, terminal-owning, authorization-gated etc actions wait for a safe point
+- Local operations that don't conflict with a turn can run immediately
+- Modal, terminal-owning, authorization-gated, and similar actions wait for a safe point
 
 * Library boundaries
 
@@ -156,13 +156,14 @@ source locks, and source-invalidation revisions retain their DATA paths so old a
 new writers coordinate through the same lock and revision counters.
 
 Before 0.68.0, provider cache loading moves legacy state metadata into CACHE under
-both source and target locks. Existing target metadata wins. Successful atomic
-publication is followed by source removal; failed publication uses legacy metadata
-offline. Interrupted removal retries cleanup, not import. At 0.68.0 remove this
-migration, the preferences migration, legacy POSIX root compatibility,
-configuration-local choice cache and constructor bypass, and old conversation
-payload cleanup helpers; then remove =test-legacy-xdg-migration-removal=.
-The test fails for that version and every later version.
+both source and target locks. Existing target metadata wins. After successful
+atomic publication, the source is removed. If publication fails, legacy metadata
+is used offline. After interrupted source removal, cleanup is retried without
+reimporting metadata. At 0.68.0 remove this migration, the preferences migration,
+legacy POSIX root compatibility, configuration-local choice cache and constructor
+bypass, and old conversation payload cleanup helpers; then remove
+=test-legacy-xdg-migration-removal=. The test fails for that version and every
+later version.
 
 | State         | Components                                               |
 |---------------+----------------------------------------------------------|
@@ -227,11 +228,11 @@ inference frames; listeners stay with the original.
 =preferences.lisp= reads and atomically writes version 8 records of durable
 setting choices under the config root, preserving unknown keys across rewrites.
 It moves state-root preferences once, removing the source only after atomic
-publication under both writer locks. Existing config preferences win. Failed
-publication warns and uses the legacy file until migration succeeds. Failed
-source removal retries cleanup without reimporting old values. Remove this
-compatibility path at 0.68.0. Unsupported or malformed records are reported through
-=preferences-load-warning= during configuration creation.
+publication under both writer locks. Existing config preferences win. If
+publication fails, a warning is issued and the legacy file is used until migration
+succeeds. If source removal fails, cleanup is retried without reimporting old
+values. Remove this compatibility path at 0.68.0. Unsupported or malformed records
+are reported through =preferences-load-warning= during configuration creation.
 
 * Provider and tools
 
@@ -416,7 +417,7 @@ preferences record; =--fullscreen= overrides it for one launch.
 - Autolith provides semantic styling, candidate policy, terminal mode, and
   emits OSC 133 prompt blocks
 - OSC 133: =A= and =B= precede input, =C= starts execution, =D;STATUS=
-  closes execution. This way you can rely on smarter terminals
+  closes execution.
 - OSC 0: the interactive window title is =autolith - PATH=. Autolith writes
   it at UI start, after localgroup attach, and after =(cwd "PATH")=.
 - OSC 7501: =protocol.lisp= encodes bounded root and job program-status reports;

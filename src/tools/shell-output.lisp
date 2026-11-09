@@ -29,7 +29,7 @@
 (-> shell-output--render-capture
     (cl-exec-sandbox:sandbox-capture string string &key (:budget (integer 0))) string)
 (defun shell-output--render-capture (capture reference label &key (budget 6000))
-  "Render CAPTURE's bounded head and tail, actual byte counts, and stable REFERENCE."
+  "Render CAPTURE's head and tail samples, retained and observed byte counts, and stable REFERENCE."
   (handler-case
       (multiple-value-bind (head tail omitted)
           (cl-exec-sandbox:sample-capture
@@ -52,7 +52,7 @@
     (cl-exec-sandbox:sandbox-result shell-log-artifact (integer 0)
      &key (:diagnostic (option string))) string)
 (defun shell-output--render-result (result artifact budget &key diagnostic)
-  "Render RESULT with bounded samples, giving separate stderr most of BUDGET."
+  "Render RESULT with bounded samples, using most of BUDGET for separately captured stderr."
   (let* ((output        (cl-exec-sandbox:sandbox-result-output-capture result))
          (error-output  (cl-exec-sandbox:sandbox-result-error-capture result))
          (separate-p    (and error-output t))
@@ -94,8 +94,8 @@
      &key policy timeout output-limit environment context (merge-output-p t))
   "Run one authorized command after allocating its private execution-owned capture.
 
-Allocation runs with interrupts enabled; it hands the capture over at
-publication, so the cleanup releases every capture that was published."
+Allocate the capture with interrupts enabled. Transfer ownership at publication,
+so cleanup can release every published capture."
   (let ((job      *tool-execution-current-job*)
         (artifact nil))
     (unwind-protect

@@ -6,12 +6,10 @@
     (t &key (:limit integer) (:overflow-uri-function (option function)))
     string)
 (defun bounded-string (value &key (limit 8000) overflow-uri-function)
-  "Render VALUE as a string no longer than LIMIT characters.
+  "Render VALUE, retaining at most LIMIT characters before the truncation notice.
 
-OVERFLOW-URI-FUNCTION, when supplied, receives the complete text of an
-oversized VALUE and may return a URI where that text stays readable;
-the truncation notice then tells the reader where to continue instead
-of discarding the tail."
+OVERFLOW-URI-FUNCTION receives the complete text when truncation is needed.
+If it returns a URI, include that URI in the notice."
   (let ((text (if (stringp value)
                   value
                   (write-to-string value

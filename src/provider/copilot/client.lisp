@@ -6,11 +6,11 @@
   "Whether explicit Copilot authentication may enable unconfigured models.")
 
 (defparameter *copilot-auto-request* nil
-  "The wire adapter and Auto token dynamically owned by one request only.")
+  "The wire adapter and Auto token, dynamically bound for one request.")
 
 (-> copilot--catalog-path (configuration) pathname)
 (defun copilot--catalog-path (configuration)
-  "Return the private route catalog accompanying the shared model cache."
+  "Return the path to the private route catalog."
   (merge-pathnames "copilot-models.sexp" (config :cache-root configuration)))
 
 (-> copilot--enable-model (string string string) boolean)

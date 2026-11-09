@@ -66,8 +66,8 @@ This function is available only during an explicitly enabled worker evaluation."
 
 (-> worker-host--allowlist (tool-context hash-table) (values list boolean))
 (defun worker-host--allowlist (context arguments)
-  "Return requested host tools and whether callbacks were explicitly enabled.
-Intersect requests with the originating turn's policy and exact tool registry."
+  "Validate requested host tools against the originating turn's policy and registry.
+Return the tool names and whether callbacks were explicitly enabled."
   (multiple-value-bind (requested supplied-p) (gethash "host-tools" arguments)
     (unless supplied-p
       (return-from worker-host--allowlist (values nil nil)))
@@ -125,7 +125,7 @@ Intersect requests with the originating turn's policy and exact tool registry."
 
 (-> worker-host--reentrant-p (string hash-table &key (:repl string)) boolean)
 (defun worker-host--reentrant-p (name arguments &key repl)
-  "Detect manager operations which cannot run during REPL's callback."
+  "Return true for manager operations blocked while REPL awaits a callback result."
   (and (uiop:string-prefix-p "lisp." name)
        (or (string= name "lisp.cwd")
            (and (not (member name '("lisp.images" "lisp.repls") :test #'string=))
@@ -135,7 +135,7 @@ Intersect requests with the originating turn's policy and exact tool registry."
 (-> worker-host--dispatch (t &key (:context list) (:identity list)
                                 (:cancelled-p function)) list)
 (defun worker-host--dispatch (payload &key context identity cancelled-p)
-  "Invoke the normal authorized registry with correlated worker audit records.
+  "Invoke a tool through the authorized registry and correlate its worker audit records.
 CONTEXT is host-owned data; worker payloads cannot replace its authority."
   (destructuring-bind (origin names bindings repl mission) context
     (progv (mapcar #'first bindings) (mapcar #'rest bindings)

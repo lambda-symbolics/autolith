@@ -2,24 +2,14 @@
 
 ;;;; -- Emacs Server Client --
 
-;;; The person's Emacs runs a server (server-start) on a Unix socket; its path
-;;; arrives as :EMACS-SERVER-SOCKET, which autolith.el sets. Requests use the
-;;; same line protocol emacsclient speaks: one line of &-quoted arguments, here
-;;; a single -eval, answered by -print and -print-nonl chunks or an -error,
-;;; after which Emacs closes the connection.
-;;;
-;;; Every argument travels base64 encoded and every value comes back as base64
-;;; UTF-8 JSON, so no Lisp text is ever escaped for the elisp reader and the
-;;; request line stays ASCII whatever the server's coding systems are.
-
 (defparameter *emacs-server-timeout* 10
   "Seconds one Emacs server request may wait for its reply.")
 
 (defparameter *emacs-server-maximum-reply* (* 8 1024 1024)
   "The largest reply, in characters, accepted from the Emacs server.
 
-It holds a whole emacs: buffer of *EMACS-BUFFER-MAXIMUM-CHARACTERS* as base64
-UTF-8 JSON.")
+Large enough for an emacs: buffer of *EMACS-BUFFER-MAXIMUM-CHARACTERS*
+characters, encoded as base64 UTF-8 JSON.")
 
 
 ;;;; -- Availability --
@@ -40,9 +30,9 @@ UTF-8 JSON.")
 (defun emacs-server-call (configuration body &rest arguments)
   "Evaluate elisp BODY in the configured Emacs and return its value as a JSON object.
 
-BODY sees ARGUMENTS, all strings, as the variables A0, A1 and so on, and must
-return a value json-serialize accepts: a plist, vector, string, number, t,
-:false or :null."
+Bind ARGUMENTS, which must be strings, to A0, A1 and so on. BODY must return
+a value accepted by json-serialize: a plist, vector, string, number, t, :false
+or :null."
   (let* ((socket (or (config :emacs-server-socket configuration)
                      (error 'emacs-server-error
                             :message "No Emacs server socket is configured."
@@ -52,7 +42,10 @@ return a value json-serialize accepts: a plist, vector, string, number, t,
 
 (-> emacs-server-evaluate (pathname string &key (:timeout (real 0))) string)
 (defun emacs-server-evaluate (socket form &key (timeout *emacs-server-timeout*))
-  "Send elisp FORM to the Emacs server at SOCKET and return the printed value text."
+  "Send elisp FORM to the Emacs server at SOCKET and return its printed value.
+
+The request must end with a space before the newline; newer servers reject
+requests without that trailing space."
   (let ((connection (handler-case (platform-connect-local *platform* socket)
                       (error (condition)
                         (error 'emacs-server-error
@@ -66,8 +59,6 @@ return a value json-serialize accepts: a plist, vector, string, number, t,
                                    :timeout timeout)))
            (handler-case
                (progn
-                 ;; Like emacsclient, end every argument with a space; newer
-                 ;; servers reject a request line that does not end in one.
                  (write-string "-eval " stream)
                  (write-string (emacs-server-quote form) stream)
                  (write-char #\Space stream)

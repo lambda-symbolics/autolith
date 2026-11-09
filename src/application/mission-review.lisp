@@ -35,7 +35,7 @@
 
 (-> mission-review--account (mission-context conversation &key (:function function) (:usage-function function)) t)
 (defun mission-review--account (context conversation &key function usage-function)
-  "Charge reviewer inference concurrently to its policy and the ordinary mission."
+  "Charge reviewer inference against both the review and mission budgets."
   (let ((checkpoint (with-lock-held (*mission-review-lock*)
                       (gethash conversation *mission-review-conversations*))))
     (mission--account-inference context function usage-function
@@ -43,17 +43,17 @@
 
 (-> mission-review--context (application) mission-context)
 (defun mission-review--context (application)
-  "Return APPLICATION's exact mission context or reject missing policy."
+  "Return APPLICATION's mission context, or reject the request if no mission is set."
   (or (and (mission-goal-p (application-goal application))
            (mission-context-find (application-conversation application)))
       (mission--reject ':missing "No mission is set.")))
 
 (-> application-mission-review-configure (application list) list)
 (defun application-mission-review-configure (application specification)
-  "Attach explicit bounded reviewer policy, retaining previous decisions.
-Each ID may be installed once per mission. INPUTS name the complete relevant
-file set; CONTEXT contains the independent assignment's background. Budgets are
-cumulative across changed snapshots, not reset by retries or restart."
+  "Add a review policy with explicit limits, preserving existing decisions.
+Each review ID may be used once per mission. INPUTS must list all relevant files;
+CONTEXT provides background for the independent review. Budget use accumulates
+across changed snapshots and is not reset by retries or restarts."
   (let* ((context    (mission-review--context application))
          (id         (getf specification :id))
          (phase      (getf specification :phase))
@@ -71,7 +71,7 @@ cumulative across changed snapshots, not reset by retries or restart."
                  (typep runs '(integer 1 32))
                  (proper-list-p (getf specification :models))
                  (every #'non-empty-string-p (getf specification :models)))
-      (mission--reject ':invalid "Review policy requires ID, phase, explicit inputs/context and positive bounded turn, token and run allowances."))
+      (mission--reject ':invalid "Review policy requires an ID, a phase, explicit inputs and context, and positive, bounded limits for turns, tokens and runs."))
     (with-recursive-lock-held ((mission-context-request-lock context))
       (with-recursive-lock-held ((mission-context-lock context))
         (mission--admit context :inference-p nil)
@@ -178,7 +178,7 @@ cumulative across changed snapshots, not reset by retries or restart."
 
 (-> mission-review--findings (list) list)
 (defun mission-review--findings (result)
-  "Validate complete native task output and retain identified advisory findings."
+  "Validate the full native task output and return the advisory findings."
   (when (member (getf result :status) '(:aborted :cancelled))
     (mission--reject ':review-cancelled "Reviewer was cancelled before completing its contract."))
   (unless (and (eq (getf result :status) ':success)
@@ -195,7 +195,7 @@ cumulative across changed snapshots, not reset by retries or restart."
           (progn
             (unless (and (non-empty-string-p id) (<= (length id) 128)
                          (not (member id ids :test #'equal)))
-              (mission--reject ':review-failed "Reviewer finding IDs must be unique nonempty bounded strings."))
+              (mission--reject ':review-failed "Reviewer finding IDs must be unique, nonempty strings of at most 128 characters."))
             (push id ids)
             (list :id id :severity (gethash "severity" finding)
                   :confidence (gethash "confidence" finding)
@@ -208,8 +208,9 @@ cumulative across changed snapshots, not reset by retries or restart."
 
 (-> application-mission-review-trigger (application string &key (:tool-context (option tool-context))) list)
 (defun application-mission-review-trigger (application id &key tool-context)
-  "Run changed ID once. Unchanged completed, failed and interrupted runs are reused.
-Every finding needs an explicit primary resolve/reject decision before acceptance."
+  "Run checkpoint ID once per input snapshot; reuse existing runs.
+Before acceptance, every finding must be explicitly resolved or rejected by the
+primary agent or local user."
   (let* ((context  (mission-review--context application))
          (boundary (or tool-context (application-tool-context application)))
          (policy   (mission-review--policy context id)))
@@ -217,8 +218,6 @@ Every finding needs an explicit primary resolve/reject decision before acceptanc
       (mission--reject ':review-authority "Only the primary agent may trigger a checkpoint."))
     (multiple-value-bind (fingerprint background) (mission-review--snapshot policy boundary)
       (let ((run nil))
-        ;; Final acceptance holds this request lock through its state transition.
-        ;; Publish review applicability under the same lock, then release it before delegation.
         (with-recursive-lock-held ((mission-context-request-lock context))
           (with-recursive-lock-held ((mission-context-lock context))
             (mission--admit context :inference-p nil)
@@ -241,7 +240,7 @@ Every finding needs an explicit primary resolve/reject decision before acceptanc
             (with-lock-held (*mission-review-lock*)
               (setf (gethash run *mission-review-live-runs*) t))
             (mission--record context)))
-        ;; Never hold the request/state lock while awaiting the delegated worker.
+        ;; Do not hold the request lock or state lock while waiting for the worker.
         (unwind-protect
              (handler-case
                (let* ((result   (mission-review--run-task context policy
@@ -271,7 +270,8 @@ Every finding needs an explicit primary resolve/reject decision before acceptanc
 
 (-> application-mission-review-decide (application string string &key (:decision keyword) (:reason string) (:agent t)) list)
 (defun application-mission-review-decide (application checkpoint-id finding-id &key decision reason agent)
-  "Retain a primary resolve/reject decision for the latest checkpoint's finding."
+  "Record a resolve or reject decision from the primary agent or local user for a
+finding in the checkpoint's current run."
   (unless (or (null agent) (eq agent (application-agent application)))
     (mission--reject ':review-authority "Review decisions require the primary agent or local user and an explicit resolve/reject reason."))
   (unless (and (member decision '(:resolve :reject)) (non-empty-string-p reason))
@@ -300,9 +300,10 @@ Every finding needs an explicit primary resolve/reject decision before acceptanc
 
 (-> application-mission-review-checkpoint (application keyword) boolean)
 (defun application-mission-review-checkpoint (application phase)
-  "Run only configured PHASE reviews. Return true when all advice is adjudicated.
-Pending findings, failures and interrupted/cancelled reviewers prevent acceptance
-without claiming failed harness checks. No configured review means no model call."
+  "Run reviews configured for PHASE. Return true when current reviews are complete
+and every finding has been resolved or rejected.
+Pending findings and failed, interrupted or cancelled reviews block acceptance
+but do not count as failed harness checks. No configured reviews means no model call."
   (let ((context (mission-review--context application)))
     (dolist (policy (getf (mission-context-goal context) :reviews)
                     (application-mission-review-current-p application phase))
@@ -317,9 +318,10 @@ without claiming failed harness checks. No configured review means no model call
 
 (-> application-mission-review-current-p (application keyword) boolean)
 (defun application-mission-review-current-p (application phase)
-  "Require completed adjudicated reviews for current inputs without another model call.
-Final acceptance retains the request lock from this check through its transition;
-policy admission and fingerprint selection use the same request-before-state order."
+  "Check that reviews of current inputs are complete and all findings are decided.
+No model call is made. Final acceptance holds the request lock from this check
+through its transition. Policy admission and fingerprint selection take the
+request lock before the state lock."
   (let* ((context  (mission-review--context application))
          (boundary (application-tool-context application)))
     (with-recursive-lock-held ((mission-context-request-lock context))

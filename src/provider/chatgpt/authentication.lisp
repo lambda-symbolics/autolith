@@ -43,7 +43,7 @@
 
 (-> chatgpt-oauth--state-matches-p (t string) boolean)
 (defun chatgpt-oauth--state-matches-p (actual expected)
-  "Return true when ACTUAL is EXPECTED or its supported onboarding variant."
+  "Return true when ACTUAL matches EXPECTED, with or without the onboarding suffix."
   (and (stringp actual)
        (or (string= actual expected)
            (string= actual
@@ -58,7 +58,7 @@
        (issuer *openai-oauth-issuer*) (client-id *openai-oauth-client-id*)
        (token-endpoint *openai-oauth-token-endpoint*)
        (originator *openai-oauth-originator*))
-  "Create the shared browser OAuth client with ChatGPT's provider policy."
+  "Create a browser OAuth client with ChatGPT's provider policy."
   (make-instance 'cl-rfc8252:browser-authentication-client
                  :authorization-endpoint
                  (format nil "~A/oauth/authorize"
@@ -131,7 +131,7 @@
 
 (-> chatgpt-oauth--request (&key (:url string) (:content string)) t)
 (defun chatgpt-oauth--request (&key url content)
-  "POST an OAuth form with Autolith's identity and OpenAI's originator header."
+  "POST an OAuth form with Autolith's User-Agent and OpenAI's originator header."
   (cl-rfc8252:browser-authentication-request
    :url url :content content
    :headers         (list (cons "User-Agent" (provider-user-agent))
@@ -157,7 +157,7 @@
 
 (-> chatgpt-oauth--credentials-from-document (credential-manager json-object) oauth-credentials)
 (defun chatgpt-oauth--credentials-from-document (manager document)
-  "Validate DOCUMENT and return persisted ChatGPT OAuth credentials."
+  "Validate DOCUMENT and return ChatGPT OAuth credentials."
   (let* ((id-token      (json-get document "id_token"))
          (access-token  (json-get document "access_token"))
          (refresh-token (json-get document "refresh_token"))

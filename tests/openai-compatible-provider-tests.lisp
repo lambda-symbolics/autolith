@@ -306,8 +306,6 @@
                        (declare (ignore arguments))
                        (setf reconnect-called-p t)
                        application))
-               ;; Authentication continues into a session; a real interactive
-               ;; loop against the test's non-terminal stdin can wait forever.
                (list 'application-run
                      (lambda (application &rest arguments)
                        (declare (ignore application arguments))
@@ -1059,8 +1057,6 @@
            (test-assert (test-fixture-permissions-p *platform* pathname ':private-file)
             "the provider-key store is private to the user"))
          (let* ((model             "test/chat-model")
-                ;; Select the model from an effort it does not offer so the
-                ;; selection has to fall back to the registered efforts.
                 (provider-configuration
                   (configuration-copy
                    (configuration-copy configuration :reasoning-effort "ultra")

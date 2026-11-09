@@ -55,9 +55,9 @@
 
 (-> executable-skill--admit (tool-context t &key (:asd (option pathname))) list)
 (defun executable-skill--admit (context executable &key asd)
-  "Approve exact tool requirements and explicit full-access code execution.
-Capabilities are declarations presented to the ordinary command authorizer,
-not grants. Only declared exact tools enter the host bridge."
+  "Check declared host-tool requirements and require explicit full-access command authorization for code execution.
+Capabilities are declarations for the ordinary command authorizer, not grants.
+Only tools declared by exact name enter the host bridge."
   (let* ((manifest  (cl-skills:skill-executable-manifest executable))
          (arguments (json-object "host-tools" (coerce (getf manifest :tools) 'vector)))
          (names     (worker-host--allowlist context arguments))
@@ -137,7 +137,7 @@ not grants. Only declared exact tools enter the host bridge."
 
 (-> executable-skill--result-grammar () source-grammar)
 (defun executable-skill--result-grammar ()
-  "Return the preconstruction-bounded portable result data dialect."
+  "Return the grammar for portable result data, with limits enforced before construction."
   (make-source-grammar
    :label                                     "Executable Skill result"
    :maximum-depth 128 :maximum-nodes 262144

@@ -2,8 +2,6 @@
 
 ;;;; -- Provider Protocol --
 
-;; These streamed error types carry no HTTP status in the pinned wire client.
-;; Use its existing bounded transient retry policy for the exact variants.
 (setf *provider-retryable-event-error-codes*
       (union '("service_unavailable_error" "overloaded_error" "rate_limit_error")
              *provider-retryable-event-error-codes*
@@ -31,7 +29,7 @@
   (:documentation "A direct ChatGPT subscription client for the Codex Responses service."))
 
 (defmethod provider-account-label ((provider codex-subscription-provider))
-  "Name the ChatGPT account service in user-visible failures."
+  "Return the ChatGPT service name for user-visible errors."
   (declare (ignore provider))
   "ChatGPT")
 
@@ -44,7 +42,7 @@
 
 (-> provider--parse-authentication-method ((option string)) (option keyword))
 (defun provider--parse-authentication-method (text)
-  "Decode authentication method TEXT at a command-line or slash boundary."
+  "Parse authentication method TEXT from command-line or slash-command input."
   (cond
     ((null text)
      nil)
@@ -58,7 +56,7 @@
 
 (-> provider--authentication-method (model-provider t) keyword)
 (defun provider--authentication-method (provider method)
-  "Validate native METHOD for PROVIDER and supply the browser default."
+  "Validate METHOD for PROVIDER, defaulting to browser authentication."
   (unless (member method '(nil :browser :device-code))
     (error 'authentication-error
            :message "Authentication method must be :browser or :device-code."))
@@ -321,7 +319,7 @@ credentials and model metadata independently of their cached wire routes."
 
 (defgeneric provider-authenticated-model (configuration provider)
   (:documentation
-   "Return a provider-specific model selection after login, or NIL to keep it."))
+   "Return the model to use after login, or NIL to keep the current model."))
 
 (defmethod provider-authenticated-model
     ((configuration configuration) (provider model-provider))
@@ -740,7 +738,7 @@ and codes follow the Codex reference at commit 6f51c65958."
 
 (defmethod provider-signal-transport-failure :around
     ((provider subscription-provider) (condition http-request-failed))
-  "Preserve detached401 details before either shared or Codex normalization."
+  "Preserve detached HTTP 401 details before shared or Codex normalization."
   (if (= (dexador.error:response-status condition) 401)
       (let ((headers (provider--sanitize-wire-value
                       (dexador.error:response-headers condition))))
@@ -782,10 +780,6 @@ and codes follow the Codex reference at commit 6f51c65958."
 
 
 ;;;; -- SSE Decoding --
-
-;;; Bounded SSE decoding and the per-line inactivity deadline live in
-;;; cl-llm-provider-api. Autolith installs the deadline reader and names its
-;;; condition class for stream size violations.
 
 (setf *sse-read-line-function* #'sse-read-line-within-inactivity-deadline)
 (setf *stream-limit-error-class* 'response-stream-limit-error)
@@ -953,11 +947,11 @@ are request-scoped and included in transport and result redaction."))
 
 (defmethod cl-llm-provider-api:provider-api-error-message
     ((condition provider--authentication-failure))
-  "Read the actionable authentication report including available provider details."
+  "Return the authentication error message, including any provider details."
   (autolith-error-message condition))
 
 (defmethod provider-error-response-id ((condition provider--authentication-failure))
-  "No response object was returned on HTTP401."
+  "No response object was returned on HTTP 401."
   (declare (ignore condition))
   nil)
 

@@ -3,9 +3,9 @@
 ;;;; -- Fullscreen Viewport --
 
 (defparameter *fullscreen-transcript-character-limit* 4194304
-  "The most characters of transcript text, display and rows the fullscreen viewport keeps.
+  "The maximum characters of transcript text, display and rows kept in the viewport.
 
-Older output is evicted past it and stays loadable with (history).")
+When output exceeds the limit, older output is evicted and can be loaded with (history).")
 
 (defclass fullscreen-terminal-ui (terminal-ui)
   ((viewport :initform      nil
@@ -133,8 +133,8 @@ Older output is evicted past it and stays loadable with (history).")
 (defun terminal-ui-fullscreen-leave (ui)
   "Leave only an owned alternate buffer and restore native state on every exit.
 
-Any epilogue set through TERMINAL-UI-SET-EPILOGUE follows the restore
-sequence, so it lands in the normal screen where it stays readable."
+An epilogue set through TERMINAL-UI-SET-EPILOGUE is written to the normal
+screen after leaving the alternate buffer."
   (unwind-protect
        (terminal-ui--leave-theme ui)
     (when (fullscreen-terminal-ui-active-p ui)
@@ -259,10 +259,9 @@ EVICTED-P adds how to load output older than the viewport keeps."
 (defun terminal-ui-fullscreen--legend-row (ui &key top total space width)
   "Render the legend separating the transcript from the composer.
 
-The position block wears the legend accent, keys the plain legend style, and
-their descriptions the dim legend style. These share the modeline's
-foregrounds without its background, so the legend stays distinct from the
-composer's dim placeholder without reading as a second modeline."
+The position uses the legend accent, keys use the plain style, and descriptions
+use the dim style. The modeline foregrounds are used without its background,
+distinguishing the legend from the placeholder and the modeline."
   (let* ((viewport    (fullscreen-terminal-ui-viewport ui))
          (following-p (clinedi:transcript-viewport-following-p viewport))
          (evicted-p   (and (not following-p)

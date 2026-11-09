@@ -68,7 +68,7 @@
     :initarg       :requested-path
     :reader        working-directory-error-requested-path
     :type          t
-    :documentation "The user-supplied location that could not become the workspace.")
+    :documentation "The requested workspace location.")
    (previous-directory
     :initarg       :previous-directory
     :reader        working-directory-error-previous-directory
@@ -246,7 +246,7 @@
     :reader        image-input-error-cause
     :type          t
     :documentation "The underlying image or filesystem failure, when available."))
-  (:documentation "A local image could not become provider-visible user input."))
+  (:documentation "A local image could not be prepared for a model request."))
 
 (define-condition preferences-error (autolith-error)
   ((pathname
@@ -474,7 +474,7 @@
     :initform      ':invalid
     :reader        knowledge-error-code
     :type          keyword
-    :documentation "A stable reason callers and tools can distinguish.")
+    :documentation "A machine-readable failure reason.")
    (subject
     :initarg       :subject
     :initform      nil
@@ -512,12 +512,11 @@
 
 (define-condition tool-authority-denied (tool-error)
   ()
-  (:documentation "A terminal tool failure caused by refused user or policy authority."))
+  (:documentation "A tool call was refused by the user or by policy."))
 
 (defgeneric tool-failure-code (condition)
   (:documentation
-   "Return CONDITION's stable machine-readable tool failure category.
-Codes let tests and callers discriminate failures without pinning prose.")
+   "Return CONDITION's stable machine-readable tool failure category.")
   (:method ((condition condition))
     ':tool-failure)
   (:method ((condition tool-error))
@@ -572,10 +571,7 @@ Codes let tests and callers discriminate failures without pinning prose.")
     :type          list
     :documentation "The invokable restart names offered by the failed operation."))
   (:documentation
-   "An active-image operation failed while offering selectable restarts.
-
-As a RESTART-CHOICE-AVAILABLE it carries the original condition and its
-choices, so an enclosing restart selection passes it through unchanged."))
+   "An active-image failure with selectable restarts and the original condition."))
 
 (define-condition active-image-corruption (autolith-error)
   ((original-condition

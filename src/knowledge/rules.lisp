@@ -2,28 +2,11 @@
 
 ;;;; -- Knowledge Rules --
 
-;;; A rule derives one conclusion from claims matched by its premises:
-;;;
-;;;   (:rule :id "departure"
-;;;    :premises (("event.start" "?event" "?start")
-;;;               ("event.travel" "?event" "?travel")
-;;;               (:not ("event.cancelled" "?event")))
-;;;    :guards (("<" "?travel" (:duration 7200)))
-;;;    :bindings (("?leave" ("-" "?start" "?travel")))
-;;;    :conclusion ("event.departure" "?event" "?leave"))
-;;;
-;;; Rules are range restricted: every variable of a guard, binding, negated
-;;; premise, or the conclusion is bound by a positive premise or an earlier
-;;; binding. A negated premise matches only an explicitly supported negation;
-;;; a missing claim never satisfies it. Computations are registered pure
-;;; functions with static signatures, so a rule is type-checked against its
-;;; schemas before it can be admitted.
-
 (defparameter *knowledge-rule-premise-limit* 8
   "The maximum premises of one rule.")
 
 (defparameter *knowledge-rule-step-limit* 8
-  "The maximum guards, and separately bindings, of one rule.")
+  "Maximum guards and maximum bindings per rule.")
 
 (defparameter *knowledge-expression-depth-limit* 6
   "The deepest nesting of one rule expression.")

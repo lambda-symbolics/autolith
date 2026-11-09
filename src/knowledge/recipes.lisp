@@ -2,16 +2,10 @@
 
 ;;;; -- Starter Recipes --
 
-;;; A recipe is a small maintained vocabulary for a common kind of work: the
-;;; predicates its facts use and the rules that derive values from them. Using
-;;; one defines the predicates and proposes the rules, so the first structured
-;;; record of that work costs one operation instead of a vocabulary design.
-;;; Proposed rules still wait for admission like any other rule.
-
 (defparameter *knowledge-recipes*
   '((:recipe
      :id          "appointments"
-     :description "Events with a start, travel, and an early-arrival buffer; the departure time follows."
+     :description "Calculate departure times from event start times, travel times, and early-arrival buffers."
      :predicates  ((:predicate "event.start"
                     :arguments ((:name "event" :type :entity) (:name "time" :type :instant))
                     :key       ("event")

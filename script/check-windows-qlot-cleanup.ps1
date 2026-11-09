@@ -16,8 +16,6 @@ try {
   $dotTree = Join-Path $tree '.git/objects'
   [IO.Directory]::CreateDirectory($dotTree) | Out-Null
   [IO.Directory]::CreateDirectory($outside) | Out-Null
-  # PowerShell 5.1 resolves link targets as wildcard patterns. Keep brackets
-  # in an ordinary child so link creation cannot mask literal-path coverage.
   $literal = Join-Path $tree '[literal]'
   [IO.Directory]::CreateDirectory($literal) | Out-Null
   [IO.File]::WriteAllText((Join-Path $literal 'data'), 'literal entry')

@@ -1,14 +1,5 @@
 ;;;; -- Source Check Dependencies --
 
-;;; cheque, the source checker, Mallet, and the libraries only they need are
-;;; development tools, like Cargo's dev-dependencies. checks/qlfile lists them
-;;; apart from the runtime qlfile and only the check scripts install or see
-;;; them, so releases, Nix packages and running Autolith images never carry
-;;; them. They install as a qlot project in Autolith's cache, outside the
-;;; source tree, because ASDF's default source registry searches trees like
-;;; ~/common-lisp and would otherwise find Mallet's vendored ASDF below a
-;;; checkout.
-
 (require :sb-md5)
 (load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
 
@@ -17,10 +8,7 @@
   "The checks/ files that define the check tools' qlot project.")
 
 (defparameter *autolith-check-dependency-floating* '("cheque")
-  "Check tools that follow their default branch instead of the lock.
-
-cheque is Lambda Symbolics' shared source checker, so every project picks up
-its current rules; installs still honor the lock for the pinned tools.")
+  "Check tools updated from their default branch; other tools use locked versions.")
 
 (defparameter *autolith-check-dependency-refresh-seconds* 3600
   "The longest the installed floating check tools go without a refresh.")

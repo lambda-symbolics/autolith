@@ -16,7 +16,7 @@
 
 (defmethod rfc8628-device-authentication-authorization-class
     ((client grok-device-authentication-client))
-  "Use Grok's named RFC 8628 authorization state."
+  "Return Grok's RFC 8628 authorization class."
   (declare (ignore client))
   'grok-device-authorization)
 
@@ -41,7 +41,7 @@
        (clock-function #'device-authentication-monotonic-seconds)
        (browser-function #'device-authentication-open-browser)
        (poll-timeout *device-authentication-timeout*))
-  "Create a Grok device client, optionally replacing every external effect."
+  "Create a Grok device client with optional I/O and timing overrides."
   (unless (and (non-empty-string-p issuer)
                (non-empty-string-p client-id)
                (plusp poll-timeout))

@@ -2,30 +2,6 @@
 
 ;;;; -- Learned Procedures --
 
-;;; A procedure is a tool-call sequence learned from turns that did the same
-;;; work, kept as auditable data:
-;;;
-;;;   (:procedure :id "make-sales-report"
-;;;    :parameters ((:name "file" :type :string))
-;;;    :input ("Make" "the" "sales" "report" "for" (:param "file" "" "."))
-;;;    :steps ((:tool "sales.load"
-;;;             :arguments (:object ("file" (:text "data/" "file" ".csv"))))
-;;;            (:tool "sales.report"
-;;;             :arguments (:object ("table" (:from 0 ("table")))))))
-;;;
-;;; Argument templates are constants (:JSON TEXT), parameters (:PARAM NAME),
-;;; text around a parameter (:TEXT PREFIX NAME SUFFIX), values taken from an
-;;; earlier step's JSON result (:FROM STEP PATH), and objects and arrays of
-;;; templates. INPUT, when present, matches requests the procedure fits: its
-;;; words are literal or bind a parameter, or any word, between a fixed
-;;; prefix and suffix. Running a procedure calls its tools through the
-;;; ordinary tool path, so each call keeps its own authorization and
-;;; contracts.
-;;;
-;;; Procedures live in the knowledge log. A learned procedure is a candidate
-;;; until it is admitted; consecutive failed runs suspend it until it is
-;;; admitted again, and a retired procedure is never learned again.
-
 (defparameter *procedure-step-limit* 32
   "The most tool calls one procedure makes.")
 

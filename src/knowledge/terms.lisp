@@ -2,11 +2,6 @@
 
 ;;;; -- Knowledge Terms --
 
-;;; Arguments of structured claims are portable terms: strings, integers and
-;;; rationals, :TRUE and :FALSE, and tagged forms for instants, dates,
-;;; durations, and quantities. Every term has one canonical form, so equal
-;;; values print identically and claim identities stay stable.
-
 (defparameter *knowledge-units*
   '(("m" :length 1) ("km" :length 1000) ("cm" :length 1/100) ("mm" :length 1/1000)
     ("mi" :length 201168/125) ("ft" :length 381/1250)

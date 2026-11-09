@@ -622,11 +622,8 @@ releasing startup ownership. A nonlocal exit from it cancels the launch."
 
 (-> application-localgroup-request-handoff (application keyword) list)
 (defun application-localgroup-request-handoff (application mode)
-  "Schedule MODE process handoff without disturbing the running agent.
-
-Detaching is a terminal-side event: the agent keeps working and never
-observes it. Queued work and steering stay in the durable snapshot the
-replacement restores, so detaching changes nothing about the session."
+  "Schedule process handoff in MODE without interrupting the agent.
+The replacement restores queued work and steering from the durable snapshot."
   (unless (member mode '(:detach :take-over))
     (error 'localgroup-error :message "The localgroup handoff mode is invalid."
            :operation                 ':handoff))
@@ -694,14 +691,11 @@ scheduler tests that must not disturb the armed mode."
 
 (-> localgroup-handoff--primary-ready-p (application-input-controller) boolean)
 (defun localgroup-handoff--primary-ready-p (controller)
-  "Return true when CONTROLLER has no work that must precede handoff.
+  "Return true when CONTROLLER can hand off to a replacement process.
 
-Queued follow-up work and steering never block a handoff: both live in
-the durable pending snapshot the detached replacement restores, so
-detaching changes nothing about them. Only cancellation, failure, and
-shutdown must resolve in this process, because those decide whether a
-replacement may exist at all. An open follow-up edit also holds it: the
-recalled draft lives only in this editor, not in the snapshot."
+Cancellation, failure, shutdown, and an open follow-up edit block handoff.
+Queued work and steering do not block handoff because the replacement restores
+them from the durable pending snapshot. An open edit exists only in this editor."
   (and (null (application-input-controller-follow-up-edit-work controller))
        (null (application-input-controller-turn-cancellation-p controller))
        (null (application-input-controller-failure controller))

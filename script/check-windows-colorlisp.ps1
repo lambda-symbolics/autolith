@@ -33,8 +33,6 @@ try {
   $result = Invoke-ColorLispProbe copy $selected
   Assert-ColorLisp ($result.Status -eq 0) "Initial library selection failed: $($result.Output)"
 
-  # An explicit selected library and a cache containing only a COFF decoy
-  # must work without searching the cache or assuming a .dll extension.
   $env:COLORLISP_NATIVE_LIBRARY = $selected
   $env:XDG_CACHE_HOME = Join-Path $temporary 'cache'
   $decoyDirectory = Join-Path $env:XDG_CACHE_HOME 'colorlisp/native/stale'

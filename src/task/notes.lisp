@@ -71,8 +71,6 @@ bound so the child can adapt instead of silently losing the note."
                       (conversation-identifier (agent-conversation parent))
                       label
                       note)))
-        ;; The note also lands in the job's output tail, so job.get shows
-        ;; it even when the queued delivery misses a failed request.
         (task-progress-append-output (task-job-progress job)
                                      (format nil "~%[note] ~A~%" note))
         (if (eq status ':accepted)

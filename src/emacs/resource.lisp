@@ -2,16 +2,6 @@
 
 ;;;; -- Emacs Resources --
 
-;;; The emacs: scheme exposes the person's running Emacs through the resource
-;;; protocol. emacs:current is a read-only snapshot of what they see: visible
-;;; windows, the active region and the open file buffers. emacs:buffer/<name>
-;;; is one live buffer's whole text, unsaved edits included, read in line
-;;; windows and edited with the same original-line operations as workspace
-;;; files. An edit replaces the buffer text inside Emacs only while it still
-;;; equals the observed text, so the person's concurrent typing makes it stale
-;;; instead of being overwritten. Edited buffers stay unsaved and the change
-;;; joins their undo history.
-
 (defparameter *emacs-buffer-maximum-characters* (* 1024 1024)
   "The largest buffer, in characters, that emacs: reads or writes.")
 
@@ -177,7 +167,7 @@ evaluates without interleaving the person's commands.")
 (defmethod resource-resolver-edit-documentation ((resolver emacs-resolver))
   "Document emacs: edits."
   (declare (ignore resolver))
-  "emacs:buffer/ buffers accept the same original-line operations as workspace: files. The edit lands in the person's live buffer, unsaved and undoable there, and is stale when they changed the buffer since your read.")
+  "Edit live emacs:buffer/ buffers with the same original-line operations as workspace: files. Changes are unsaved and undoable in Emacs. An edit fails as stale if the buffer has changed since your read.")
 
 (defmethod resource-resolver-resolve
     ((resolver emacs-resolver) identifier (context tool-context))
@@ -393,7 +383,7 @@ Return the new observation and the normalized operations."
 
 (-> emacs-resource--call (tool-context non-empty-string string &rest string) json-object)
 (defun emacs-resource--call (context tool-name body &rest arguments)
-  "Evaluate elisp BODY with ARGUMENTS in CONTEXT's Emacs, failing as TOOL-NAME."
+  "Evaluate elisp BODY with ARGUMENTS in CONTEXT's Emacs, reporting errors under TOOL-NAME."
   (handler-case
       (apply #'emacs-server-call (tool-context-configuration context) body arguments)
     (emacs-server-error (condition)
@@ -417,7 +407,7 @@ Return the new observation and the normalized operations."
     (emacs-buffer-resource json-object non-empty-string)
     emacs-buffer-observation)
 (defun emacs-buffer--observation (resource snapshot tool-name)
-  "Return the observation of RESOURCE described by the Emacs SNAPSHOT reply, failing as TOOL-NAME."
+  "Return RESOURCE's observation from the Emacs SNAPSHOT reply, reporting errors under TOOL-NAME."
   (let ((status (json-get snapshot "status"))
         (name   (emacs-buffer-resource-name resource)))
     (cond
@@ -585,6 +575,6 @@ Return the new observation and the normalized operations."
 
 (-> emacs-current--file (json-object) (option string))
 (defun emacs-current--file (entry)
-  "Return ENTRY's visited file name, or NIL when it visits none."
+  "Return the file name in ENTRY, or NIL for a non-file buffer."
   (let ((file (json-get entry "file")))
     (and (stringp file) file)))

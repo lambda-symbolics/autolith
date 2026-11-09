@@ -7,10 +7,10 @@ Autolith is an MCP client. It supports MCP 2025-11-25 and 2025-06-18
 through stdio and Streamable HTTP, using [[https://github.com/lambda-symbolics/mcparen][mcparen]]. It requests the newer
 revision and accepts either one the server selects.
 
-As with other agents servers can offer tools, resources, resource
-templates, prompts, and server instructions.
+MCP servers can offer tools, resources, resource templates, prompts, and
+server instructions.
 
-Autolit's MCP configuration is an S-expression, see below.
+Autolith's MCP configuration is an S-expression.
 
 * Start with one server
 
@@ -34,13 +34,12 @@ Create =${XDG_CONFIG_HOME:-~/.config}/autolith/mcp.sexp=:
    :child-tools             ("lookup"))))
 #+END_SRC
 
-There is a couple important notes:
 - Server names are case-sensitive
 - A stdio =:directory= is =:workspace= or an existing pathname
 - =:workspace= is resolved when the process starts, so a reconnect
   follows the current working directory
 
-Here is how a remote server with read-only approval would look:
+For a remote server with read-only approval:
 
 #+BEGIN_SRC lisp
 (:name      "remote-tools"
@@ -72,7 +71,7 @@ CCP.
 
 - Autolith reads every referenced source variable once at the start of
   each credential-bearing MCP operation
-- A changed credential closes the old process before reconnecting
+- If a credential changes, Autolith closes the old process before reconnecting
 - Stdio servers get a small baseline environment plus =AUTOLITH_MCP=1=.
   They do not inherit Autolith's full environment. Add every other
   value with =:environment=
@@ -103,10 +102,10 @@ configuration root is set, Autolith first loads its =init.lisp=. It then loads
 trusted directory files from outermost to nearest and finally
 =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp=.
 
-They are full-power Common Lisp in the =AUTOLITH= package. They can
-register servers. Arbitrary side effects remain until you reverse them
-or restart. Workspace changes replace extension registrations, not
-arbitrary Lisp effects.
+The =init.lisp= files are evaluated as full-power Common Lisp in the =AUTOLITH=
+package. You can register servers in these files. Arbitrary side effects
+persist until you reverse them or restart. On a workspace change, only
+extension registrations are replaced.
 
 * Approval
 
@@ -177,8 +176,8 @@ sections share one bounded preview.
 
 As for commands:
 - =(mcp)= shows connection state.
-- =(mcp refresh= refreshes connections and tool discovery (does not reread config).
-- =(mcp reload)= rereads the site, global, and active directory files plus =init.lisp=, closes old runtimes, and
+- =(mcp :refresh)= refreshes connections and tool discovery without rereading configuration.
+- =(mcp :reload)= rereads the site, global, and active directory files plus =init.lisp=, closes old runtimes, and
 installs a fresh registry. =(cwd)= does the equivalent replacement before changing directory.
 
 A =notifications/tools/list_changed= notification marks one server
@@ -189,8 +188,8 @@ MCP results become ordinary Autolith tool results, and will be recorded.
 
 * Register from Lisp
 
-Your global =init.lisp=, or whatever other file you load,
-can register the same property list used by =mcp.sexp=:
+Use =register-mcp-server= in your global =init.lisp= or another file you load.
+Pass the same property list as in =mcp.sexp=:
 
 #+BEGIN_SRC lisp
 (register-mcp-server

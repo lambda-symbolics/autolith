@@ -2,11 +2,6 @@
 
 ;;;; -- POSIX Platform Adapter --
 
-;;; This file implements the platform protocol for Linux, macOS, and BSD
-;;; hosts on top of SB-POSIX. Besides the Windows adapter, it is the only
-;;; Autolith source naming SB-POSIX process, permission, link, terminal,
-;;; and signal operations, and the only one with host reader conditionals.
-
 (defclass posix-platform (platform)
   ()
   (:documentation "The adapter for Linux, macOS, and BSD hosts built on SB-POSIX."))

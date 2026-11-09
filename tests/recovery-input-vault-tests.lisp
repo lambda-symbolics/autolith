@@ -90,8 +90,6 @@
                    (equal (getf capture :work-items)
                           '((:message "queued follow-up"))))
               "recovery import filters durable steering and preserves remaining input")
-             ;; Give the existing capture a recognizable timestamp, then replay the
-             ;; same pending snapshot as if recovery crashed after vault publication.
              (setf (getf capture :captured-at) 123)
              (application-recovery-input-vault--write-captures
               application captures))
@@ -171,8 +169,6 @@
                             (:message "legacy work")))
                    (not (probe-file legacy-pathname)))
               "legacy import generates stable identity and deletes only owned state"))
-           ;; Recreate the interrupted migration window: canonical v2 is durable
-           ;; while its equivalent legacy source still exists.
            (let* ((third-application
                     (recovery-input-vault-tests--application
                      configuration "recovery-vault-migration"))
@@ -1352,8 +1348,6 @@
                   (submit "/vault")
                   (setf observed-failure
                         (application-recovery-input-vault-failure application))
-                  ;; Startup itself must not have touched the corrupt bytes
-                  ;; before any vault control runs.
                   (setf bytes-preserved-p
                         (and (probe-file pending-pathname)
                              (probe-file vault-pathname)
@@ -1366,9 +1360,6 @@
                              t))
                   (submit "/vault-restore")
                   (submit "/vault-discard")
-                  ;; Vault controls manage the blocked queue itself, so they
-                  ;; execute immediately instead of joining that queue; the
-                  ;; executed discard resolves the corrupt vault state.
                   (setf vault-controls-admitted-p
                         (and (null (application-input-controller--state
                                     controller :work-items))

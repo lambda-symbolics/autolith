@@ -2,12 +2,6 @@
 
 ;;;; -- Evidence Applicability --
 
-;;; Evidence is an immutable record of what was observed; whether it still
-;;; applies is decided now. File evidence requires the observed content digest,
-;;; including when it quotes a passage: surrounding edits may change its meaning.
-;;; Web pages and tool output expire without background retrieval. A user's
-;;; statement and a recorded run stay as they were.
-
 (defparameter *knowledge-url-lifetime* (* 7 86400)
   "Seconds a web observation supports claims before it expires.")
 
@@ -21,7 +15,7 @@ Replays and fixtures bind it to evaluate expiry deterministically.")
 
 (-> knowledge-now () timestamp)
 (defun knowledge-now ()
-  "Return the current time as knowledge sees it."
+  "Return the current time from *KNOWLEDGE-CLOCK*."
   (funcall *knowledge-clock*))
 
 (deftype knowledge-applicability ()
@@ -183,10 +177,10 @@ the read failure of an unverified file."
     (pathname &key (:quote (option string)) (:workspace (option string)) (:time timestamp))
     list)
 (defun knowledge-observe-file (pathname &key quote workspace (time (knowledge-now)))
-  "Return evidence that file PATHNAME contains QUOTE, or its whole current text.
+  "Return evidence for file PATHNAME, requiring QUOTE when supplied.
 
-A file inside WORKSPACE is recorded relative to it. Signal MEMORY-ERROR
-correctively when the file cannot support anything."
+Record files inside WORKSPACE using relative paths. Signal MEMORY-ERROR with
+a corrective message if no evidence can be obtained."
   (let* ((observed (memory-source-observe-file pathname :quote quote :time time))
          (relative (and workspace
                         (uiop:subpathp pathname (uiop:ensure-directory-pathname workspace)))))

@@ -46,7 +46,7 @@
 (define-setting :telemetry-enabled-p (boolean-setting)
   :label "Telemetry enabled" :group :telemetry :scope :durable :default t
   :environment                       "AUTOLITH_TELEMETRY"
-  :documentation                     "Export bounded numerical metadata and fetch the public models.dev catalog by default. Disable to stop telemetry and its catalog refresh; an explicit saved opt-out is preserved.")
+  :documentation                     "Send bounded numerical metadata and refresh the public models.dev catalog by default. Disable to stop both. A saved opt-out takes precedence.")
 
 (define-setting :telemetry-diagnostics-p (boolean-setting)
   :label "Diagnostic consent" :group :telemetry :scope :durable :default nil

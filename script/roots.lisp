@@ -4,12 +4,6 @@
 
 (require :sb-posix)
 
-;;; The scripts run before the Autolith system is loaded, so they cannot ask
-;;; the platform adapter. This mirrors PLATFORM-APPLICATION-ROOT from
-;;; src/core/platform-posix.lisp and src/core/platform-win32.lisp: an absolute
-;;; XDG variable wins on every host, otherwise POSIX uses the XDG defaults
-;;; below the home directory and Windows uses the application data folders.
-
 (defun autolith-script-setenv (name value)
   "Set environment variable NAME to VALUE for this process and its children.
 

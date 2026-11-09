@@ -2,13 +2,6 @@
 
 ;;;; -- Conversation History Resources --
 
-;;; conversation:current exposes the requesting conversation's complete
-;;; durable history, including everything compaction removed from the model
-;;; context. Another conversation is read only when its identifier is named
-;;; with conversation:id/<id>; there is deliberately no search across
-;;; conversations. Reads page by durable record sequence or search one
-;;; conversation's records.
-
 (defparameter *conversation-resource-current-identifier* "current"
   "The reserved identifier naming the requesting conversation.")
 
@@ -28,10 +21,10 @@
   "The largest number of matches one conversation search returns.")
 
 (defparameter *conversation-resource-maximum-characters* 7000
-  "The most characters a window or search returns, below the tool result bound.
+  "The character budget for a window or search, below the tool-result limit.
 
-Only a record read alone may exceed it, so its complete text is spilled to a
-readable context object instead of being cut.")
+Only a single-record read may exceed this budget; its complete text is spilled
+to a readable context object rather than truncated.")
 
 (defparameter *conversation-resource-record-characters* 1500
   "The most characters one record shows inside a multi-record window.")
@@ -61,7 +54,7 @@ readable context object instead of being cut.")
 (defmethod resource-resolver-read-documentation ((resolver conversation-resolver))
   "Document conversation: reads."
   (declare (ignore resolver))
-  "conversation:current exposes durable records, paginated by start-sequence/record-count or searched with query. conversation:id/<id> names another conversation.")
+  "conversation:current exposes the requesting conversation's complete durable history, including records removed from model context by compaction. Page with start-sequence and record-count, or search with query. conversation:id/<id> names another conversation; searches never span conversations.")
 
 (defmethod resource-resolver-resolve
     ((resolver conversation-resolver) identifier (context tool-context))
@@ -151,10 +144,10 @@ readable context object instead of being cut.")
 
 (defmethod resource-whole-text
     ((resource conversation-resource) (context tool-context) &key maximum-bytes tool-name)
-  "Return RESOURCE's complete durable history with every record whole.
+  "Return RESOURCE's complete durable history without truncating records.
 
-The text stops being built once it passes MAXIMUM-BYTES of UTF-8, which
-signals a TOOL-ERROR naming TOOL-NAME instead of returning part of it."
+If the text exceeds MAXIMUM-BYTES when encoded as UTF-8, stop building it
+and signal a TOOL-ERROR naming TOOL-NAME rather than return partial history."
   (declare (ignore context))
   (let ((conversation (conversation-resource-conversation resource))
         (bytes        0)
@@ -163,7 +156,7 @@ signals a TOOL-ERROR naming TOOL-NAME instead of returning part of it."
              (incf bytes (length (utf8-string-to-octets text)))
              (when (> bytes maximum-bytes)
                (error 'tool-error
-                      :message   (format nil "Conversation ~A is larger than ~:D bytes, the most ~A reads whole. Read it in windows with resource.read instead."
+                      :message   (format nil "Conversation ~A exceeds the ~:D-byte whole-history limit for ~A. Read it in windows with resource.read instead."
                                          (conversation-resource--label resource)
                                          maximum-bytes
                                          tool-name)
@@ -239,7 +232,7 @@ A NIL MAXIMUM shows the complete body."
 
 (-> conversation-resource--compaction-note (conversation) string)
 (defun conversation-resource--compaction-note (conversation)
-  "Return how often CONVERSATION was compacted and where the latest began."
+  "Return CONVERSATION's compaction count and most recent compaction sequences."
   (let* ((sequences (conversation-compaction-sequences conversation))
          (latest    (reverse
                      (last sequences

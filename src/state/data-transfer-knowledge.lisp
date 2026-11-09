@@ -2,14 +2,6 @@
 
 ;;;; -- Knowledge in Portable Archives --
 
-;;; An archive carries the knowledge log as its records in order. A workspace
-;;; archive carries that workspace's predicates, claims, rules, and their
-;;; evidence and retractions, plus the global predicates they use. Claim and
-;;; evidence identities include the workspace, so relocating a workspace
-;;; recomputes them and rewrites every reference, including memory premises
-;;; naming claims. Importing appends the records the destination lacks and
-;;; refuses records whose identity it already holds with other content.
-
 (-> data-transfer--knowledge-owner (list) (option string))
 (defun data-transfer--knowledge-owner (record)
   "Return the workspace owning knowledge RECORD, or NIL for global or ownerless records."

@@ -157,8 +157,6 @@
 (-> management-repl-tests--unix-lifecycle () null)
 (defun management-repl-tests--unix-lifecycle ()
   "Drive the Unix management transport through its application lifecycle."
-  ;; A short MKDTEMP root keeps the socket path within the 104-byte macOS
-  ;; limit below the long per-user TMPDIR.
   (let* ((root          (test-make-temporary-root))
          (configuration (management-repl-test-configuration root))
          (token         "test-management-token")

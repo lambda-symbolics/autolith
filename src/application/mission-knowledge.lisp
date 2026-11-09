@@ -2,15 +2,10 @@
 
 ;;;; -- Mission Observations --
 
-;;; A mission's status and the result of each acceptance gate are recorded as
-;;; facts about the mission, so rules and plans can depend on them. Each new
-;;; report replaces the previous one from the same mission. Recording follows
-;;; the knowledge setting and never fails the mission: a knowledge storage
-;;; failure only loses the observation.
 
 (-> mission-knowledge--identity (mission-context) string)
 (defun mission-knowledge--identity (context)
-  "Return the entity identifying CONTEXT's mission in facts."
+  "Return the entity ID used for CONTEXT's mission in facts."
   (format nil "mission/~A/~D"
           (conversation-identifier
            (application-conversation (mission-context-application context)))
@@ -19,7 +14,9 @@
 (-> mission-knowledge--record
     (mission-context string &key (:arguments list) (:detail string)) null)
 (defun mission-knowledge--record (context predicate &key arguments detail)
-  "Record that CONTEXT's mission reported PREDICATE of ARGUMENTS, described by DETAIL."
+  "Record PREDICATE with ARGUMENTS for CONTEXT's mission, using DETAIL as the description.
+Record only when knowledge capture is enabled. Knowledge storage errors do not
+fail the mission; only the observation is lost."
   (let* ((application   (mission-context-application context))
          (configuration (application-configuration application)))
     (when (knowledge-capture-p configuration)

@@ -2,22 +2,6 @@
 
 ;;;; -- Action Contracts --
 
-;;; A contract describes what a tool call needs and does:
-;;;
-;;;   (:contract :id "send-report" :tool "mcp__mail.send"
-;;;    :when (("to" "?recipient"))
-;;;    :requires (("report.ready" "?recipient"))
-;;;    :effects (("report.sent" "?recipient"))
-;;;    :observes ((:predicate "mail.message" :arguments ("$arg.to" "$result.id"))))
-;;;
-;;; Before a matching call runs, its requirements must hold; a requirement that
-;;; fails or cannot be decided refuses the call with the reason. After the call
-;;; succeeds, its effects are recorded as the model's predictions, rejected by
-;;; default by fact gates. Its observations are read from the call's arguments
-;;; and its JSON result and recorded as observations of that call. This is how
-;;; structured tool output, including MCP results, becomes facts: only through
-;;; a contract that names the predicate for each value.
-
 (defparameter *knowledge-contract-pattern-limit* 8
   "The most requirements, effects, or observations one contract lists.")
 
@@ -67,9 +51,9 @@
 WHEN maps argument names to required values or to variables they bind.
 Requirement and effect variables must be bound by WHEN or a positive
 requirement. Observation arguments are values, bound variables, or references
-such as $arg.to and $result.id. ACCEPTS names the bases a requirement may rest
-on, by default observations and the user's statements; naming model-proposal
-lets the predicted effects of earlier calls satisfy it."
+such as $arg.to and $result.id. ACCEPTS lists the allowed evidence bases.
+The default is observations and user statements; include model-proposal to
+allow predicted effects from earlier calls to satisfy requirements."
   (unless (knowledge-rule-name-p id)
     (knowledge--fail ':invalid-contract id
                      "Contract names are lowercase letters, digits, hyphens, and dots."))
@@ -421,9 +405,6 @@ never change the external action's outcome and never disappear silently."
     (dolist (match matches)
       (destructuring-bind (contract environment &optional supports) match
         (let* ((identifier (getf (rest contract) :id))
-               ;; The call names the invocation, not only the contract, so a
-               ;; result shared by calls about different subjects stays
-               ;; separate evidence for each of them.
                (call       (format nil "~A/~A" identifier
                                    (subseq (memory-source-text-digest
                                             (json-encode (or arguments (json-object))))

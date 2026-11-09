@@ -48,9 +48,9 @@
 
 (-> search--validated-library-path (configuration) pathname)
 (defun search--validated-library-path (configuration)
-  "Return CONFIGURATION's private fff library once clifff confirms its pinned revision.
+  "Return CONFIGURATION's private fff library path after clifff verifies the pinned revision.
 
-AUTOLITH_FFF_LIBRARY names a library to use instead, as the Nix package does."
+AUTOLITH_FFF_LIBRARY overrides the library path; the Nix package uses this override."
   (let ((override (uiop:getenv "AUTOLITH_FFF_LIBRARY")))
     (handler-case
         (platform-truename
@@ -106,10 +106,10 @@ AUTOLITH_FFF_LIBRARY names a library to use instead, as the Nix package does."
 
 (-> search-tool--earmuffed-name-p (string) boolean)
 (defun search-tool--earmuffed-name-p (token)
-  "Return true when TOKEN reads as a Lisp special variable name such as *limit*.
+  "Return true when TOKEN resembles a Lisp special variable name, such as *limit*.
 
-fff's agent query parser takes a token that starts and ends with an asterisk as
-a path glob, so such a name would filter paths instead of being searched."
+fff's agent query parser treats tokens that start and end with an asterisk as
+path globs rather than search text."
   (let ((length (length token)))
     (and (>= length 3)
          (char= (char token 0) #\*)

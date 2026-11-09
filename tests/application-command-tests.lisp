@@ -481,12 +481,8 @@
        '(("/help" :execute)
          ("/cwd /tmp" :hold)
          ("/model gpt-5.6-sol" :apply)
-         ;; Detaching exists to leave while work runs; it must never wait
-         ;; for the idle queue.
          ("/detach" :execute)
          ("/fix-skipped-definitions" :hold)
-         ;; Vault commands manage the follow-up queue itself, so they act
-         ;; immediately rather than waiting behind that queue.
          ("/vault-restore" :execute)
          ("/vault-discard" :execute)
          ("/quit" :cancel)))
@@ -636,8 +632,6 @@
     (test-assert
      (handler-case
          (progn
-           ;; Call the registered handler so the compiler leaves the arity
-           ;; mismatch to the run-time check this case exercises.
            (funcall (application-command-handler (application-command-find "/help"))
                     application ':extra ':more)
            nil)

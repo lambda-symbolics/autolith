@@ -346,7 +346,7 @@ local-user override."
 
 (defgeneric tool-active-turn-action (tool)
   (:documentation
-   "Return whether an explicit local call to TOOL may overlap an active turn."))
+   "Return :EXECUTE or :HOLD for an explicit local call to TOOL during an active turn."))
 
 (defmacro define-tool-active-turn-actions (action &body specifications)
   "Define constant ACTION methods for tool classes in SPECIFICATIONS."

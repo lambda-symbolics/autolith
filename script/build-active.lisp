@@ -29,8 +29,6 @@
          (merge-pathnames "active/autolith-active.core"
                           (autolith-application-root :data)))
        (arguments        (uiop:command-line-arguments))
-       ;; ACTIVE-IMAGE-INSTALL starts this script again with --child on hosts
-       ;; without fork; that process loads the system and saves itself.
        (child-core
          (and (string= (or (first arguments) "") "--child")
               (second arguments)))

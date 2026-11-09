@@ -2,18 +2,6 @@
 
 ;;;; -- Fireworks API Key Provider --
 
-;;; The Fireworks Responses API speaks the standard streaming Responses
-;;; dialect, verified against accounts/fireworks/models/kimi-k3 on
-;;; 2026-08-06: input accepts developer messages, prior function calls, and
-;;; function_call_output items; streams emit response.output_item.done items
-;;; and response.completed without an end_turn flag; requests accept
-;;; reasoning.effort, store=false, and prompt_cache_key. Like the Grok
-;;; proxy, tools ride in the request's flat tools array and function calls
-;;; return one flat wire name, so this provider joins Autolith's namespaced
-;;; tool names with a dot on the way out and splits them again on completed
-;;; items. Conversations therefore persist in the same namespaced shape
-;;; regardless of the serving provider.
-
 (defclass fireworks-api-key-provider
     (session-preserving-provider-mixin responses-api-provider)
   ()
@@ -26,7 +14,7 @@
   "Fireworks")
 
 (defmethod provider-family ((provider fireworks-api-key-provider))
-  "The Fireworks provider serves the Fireworks model family."
+  "Return the Fireworks model family."
   (declare (ignore provider))
   ':fireworks)
 
@@ -34,7 +22,7 @@
     ((family (eql ':fireworks))
      (configuration configuration)
      &key reasoning-summaries-p)
-  "Create the Fireworks API key provider; summaries always stream when served."
+  "Create the Fireworks API key provider."
   (declare (ignore reasoning-summaries-p))
   (fireworks-provider-create configuration))
 
@@ -50,15 +38,10 @@
 
 ;;;; -- Fireworks Protocol Specializations --
 
-;; Verified 2026-08-11 against the live Fireworks Responses API: every
-;; effort level Autolith can send (low, medium, high) fails for this model
-;; with a 404 'Model not found, inaccessible, and/or not deployed', while
-;; omitting the reasoning object succeeds.
 (defparameter *fireworks-reasoning-effort-models-blacklist*
   '("accounts/fireworks/models/qwen3p7-plus")
-  "Fireworks model identifiers whose serving stacks reject any reasoning
-effort parameter.  Requests for these models must omit the reasoning
-object entirely; see PROVIDER-RESPONSES-WIRE-EFFORT.")
+  "Fireworks models that reject reasoning parameters. Omit the reasoning object
+for these models; see PROVIDER-RESPONSES-WIRE-EFFORT.")
 
 (-> fireworks-model-reasoning-effort-p (string) boolean)
 (defun fireworks-model-reasoning-effort-p (model)
@@ -68,11 +51,7 @@ object entirely; see PROVIDER-RESPONSES-WIRE-EFFORT.")
 
 (defmethod provider-responses-wire-effort
     ((provider fireworks-api-key-provider) (configuration configuration))
-  "Return CONFIGURATION's Fireworks reasoning effort, or NIL to omit it.
-
-Models in *fireworks-reasoning-effort-models-blacklist* reject every
-reasoning effort value at the serving stack, so NIL tells the shared
-request builder to omit the reasoning object entirely."
+  "Return CONFIGURATION's Fireworks reasoning effort, or NIL to omit it."
   (declare (ignore provider))
   (when (fireworks-model-reasoning-effort-p
          (config :model configuration))

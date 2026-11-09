@@ -3,11 +3,11 @@
 ;;;; -- Mission Review Attachment and Decisions --
 
 (defclass mission-review-tool (tool) ()
-  (:documentation "Primary-only optional mission review configuration and decisions."))
+  (:documentation "Tools for optional mission reviews, restricted to the primary agent."))
 
 (-> mission-review--application (tool-context) application)
 (defun mission-review--application (context)
-  "Require the owning primary application, excluding delegated agents."
+  "Return the owning application only for the primary agent; reject delegated agents."
   (let* ((mission     (mission-context-find (tool-context-conversation context)))
          (application (and mission (mission-context-application mission))))
     (unless application
@@ -18,7 +18,7 @@
     application))
 
 (defmethod tool-execute ((tool mission-review-tool) (context tool-context) arguments)
-  "Execute review operations without granting a reviewer decision authority."
+  "Execute review operations without granting decision authority to reviewers."
   (let* ((application (mission-review--application context))
          (operation   (tool-name tool))
          (result

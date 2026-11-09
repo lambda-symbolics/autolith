@@ -19,10 +19,6 @@
 
 ;;;; -- Endpoint Ownership --
 
-;;; The management REPL is image-daemon's evaluation endpoint, configured from
-;;; the :MANAGEMENT-REPL-* settings, evaluating in the AUTOLITH package, and
-;;; owned by one application at a time.
-
 (-> management-repl-start (application) (option eval-endpoint))
 (defun management-repl-start (application)
   "Start APPLICATION's configured management endpoint when enabled and return it."

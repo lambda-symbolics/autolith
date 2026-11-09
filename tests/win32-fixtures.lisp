@@ -2,13 +2,6 @@
 
 ;;;; -- Windows Host Fixtures --
 
-;;; The Windows implementation of the host fixture protocol declared in
-;;; tests/test-support.lisp. Symbolic links are available once the account
-;;; may create them, which Developer Mode or administrative rights grant.
-;;; FIFOs, device nodes, POSIX file modes, forked children, pseudo-terminals,
-;;; and the POSIX shell do not exist here, so the checks that need them are
-;;; recorded as skipped.
-
 (defmethod test-fixture-shell-command ((platform win32-platform) posix powershell)
   "Use native PowerShell for Windows command tests."
   (declare (ignore posix))

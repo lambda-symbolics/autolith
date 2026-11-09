@@ -2,17 +2,6 @@
 
 ;;;; -- Knowledge Explanations and Changes --
 
-;;; An explanation is the bounded tree of what supports one claim: its stored
-;;; supports with their evidence, and its derivations with their rule versions,
-;;; bindings, and premises, explained in turn. Trees are paged: past the node
-;;; limit, unexpanded premises are returned as a cursor to continue from.
-;;;
-;;; A snapshot records which claims a view supports. Comparing a snapshot with
-;;; a later view yields the changes between them: new and withdrawn claims,
-;;; keyed values that moved, and new conflicts, each with the cause when it is
-;;; known. Snapshots are portable, so the last state a person or model saw can
-;;; be kept and changes reported once.
-
 (defparameter *knowledge-explanation-node-limit* 32
   "The most claims one page of an explanation expands.")
 

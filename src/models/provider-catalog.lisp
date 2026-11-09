@@ -97,8 +97,6 @@ Account-specific Copilot routing and providers absent from models.dev retain dis
                      (when (member (provider-registration-name registration)
                                    '("chatgpt" "gemini" "grok") :test #'string=)
                        (mapcar #'provider-model-name (provider-registration-models registration))))))
-        ;; Remove the pre-0.68.0 startup hint only after validating its replacement.
-        ;; Ordinary registration replacement would retain that discovered model.
         (when (member *provider-cache-selection-hint-model*
                       (provider-registration-discovered-models registration) :test #'eq)
           (unregister-provider (provider-registration-name registration) :source ':builtin)

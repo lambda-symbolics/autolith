@@ -92,7 +92,7 @@ The root context never enters a prompt, but its environment holds it in memory."
      "label" (tool-string-property "Optional short view name.")
      "text" (tool-string-property "Literal view content.")
      "uri" (tool-string-property
-            "Resource whose observation becomes the view, for example workspace:src/main.lisp. A path outside the workspace needs full access, as for any tool.")
+             "Resource to read as the view, for example workspace:src/main.lisp. Paths outside the workspace require full access.")
      "object" (tool-string-property
                "Stored context object reference: context:<sha256> or the bare digest.")))))
 
@@ -116,7 +116,7 @@ The root context never enters a prompt, but its environment holds it in memory."
   (list
    "model"
    (tool-string-property
-    "Optional model for this RLM subtree, given as an exact supported model name; aliases and shorthand are rejected and the failure lists the accepted names. Nested calls inherit their enclosing run's route.")
+     "Optional exact supported model name for this subtree. Invalid names, including aliases and shorthand, are rejected with a list of supported names. Nested calls inherit the enclosing run's route.")
    "effort"
    (tool-string-property
     "Optional reasoning effort supported by the selected model. Nested calls inherit their enclosing run's route.")))
@@ -162,7 +162,7 @@ The root context never enters a prompt, but its environment holds it in memory."
    :provider  provider
    :budget    budget
    :description
-   "Run one bounded inference frame: a separate model call over only the supplied read-only views, isolated from this conversation. Use it to analyze inputs without loading them here. The frame sees nothing but its views, so pass everything it needs. Its budget is small by default and a read frame gets only a handful of tool rounds, so it answers one question over a few files: it cannot audit a repository, review a whole change set, or read many files, and such open-ended investigation belongs to a task.run child instead. Returns the frame's value, its trace identifier, its settled token spend, and the remaining budget."
+   "Analyze supplied read-only views in a separate, bounded model call. The frame does not inherit this conversation, so include all needed context. With read capabilities, it can inspect a few files within a small tool-round limit. Use a child agent for repository audits or whole change-set reviews. Returns the answer, trace identifier, token spend, and remaining budget."
    :parameters
    (tool-object-schema
     (apply #'json-object
@@ -187,7 +187,7 @@ The root context never enters a prompt, but its environment holds it in memory."
    :provider  provider
    :budget    budget
    :description
-   "Fan tasks out as concurrent bounded inference frames sharing one budget, isolated from this conversation. Use it to apply one question to many snippets or files at once. Each frame is as bounded as rlm.infer, so give every task its own views instead of expecting frames to search for them. Results keep task order; a failed frame reports its error without discarding the others. Returns each frame's value, trace, and settled token spend plus the remaining budget."
+   "Run bounded inference frames concurrently under one shared budget. Supply each task's views explicitly. Each frame has rlm.infer's limits; use a child agent for broad investigation. Results follow task order and include each frame's answer, trace, and token spend, plus the remaining budget. A failed frame is returned as an error without discarding other results."
    :parameters
    (tool-object-schema
     (apply #'json-object
@@ -226,7 +226,7 @@ The root context never enters a prompt, but its environment holds it in memory."
    :provider  provider
    :budget    budget
    :description
-   "Run a root recursive language model over one large external context: the content stays outside the root model context, only selected bounded slices enter sub-inferences, and a dedicated Lisp environment programmatically slices it, fans sub-inferences over the pieces, and records the final value. Use it when one input, such as a long document, log, or diff, is far too large to read into this conversation and must be processed nearly in full. The run works only on the supplied context and never browses the workspace; raise calls and tokens explicitly for a very large input. Returns the recorded value, the root trace identifier, and the remaining budget."
+   "Analyze a large input through a dedicated Lisp environment and sub-inferences. Use when the input cannot fit in this conversation or needs to be read nearly in full. The root model receives metadata; it can select slices and delegate their analysis. The run can read only the supplied context, not the workspace. Increase call and token allowances for very large inputs. Returns the final value, root trace identifier, and remaining budget."
    :parameters
    (tool-object-schema
     (apply #'json-object
@@ -705,9 +705,6 @@ turn, and async requests hand off at admission."
                                :activity-callback (rlm--tool-activity-callback tool context))
                (let* ((printed (rlm--result-sexp value))
                       (value-fields
-                        ;; A large final value is externalized as a stored
-                        ;; context object with a bounded preview instead of
-                        ;; flooding the caller's conversation.
                         (if (<= (length printed)
                                 *rlm-tool-maximum-value-characters*)
                             (list ':value value)

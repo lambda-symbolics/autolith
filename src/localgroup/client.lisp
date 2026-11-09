@@ -686,15 +686,11 @@ Return an application exit plist, or NIL after a detach or connection loss."
 
 (-> localgroup-relay-exit (configuration (option list) keyword) null)
 (defun localgroup-relay-exit (configuration exit mode)
-  "Finish this relaying process as the detached session did when EXIT is present.
+  "Report EXIT's message and, for a controlling terminal, exit with its status.
 
-A controlling terminal reports EXIT's message and exits with its status, so the
-outer launcher updates, rolls back, or recovers exactly as it would for a
-foreground session. The session published its crash capsule to its own
-launcher, so the controlling terminal publishes the capsule its exit details
-name to this process's launcher for recovery to restore the conversation. A
-read-only observer only reports the message, leaving that action to the
-controlling terminal."
+Before exiting, publish the crash capsule from EXIT's details to this process's
+launcher so recovery can restore the conversation. Read-only observers report
+the message without publishing the capsule or exiting."
   (when exit
     (let ((message (getf exit :message)))
       (when message
@@ -703,8 +699,6 @@ controlling terminal."
     (unless (eq mode ':read-only)
       (let ((capsule (getf (getf exit :details) :crash-capsule)))
         (when (non-empty-string-p capsule)
-          ;; A missed pointer only costs recovery its conversation, never the
-          ;; status the launcher recovers on.
           (handler-case
               (application-publish-crash-pointer configuration (pathname capsule))
             (error (condition)
@@ -718,7 +712,7 @@ controlling terminal."
 
 (-> localgroup--client-configuration () configuration)
 (defun localgroup--client-configuration ()
-  "Return a directory-ensured configuration for one localgroup client command."
+  "Create a localgroup client configuration and ensure its directories exist."
   (let ((configuration (configuration-create :defer-provider-validation-p t)))
     (configuration-ensure-directories configuration)
     (localgroup-reconcile-endpoint-records configuration)

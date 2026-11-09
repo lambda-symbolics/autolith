@@ -2,10 +2,6 @@
 
 ;;;; -- Preloaded Active Image --
 
-;;; sbcl-generations builds, probes and installs the image; this file names its
-;;; inputs, its entry point, the SBCL that boots it, and the platform steps that
-;;; publish it.
-
 (defparameter *active-image-probe-argument*
   "--autolith-internal-active-image-probe"
   "The private argument requesting active-image validation, which the launchers pass.")

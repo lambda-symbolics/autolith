@@ -429,8 +429,6 @@
                        (test-assert (equal ran "nil")
                                     (format nil "A denied form never reaches Emacs: ~S" ran)))))
               (ignore-errors (emacs-server-evaluate socket "(kill-emacs)" :timeout 2))
-              ;; The exiting daemon unlinks its lock files below RUNTIME, so a
-              ;; deletion that starts first can lose a listed file to it.
               (when (and daemon-process-id
                          (not (emacs-test-await-exit daemon-process-id 10)))
                 (error 'emacs-server-error

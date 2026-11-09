@@ -36,7 +36,7 @@
 ;;;; -- Workspace Defaults --
 
 (defparameter *shell-default-timeout-seconds* 60
-  "The seconds one shell.run command may take by default.")
+  "The default timeout for a shell.run command, in seconds.")
 
 (defparameter *shell-maximum-output-characters* 6000
   "The raw-byte head/tail sampling budget for an inline shell.run preview.")
@@ -83,9 +83,8 @@ or filesystem failures as absence."
 (defun workspace-tool--relative-identifier (path root)
   "Return PATH below directory ROOT as a slash-separated identifier, or \".\" for ROOT.
 
-The components come from the parsed pathname, so the identifier reads the same
-on every host: names keep their literal characters, a directory keeps its
-trailing slash, and the separator is a slash whatever the host writes natively."
+Pathname components retain their literal characters. Directory identifiers end
+with a slash; all separators are slashes, regardless of the host's native syntax."
   (let* ((relative    (uiop:enough-pathname path root))
          (directories (rest (pathname-directory relative)))
          (file        (uiop:native-namestring
@@ -150,11 +149,11 @@ already authorized the path, use this instead of WORKSPACE-TOOL-PATH."
 
 (-> workspace-tool-authorize-outside-path (tool-context pathname non-empty-string) boolean)
 (defun workspace-tool-authorize-outside-path (context path tool-name)
-  "Return true when full access covers TOOL-NAME reaching PATH outside the roots.
+  "Return true when TOOL-NAME has full-access approval for PATH outside the roots.
 
-The request is the command \"TOOL-NAME -- PATH\", so a full-access session
-passes without a prompt, saved permissions apply, and ask mode asks once. A
-sandboxed decision is not enough, because the tool itself runs unsandboxed."
+Authorize the command \"TOOL-NAME -- PATH\". Full-access sessions need no
+prompt; saved permissions apply, and ask mode prompts once. Sandboxed approval
+is insufficient because the tool runs outside the sandbox."
   (let ((approved-p
           (handler-case
               (eq (tool-context-authorize-command
@@ -174,9 +173,8 @@ sandboxed decision is not enough, because the tool itself runs unsandboxed."
 (defun workspace-tool-path (context path &key (tool-name "resource"))
   "Return PATH resolved against CONTEXT's working directory for TOOL-NAME.
 
-A path inside the workspace or source roots is returned directly. Any other path
-needs full access, through WORKSPACE-TOOL-AUTHORIZE-OUTSIDE-PATH, so a session
-with full permissions never refuses one."
+Paths inside the workspace or source roots need no additional approval.
+Other paths require full access through WORKSPACE-TOOL-AUTHORIZE-OUTSIDE-PATH."
   (let ((canonical (workspace-tool-resolve-path context path)))
     (unless (or (workspace-tool--read-path-allowed-p
                  canonical (workspace-tool-readable-roots context))

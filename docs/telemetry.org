@@ -131,12 +131,13 @@ An exit without terminal metadata exports =error= / =internal= with
 =autolith.run.error_code= =unfinished-run=. Finish is idempotent. Terminal
 reports after finish are ignored with a local debug log.
 
-The owner's own terminal result is authoritative, including successful recovery
-from a child's failure. Only an owner without a terminal result uses borrower
-reports: error wins over cancelled, which wins over success. Equal outcomes use
-lexical error type and code order so completion order cannot change the result.
-Detached tasks own independent runs with fresh traces and attempt 1; their
-children and terminal root remain valid after the caller's turn finishes.
+The owner's terminal result is authoritative, including successful recovery
+from a child's failure. Borrower reports are used only if the owner has no
+terminal result: error wins over cancelled, which wins over success. Ties are
+broken by lexical order of error type and code, so completion order cannot
+change the result. Detached tasks own independent runs with fresh traces and
+attempt 1; their children and terminal root remain valid after the caller's
+turn finishes.
 
 The Bash and Lisp launchers create =AUTOLITH_TRACEPARENT= once when absent and
 default =AUTOLITH_RUN_ATTEMPT= to 1. Recovery forwards the trace context and
@@ -296,13 +297,14 @@ name, and verification scope. =autolith.incident.id= links an issue and
 incident ID when linked, otherwise the attempt ID. These IDs permit cross-run
 correlation for one issue or attempt.
 
-Diagnostic consent gates the summary thunk before reading it. Deterministic
+The summary thunk is called only with diagnostic consent. Deterministic
 credential/path/host masking surrounds Defingerprinter's full pinned Rampart
-model. Only complete successful redacted narratives of at most 8,000 characters enter the
-queue, with the =rampart= engine and pinned upstream revision marker. Unsupported
-languages/scripts, missing artifacts, redaction failures and deadlines discard
-text while numerical telemetry remains available. Supported languages are
-English, Spanish, French, German, Italian, Portuguese and Dutch.
+model. Only complete, successfully redacted narratives of at most 8,000
+characters enter the queue, with the =rampart= engine and pinned upstream
+revision marker. Text is discarded if the language/script is unsupported,
+artifacts are missing, redaction fails or a deadline is reached. Numerical
+telemetry remains available. Supported languages are English, Spanish, French,
+German, Italian, Portuguese and Dutch.
 
 Prompts, tool arguments/results, credentials, raw conditions, stacks, source,
 workspace paths and local identifiers are outside the wire projection. Backend

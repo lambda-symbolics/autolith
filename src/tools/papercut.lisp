@@ -19,7 +19,7 @@
 
 (-> papercut-tool--result (papercut boolean) string)
 (defun papercut-tool--result (papercut duplicate-p)
-  "Return the bounded acknowledgement for PAPERCUT, noting when it already existed."
+  "Return the bounded acknowledgement, noting whether PAPERCUT was already active."
   (format nil
           "papercut-id: ~A~%title: ~A~@[~%~A~]"
           (papercut-identifier papercut)
@@ -34,10 +34,7 @@
   t)
 
 (defmethod tool-conversation-persistence ((tool papercut-report-tool))
-  "Keep papercut calls and their short acknowledgements in the conversation.
-
-The acknowledgement is what stops the model from filing the same report again
-after later responses and compaction, so it must outlive the next response."
+  "Keep papercut calls and their acknowledgements across responses and compaction."
   (declare (ignore tool))
   ':durable)
 
@@ -48,16 +45,16 @@ after later responses and compaction, so it must outlive the next response."
 (defmethod tool-execute ((tool papercut-report-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Record a new papercut from complete supplied title and content.
+  "Record a papercut using the full title and content provided.
 
-A report that repeats an active papercut of this workspace returns that
-existing report instead of recording another."
+If the report duplicates an active papercut in this workspace, return the
+existing report instead."
   (declare (ignore tool))
   (let ((title   (tool-argument arguments "title" :required t))
         (content (tool-argument arguments "content" :required t)))
     (unless (and (stringp title) (stringp content))
       (error 'tool-error
-             :message   "papercut.report requires string title and content."
+             :message   "papercut.report requires string values for title and content."
              :tool-name "papercut.report"))
     (multiple-value-bind (papercut duplicate-p)
         (papercut-report

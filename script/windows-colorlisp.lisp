@@ -53,8 +53,6 @@
   (load (merge-pathnames ".qlot/setup.lisp" source))
   (uiop:symbol-call '#:ql '#:quickload :colorlisp :silent t)
   (when (string= action "copy")
-    ;; The cache also contains linker import libraries and export objects.
-    ;; Only ColorLisp knows which file is its selected linked library.
     (let ((library (uiop:symbol-call '#:colorlisp '#:native-library-path)))
       (windows-colorlisp--validate-image library)
       (ensure-directories-exist target)

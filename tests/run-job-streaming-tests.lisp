@@ -363,8 +363,6 @@
       (run-job-streaming-tests--input input)
       (unwind-protect
            (progn
-             ;; Boot the checked core through its normal worker entry, then invoke the
-             ;; actual CLI handler with a deterministic executor. Keep stdout unread.
              (setf process
                    (uiop:launch-program
                     (active-image-process-command configuration '("--worker"))

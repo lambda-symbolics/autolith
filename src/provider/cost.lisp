@@ -2,12 +2,6 @@
 
 ;;;; -- Request Cost --
 
-;;; Every completed streaming request is priced into one ledger for the
-;;; process: by the charge the provider reports, else by a price snapshot for
-;;; its model. Requests without a price, such as subscription routes, are
-;;; counted as unpriced instead of free. The optional cost limit refuses new
-;;; requests once recorded spending reaches it.
-
 (defvar *provider-cost-ledger* (make-cost-ledger)
   "The process-wide record of what completed model requests cost.")
 
@@ -15,14 +9,13 @@
   (:documentation
    "Return the price of CONFIGURATION's model on PROVIDER's route, or NIL when unknown.
 
-Prices from the model prices setting come first; a route may add built-in list
-prices behind them."))
+Configured model prices take precedence over built-in prices."))
 
 
 ;;;; -- Methods --
 
 (defmethod provider-model-price ((provider model-provider) (configuration configuration))
-  "Use the model prices setting, the only price source a route has by default."
+  "Return the configured model price."
   (declare (ignore provider))
   (provider--configured-model-price configuration))
 
@@ -31,7 +24,7 @@ prices behind them."))
 
 (-> provider-cost-check (t) null)
 (defun provider-cost-check (provider)
-  "Signal COST-LIMIT-REACHED when recorded spending reached PROVIDER's cost limit."
+  "Signal COST-LIMIT-REACHED if spending has reached PROVIDER's cost limit."
   (let* ((configuration (provider--cost-configuration provider))
          (limit         (and configuration (config :cost-limit configuration))))
     (cost-ledger-check-limit *provider-cost-ledger* (and limit (plusp limit) limit))))

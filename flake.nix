@@ -16,8 +16,6 @@
 
   outputs = inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-      # Nix builds run on Linux x86-64 (the packaged release target) and on
-      # macOS arm64. nix/package.nix asserts the same platform set.
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
 
       perSystem = { pkgs, ... }:
@@ -230,8 +228,6 @@
               touch "$out"
             '';
 
-            # The test runtime's ASDF environment describes the test variant, so
-            # the packaged launcher must start without inheriting it.
             acp-startup = pkgs.runCommand "autolith-acp-startup-check" {} ''
               export HOME="$TMPDIR/home"
               export XDG_CONFIG_HOME="$TMPDIR/config"

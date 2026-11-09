@@ -1056,8 +1056,6 @@
                    "namespace" "search")))
            (conversation-append-user-message conversation "continue the task")
            (conversation-append-provider-item conversation call)
-           ;; Reproduce a user message persisted after restart but before the
-           ;; malformed provider replay was rejected.
            (conversation-append-user-message conversation "carry on")
            (let* ((loaded
                     (conversation-load-by-id configuration "interrupted"))

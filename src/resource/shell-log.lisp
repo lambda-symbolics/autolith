@@ -6,10 +6,10 @@
   "Largest raw byte window rendered by one resource read.")
 
 (defparameter *shell-log-resource-scan-bytes* (* 1024 1024)
-  "Maximum raw bytes examined by one paginated search.")
+  "Maximum raw bytes examined per search page.")
 
 (defparameter *shell-log-resource-maximum-results* 50
-  "Maximum bounded excerpts returned by one search, matching resource.read.")
+  "Maximum bounded excerpts returned per search page, matching resource.read.")
 
 (defclass shell-log-resource (resource)
   ((directory :initarg :directory :reader shell-log-resource-directory
@@ -131,17 +131,14 @@ Return the octets, current file size and actual next byte position."
 (-> shell-log-resource--integer
     (hash-table string &key (:default integer) (:maximum integer)) integer)
 (defun shell-log-resource--integer (arguments key &key (default 0) maximum)
-  "Validate a nonnegative byte window or result bound, reducing one above MAXIMUM.
-
-A request above the limit returns the limit and a note rather than failing, so
-asking for a large range costs no extra call."
+  "Require a nonnegative integer; cap values above MAXIMUM and emit a note."
   (let ((value (gethash key arguments default)))
     (unless (and (integerp value) (<= 0 value))
       (error 'tool-error :tool-name "resource.read"
              :message               (format nil "~A must be an integer between 0 and ~D." key maximum)))
     (if (> value maximum)
         (progn
-          (resource-tool-note "~A ~D was reduced to ~D, the most one read returns." key value maximum)
+          (resource-tool-note "~A ~D was reduced to the per-read limit of ~D." key value maximum)
           maximum)
         value)))
 

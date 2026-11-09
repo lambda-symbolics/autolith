@@ -115,8 +115,6 @@ ownership of TEMPORARY-ROOT when supplied or allocating a fresh run directory."
                                   :detail (with-output-to-string (output)
                                             (let ((fiveam:*test-dribble* output))
                                               (fiveam:explain! results))))))
-               ;; Emit the detail while the owned fixture root still exists.  A
-               ;; cleanup failure must not erase the primary test diagnosis.
                (format stream "~&~A:~%~A~%"
                        (getf failure :test) (getf failure :detail))
                (finish-output stream)

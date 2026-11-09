@@ -246,8 +246,6 @@
                (agentcomms:agent-client-request service "_sync" (agentcomms:json-object))
                (test-assert (null (acp-observer-test-client-updates client))
                             "empty text alone sends no update")
-               ;; Providers stream an empty content delta beside each
-               ;; reasoning delta while the model is still thinking.
                (agent-observer-reasoning observer "first ")
                (agent-observer-text observer "")
                (agent-observer-reasoning observer "thought")

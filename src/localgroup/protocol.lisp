@@ -2,10 +2,6 @@
 
 ;;;; -- Localgroup Protocol Bridge --
 
-;;; The wire protocol lives in the image-daemon library. This file keeps
-;;; Autolith's condition bridge, startup handoff state, and the small
-;;; process helpers the localgroup runtime shares.
-
 (defvar *localgroup-startup-record* nil
   "The validated detached-process handoff record active during startup.")
 

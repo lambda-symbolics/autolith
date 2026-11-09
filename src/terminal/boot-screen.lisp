@@ -233,10 +233,9 @@ the tip."
 (defun terminal-ui--await-interactive (terminal wait-function timeout)
   "Poll TERMINAL for up to TIMEOUT seconds until it reports interactive.
 
-A detached localgroup terminal starts non-interactive and only flips once
-its attaching client reports its size over the wire, shortly after the
-localgroup daemon begins listening. This gives that handshake a brief
-window instead of judging interactivity before it could possibly happen."
+A detached localgroup terminal becomes interactive after the attaching client
+reports the terminal size, shortly after the daemon starts listening. Allow time
+for that handshake before concluding the terminal is non-interactive."
   (or (terminal-interactive-p terminal)
       (let ((deadline (+ (get-internal-real-time)
                          (round (* timeout internal-time-units-per-second)))))

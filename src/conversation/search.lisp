@@ -2,16 +2,6 @@
 
 ;;;; -- Durable Conversation Record Search --
 
-;;; A conversation is searched in its own durable segments, newest first, so
-;;; no second index can drift from the records. Every searchable field is a
-;;; string a record stores verbatim, either directly or inside its wire JSON.
-;;; Printing escapes only double quotes and backslashes, and JSON additionally
-;;; escapes control and astral characters, so any run of other characters in
-;;; a query term occurs octet for octet in the UTF-8 segment holding a match.
-;;; A segment lacking the longest such run of any term cannot match and is
-;;; skipped without being read as Lisp data. Matching folds ASCII letters only, which folds the
-;;; octets of a UTF-8 segment identically.
-
 (defparameter *conversation-search-buffer-octets* (* 1024 1024)
   "The octets read from one segment at once while looking for a query fragment.")
 

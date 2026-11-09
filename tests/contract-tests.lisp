@@ -345,8 +345,6 @@
                  (list 'knowledge-transact
                        (lambda (&rest arguments)
                          (when (and (not superseded-p) (= (incf transactions) boundary))
-                           ;; Insert the replacement before the assertion reads
-                           ;; its locked base, after recording read its snapshot.
                            (setf superseded-p t)
                            (knowledge-define-contract
                             configuration :id "report-read" :tool "resource.read"

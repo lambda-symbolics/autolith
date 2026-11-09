@@ -2,18 +2,6 @@
 
 ;;;; -- Procedure Mining --
 
-;;; Turns that called the same tools in the same order are generalized into
-;;; one procedure by anti-unification: an argument equal in every turn stays a
-;;; constant, one equal to a field of an earlier call's JSON result becomes a
-;;; reference to it, and one that varies becomes a parameter. Values that vary
-;;; together share a parameter, and a value that contains another parameter's
-;;; value at a fixed position becomes text around it. Words that vary in the
-;;; requests that started the turns become the procedure's request pattern.
-;;;
-;;; A procedure is kept only when every source turn is explained by the
-;;; procedure learned from the others, so it generalizes instead of copying
-;;; one turn. Mining is local and deterministic; no model takes part.
-
 (defparameter *procedure-minimum-examples* 3
   "How many turns must share a tool sequence before it is learned.")
 
@@ -228,16 +216,15 @@ with the arguments; every parameter must be bound and suit its type."
 
 (-> procedure-learn-candidates (list) list)
 (defun procedure-learn-candidates (traces)
-  "Return (PROCEDURE EXAMPLES EVALUATION) for each tool sequence enough of TRACES share.
+  "Return (PROCEDURE EXAMPLES EVALUATION) for repeated tool sequences in TRACES.
 
-TRACES are accepted traces, newest first. A sequence needs two or more calls,
-none of them a procedure run, and at least *PROCEDURE-MINIMUM-EXAMPLES* turns.
-A procedure is returned only when leaving out any one of its turns still
-learns a procedure that explains that turn. When another of TRACES fits the
-request pattern but did something else, other than running a procedure, the
-pattern does not tell when the procedure applies, so it is dropped and the
-procedure is never offered.
-EVALUATION records the turns checked and those counterexamples."
+TRACES contains accepted traces, newest first. A sequence needs at least two
+calls, no procedure runs, and *PROCEDURE-MINIMUM-EXAMPLES* example turns.
+Each omitted example must be reproducible by a procedure learned from the others.
+If another trace matches the request pattern but performs different work,
+clear that pattern so the procedure is not offered automatically. Ignore traces
+that run procedures when checking for these counterexamples.
+EVALUATION records the checked examples and counterexample count."
   (let ((groups nil))
     (dolist (trace traces)
       (let ((skeleton (action-trace-skeleton trace)))

@@ -175,7 +175,7 @@
     (:name              "/admit-procedure"
      :argument          "[ID]"
      :description       "let a learned procedure run"
-     :tip               "admit a latest version of a procedure and lift suspensions after failed runs."
+     :tip               "admit the latest version of a procedure and lift suspensions after failed runs."
      :busy-behavior     :apply
      :terminal-behavior :shared
      :callable          t)

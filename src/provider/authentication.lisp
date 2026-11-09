@@ -20,7 +20,7 @@
 
 (-> call-with-secret-use (function) t)
 (defun call-with-secret-use (function)
-  "Call FUNCTION while checkpointing can observe active transient secrets."
+  "Call FUNCTION while counting its use of transient secrets."
   (with-lock-held (*active-secret-use-lock*)
     (when (and *secret-use-quiescence-owner*
                (zerop *secret-use-depth*)
@@ -28,7 +28,7 @@
                         sb-thread:*current-thread*)))
       (error 'authentication-error
              :message
-             "A checkpoint is temporarily preventing new credential-bearing operations."))
+             "New credential operations are temporarily blocked for a checkpoint."))
     (incf *active-secret-use-count*))
   (let ((*secret-use-depth* (1+ *secret-use-depth*)))
     (unwind-protect
@@ -45,9 +45,8 @@
 (defun call-with-secret-use-quiescence (function)
   "Call FUNCTION while preventing other threads from beginning secret use.
 
-Existing operations remain counted and may finish nested cleanup. Nested
-secret use by the owner is also allowed so runtime shutdown can authenticate
-its protocol-level close operation."
+Existing operations may finish nested cleanup. The owner may use secrets to
+authenticate runtime shutdown."
   (let ((owner sb-thread:*current-thread*))
     (with-lock-held (*active-secret-use-lock*)
       (when *secret-use-quiescence-owner*
@@ -86,7 +85,7 @@ its protocol-level close operation."
 
 (-> provider-user-agent () string)
 (defun provider-user-agent ()
-  "Return the honest Autolith user agent sent to providers and authentication services."
+  "Return the Autolith user agent used for provider and authentication requests."
   (format nil "autolith/~A (~A ~A; ~A)"
           *autolith-version*
           (software-type)
@@ -223,15 +222,15 @@ The file belongs to another tool, so a symbolic link to it is followed."
 
 (defclass credential-manager (cl-rfc8628:managed-credential-manager)
   ()
-  (:documentation "Autolith's product-specific credential manager base."))
+  (:documentation "Base credential manager for Autolith."))
 
 (defclass oauth-credential-manager (credential-manager refresh-grant-credential-manager)
   ()
-  (:documentation "An Autolith credential manager rotating OAuth tokens with the refresh grant."))
+  (:documentation "Credential manager with OAuth refresh grants."))
 
 (defmethod credential-manager-refresh-request :around
     ((manager oauth-credential-manager) &key url headers content)
-  "Bound one refresh exchange by the provider response deadline and read streamed error bodies."
+  "Limit refresh requests to the response deadline and read streamed error bodies."
   (declare (ignore url headers content))
   (handler-case
       (multiple-value-bind (body status response-headers)
@@ -250,7 +249,7 @@ The file belongs to another tool, so a symbolic link to it is followed."
 
 (defclass chatgpt-credential-manager (oauth-credential-manager)
   ()
-  (:documentation "The ChatGPT OAuth credential manager behind the Codex provider."))
+  (:documentation "ChatGPT OAuth credential manager for the Codex provider."))
 
 (defmethod credential-manager-provider-label
     ((manager chatgpt-credential-manager))
@@ -259,7 +258,7 @@ The file belongs to another tool, so a symbolic link to it is followed."
   "ChatGPT")
 
 (defmethod credential-manager-login-hint ((manager chatgpt-credential-manager))
-  "Point ChatGPT credential failures at the default login command."
+  "Return the default ChatGPT login command."
   (declare (ignore manager))
   "run autolith auth")
 
@@ -275,17 +274,17 @@ The file belongs to another tool, so a symbolic link to it is followed."
                                     :pathname (config :codex-auth-path configuration))))
 
 (defmethod credential-manager-token-endpoint ((manager chatgpt-credential-manager))
-  "Refresh ChatGPT credentials at OpenAI's OAuth token endpoint."
+  "Return OpenAI's OAuth token endpoint."
   (declare (ignore manager))
   *openai-oauth-token-endpoint*)
 
 (defmethod credential-manager-client-id ((manager chatgpt-credential-manager))
-  "Refresh as the first-party Codex OAuth client."
+  "Return the first-party Codex OAuth client identifier."
   (declare (ignore manager))
   *openai-oauth-client-id*)
 
 (defmethod credential-manager-refresh-content-type ((manager chatgpt-credential-manager))
-  "Send OpenAI's token endpoint a JSON refresh request."
+  "Return the content type for OpenAI's JSON refresh requests."
   (declare (ignore manager))
   *refresh-json-content-type*)
 

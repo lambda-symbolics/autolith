@@ -1,15 +1,6 @@
 # Autolith runtime provisioning for Windows.
 #
 # Usage: autolith-runtime.ps1 [--install] --script PATH [ARGUMENT...]
-#
-# Selects an SBCL that satisfies sbcl.version in the same order as
-# bin/autolith-runtime: AUTOLITH_SBCL, the recorded runtime command, the
-# managed installation, then PATH. With --install and no compatible SBCL, it
-# downloads the pinned official Windows binary, verifies it against
-# sbcl-windows-releases.sha256, and unpacks it below the data root without
-# registering it with Windows. Everything after that, including the matching
-# source tree and the environment the entry points expect, is
-# script/runtime.lisp's job.
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest

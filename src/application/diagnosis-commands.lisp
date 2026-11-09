@@ -2,10 +2,6 @@
 
 ;;;; -- Diagnosis Commands --
 
-;;; (diagnoses) lists the saved diagnoses of the workspace and its recent
-;;; cases: what remained, the repair it points to, and the facts that ruled
-;;; out the other hypotheses.
-
 (-> application-diagnoses-entry (application) list)
 (defun application-diagnoses-entry (application)
   "Return the saved diagnoses and recent diagnosis cases of APPLICATION's workspace."
@@ -93,7 +89,7 @@
     (:name              "/diagnoses"
      :argument          nil
      :description       "list diagnoses and what decided their cases"
-     :tip               "shows saved diagnoses and recent cases: what cause cause was discovered, how it was repaired, and the facts that were involed."
+     :tip               "shows saved diagnoses and recent cases: what cause was discovered, how it was repaired, and the facts that were involved."
      :busy-behavior     :inspect
      :terminal-behavior :shared
      :callable          t)

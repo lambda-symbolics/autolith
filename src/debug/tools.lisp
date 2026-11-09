@@ -350,7 +350,7 @@
 (-> debug-register-tools
     (tool-registry &key (:program (option string)) (:arguments list) (:cancel-p (option function))) tool-registry)
 (defun debug-register-tools (registry &key (program *debug-adapter-program*) (arguments *debug-adapter-arguments*) cancel-p)
-  "Opt in REGISTRY to debugging with an explicit adapter and optional supervisor cancellation.
+  "Register debugger tools in REGISTRY with an adapter and optional cancellation callback.
 
 Loading the optional system starts nothing. Adapter arguments are literal strings.
 Existing registries can explicitly register after loading autolith/debug. All session

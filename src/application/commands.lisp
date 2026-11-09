@@ -18,10 +18,10 @@
 
 (-> application--entry-fields (list) list)
 (defun application--entry-fields (fields)
-  "Return aligned semantic FIELDS, each containing a label, style, and value.
+  "Return terminal spans for FIELDS, a list of label, style, and value triples.
 
-Measure sanitized labels in terminal cells. Values wrap through the ordinary
-transcript renderer, including in fullscreen."
+Align sanitized labels by terminal cell width. Values wrap in the transcript
+renderer, including in fullscreen."
   (let* ((labels (mapcar (lambda (field)
                           (sanitize-text (first field) :single-line-p t))
 
@@ -757,8 +757,8 @@ notice preference is on, so enabling it mid-session takes effect immediately."
 (defun application-set-reasoning-effort (application effort)
   "Switch APPLICATION to reasoning EFFORT and save it as the global default.
 
-The model the effort belongs to is saved beside it, so a later start pairs
-the effort with the same model even when the model was never chosen."
+Save the current model and provider with EFFORT so future sessions use the same
+combination."
   (let ((configuration (application-configuration application)))
     (setf (config :reasoning-effort configuration) effort)
     (configuration-persist configuration :model-provider)
@@ -1579,7 +1579,7 @@ work must steer the running turn, not queue as follow-up work."
 
 (-> application--replace-lightweight-goal (application (option list)) null)
 (defun application--replace-lightweight-goal (application goal)
-  "Cancel the mission and order GOAL's installation after its terminal notices."
+  "Cancel the mission and install GOAL after the mission's final notices."
   (let ((previous (and (mission-goal-p (application-goal application))
                        (mission-context-find (application-conversation application)))))
     (mission-detach application)
@@ -1722,12 +1722,11 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
                       initial-name initial-value search-p
                       (search-key #'terminal-ui--picker-default-search-text)
                       on-event)
-  "Pick one identifier from ITEMS interactively, or explain why none was picked.
+  "Pick an identifier from ITEMS, returning NIL on cancellation.
 
-Signals a usage error on non-interactive terminals, presents EMPTY-NOTICE
-when ITEMS is empty, and returns NIL when the picker is cancelled. HINT,
-VISIBLE-COUNT, INITIAL-NAME, INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT
-are forwarded to TERMINAL-UI-SELECT."
+Signal a usage error on non-interactive terminals. If ITEMS is empty, present
+EMPTY-NOTICE and return NIL. Forward HINT, VISIBLE-COUNT, INITIAL-NAME,
+INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT to TERMINAL-UI-SELECT."
   (block nil
     (let ((ui (application-ui application)))
       (unless (terminal-interactive-p (terminal-ui-terminal ui))
@@ -1939,12 +1938,10 @@ are forwarded to TERMINAL-UI-SELECT."
                      (project-adaptation-resume-qualifies-p
                       configuration
                       (application-conversation application)))
-            ;; Persist the ordinary dismissal before opening the modal selector,
-            ;; so Escape, Ctrl-C, or a lost terminal cannot cause resume-time nagging.
             (project-adaptation-offer-defer configuration project-root)
             (application-present
              application
-             "This project has enough Autolith history to benefit from AUTOLITH.org, a voluntary ledger for project-specific adaptations.")
+             "AUTOLITH.org is an optional record of project-specific Autolith adaptations.")
             (let ((choice
                     (application--pick-identifier
                      application
@@ -2338,7 +2335,7 @@ are forwarded to TERMINAL-UI-SELECT."
                         (generation-identifier generation))))
              (application-present
               application
-              (format nil "Checkpoint ~A is publishing in process ~D."
+              (format nil "Checkpoint ~A is being published by process ~D."
                       (generation-identifier generation)
                       (generation-coordinator-pid generation)))))
     (application-set-activity application nil))
@@ -2388,8 +2385,8 @@ are forwarded to TERMINAL-UI-SELECT."
       (list :name        "full"
             :argument    nil
             :description (if (eq current ':full-access)
-                             "current; let it ride with full user privileges"
-                             "let it ride with full user privileges"))))))
+                             "current; run commands with full user privileges"
+                             "run commands with full user privileges"))))))
 
 (-> application--saved-permissions-text (application) string)
 (defun application--saved-permissions-text (application)
@@ -3063,9 +3060,6 @@ The current value and its source sit in aligned columns of their own."
      :terminal-behavior :exclusive
      :callable          t)
     (application &rest arguments)
-  ;; ARGUMENTS are an optional MODEL followed by :PROVIDER, parsed here because
-  ;; a lambda list mixing &OPTIONAL and &KEY is ambiguous: an odd count means
-  ;; the first argument is the model.
   (let* ((model-supplied-p (oddp (length arguments)))
          (model            (and model-supplied-p (first arguments))))
     (destructuring-bind (&key provider) (if model-supplied-p (rest arguments) arguments)
@@ -3600,8 +3594,6 @@ The current value and its source sit in aligned columns of their own."
      :argument          nil
      :description       "detach Autolith from the current terminal"
      :tip               "keeps the session running and returns the foreground shell."
-     ;; Detaching exists precisely to leave while work is running; the
-     ;; handoff path schedules foreground release safely mid-turn.
      :busy-behavior     :execute
      :terminal-behavior :shared
      :callable          t)

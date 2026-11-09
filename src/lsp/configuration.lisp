@@ -37,8 +37,8 @@
 (defun lsp-configuration-enabled-p (configuration)
   "Return true when CONFIGURATION enables at least one language server.
 
-A present but malformed lsp.sexp returns true so the configuration error
-surfaces through the LSP tools instead of failing registry creation."
+Also return true if lsp.sexp is present but malformed, so the configuration
+error is reported through the LSP tools rather than blocking registry creation."
   (unless (probe-file (lsp-configuration-path configuration))
     (return-from lsp-configuration-enabled-p nil))
   (handler-case
@@ -50,7 +50,8 @@ surfaces through the LSP tools instead of failing registry creation."
 
 (-> lsp-manager-configure (lsp-manager configuration) list)
 (defun lsp-manager-configure (manager configuration)
-  "Load user-owned server definitions once until refresh or runtime retirement."
+  "Load and cache CONFIGURATION's user-owned server definitions in MANAGER
+until refresh or runtime retirement."
   (unless (lsp-manager-loaded-p manager)
     (setf (lsp-manager-configurations manager) (lsp-load-configurations configuration)
           (lsp-manager-loaded-p manager) t))

@@ -2,12 +2,6 @@
 
 ;;;; -- Asynchronous Inference Frames --
 
-;;; A frame set runs inference frames in the background under one budget
-;;; subtree. Its caller submits tasks and receives handles, inspects their
-;;; states, collects results as frames finish, and cancels frames whose
-;;; answers it no longer needs. RLM-MAP stays the ordered convenience that
-;;; waits for every frame.
-
 (defparameter *rlm-frame-set-maximum-frames* 64
   "The most frames one frame set admits over its lifetime.")
 

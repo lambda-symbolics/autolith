@@ -12,7 +12,7 @@
   "Google Cloud")
 
 (defmethod credential-manager-refreshable-p ((manager vertex-credential-manager))
-  "Do not retry rejected tokens: each load already exchanges a fresh refresh grant."
+  "Do not retry rejected tokens; credentials are refreshed on every load."
   (declare (ignore manager))
   nil)
 
@@ -45,7 +45,7 @@
 
 (defmethod call-with-credentials
     ((manager vertex-credential-manager) function &key force-refresh)
-  "Exchange one fresh grant, including forced refreshes and short-lived tokens."
+  "Call FUNCTION with a newly refreshed token."
   (declare (ignore force-refresh))
   (call-with-secret-use
    (lambda ()
@@ -56,7 +56,7 @@
 
 (defclass vertex-product-provider (session-preserving-provider-mixin subscription-provider)
   ()
-  (:documentation "Autolith configuration and local ADC ownership for Vertex transports."))
+  (:documentation "Vertex provider with Autolith configuration and local ADC."))
 
 (defclass vertex-gemini-provider
     (gemini-product-provider-mixin vertex-product-provider
@@ -87,7 +87,7 @@
 
 (-> vertex--routing-initargs (configuration) list)
 (defun vertex--routing-initargs (configuration)
-  "Resolve Vertex routing from configuration without touching credentials."
+  "Read Vertex routing options without loading credentials."
   (let ((project (config :vertex-project configuration))
         (quota   (config :vertex-quota-project configuration)))
     (unless (non-empty-string-p project)
@@ -98,7 +98,7 @@
 
 (-> vertex--provider-create (configuration symbol) vertex-product-provider)
 (defun vertex--provider-create (configuration class)
-  "Create one Vertex protocol adapter with no retained credential material."
+  "Create a Vertex provider without retaining credentials."
   (apply #'make-instance class
          :configuration      configuration
          :credential-manager (make-instance 'vertex-credential-manager)

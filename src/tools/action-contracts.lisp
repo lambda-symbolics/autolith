@@ -2,11 +2,6 @@
 
 ;;;; -- Contracted Tool Calls --
 
-;;; Every tool call passes through its contracts, when any describe it. In
-;;; active mode a call whose requirements do not hold is refused before it
-;;; runs. In active and passive mode a successful call records its predicted
-;;; effects and its observations. Calls no contract describes run unchanged.
-
 (defclass contract-recording-result (tool-result)
   ((original
     :initarg :original :reader contract-recording-result-original
@@ -14,7 +9,7 @@
    (prefix-length
     :initarg :prefix-length :reader contract-recording-result-prefix-length
     :type          (integer 0)
-    :documentation "Characters of external content retained before the diagnostic.")
+    :documentation "Number of characters retained from external content before the diagnostic.")
    (diagnostic
     :initarg :diagnostic :reader contract-recording-result-diagnostic
     :type          string
@@ -22,13 +17,13 @@
   (:documentation "A successful external result with failed structured knowledge recording."))
 
 (defgeneric tool-contract--prefix-details (result length)
-  (:documentation "Retain RESULT's metadata for LENGTH leading external characters.")
+  (:documentation "Retain RESULT's metadata for the first LENGTH characters of external content.")
   (:method ((result tool-result) length)
     (declare (ignore length))
     (tool-result-details result)))
 
 (defmethod tool-result-details ((result contract-recording-result))
-  "Retain subtype metadata, original clipped metadata, and the recording diagnostic."
+  "Return subtype metadata and the recording diagnostic, with original metadata as provenance."
   (let* ((original   (tool-result-details (contract-recording-result-original result)))
          (retained   (tool-contract--prefix-details
                       (contract-recording-result-original result)
@@ -86,10 +81,10 @@
 
 (-> tool-contract--recording-result (tool-result list) tool-result)
 (defun tool-contract--recording-result (result errors)
-  "Decorate external success with a bounded provider-visible recording diagnostic.
+  "Add a bounded provider-visible recording diagnostic to a successful external result.
 
-Retain image order and subtype metadata. When text must be shortened, keep its
-original metadata as provenance and adapt visible section ranges to its prefix."
+Retain image order and subtype metadata. If the text is shortened, retain the
+original metadata as provenance and adjust section ranges to the retained prefix."
   (let* ((rich-p     (or (tool-result-content-blocks result) (tool-result-details result)))
          (diagnostic (tool-contract--recording-diagnostic
                       result errors :include-output-p (not rich-p) :limit (if rich-p 2000 8000)))
@@ -145,8 +140,8 @@ Match canonical names and unique display aliases through CONTEXT's registry."
                                (knowledge-error (condition)
                                  (return-from tool-execute-with-contracts
                                    (tool-failure
-                                    (format nil "A contract for ~A could not read the call: ~A The call was not made."
-                                            name (autolith-error-message condition))
+                                    (format nil "Contract matching failed for ~A: ~A The call was not made."
+                                             name (autolith-error-message condition))
                                     :code ':precondition-unknown)))))))
     (if (null matches)
         (tool-execute tool context arguments)
@@ -155,8 +150,6 @@ Match canonical names and unique display aliases through CONTEXT's registry."
           (if (and refusal (knowledge-active-p configuration))
               (tool-failure refusal :code ':precondition-unmet)
               (let ((result (tool-execute tool context arguments)))
-                ;; A handed-off call has only started, so its effects and
-                ;; observations are not known yet.
                 (if (or (not (tool-result-success-p result))
                         (tool-result-handed-off-p result))
                     result

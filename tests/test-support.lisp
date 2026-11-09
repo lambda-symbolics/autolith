@@ -136,9 +136,6 @@ process-global fixture parent on exit; parallel runs need separate processes."
                         (or parent (uiop:temporary-directory)))))
          (source-root (asdf:system-source-directory :autolith)))
     (uiop:ensure-all-directories-exist (list root))
-    ;; Canonicalize ROOT so tests compare paths on the same terms as the
-    ;; truename-resolved working directory, even when the platform temporary
-    ;; directory is a symlink (macOS maps /var to /private/var).
     (setf root (uiop:ensure-directory-pathname (truename root)))
     (apply
      #'make-configuration
@@ -152,8 +149,6 @@ process-global fixture parent on exit; parallel runs need separate processes."
      :cache-root               (merge-pathnames "cache/" root)
      :codex-auth-path          (merge-pathnames "missing-auth.json" root)
      :grok-bootstrap-auth-path (merge-pathnames "missing-grok-auth.json" root)
-     ;; The check runner builds one active core per run, so fresh Autolith
-     ;; processes boot it instead of loading the system from source.
      (append (unless telemetry-defaults-p (list :telemetry-enabled-p nil))
              (let ((active-core (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")))
                (when (non-empty-string-p active-core)
@@ -274,13 +269,6 @@ output."
 
 
 ;;;; -- Host Fixtures --
-
-;;; Some checks need host facilities Autolith itself never uses, such as
-;;; symbolic links, FIFOs, forked children, and POSIX file modes. The
-;;; protocol below dispatches on *PLATFORM*; tests/posix-fixtures.lisp and
-;;; tests/win32-fixtures.lisp implement it for their hosts. A host without a
-;;; fixture says so through TEST-FIXTURE-AVAILABLE-P, and the checks that need
-;;; it are recorded as skipped through WITH-TEST-FIXTURE.
 
 (deftype test-fixture-kind ()
   "A host facility the tests may depend on.

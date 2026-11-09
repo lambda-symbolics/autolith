@@ -2,10 +2,6 @@
 
 ;;;; -- Configuration Access --
 
-;; The setting protocol, the configuration object, and CONFIG come from
-;; setinka. Autolith defines its setting kinds and settings below, persists
-;; durable values through the preferences store, and keeps its constructors,
-;; which name validation deferral after the provider registry it waits for.
 
 ;;;; -- Setting Kinds Specific to Autolith --
 
@@ -458,7 +454,7 @@ Ordinary native defaults remain lazy and follow the current environment."
 (define-setting :knowledge-mode (choice-setting)
   :label                        "Structured knowledge"
   :group                        :behavior
-  :documentation                "Whether facts and rules are used (active), only recorded from observations (passive), or neither (off). Passive and off leave model requests exactly as without them."
+  :documentation                "Use facts and rules (active), record observations without using them (passive), or disable knowledge (off). No knowledge is added to model requests in passive or off mode."
   :type                         'non-empty-string
   :scope                        :durable
   :environment                  "AUTOLITH_KNOWLEDGE"
@@ -470,7 +466,7 @@ Ordinary native defaults remain lazy and follow the current environment."
 (define-setting :diagnosis-p (boolean-setting)
   :label                     "Diagnostic probes"
   :group                     :behavior
-  :documentation             "Whether the model may test hypotheses about a failure with probe tool calls (diagnosis.run). It needs active structured knowledge."
+  :documentation             "Whether the model may test failure hypotheses with diagnosis.run. Requires active structured knowledge."
   :scope                     :durable
   :environment               "AUTOLITH_DIAGNOSIS"
   :default                   t)
@@ -494,7 +490,7 @@ Ordinary native defaults remain lazy and follow the current environment."
 (define-setting :cost-limit (number-setting)
   :label                    "Cost limit"
   :group                    :behavior
-  :documentation            "US dollars of reported and estimated request cost after which this process refuses new model requests; zero disables the limit."
+  :documentation            "Cumulative request cost in US dollars at which this process refuses new model requests; zero disables the limit. Includes reported and estimated costs."
   :type                     '(real 0)
   :scope                    :durable
   :minimum                  0
@@ -510,7 +506,7 @@ Ordinary native defaults remain lazy and follow the current environment."
 (define-setting :prompt-cache-ttl (choice-setting)
   :label                          "Cache lifetime"
   :group                          :behavior
-  :documentation                  "The prompt-cache lifetime requested from Claude routes that take one: 5m, or 1h at twice the cache-write price."
+  :documentation                  "The cache lifetime requested for supported Claude routes: 5m, or 1h at twice the cache-write price."
   :type                           'non-empty-string
   :scope                          :durable
   :options                        (lambda (configuration)
@@ -552,7 +548,7 @@ Ordinary native defaults remain lazy and follow the current environment."
 (define-setting :activity-line-p (boolean-setting)
   :label                         "Activity line"
   :group                         :terminal
-  :documentation                 "Whether a working turn shows what Autolith is doing, such as pondering, on its own line under the modeline."
+  :documentation                 "Whether to show turn activity, such as pondering, below the modeline."
   :scope                         :durable
   :default                       t)
 
@@ -755,13 +751,11 @@ Ordinary native defaults remain lazy and follow the current environment."
 
 (-> make-configuration (&rest t) configuration)
 (defun make-configuration (&rest overrides &key (provider-validation-p t) &allow-other-keys)
-  "Return a configuration holding only OVERRIDES over the setting defaults.
+  "Return a configuration with OVERRIDES applied to setting defaults.
 
-Neither the environment nor the preferences file is consulted, which makes
-the result deterministic for tests and child agents. Overrides apply in
-setting definition order, so a model override precedes its reasoning effort.
-PROVIDER-VALIDATION-P NIL defers model checks until the provider registry is
-known."
+Ignore the environment and preferences file. Apply overrides in setting
+order, with the model before its reasoning effort. PROVIDER-VALIDATION-P NIL
+defers model checks until the provider registry is available."
   (let ((*legacy-xdg-root-bypass* (configuration--legacy-xdg-root-bypass overrides)))
     (setinka:make-configuration
      :overrides             (configuration--overrides overrides '(:provider-validation-p))
@@ -777,9 +771,8 @@ known."
      &allow-other-keys)
   "Return a copy of CONFIGURATION with OVERRIDES applied in setting order.
 
-PROVIDER-VALIDATION-P defaults to the original's; passing NIL lets a copy name
-a model the registry does not serve. Listeners stay with the original; a child
-or frame reacts to its own changes."
+PROVIDER-VALIDATION-P defaults to the original value; NIL defers model checks.
+Change listeners are not copied."
   (let ((*legacy-xdg-root-bypass* (configuration--legacy-xdg-root-bypass overrides)))
     (setinka:configuration-copy
      configuration

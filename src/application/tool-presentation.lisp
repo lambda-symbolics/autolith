@@ -40,9 +40,8 @@
     (application text &key (limit *application-tool-output-lines*) json-p)
   "Format self-identifying code output without reading Lisp or accessing files.
 
-JSON-P also recognizes complete JSON captures, which otherwise retain the
-recursive field layout of the generic result presenter. Shell output is not
-assumed to be shell source."
+With JSON-P, render complete JSON captures as source rather than nested fields.
+Shell output is not assumed to be shell source."
   (let ((trimmed (string-left-trim '(#\Space #\Tab #\Newline #\Return) text)))
     (or (application--fenced-output-rows application text limit)
         (when (uiop:string-prefix-p "(:" trimmed)
@@ -118,9 +117,9 @@ assumed to be shell source."
 (defun application--lisp-key-token (name)
   "Return a reader-safe local call key naming JSON property NAME exactly.
 
-The reader upcases plain keywords and the local call boundary lowercases them
-again, so a name with uppercase letters is escaped when it also has lowercase
-ones and written as a string when it has none."
+Plain keywords are upcased by the reader and lowercased at the local call
+boundary. Escape mixed-case names; use strings for names with uppercase
+letters but no lowercase letters."
   (cond
     ((notany #'upper-case-p name)
      (format nil ":~A" (application--lisp-symbol-token name)))
@@ -1098,11 +1097,10 @@ structural discriminator as a readable heading instead."
     (option string))
 (defun application--workspace-resource-observed-text
     (application uri revision &key start-line end-line)
-  "Return visible observed workspace lines for URI and REVISION, or NIL.
+  "Return observed workspace lines for URI and REVISION, or NIL.
 
-The transcript never reads the current file as a revision-gated preimage. It
-uses only the exact transient observation and only ranges already shown to the
-model."
+Use only the exact transient observation and ranges already shown to the model.
+Never read the current file as a revision-gated preimage."
   (block nil
     (unless (and (slot-boundp application 'conversation)
                  (non-empty-string-p revision)
@@ -1733,10 +1731,9 @@ OPERATION's own declared target line so they stay numbered."
 
 (-> application--structured-output-value (string) (values t boolean))
 (defun application--structured-output-value (output)
-  "Decode a JSON object or array OUTPUT for transcript presentation.
+  "Decode OUTPUT as a complete JSON object or array for transcript display.
 
-Only complete object and array documents opt into this path.  Other output
-remains ordinary bounded tool text, including malformed untrusted JSON."
+Treat other output, including malformed untrusted JSON, as bounded tool text."
   (let ((trimmed (string-trim '(#\Space #\Tab #\Newline #\Return) output)))
     (if (and (plusp (length trimmed))
              (member (char trimmed 0) '(#\{ #\[))
@@ -2055,10 +2052,10 @@ re-emitting untrusted serialized JSON."
 
 (-> application--job-cancel-widget (list t) list)
 (defun application--job-cancel-widget (spans identifier)
-  "Highlight the complete job.cancel call and make every token insert its readable form.
+  "Highlight fully visible job.cancel calls; clicking any token inserts the whole call.
 
-Only a call shown in full becomes clickable; a detail cut at the terminal edge
-stays plain. The header stays an ordinary span, so the entry keeps its group."
+Clipped details stay plain. Keep the header as an ordinary span to preserve
+the entry's group."
   (let ((text (and (stringp identifier) (application--job-cancel-text identifier))))
     (if (null text)
         spans
@@ -2120,10 +2117,9 @@ stays plain. The header stays an ordinary span, so the entry keeps its group."
 
 (defmethod application-tool-result-entry
     ((tool papercut-report-tool) (application application) record)
-  "Present a successful papercut report as a prominent persistent alert.
+  "Show successful papercut reports as prominent persistent alerts.
 
-A report that only repeated an active papercut is presented as such, so the
-user sees the existing report rather than a new one."
+Mark reports that repeat an active papercut as already reported."
   (if (application--tool-result-success-p record)
       (let* ((output     (or (getf (rest record) :output) ""))
              (identifier (application--papercut-result-identifier output))

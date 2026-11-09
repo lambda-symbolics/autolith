@@ -56,8 +56,6 @@ native =SKILL.sexp=, edit the native definition directly instead.
 
 * Native =SKILL.sexp=
 
-The native format remains available:
-
 #+BEGIN_SRC lisp
 (:autolith-skill
  :version      1
@@ -89,9 +87,6 @@ case-sensitive filenames =SKILL.sexp= and =SKILL.md= count. Within one
 directory, a valid native definition is considered before =SKILL.md=. An
 invalid definition does not reserve its name, so another valid definition may
 still be selected.
-
-Earlier locations override later ones, so you can have a project-local or
-user-local version of a site Skill.
 
 * Loading
 

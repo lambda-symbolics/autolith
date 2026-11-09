@@ -687,9 +687,6 @@
                                         "properties")
                               "query")))
               "tool search is declared client-executed with a query parameter"))
-           ;; Expansions replay intact in the deferred wire shape; the null
-           ;; output_schema of server-produced records is dropped and a child
-           ;; without an object parameter schema cannot be declared.
            (let* ((search-output
                     (json-object
                      "type" "tool_search_output"
@@ -2339,8 +2336,6 @@
                        (if refreshable-p '(nil t) '(nil)))
                 "only refreshable credentials receive one forced refresh")
                (test-assert (null events) "authentication exhaustion adds no provider events")
-               ;; Guard diagnostic readers so the unpatched control records assertions,
-               ;; rather than aborting on its generic authentication-error condition.
                (let* ((report      (princ-to-string terminal))
                       (preserved-p (if missing-p
                                        (not (search message report))

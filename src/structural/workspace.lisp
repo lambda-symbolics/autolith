@@ -6,10 +6,10 @@
   "Explicit ast-grep executable pathname, or NIL to leave the optional backend disabled.")
 
 (defparameter *structural-maximum-bytes* (* 1024 1024)
-  "Maximum UTF-8 source and preview bytes for one structural operation.")
+  "Maximum size, in UTF-8 bytes, of source text or a preview for one structural operation.")
 
 (defparameter *structural-maximum-proposals* 16
-  "Maximum retained rewrite proposals per conversation.")
+  "Maximum number of rewrite proposals retained per conversation.")
 
 (define-condition structural-workspace-error (tool-error)
   ((code :initarg :code :reader structural-workspace-error-code
@@ -31,7 +31,7 @@
   (values *structural-maximum-proposals* most-positive-fixnum most-positive-fixnum))
 
 (defmethod edit-proposal-fail ((store structural-state) code message)
-  "Preserve structural typed policy failures."
+  "Signal policy failures as typed structural errors."
   (structural--fail code message))
 
 (-> structural--fail (keyword string) null)
@@ -94,7 +94,7 @@
 
 (-> structural--present (structural-proposal) json-object)
 (defun structural--present (proposal)
-  "Return the complete bounded preview and exact original-coordinate edit list."
+  "Return the complete bounded preview and the edit list in original coordinates."
   (let* ((plan     (structural-proposal-plan proposal))
          (snapshot (clasted:plan-snapshot plan)))
     (json-object
@@ -112,12 +112,12 @@
   (edit-proposal-find state context identifier))
 
 (defmethod edit-proposal-requests ((context tool-context) (proposal structural-proposal))
-  "Construct the retained structural replacement, omitting no-match publication."
+  "Return a list containing the replacement request, or NIL if the plan has no edits."
   (when (plusp (length (clasted:plan-edits (structural-proposal-plan proposal))))
     (list (structural--request proposal))))
 
 (defmethod edit-proposal-access ((proposal structural-proposal))
-  "Preserve read-only freshness validation for an already authorized no-match rewrite."
+  "Use read-only access to validate freshness for an authorized rewrite with no edits."
   (if (plusp (length (clasted:plan-edits (structural-proposal-plan proposal)))) ':edit ':read))
 
 (-> structural--prepare
@@ -125,7 +125,7 @@
                                        (:observation workspace-file-observation))
     structural-proposal)
 (defun structural--prepare (state context &key resource plan observation)
-  "Own the exact baseline and stage the preview before admitting it to retention."
+  "Take ownership of the exact baseline and stage the preview before retaining the proposal."
   (let* ((snapshots (make-hash-table :test #'equal))
          (proposal  (make-instance 'structural-proposal :resource resource :plan plan :snapshots snapshots)))
     (setf (gethash (resource-uri resource) snapshots)

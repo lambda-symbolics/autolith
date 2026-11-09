@@ -2,12 +2,6 @@
 
 ;;;; -- Diagnosis Tests --
 
-;;; The remote-service family: a call to a service fails because the service
-;;; is down, its configured endpoint is stale, or its credentials are
-;;; rejected. Probes ping it, read its endpoint, and try to authenticate;
-;;; contracts turn their results into facts. Each scenario runs with no
-;;; provider at all.
-
 (defparameter *diagnosis-tests-repairs*
   '(("unavailable" . "service.restart")
     ("stale-endpoint" . "service.update-endpoint")

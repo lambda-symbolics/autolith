@@ -382,11 +382,9 @@ its definition outside this image preserves the running server's system registry
 
 (-> release-builder--clear-shared-source-fasl-cache (pathname) null)
 (defun release-builder--clear-shared-source-fasl-cache (state-root)
-  "Delete shared /source ASDF fasls so successive tags cannot poison each other.
-
-Every release checkout is bind-mounted at the same container path, /source.
-ASDF therefore keys compiled fasls under one shared cache tree. Leaving that
-tree intact lets one tag's object files fail a later tag's checks."
+  "Delete cached ASDF FASLs shared by release builds at /source.
+Every checkout uses the same container path and cache, so stale FASLs could
+otherwise be reused for a different release tag."
   (let ((cache-root (merge-pathnames "cache/common-lisp/" state-root)))
     (when (uiop:directory-exists-p cache-root)
       (dolist (implementation (uiop:subdirectories cache-root))

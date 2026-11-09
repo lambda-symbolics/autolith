@@ -9,20 +9,16 @@
 (defclass standard-mutation-checker (mutation-checker)
   ()
   (:documentation
-   "The production checker validating the rendered pending definitions.
-
-Behavioral validation of a commit lives in the clean-process replay probe
-that IMAGE-COMMIT-PUBLISH always runs, plus any self.exercise records; the
-in-image gate only has to prove the rendered source is structurally sound."))
+   "Check the syntax of pending definitions.
+IMAGE-COMMIT-PUBLISH separately probes replay in a clean process.
+Use self.exercise for focused behavior checks."))
 
 (defclass full-suite-mutation-checker (mutation-checker)
   ()
   (:documentation
-   "A checker running the complete in-image Autolith test suite.
-
-This is minutes of silent work, needs the test system loadable beside the
-active image, and inherits whatever dynamic state the live session holds,
-so it is opt-in rather than the default commit gate."))
+   "Run the complete Autolith test suite in the active image.
+Requires the test system and uses the live session's dynamic state.
+This opt-in checker may run for minutes without output."))
 
 (defclass callback-mutation-checker (mutation-checker)
   ((active-callback
@@ -331,8 +327,6 @@ records resolves once."
          (or (uiop:subpathp pathname (merge-pathnames "src/" source-root))
              (uiop:subpathp pathname
                             (configuration-image-commit-root configuration))
-             ;; Journals may be replayed under a different data root, so a
-             ;; foreign overlays directory is still a recognizable location.
              (not (null
                    (find "overlays"
                          (pathname-directory pathname)

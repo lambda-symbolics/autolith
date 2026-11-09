@@ -768,8 +768,6 @@ exactly that race."
                     (original-configuration
                       (symbol-function 'task-configuration-for-definition)))
                (task-orchestrator-set-hurry-up orchestrator t)
-               ;; Isolate the cumulative session allowance from the pool's live
-               ;; bound. Inline jobs remain live until test cleanup.
                (with-lock-held ((task-orchestrator-lock orchestrator))
                  (setf (job-pool-maximum-live-jobs pool)
                        *task-maximum-live-jobs*))
@@ -2107,9 +2105,6 @@ exactly that race."
            (test-assert
             (task-tests--wait-until (lambda () started-p) 2)
             "the delayed closing worker reaches its barrier")
-           ;; A real close first, so the pool's own workers and deadline monitor
-           ;; are genuinely gone and the only thread left alive is the one this
-           ;; test controls.
            (task-orchestrator-close orchestrator)
            (with-lock-held ((cl-jobpond::job-pool--lock (task-orchestrator-pool orchestrator)))
              (setf (cl-jobpond::job-pool--monitor-thread (task-orchestrator-pool orchestrator))
@@ -2383,8 +2378,6 @@ exactly that race."
                                    :context nil
                                    :async   t)
                              :detached   t)))))
-             ;; Capacity is filled with children no worker will ever pick up, so
-             ;; the bound is measured rather than raced against jobs finishing.
              (dotimes (index *task-maximum-live-jobs*)
                (task-tests--register-job
                 orchestrator primary definition
