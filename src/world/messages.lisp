@@ -95,61 +95,55 @@ The world server sets it while it runs, so a message wakes the agent it is for."
   (merge-pathnames (make-pathname :name channel-identifier :type "sexp")
                    (merge-pathnames "world/inbox/" (config :data-root configuration))))
 
+(defparameter *world-delivery-fields*
+  (flet ((field (indicator reader validate &key (required t) (initarg indicator)
+                                             (encode 'identity) (decode 'identity))
+           "Describe one stored field, its validation and its explicit wire codecs."
+           (list :indicator indicator :reader reader :validate validate
+                 :required required :initarg initarg :encode encode :decode decode)))
+    (list
+     (field ':id 'world-delivery-identifier 'non-empty-string-p
+            :initarg ':identifier :encode 'world-portable-string)
+     (field ':time 'world-delivery-time (lambda (value) (typep value 'timestamp)))
+     (field ':sender 'world-delivery-sender 'non-empty-string-p :encode 'world-portable-string)
+     (field ':sender-name 'world-delivery-sender-name 'world--name-p :encode 'world-portable-string)
+     ;; Missing sender kind is accepted for pre-kind copies until 0.68.0.
+     (field ':sender-kind 'world-delivery-sender-kind
+            (lambda (value) (typep value '(option participant-kind))) :required nil)
+     (field ':source 'world-delivery-source 'non-empty-string-p :encode 'world-portable-string)
+     (field ':target 'world-delivery-target 'non-empty-string-p :encode 'world-portable-string)
+     (field ':text 'world-delivery-text
+            (lambda (value)
+              (and (non-empty-string-p value) (<= (length value) *world-message-text-limit*)))
+            :encode 'world-portable-string)
+     (field ':mentions 'world-delivery-mentions 'world--identifier-list-p
+            :encode (lambda (value) (mapcar #'world-portable-string value)) :decode 'copy-list)
+     (field ':kind 'world-delivery-kind (lambda (value) (typep value 'world-delivery-kind)))))
+  "Ordered delivery field schema and explicit wire codecs; the class defines the domain object.")
+
 (-> world-delivery--record (world-delivery) list)
 (defun world-delivery--record (delivery)
   "Return DELIVERY as one portable readable record."
-  (list :delivery
-        :id          (world-portable-string (world-delivery-identifier delivery))
-        :time        (world-delivery-time delivery)
-        :sender      (world-portable-string (world-delivery-sender delivery))
-        :sender-name (world-portable-string (world-delivery-sender-name delivery))
-        :sender-kind (world-delivery-sender-kind delivery)
-        :source      (world-portable-string (world-delivery-source delivery))
-        :target      (world-portable-string (world-delivery-target delivery))
-        :text        (world-portable-string (world-delivery-text delivery))
-        :mentions    (mapcar #'world-portable-string (world-delivery-mentions delivery))
-        :kind        (world-delivery-kind delivery)))
+  (cons ':delivery
+        (loop for field in *world-delivery-fields*
+              append (list (getf field :indicator)
+                           (funcall (getf field :encode)
+                                    (funcall (getf field :reader) delivery))))))
 
 (-> world-delivery--record-p (t) boolean)
 (defun world-delivery--record-p (form)
   "Return true when FORM is one valid delivery record."
-  (and (listp form)
-       (eq (first form) ':delivery)
-       (sexp-store:plist-schema-p (rest form)
-                                 :required-keys  '(:id :time :sender :sender-name :source
-                                                   :target :text :mentions :kind)
-                                 :allowed-keys   '(:id :time :sender :sender-name :sender-kind :source
-                                                   :target :text :mentions :kind)
-                                 :keyword-keys-p t)
-       (let ((properties (rest form)))
-         (and (non-empty-string-p (getf properties :id))
-              (typep (getf properties :time) 'timestamp)
-              (non-empty-string-p (getf properties :sender))
-              (world--name-p (getf properties :sender-name))
-              (typep (getf properties :sender-kind) '(option participant-kind))
-              (non-empty-string-p (getf properties :source))
-              (non-empty-string-p (getf properties :target))
-              (non-empty-string-p (getf properties :text))
-              (<= (length (getf properties :text)) *world-message-text-limit*)
-              (world--identifier-list-p (getf properties :mentions))
-              (typep (getf properties :kind) 'world-delivery-kind)
-              t))))
+  (nth-value 0 (sexp-store:record-check form :tag ':delivery :fields *world-delivery-fields*
+                                          :allow-other-keys nil :keyword-keys-p t)))
 
 (-> world-delivery--record->delivery (list) world-delivery)
 (defun world-delivery--record->delivery (record)
   "Return the delivery validated RECORD describes."
-  (let ((properties (rest record)))
-    (make-instance 'world-delivery
-                   :identifier  (getf properties :id)
-                   :time        (getf properties :time)
-                   :sender      (getf properties :sender)
-                   :sender-name (getf properties :sender-name)
-                   :sender-kind (getf properties :sender-kind)
-                   :source      (getf properties :source)
-                   :target      (getf properties :target)
-                   :text        (getf properties :text)
-                   :mentions    (copy-list (getf properties :mentions))
-                   :kind        (getf properties :kind))))
+  (apply #'make-instance 'world-delivery
+         (loop for field in *world-delivery-fields*
+               append (list (getf field :initarg)
+                            (funcall (getf field :decode)
+                                     (getf (rest record) (getf field :indicator)))))))
 
 (-> world-inbox--form-p (t) boolean)
 (defun world-inbox--form-p (form)

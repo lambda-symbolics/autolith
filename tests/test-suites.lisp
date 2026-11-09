@@ -642,6 +642,7 @@
   test-world-agent-name-header
   test-world-channel-resolve
   test-world-message-send
+  test-world-delivery-codec
   test-world-message-outbox
   test-world-channel-tools
   test-world-message-presentation
