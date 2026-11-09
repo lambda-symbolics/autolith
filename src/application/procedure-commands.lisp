@@ -146,8 +146,8 @@
 (define-application-command application--builtin-procedures-command
     (:name              "/procedures"
      :argument          nil
-     :description       "list procedures learned from recurring work"
-     :tip               "shows each learned tool sequence, whether it may run, and what it saved."
+     :description       "list procedures learned from recurring work."
+     :tip               "shows all learned tool sequences"
      :busy-behavior     :inspect
      :terminal-behavior :shared
      :callable          t)
@@ -158,8 +158,8 @@
 (define-application-command application--builtin-run-procedure-command
     (:name              "/run-procedure"
      :argument          "[ID] [NAME VALUE ...]"
-     :description       "run a learned procedure without the model"
-     :tip               "makes the procedure's tool calls with your parameters, each with its usual authorization."
+     :description       "run a learned procedure without the model."
+     :tip               "run a saved tool procedure"
      :busy-behavior     :hold
      :terminal-behavior :shared
      :callable          t)
@@ -175,7 +175,7 @@
     (:name              "/admit-procedure"
      :argument          "[ID]"
      :description       "let a learned procedure run"
-     :tip               "admits its latest version and lifts a suspension after failed runs."
+     :tip               "admit a latest version of a procedure and lift suspensions after failed runs."
      :busy-behavior     :apply
      :terminal-behavior :shared
      :callable          t)
@@ -191,7 +191,7 @@
     (:name              "/retire-procedure"
      :argument          "[ID]"
      :description       "stop a learned procedure for good"
-     :tip               "retires it so it neither runs nor is learned again."
+     :tip               "retire a procedure so it is no longer used"
      :busy-behavior     :apply
      :terminal-behavior :shared
      :callable          t)

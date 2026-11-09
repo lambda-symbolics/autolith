@@ -1,12 +1,5 @@
 ;;;; -- Autolith Systems --
 
-;;; Compiling a file proclaims its -> declarations while its classes are still
-;;; placeholders, so loading the file into the same image proclaims them again
-;;; and SBCL reports that each declaration over a class from that file differs
-;;; from itself. Loading Autolith's own files muffles that report. A genuine
-;;; disagreement needs two declarations of one function, which the source
-;;; checks refuse, and still warns when it is compiled.
-
 (defclass autolith-source-file (asdf:cl-source-file)
   ()
   (:documentation "An Autolith source file, loaded without SBCL's self-redeclaration reports."))

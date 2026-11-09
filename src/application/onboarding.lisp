@@ -175,8 +175,6 @@ remaining selected revisions; interruption leaves them pending."
                              (onboarding-state-pending configuration
                                                        (onboarding-pages configuration)))))
     (when (and pending (typep terminal 'localgroup-terminal))
-      ;; Client-first sessions publish their listener before the relay reports a
-      ;; TTY. Wait for the same window as the launch's attachment watchdog.
       (catch 'onboarding-client-wait-ended
         (terminal-ui--await-interactive
          terminal
@@ -211,7 +209,7 @@ remaining selected revisions; interruption leaves them pending."
     (:name              "/onboard"
      :argument          nil
      :description       "replay the fullscreen onboarding tour"
-     :tip               "Use `(onboard)` to practice the prompt and explore Autolith's capabilities."
+     :tip               "Use `(onboard)` to replay the internal onboarding guide."
      :busy-behavior     :hold
      :terminal-behavior :exclusive
      :callable          t)

@@ -426,7 +426,7 @@ matches of an ambiguous prefix."
     (:name              "/what-changed"
      :argument          nil
      :description       "show how facts changed since you last asked"
-     :tip               "reports facts that changed, appeared, or stopped holding, with the cause."
+     :tip               "reports facts that changed, appeared, or stopped holding, and why."
      :busy-behavior     :inspect
      :terminal-behavior :shared
      :callable          t)
@@ -438,7 +438,7 @@ matches of an ambiguous prefix."
     (:name              "/rules"
      :argument          nil
      :description       "list the rules that derive facts"
-     :tip               "shows each rule's latest version and whether it is admitted."
+     :tip               "show the latest version and whether it is admitted for all rules."
      :busy-behavior     :inspect
      :terminal-behavior :shared
      :callable          t)
@@ -450,7 +450,7 @@ matches of an ambiguous prefix."
     (:name              "/admit-rule"
      :argument          "[ID]"
      :description       "admit a proposed rule"
-     :tip               "lets a proposed rule derive facts; its latest version replaces any earlier one."
+     :tip               "admit a proposed rule so it may be used to derive facts, the latest version replaces earlier ones."
      :busy-behavior     :apply
      :terminal-behavior :shared
      :callable          t)
@@ -466,7 +466,7 @@ matches of an ambiguous prefix."
     (:name              "/retire-rule"
      :argument          "[ID]"
      :description       "stop a rule deriving facts"
-     :tip               "retires a rule; facts it derived stop holding unless something else supports them."
+     :tip               "retires a rule; facts derived through the rule stop holding unless something else supports them."
      :busy-behavior     :apply
      :terminal-behavior :shared
      :callable          t)

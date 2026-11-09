@@ -93,7 +93,7 @@
     (:name              "/diagnoses"
      :argument          nil
      :description       "list diagnoses and what decided their cases"
-     :tip               "shows saved diagnoses and recent cases: the cause found, its repair, and the facts that ruled out the rest."
+     :tip               "shows saved diagnoses and recent cases: what cause cause was discovered, how it was repaired, and the facts that were involed."
      :busy-behavior     :inspect
      :terminal-behavior :shared
      :callable          t)
