@@ -376,33 +376,31 @@ becomes (:OBJECT KEY VALUE ...), a JSON array (:ARRAY VALUE ...) and JSON
 false :FALSE, other symbols their lowercase names, pathnames their
 namestrings, and other objects, such as conditions, their printed text.
 CLIENT-JSON turns the JSON forms back."
-  (typecase value
-    (null
-     nil)
-    ((satisfies json-false-p)
-     ':false)
-    ((or string number keyword character (eql t))
-     value)
-    (hash-table
-     (cons ':object
-           (loop for key being the hash-keys of value using (hash-value item)
-                 append (list (client-portable key) (client-portable item)))))
-    (vector
-     (cons ':array (map 'list #'client-portable value)))
-    (cons
-     (let ((result nil))
-       (loop for rest on value
-             do (push (client-portable (first rest)) result)
-                (unless (listp (rest rest))
-                  (return-from client-portable
-                    (nreconc result (client-portable (rest rest))))))
-       (nreverse result)))
-    (symbol
-     (string-downcase (symbol-name value)))
-    (pathname
-     (namestring value))
-    (t
-     (princ-to-string value))))
+  (portable-value-map
+   value
+   (lambda (item child)
+     (typecase item
+       (null
+        nil)
+       ((satisfies json-false-p)
+        ':false)
+       (string
+        (copy-seq item))
+       ((or number keyword character (eql t))
+        item)
+       (hash-table
+        (cons ':object
+              (loop for key being the hash-keys of item using (hash-value member)
+                    append (list (funcall child key) (funcall child member)))))
+       (vector
+        (cons ':array (map 'list child item)))
+       (symbol
+        (string-downcase (symbol-name item)))
+       (pathname
+        (namestring item))
+       (t
+        (princ-to-string item))))
+   :containers-p t))
 
 (-> client-json (t) t)
 (defun client-json (value)

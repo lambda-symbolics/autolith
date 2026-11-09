@@ -703,6 +703,11 @@ paths that do not contain QUERY as a contiguous substring."
 
 ;;;; -- Lisp Argument Boundary --
 
+(define-condition application-operation-value-error (configuration-error portable-value-error)
+  ()
+  (:default-initargs :message "A local tool argument cannot cross the JSON boundary.")
+  (:documentation "A payload-free local JSON argument rejection with a structured reason."))
+
 (-> application-operation--json-key (t) non-empty-string)
 (defun application-operation--json-key (key)
   "Return KEY as one JSON object member name.
@@ -711,66 +716,64 @@ A string names its member exactly. A symbol the reader upcased, such as
 :FILE-PATH, names the lowercase member; one whose name has a lowercase letter,
 such as :|filePath|, was escaped on purpose and keeps its case."
   (let ((name
-          (etypecase key
+          (typecase key
             (string
              key)
             (symbol
              (let ((name (symbol-name key)))
                (if (some #'lower-case-p name)
                    name
-                   (string-downcase name)))))))
+                   (string-downcase name))))
+            (t
+             (error 'application-operation-value-error :reason ':key)))))
     (unless (non-empty-string-p name)
-      (error 'configuration-error
-             :message "A local tool argument key must not be empty."))
+      (error 'application-operation-value-error :reason ':key))
     name))
 
 (-> application-operation--json-value (t) t)
 (defun application-operation--json-value (value)
   "Translate one explicit Lisp VALUE into the project's JSON value convention."
-  (cond
-    ((eq value t)
-     t)
-    ((json-false-p value)
-     (json-false))
-    ((null value)
-     (json-false))
-    ((eq value ':null)
-     nil)
-    ((stringp value)
-     (copy-seq value))
-    ((pathnamep value)
-     (namestring value))
-    ((characterp value)
-     (string value))
-    ((or (integerp value) (floatp value))
-     value)
-    ((keywordp value)
-     (string-downcase (symbol-name value)))
-    ((symbolp value)
-     (string-downcase (symbol-name value)))
-    ((hash-table-p value)
-     (let ((object (json-object)))
-       (maphash
-        (lambda (key member)
-          (let ((name (application-operation--json-key key)))
-            (when (nth-value 1 (gethash name object))
-              (error 'configuration-error
-                     :message
-                     (format nil "A local JSON object repeats key ~S." name)))
-            (setf (gethash name object)
-                  (application-operation--json-value member))))
-        value)
-       object))
-    ((vectorp value)
-     (map 'vector #'application-operation--json-value value))
-    ((proper-list-p value)
-     (map 'vector #'application-operation--json-value value))
-    (t
-     (error 'configuration-error
-            :message
-            (format nil
-                    "Local tool argument value ~S cannot cross the JSON boundary."
-                    value)))))
+  (handler-case
+      (portable-value-map
+       value
+       (lambda (item child)
+         (cond
+           ((eq item t)
+            t)
+           ((or (json-false-p item) (null item))
+            (json-false))
+           ((eq item ':null)
+            nil)
+           ((stringp item)
+            (copy-seq item))
+           ((pathnamep item)
+            (namestring item))
+           ((characterp item)
+            (string item))
+           ((or (integerp item) (floatp item))
+            item)
+           ((symbolp item)
+            (string-downcase (symbol-name item)))
+           ((hash-table-p item)
+            (let ((object (json-object)))
+              (maphash
+               (lambda (key member)
+                 (let ((name (application-operation--json-key key)))
+                   (when (nth-value 1 (gethash name object))
+                     (error 'application-operation-value-error :reason ':duplicate-key))
+                   (setf (gethash name object) (funcall child member))))
+               item)
+              object))
+           ((vectorp item)
+            (map 'vector child item))
+           (t
+            (error 'application-operation-value-error :reason ':value))))
+       :containers-p   t
+       :proper-lists-p t
+       :list           (lambda (items) (coerce items 'vector)))
+    (portable-value-error (condition)
+      (error 'application-operation-value-error
+             :reason (portable-value-error-reason condition)))))
 
 (-> application-operation--tool-arguments (list) json-object)
 (defun application-operation--tool-arguments (arguments)
@@ -785,9 +788,7 @@ such as :|filePath|, was escaped on purpose and keeps its case."
           for name = (application-operation--json-key key)
           do
              (when (nth-value 1 (gethash name object))
-               (error 'configuration-error
-                      :message
-                      (format nil "A local tool call repeats argument ~S." name)))
+               (error 'application-operation-value-error :reason ':duplicate-key))
              (setf (gethash name object)
                    (application-operation--json-value value)))
     object))
