@@ -41,11 +41,14 @@
          (command  (list (terminal-span ':tool "▸ (shell.run)")
                          (terminal-span ':plain (format nil "~%  :command ls"))))
          (decision (list (terminal-span ':annotation "  auto-permission sandbox")))
-         (entries  (list (list 0 edit) (list 0 "duplicate") (list 1 edit)
-                         (list 2 check) (list 3 custom) (list 4 body)
-                         (list 5 edit) (list 6 failure) (list 7 edit)
-                         (list 8 call) (list 9 edit) (list 10 message)
-                         (list 11 command) (list 12 decision) (list 13 edit)))
+         (entries  (list (list 0 edit '(:group :success)) (list 0 "duplicate")
+                         (list 1 edit '(:group :success)) (list 2 check '(:group :success))
+                         (list 3 custom '(:group :success)) (list 4 body)
+                         (list 5 edit '(:group :success)) (list 6 failure)
+                         (list 7 edit '(:group :success)) (list 8 call)
+                         (list 9 edit '(:group :success)) (list 10 message)
+                         (list 11 command '(:group :call))
+                         (list 12 decision '(:group :attached)) (list 13 edit '(:group :success))))
          (expected (format nil "✓ resource.edit  applied~%✓ resource.edit  applied~%✓ lisp.paren-check~%✓ extension.probe~%~%✓ resource.read~%  │ body~%~%✓ resource.edit  applied~%~%✗ resource.read failed~%~%✓ resource.edit  applied~%~%▸ (shell.run)~%~%✓ resource.edit  applied~%~%✓ goal complete~%~%▸ (shell.run)~%  :command ls~%  auto-permission sandbox~%~%✓ resource.edit  applied~%")))
     (dolist (fullscreen-p '(nil t))
       (dolist (batch-p '(nil t))
@@ -61,7 +64,8 @@
                                "batch counts only unique entries")
                   (terminal-ui-append-finalized-batch ui (subseq entries 5)))
                 (dolist (pair entries)
-                  (terminal-ui-append-finalized ui (first pair) (second pair))))
+                  (terminal-ui-append-finalized ui (first pair) (second pair)
+                                                 :group (getf (third pair) :group))))
             (let ((actual
                     (if deferred-p
                         (terminal-ui-deferred-live-appended-text ui)
@@ -130,7 +134,7 @@
       (let* ((terminal (make-instance 'failing-recording-terminal :columns 100 :rows 24))
              (ui       (terminal-ui-create :terminal terminal :fullscreen-p fullscreen-p)))
         (with-terminal-ui (ui ui)
-          (terminal-ui-append-finalized ui 0 entry)
+          (terminal-ui-append-finalized ui 0 entry :group ':success)
           (let ((count  (hash-table-count (terminal-ui-finalized-identifiers ui)))
                 (before (terminal-ui-compact-tail-group ui)))
             (terminal-ui--finalized-content ui "capture only")
@@ -145,7 +149,7 @@
           (setf (failing-recording-terminal-fail-next-write-p terminal) t)
           (test-assert
            (handler-case (progn (terminal-ui-append-finalized-batch
-                                 ui (list (list 1 entry) (list 2 "boundary"))) nil)
+                                 ui (list (list 1 entry '(:group :success)) (list 2 "boundary"))) nil)
              (terminal-error () t))
            "append error is propagated")
           (test-assert (and (eq (terminal-ui-compact-tail-group ui) ':success)
@@ -153,7 +157,7 @@
                             (not (gethash 2 (terminal-ui-finalized-identifiers ui))))
                        "failed batch restores grouping state and identifiers")
           (setf (terminal-ui-live-output-suspended-p ui) t)
-          (terminal-ui-append-finalized ui 1 entry)
+          (terminal-ui-append-finalized ui 1 entry :group ':success)
           (terminal-ui-stream-update ui :rows (list (list (terminal-span ':plain "stream")))
                                      :tail    "tail")
           (terminal-ui-stream-update ui :rows (list (list (terminal-span ':plain "next"))))
@@ -162,25 +166,25 @@
                        "stream starts after a gap and subsequent chunks are contiguous")
           (setf (terminal-ui-live-output-suspended-p ui) nil)
           (when fullscreen-p
-            (terminal-ui-append-finalized ui 3 entry)
+            (terminal-ui-append-finalized ui 3 entry :group ':success)
             (terminal-ui-reset-transcript ui)
             (terminal-ui-append-finalized ui 3 "fresh")
             (test-assert (string= "fresh" (fullscreen-test--row-text ui 0))
                          "clear resets compact separation and result identities")
             (terminal-ui-reset-transcript ui)
-            (terminal-ui-append-finalized ui 0 entry)
+            (terminal-ui-append-finalized ui 0 entry :group ':success)
             (let ((actions nil))
               (setf (terminal-ui-action-function ui)
                     (lambda (action) (push action actions)))
               (terminal-ui-append-finalized-batch
-               ui (list (list 1 entry)
+               ui (list (list 1 entry '(:group :success))
                         (list 2 (list (termdown:make-widget
                                        ':code-copy "copy" '(:copy "boundary"))))))
               (fullscreen-test--click ui 1 4)
               (test-assert (equal '(:copy "boundary") (first actions))
                            "batch widgets retain their regions across the inserted gap")
               (terminal-ui-reset-transcript ui)
-              (terminal-ui-append-finalized ui 0 entry)
+              (terminal-ui-append-finalized ui 0 entry :group ':success)
               (terminal-ui-append-finalized-batch
                ui (list (list 2 (list (termdown:make-widget
                                        ':code-copy "copy" '(:copy "external"))))))
@@ -219,7 +223,14 @@
                                 clipped call body call mcp mcp mcp-other
                                 handoff handoff-next handoff-other handoff-body
                                 handoff handoff-failed handoff-clipped handoff-clipped))
-         (pairs           (loop for entry in entries for index from 0 collect (list index entry)))
+         (groups          '("resource.read" "resource.read" "resource.read"
+                            "resource.edit" "resource.edit" :success :success
+                            "resource.read" nil "resource.read" :call "resource.read"
+                            "MCP server / read" "MCP server / read" "MCP server / write"
+                            "handoff shell.run" "handoff shell.run" "handoff lisp.eval"
+                            nil "handoff shell.run" nil nil nil))
+         (pairs           (loop for entry in entries for group in groups for index from 0
+                                collect (list index entry (list :group group))))
          (expected        (format nil "▸ (resource.read)~%▸ (resource.read :uri workspace:x)~%▸ (resource.read)~%~%▸ (resource.edit)~%▸ (resource.edit)~%~%✓ resource.read~%✓ resource.read~%~%▸ (resource.read)~%~%▸ (resource.re…~%~%▸ (resource.read)~%~%▸ (resource.read)~%  │ body~%~%▸ (resource.read)~%~%▸ (MCP server / read)~%▸ (MCP server / read)~%~%▸ (MCP server / write)~%~%↪ shell.run  running in background · exec:16~%↪ shell.run  running in background · (job.cancel :id exec:17)~%~%↪ lisp.eval~%~%↪ shell.run  running in background · exec:16~%  │ task~%~%↪ shell.run  running in background · exec:16~%~%↪ shell.run~%~%↪ shell.r…~%~%↪ shell.r…")))
     (dolist (fullscreen-p '(nil t))
       (dolist (deferred-p '(nil t))
@@ -230,12 +241,13 @@
                   (terminal-interactive-p terminal) deferred-p)
             (if batch-p
                 (progn
-                  (terminal-ui-append-finalized ui 0 call)
+                  (terminal-ui-append-finalized ui 0 call :group "resource.read")
                   (terminal-ui-append-finalized-batch ui (subseq pairs 0 4))
                   (terminal-ui-append-finalized-batch ui (subseq pairs 4 6))
                   (terminal-ui-append-finalized-batch ui (subseq pairs 6)))
                 (dolist (pair pairs)
-                  (terminal-ui-append-finalized ui (first pair) (second pair))))
+                  (terminal-ui-append-finalized ui (first pair) (second pair)
+                                                 :group (getf (third pair) :group))))
             (let ((actual
                     (if deferred-p
                         (terminal-ui-deferred-live-appended-text ui)
@@ -252,11 +264,11 @@
            (ui       (terminal-ui-create :terminal terminal :fullscreen-p fullscreen-p))
            (call     (list (terminal-span ':tool "▸ (resource.read)"))))
       (with-terminal-ui (active ui)
-        (terminal-ui-append-finalized active 0 call)
+        (terminal-ui-append-finalized active 0 call :group "resource.read")
         (setf (failing-recording-terminal-fail-next-write-p terminal) t)
         (test-assert
          (handler-case
-             (progn (terminal-ui-append-finalized-batch active (list (list 1 call) (list 2 "body")))
+             (progn (terminal-ui-append-finalized-batch active (list (list 1 call '(:group "resource.read")) (list 2 "body")))
                     nil)
            (terminal-error () t))
          "a failed call batch reports its terminal error")
@@ -266,7 +278,7 @@
               (not (gethash 2 (terminal-ui-finalized-identifiers active))))
          "failed appends restore the exact call group and identifiers")
         (setf (terminal-ui-live-output-suspended-p active) t)
-        (terminal-ui-append-finalized active 1 call)
+        (terminal-ui-append-finalized active 1 call :group "resource.read")
         (terminal-ui-stream-update active :rows (list (list (terminal-span ':plain "stream"))))
         (test-assert
          (string= (terminal-ui-deferred-live-appended-text active)
@@ -275,7 +287,7 @@
         (when fullscreen-p
           (setf (terminal-ui-live-output-suspended-p active) nil)
           (terminal-ui-reset-transcript active)
-          (terminal-ui-append-finalized active 0 call)
+          (terminal-ui-append-finalized active 0 call :group "resource.read")
           (test-assert (string= "▸ (resource.read)"
                                 (fullscreen-test--row-text active 0))
                        "clearing a compact call group starts a fresh transcript")))))

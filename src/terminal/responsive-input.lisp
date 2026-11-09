@@ -2768,19 +2768,19 @@ sandbox grant is revalidated at this final authorization boundary."
          (progn
            (application-present
             application
-            (list (terminal-span ':annotation "  auto-permission sandbox")))
+            (list (terminal-span ':annotation "  auto-permission sandbox")) :group ':attached)
            ':sandboxed)
          (progn
            (application-present
             application
             (list (terminal-span
                    ':annotation
-                   "  auto-permission deny: the workspace sandbox became unavailable")))
+                   "  auto-permission deny: the workspace sandbox became unavailable")) :group ':attached)
            ':deny)))
     (:full-access
      (application-present
       application
-      (list (terminal-span ':annotation "  auto-permission full access")))
+      (list (terminal-span ':annotation "  auto-permission full access")) :group ':attached)
      ':full-access)
     (:deny
      (application-present
@@ -2788,7 +2788,7 @@ sandbox grant is revalidated at this final authorization boundary."
       (list (terminal-span
              ':annotation
              (format nil "  auto-permission deny: ~A"
-                     (sanitize-text reason :single-line-p t)))))
+                     (sanitize-text reason :single-line-p t)))) :group ':attached)
      ':deny)))
 
 (-> application--current-user-instructions (application) (option string))

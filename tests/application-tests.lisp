@@ -2539,6 +2539,8 @@
            (compact    (application-tests--ui-application :columns 100))
            (expanded   (application-tests--ui-application
                         :columns 100 :compact-view-p nil)))
+       (setf (application-conversation compact) (agent-conversation parent)
+             (application-conversation expanded) (agent-conversation parent))
        (unwind-protect
             (loop for async-p in '(t nil)
                   for reason in '(:requested :grace-expired)
@@ -2589,8 +2591,10 @@
                                        (equal (termdown:widget-action widget) action))
                                      widgets)
                               (string= (terminal--spans-text widgets)
-                                       (terminal-ui--job-cancel-text identifier))
-                              (terminal-ui--compact-handoff-group entry))
+                                       (application--job-cancel-text identifier))
+                              (equal "handoff shell.run"
+                                      (getf (third (application--record-presentation compact record))
+                                            :group)))
                          "a running handoff highlights every clickable cancellation token"))
                       (test-assert
                        (search "Run repository checks"

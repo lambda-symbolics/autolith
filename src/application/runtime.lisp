@@ -2858,8 +2858,9 @@ sidebar leaves, and it never wraps."
        (list (terminal-span ':plain entry))
        entry)))
 
-(-> application-present (application (or string list) &key (:identifier t)) boolean)
-(defun application-present (application entry &key identifier)
+(-> application-present
+    (application (or string list) &key (:identifier t) (:group t)) boolean)
+(defun application-present (application entry &key identifier group)
   "Append non-conversation ENTRY once, optionally under a stable IDENTIFIER.
 
 The channel's structured clients receive its text as a :PRESENT event."
@@ -2875,7 +2876,7 @@ The channel's structured clients receive its text as a :PRESENT event."
                entry)))
     (flet ((entry-text ()
              (if ui
-                 (nth-value 0 (terminal-ui--finalized-content ui entry))
+                 (nth-value 0 (terminal-ui--finalized-content ui entry :group group))
                  (concatenate
                   'string
                   (if (stringp entry)
@@ -2900,7 +2901,7 @@ The channel's structured clients receive its text as a :PRESENT event."
                    (terminal-ui-append-finalized
                     ui
                     identifier
-                    presented-entry)))
+                    presented-entry :group (unless invocation group))))
             (when (and invocation emitted-p)
               (setf *application-command-presentation-pending-p* nil))
             emitted-p)))))
@@ -3004,20 +3005,60 @@ The channel's structured clients receive its text as a :PRESENT event."
         (list :cancellation-warning owner (getf completion :id))
         (list :conversation owner (application--record-sequence record)))))
 
+(-> application--record-entry-semantics (list list) list)
+(defun application--record-entry-semantics (record entry)
+  "Describe RECORD's entry kind and spacing independently of its rendered style."
+  (let* ((properties   (rest record))
+         (single-row-p (notany (lambda (span)
+                                (find-if (lambda (character)
+                                           (find character '(#\Newline #\Return)))
+                                         (terminal-span-text span)))
+                              entry))
+         (kind         (first record))
+         (group        nil))
+    (case kind
+      (:provider-item
+       (let* ((wire (getf properties :wire-json))
+              (item (and wire (json-decode wire)))
+              (type (and item (json-get item "type"))))
+         (cond
+           ((member type '("function_call" "web_search_call") :test #'equal)
+            (setf kind ':tool-call
+                  group (if single-row-p
+                            (or (function-call-canonical-name item) "web search")
+                            ':call)))
+           ((equal type "reasoning")
+            (setf kind ':reasoning))
+           (t
+            (setf kind ':message)))))
+      (:tool-result
+       (cond
+         ((application--tool-execution-handoff record)
+          (setf kind ':handoff
+                group (when single-row-p
+                        (format nil "handoff ~A" (getf properties :tool)))))
+         ((and single-row-p (eq (getf properties :status) ':ok))
+          (setf group ':success))))
+      (:message
+       (when (application--job-completion-message-p properties)
+         (setf kind ':job-completion))))
+    (list :entry-kind kind :group group)))
+
 (-> application--record-presentation
     (application list &key (:outcomes (option hash-table))) (option list))
 (defun application--record-presentation (application record &key outcomes)
-  "Return RECORD's identity, entry and optional semantic fullscreen outcome."
+  "Return RECORD's identity, styled entry and explicit presentation semantics."
   (let* ((entry    (conversation-record-entry application record))
-         (metadata (when (terminal-ui-fullscreen-p (application-ui application))
-                     (application--record-tool-outcome application record entry)))
-         (resolved (and outcomes metadata
+         (metadata (append
+                    (application--record-entry-semantics record entry)
+                    (when (terminal-ui-fullscreen-p (application-ui application))
+                      (application--record-tool-outcome application record entry))))
+         (resolved (and outcomes (getf metadata :call-key)
                         (gethash (getf metadata :call-key) outcomes))))
     (when resolved
-      (let ((kind (getf metadata :kind)))
-        (setf metadata (copy-list resolved)
-              (getf metadata :kind) kind)))
-    (when (or entry metadata)
+      (dolist (key '(:state :job-key :retain-output-p :body))
+        (setf (getf metadata key) (getf resolved key))))
+    (when (or entry (getf metadata :kind))
       (list (application--record-presentation-identifier application record)
             entry metadata))))
 
@@ -3884,8 +3925,9 @@ does turning the activity line setting off."
                           call-id))
               (plusp (terminal-ui-present-records
                       (application-ui application) (list presentation)))))
-          (application-present
-           application (application-tool-result-entry tool application record))))))
+          (let* ((entry    (application-tool-result-entry tool application record))
+                 (metadata (application--record-entry-semantics record entry)))
+            (application-present application entry :group (getf metadata :group)))))))
 
 (-> application--skill-load-result-details
     (t)

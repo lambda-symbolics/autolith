@@ -8,7 +8,7 @@
   (list identifier
         (list (termdown:make-widget ':tool "▸ (probe " '(:copy "original call"))
               (terminal-span ':tool (format nil "~S)" call-id)))
-        (list :kind ':call :call-key (list :call "owner" call-id) :state ':pending)))
+        (list :kind ':call :call-key (list :call "owner" call-id) :state ':pending :entry-kind ':tool-call :group "probe")))
 
 (-> tool-outcome-test--result
     (t string &key (:state keyword) (:body list) (:job-id (option string))) list)
@@ -176,4 +176,60 @@
                       (zerop (hash-table-count (fullscreen-terminal-ui-presentation-records ui)))
                       (null (fullscreen-terminal-ui-deferred-operations ui)))
                  "reset clears resident aliases and queued outcomes"))
+  nil)
+
+(-> test-transcript-entry-semantics () null)
+(defun test-transcript-entry-semantics ()
+  "Use explicit groups regardless of glyphs, styles, or widget representation."
+  (dolist (fullscreen-p '(nil t))
+    (let* ((terminal (make-instance 'recording-terminal :columns 100 :rows 24))
+           (ui       (terminal-ui-create :terminal terminal :fullscreen-p fullscreen-p))
+           (entries  (list
+                      (list 1 (list (terminal-span ':failure "first"))
+                            '(:entry-kind :tool-call :group "same"))
+                      (list 2 (list (termdown:make-widget ':notice "second" '(:copy "value")))
+                            '(:entry-kind :tool-call :group "same"))
+                      (list 3 (list (terminal-span ':tool "▸ (fake.call)"))
+                            '(:entry-kind :message :group nil)))))
+      (with-terminal-ui (ui ui)
+        (recording-terminal-reset terminal)
+        (setf (terminal-interactive-p terminal) nil)
+        (terminal-ui-present-records ui entries)
+        (let ((text (if fullscreen-p (tool-outcome-test--text ui)
+                        (clinedi:ansi-strip (recording-terminal-output terminal)))))
+          (test-assert (string= text (format nil "first~%second~%~%▸ (fake.call)~%~%"))
+                       "explicit groups, including NIL, determine transcript spacing"))
+        (when fullscreen-p
+          (test-assert (equal '(:copy "value")
+                              (terminal-ui-fullscreen--click-action ui 1 2))
+                       "semantic grouping preserves widget actions"))
+        (let ((entry (list (terminal-span ':success "✓ qualified.tool"))))
+          (test-assert
+           (and (string= (terminal-ui--finalized-content ui entry :group nil)
+                         (format nil "✓ qualified.tool~%~%"))
+                (string= (terminal-ui--finalized-content ui entry :group ':success)
+                         (format nil "✓ qualified.tool~%")))
+           "explicit NIL is a block even when the entry looks compact")))))
+  (dolist (group '(nil "probe" :call))
+    (let* ((ui   (fullscreen-test--ui (make-instance 'recording-terminal :columns 100)))
+           (call (tool-outcome-test--call 2 "spacing"))
+           (key  '(:call "owner" "spacing")))
+      (setf (getf (third call) :group) group)
+      (terminal-ui-present-records
+       ui (list (list 1 "before" '(:entry-kind :message :group "before")) call))
+      (terminal-ui-present-records
+       ui (list (tool-outcome-test--result 3 "spacing" :state ':pending :job-id "job")))
+      (terminal-ui-present-records
+       ui (list (list 4 nil (list :kind ':completion :job-key '(:job "owner" "job")
+                                 :state ':failure :retain-output-p t
+                                 :body (list (terminal-span ':plain (format nil "~%  │ completed")))))))
+      (let ((resident (gethash key (fullscreen-terminal-ui-presentation-records ui))))
+        (test-assert (and (equal group (getf resident :group))
+                          (eq (getf resident :entry-kind) ':tool-call)
+                          (eq (getf resident :state) ':failure)
+                          (string= (getf resident :prefix) (string #\Newline))
+                          (uiop:string-suffix-p
+                           (tool-outcome-test--text ui)
+                           (format nil "  │ completed~%~:[~%~;~]" group)))
+                     "job completion preserves the invocation's group, prefix, and entry kind"))))
   nil)

@@ -2756,7 +2756,7 @@ The current value and its source sit in aligned columns of their own."
   "Present a compact setting row with its getter as the command heading."
   (let ((entry (application--setting-value-entry application name)))
     (setf *application-command-presentation-pending-p* nil)
-    (application-present application entry))
+    (application-present application entry :group ':lisp-result))
   nil)
 
 (-> application--settings-page (application) null)

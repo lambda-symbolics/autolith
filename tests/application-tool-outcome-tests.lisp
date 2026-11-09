@@ -190,4 +190,19 @@
                 (search "workspace:x" text)
                 (eql (not success-p) (not (null (search "transient details" text)))))
            "transient outcomes update their invocation once with the correct visible body")))))
+  (dolist (success-p '(t nil))
+    (with-test-configuration (configuration)
+      (let* ((application (application-tool-outcome-tests--application
+                           configuration :fullscreen-p nil))
+             (details     (list :tool "resource.read" :call-id "inline-transient"
+                                :success-p success-p :output (if success-p "" "transient details"))))
+        (setf (terminal-interactive-p (terminal-ui-terminal (application-ui application))) nil)
+        (application--present-transient-tool-result application details)
+        (application--present-transient-tool-result application details)
+        (let* ((ui   (application-ui application))
+               (text (clinedi:ansi-strip
+                      (recording-terminal-output (terminal-ui-terminal ui)))))
+          (test-assert (eql (not success-p)
+                            (not (null (search (format nil "~%~%") text))))
+                       "single-row inline transient successes compact; failures use blocks")))))
   nil)
