@@ -592,7 +592,7 @@ then its agent's name and its title; a closed node shows what it hides."
       (when (plusp (getf entry :unread))
         (list (terminal-span ':notice (format nil " ~D" (getf entry :unread)))))
       (when (plusp (getf entry :pending))
-        (list (terminal-span ':dim (format nil " ✉~D" (getf entry :pending)))))
+        (list (terminal-span ':dim (format nil " ~D pending" (getf entry :pending)))))
       (world-sidebar--hidden-spans entry)
       (when (and (getf entry :name) (getf entry :title))
         (list (terminal-span ':dim (format nil " ~A" (getf entry :title)))))))))

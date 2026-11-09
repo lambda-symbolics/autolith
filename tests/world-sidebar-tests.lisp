@@ -51,7 +51,7 @@
                  "a closed channel shows its unread mentions and messages, then what it hides")
     (test-assert (search "▸ www +2 1" (sixth lines))
                  "a closed workspace counts its channels and their unread messages")
-    (test-assert (search "· e-6uouHJ ✉1" (seventh lines))
+    (test-assert (search "· e-6uouHJ 1 pending" (seventh lines))
                  "a channel without a name or title shows its identifier and the deliveries waiting")
     (let ((cut (world-sidebar-tests--text (world-sidebar--rows entries 5))))
       (test-assert (and (= (length cut) 5)

@@ -1155,7 +1155,7 @@ run once the wake has."
                                :sender  (participant-identifier second-agent)
                                :channel "bsecnd2"
                                :text    (format nil "@~A the build is green" (participant-name human)))
-           (test-assert (task-tests--wait-until (lambda () (search "✉ 1 unread" (modeline))) 10)
+           (test-assert (task-tests--wait-until (lambda () (search "1 unread" (modeline))) 10)
                         "a message for the person shows as unread on the modeline of a served channel")
            (world-inbox-settle configuration (world-tests--inbox configuration)
                                (mapcar #'world-delivery-identifier

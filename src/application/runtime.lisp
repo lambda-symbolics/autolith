@@ -3853,7 +3853,7 @@ other channels show their model, since no agent reads it."
               (config :working-directory configuration))))
       (append
        (when (plusp unread)
-         (list (terminal-span ':status-accent (format nil "✉ ~D unread" unread))
+         (list (terminal-span ':status-accent (format nil "~D unread" unread))
                (terminal-span ':status-dim " · ")))
        (if inbox-p
            (list (terminal-span ':status-model "inbox"))
