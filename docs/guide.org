@@ -1498,11 +1498,13 @@ cache, and config roots. Symbolic links are skipped. Root sizes can overlap;
 the combined total counts each file identity once, including hard links.
 Inaccessible or disappearing entries appear as partial observations.
 
-RAM figures cover reachable registered session processes and their descendants.
+RAM figures cover reachable channel owners, the world server, and their
+descendants. Each live channel counts separately, even when channels share one
+process. Process IDs count once, including a world server with no open channels.
 The sum is resident set size (RSS), so shared pages can count once per process.
-The reporting process appears separately. Unavailable process discovery or
-measurements are marked explicitly. These are best-effort observations while
-sessions and files may change.
+The reporting process appears separately. Unavailable discovery or measurements
+are marked explicitly. These are best-effort observations while channels and
+files may change.
 
 The report uses compact metric columns and a disk-root table, with a stacked
 layout on narrow terminals. Bars compare each root with the largest root, not

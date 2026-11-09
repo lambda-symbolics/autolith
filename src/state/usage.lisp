@@ -17,7 +17,7 @@
   (storage nil :type list)
   (disk-bytes 0 :type (integer 0))
   (disk-partial-p nil :type boolean)
-  (sessions nil :type (option integer))
+  (channels nil :type (option integer))
   (processes nil :type (option integer))
   (resident-bytes nil :type (option integer))
   (resident-missing 0 :type (integer 0))
@@ -179,32 +179,39 @@ observation; an absent root is empty. Directory sizes are not file content bytes
 
 (-> usage--collect-processes (configuration usage-report) null)
 (defun usage--collect-processes (configuration report)
-  "Measure reachable registered session hosts and their discovered descendants.
+  "Count reachable channels and measure world owners and their descendants.
 
-Do not prune discovery records. Exclude the reporting CLI and its descendants
-from the session sum; measure the CLI separately. Missing metrics are explicit."
+Exclude the reporting CLI and its descendants from the process sum; measure the
+CLI separately. Observe discovery records without pruning them. Deduplicate
+channel identities separately from process IDs and retain missing measurements."
   (setf (usage-report-reporter-bytes report)
         (platform-process-resident-bytes *platform* (current-process-id)))
   (let ((roots            nil)
         (roots-complete-p t))
     (handler-case
-        (let ((records (localgroup-endpoint-records configuration))
-              (unknown 0))
-          (dolist (entry records)
-            (let* ((record (rest entry))
-                   (pid    (getf (rest record) :pid)))
-              (if (eq (localgroup-owner-reachability
-                       (first entry) (localgroup--record-session-id record) pid)
-                      ':reachable)
-                  (pushnew pid roots)
-                  (incf unknown))))
-          (setf (usage-report-sessions report) (length roots))
+        (let ((channels (make-hash-table :test #'equal))
+              (unknown  0))
+          (dolist (group (list (cons ':channels (localgroup-endpoint-records configuration))
+                              (cons ':world (image-daemon:daemon-registry-discover
+                                             (localgroup-world-directory configuration)))))
+            (dolist (entry (rest group))
+              (let* ((record     (rest entry))
+                     (identifier (localgroup--record-session-id record))
+                     (pid        (getf (rest record) :pid)))
+                (if (eq (localgroup-owner-reachability (first entry) identifier pid)
+                        ':reachable)
+                    (progn
+                      (pushnew pid roots)
+                      (when (eq (first group) ':channels)
+                        (setf (gethash identifier channels) t)))
+                    (incf unknown)))))
+          (setf (usage-report-channels report) (hash-table-count channels))
           (when (plusp unknown)
             (setf roots-complete-p nil)
-            (push "Some registered session endpoints were unavailable"
+            (push "Some registered channel or world endpoints were unavailable"
                   (usage-report-warnings report))))
       (error ()
-        (push "Session discovery" (usage-report-warnings report))
+        (push "Channel and world discovery" (usage-report-warnings report))
         (return-from usage--collect-processes nil)))
     (multiple-value-bind (parents available-p)
         (platform-process-parent-snapshot *platform*)
