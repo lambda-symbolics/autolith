@@ -823,3 +823,212 @@
                      "the handoff guard does not change d0 settlement"))))
             (mission-detach application))))))
   nil)
+
+
+;;;; -- Measured Ordinary Context --
+
+(-> context-admission-test--with-measured-context (function) t)
+(defun context-admission-test--with-measured-context (function)
+  "Run FUNCTION with real request encoding, small policy and an inert transport."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration))
+             (provider     (make-instance 'context-admission-test-provider :configuration configuration))
+             (agent        (agent-create :configuration configuration :conversation conversation
+                                         :provider provider :tool-registry (make-instance 'tool-registry))))
+        (test-call-with-function-replacements
+         (list (list 'system-prompt
+                     (lambda (configuration) (declare (ignore configuration)) "small policy"))
+               (list 'request-context-session-state
+                     (lambda (configuration &key hurry-up-p)
+                       (declare (ignore configuration hurry-up-p)) ""))
+               (list 'context-resolve-request
+                     (lambda (configuration conversation tools &key goal-context compaction-p)
+                       (declare (ignore configuration conversation tools goal-context compaction-p)) nil)))
+         (lambda () (funcall function agent)))))))
+
+(-> context-admission-test--measure
+    (agent &key (:usage t) (:envelope-length (integer 1)) (:during-request (option function))) null)
+(defun context-admission-test--measure
+    (agent &key (usage (json-object "input_tokens" 1000 "output_tokens" 200
+                                   "total_tokens" 1200 "cached_input_tokens" 900))
+                (envelope-length 30000) during-request)
+  "Admit a real request, persist opaque reasoning and anchor its ordinary usage."
+  (let* ((provider                   (agent-provider agent))
+         (conversation               (agent-conversation agent))
+         (context                    (provider-context-request-create provider conversation #()))
+         (*provider-context-request* context)
+         (request                    (provider-request-object provider conversation #()))
+         (result                     (make-instance 'provider-result
+                                                    :output-items
+                                                    (list (json-object "type" "reasoning" "summary" #()
+                                                                       "encrypted_content"
+                                                                       (make-string envelope-length :initial-element #\x)))
+                                                    :usage usage)))
+    (provider-open-response-stream provider request :conversation conversation)
+    (when during-request (funcall during-request conversation))
+    (agent--persist-provider-result agent result :request-number 1)
+    (provider-context-note-response context result))
+  nil)
+
+(-> test-context-admission-measured-reasoning () null)
+(defun test-context-admission-measured-reasoning ()
+  "Use full ordinary usage for retained reasoning, charging output once and new input now."
+  (context-admission-test--with-measured-context
+   (lambda (agent)
+     (let* ((conversation (agent-conversation agent))
+            (provider     (agent-provider agent)))
+       (conversation-append-user-message conversation "Before the measured request.")
+       (context-admission-test--measure agent)
+       (test-assert (conversation-context-usage-sample conversation) "ordinary usage has a projection anchor")
+       (test-assert (not (agent-should-compact-p agent)) "opaque replay does not inflate the soft estimate")
+       (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+              (request                    (provider-request-object provider conversation #())))
+         (test-assert (= 1200 (provider-request-input-token-estimate provider request))
+                      "input includes cached tokens and output is carried exactly once")
+         (provider-open-response-stream provider request :conversation conversation)
+         (let ((*provider-context-request* nil))
+           (test-assert (> (provider-request-input-token-estimate provider request) 5000)
+                        "unmeasured opaque history keeps its uncertain fallback"))
+         (test-assert
+          (handler-case
+              (progn
+                (setf (gethash "max_output_tokens" request) 3900)
+                (provider-open-response-stream provider request :conversation conversation) nil)
+            (provider-context-budget-error (condition)
+              (= 3900 (provider-context-budget-error-output-reserve condition))))
+          "measured input plus an explicit output cap is refused before transport")
+         (test-assert (= 2 (context-admission-test-provider-network-calls provider))
+                      "only the two admitted requests reached transport"))
+       (conversation-append-provider-item
+        conversation (json-object "type" "function_call" "name" "test" "call_id" "new-local-evidence"
+                                  "arguments" "{}"))
+       (conversation-append-tool-result conversation "new-local-evidence" :tool-name "test"
+                                        :output (make-string 20000 :initial-element #\e) :success-p t)
+       (test-assert (agent-should-compact-p agent) "new tool evidence crosses the soft limit without new usage")
+       (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+              (request                    (provider-request-object provider conversation #())))
+         (test-assert
+          (handler-case (progn (provider-open-response-stream provider request :conversation conversation) nil)
+            (provider-context-budget-error () t))
+          "new tool evidence also crosses hard admission")))))
+  nil)
+
+(-> test-context-admission-measured-request-tails () null)
+(defun test-context-admission-measured-request-tails ()
+  "Include new temporary context, locally expanded input and image allowances."
+  (context-admission-test--with-measured-context
+   (lambda (agent)
+     (let* ((conversation (agent-conversation agent))
+            (provider     (agent-provider agent)))
+       (context-admission-test--measure agent)
+       (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+              (request                    (provider-request-object provider conversation #()
+                                                                   :goal-context (make-string 20000 :initial-element #\g))))
+         (test-assert (> (provider-request-input-token-estimate provider request) 5000)
+                      "the current temporary tail is not covered by previous usage")
+         (test-assert
+          (handler-case (progn (provider-open-response-stream provider request :conversation conversation) nil)
+            (provider-context-budget-error () t))
+          "temporary context can refuse the next request"))
+       (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+              (request                    (provider-request-object provider conversation #())))
+         (setf (gethash "input" request)
+               (concatenate 'vector (json-get request "input")
+                            (vector (json-object "type" "message" "role" "user" "content"
+                                                 (vector (json-object "type" "input_image" "image_url" "https://example.invalid/image"))))))
+         (multiple-value-bind (tokens uncertain-p) (provider-request-input-token-estimate provider request)
+           (test-assert (and uncertain-p (> tokens *provider-image-token-estimate*))
+                        "new media retains its bounded allowance alongside measured input"))))))
+  nil)
+
+(-> test-context-admission-measured-invalidation () null)
+(defun test-context-admission-measured-invalidation ()
+  "Reject malformed samples and invalidate measurements at context ownership boundaries."
+  (context-admission-test--with-measured-context
+   (lambda (agent)
+     (let* ((conversation (agent-conversation agent))
+            (provider     (agent-provider agent)))
+       (dolist (usage (list nil (json-object "input_tokens" 1000)
+                           (json-object "input_tokens" -1 "output_tokens" 20)
+                           (json-object "input_tokens" "1000" "output_tokens" 20)
+                           (json-object "input_tokens" 1000 "output_tokens" 0)
+                           (json-object "input_tokens" 1000 "output_tokens" 200 "total_tokens" 2)
+                           (json-object "input_tokens" 1000 "output_tokens" 200 "cached_input_tokens" 2000)))
+         (context-admission-test--measure agent :envelope-length 64)
+         (context-admission-test--measure agent :usage usage :envelope-length 64)
+         (test-assert (null (conversation-context-usage-sample conversation))
+                      "an incomplete or inconsistent response cannot establish a sample"))
+       (context-admission-test--measure agent :envelope-length 64)
+       (let* ((unconfigured (make-instance 'model-provider))
+              (context      (provider-context-request-create unconfigured conversation #())))
+         (test-assert (null (getf context :eligible-p))
+                      "providers without a configuration method use unmeasured admission"))
+       (dolist (field '("instructions" "model" "tools" "input"))
+         (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+                (request                    (provider-request-object provider conversation #())))
+           (setf (gethash field request)
+                 (if (equal field "input")
+                     (vector (json-object "type" "message" "role" "user" "content" "A changed covered prefix."))
+                     "A changed request field."))
+           (multiple-value-bind (tokens matched-p) (provider-context--matched-input provider request)
+             (declare (ignore tokens))
+             (test-assert (not matched-p) "changed encoded headers or covered items reject the baseline"))))
+       (let* ((other                      (make-instance 'context-admission-test-provider
+                                                         :configuration (agent-configuration agent)))
+              (*provider-context-request* (provider-context-request-create other conversation #()))
+              (request                    (provider-request-object other conversation #())))
+         (multiple-value-bind (tokens matched-p) (provider-context--matched-input other request)
+           (declare (ignore tokens))
+           (test-assert (not matched-p) "a replacement provider cannot reuse another instance's anchor")))
+       (let* ((other                      (conversation-create (agent-configuration agent)))
+              (*provider-context-request* (provider-context-request-create provider other #()))
+              (request                    (provider-request-object provider other #())))
+         (multiple-value-bind (tokens matched-p) (provider-context--matched-input provider request)
+           (declare (ignore tokens))
+           (test-assert (not matched-p) "conversations do not share usage anchors")))
+       (context-admission-test--measure
+        agent :envelope-length 64
+        :during-request        (lambda (conversation)
+                                 (conversation-append-user-message conversation "Arrived while awaiting a reply.")))
+       (test-assert (null (conversation-context-usage-sample conversation))
+                    "input arriving in flight is not charged to the provider output allowance")
+       (context-admission-test--measure agent :envelope-length 64)
+       (conversation-append-provider-metadata conversation '(:compaction :native :usage (("input_tokens" 0) ("output_tokens" 0))))
+       (test-assert (null (conversation-context-usage-sample conversation))
+                    "native compaction usage cannot replace the ordinary baseline")
+       (context-admission-test--measure agent :envelope-length 64)
+       (conversation-append-summary conversation "A replacement context.")
+       (test-assert (null (conversation-context-usage-sample conversation)) "summary publication invalidates the sample")
+       (context-admission-test--measure agent :envelope-length 64)
+       (conversation-append-context-adoption conversation (conversation-context-rows conversation)
+                                             :participant "measured-test" :transition "measured-adoption")
+       (test-assert (null (conversation-context-usage-sample conversation))
+                    "context adoption invalidates the sample even when its wire content is identical")
+       (context-admission-test--measure agent :envelope-length 64)
+       (test-assert (null (conversation-context-usage-sample
+                           (conversation-load (conversation-pathname conversation))))
+                    "disk resume cannot restore an unverified process-local sample"))))
+  nil)
+
+(-> test-context-admission-measured-high-usage () null)
+(defun test-context-admission-measured-high-usage ()
+  "A genuinely full measured context crosses both limits despite a small serialization."
+  (context-admission-test--with-measured-context
+   (lambda (agent)
+     (let* ((conversation (agent-conversation agent))
+            (provider     (agent-provider agent)))
+       (context-admission-test--measure
+        agent :envelope-length 64
+        :usage                 (json-object "input_tokens" 4800 "output_tokens" 200
+                                            "total_tokens" 5000 "cached_input_tokens" 4700))
+       (test-assert (agent-should-compact-p agent) "full measured occupancy crosses the soft limit")
+       (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+              (request                    (provider-request-object provider conversation #())))
+         (test-assert
+          (handler-case (progn (provider-open-response-stream provider request :conversation conversation) nil)
+            (provider-context-budget-error (condition)
+              (= 5000 (provider-context-budget-error-estimated-input-tokens condition))))
+          "a small envelope cannot erase authoritative measured occupancy")))))
+  nil)

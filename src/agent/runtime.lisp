@@ -1479,11 +1479,12 @@ tool registry reaches the very next provider request."
    "Return true when AGENT's conversation should compact before continuing."))
 
 (defmethod agent-should-compact-p ((agent agent))
-  "Compare fresh known input with the soft compaction threshold, independently of paid usage."
+  "Compare current matched input accounting with the soft compaction threshold."
   (>= (context-estimate-known-tokens
        (agent-configuration agent) (agent-conversation agent)
        :tool-registry (agent-tool-registry agent)
        :hurry-up-p    (agent-hurry-up-p agent)
+       :provider      (agent-provider agent)
        :family        (provider-family (agent-provider agent)))
       (configuration-compaction-token-limit (agent-configuration agent))))
 
@@ -1996,7 +1997,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
               :next-request-tool-rounds    tool-rounds)
            (incf request-number compaction-requests)
            (setf next-request-details details)))
-       (let* ((conversation (agent-conversation agent))
+       (let* ((conversation    (agent-conversation agent))
               (tool-calls-p
                 (and tools-p
                      (eq (agent--request-tool-choice tools-p tool-restriction-p tool-rounds)
@@ -2014,7 +2015,8 @@ loop, so compaction ahead of the user message shares the turn's budget."
                   (t
                    (tool-registry-provider-schemas
                     (agent-tool-registry agent)))))
-              (cache-prefix nil)
+              (cache-prefix    nil)
+              (context-request nil)
               (result
                 (loop
                   (agent--check-request-budget agent request-number)
@@ -2032,21 +2034,27 @@ loop, so compaction ahead of the user message shares the turn's budget."
                           cache-prefix          nil))
                   (handler-case
                       (return
-                        (let ((*provider-hosted-tools-enabled-p*
-                                (not tool-restriction-p))
-                              (*provider-tool-choice*
-                                (agent--request-tool-choice tools-p tool-restriction-p tool-rounds))
-                              (*provider-maximum-output-tokens* maximum-output-tokens)
-                              (*provider-cache-request-prefix*  nil)
-                              (*provider-cache-prefix-function*
-                                (lambda (prefix) (setf cache-prefix prefix)))
-                              (*request-context-hurry-up-p*
-                                (agent-hurry-up-p agent))
-                              (*context-request-contributions*
-                                (and tools-p
-                                     (not tool-restriction-p)
-                                     (mcp-tool-registry-context-contributions
-                                      (agent-tool-registry agent)))))
+                        (let* ((context-request
+                                 (setf context-request
+                                       (provider-context-request-create
+                                        (agent-provider agent) conversation
+                                        (tool-registry-provider-schemas (agent-tool-registry agent)))))
+                               (*provider-context-request*       context-request)
+                               (*provider-hosted-tools-enabled-p*
+                                 (not tool-restriction-p))
+                               (*provider-tool-choice*
+                                 (agent--request-tool-choice tools-p tool-restriction-p tool-rounds))
+                               (*provider-maximum-output-tokens* maximum-output-tokens)
+                               (*provider-cache-request-prefix*  nil)
+                               (*provider-cache-prefix-function*
+                                 (lambda (prefix) (setf cache-prefix prefix)))
+                               (*request-context-hurry-up-p*
+                                 (agent-hurry-up-p agent))
+                               (*context-request-contributions*
+                                 (and tools-p
+                                      (not tool-restriction-p)
+                                      (mcp-tool-registry-context-contributions
+                                       (agent-tool-registry agent)))))
                           (provider-stream-turn
                            (agent-provider agent)
                            conversation
@@ -2081,7 +2089,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
                              :failure
                              (agent--provider-error-metadata condition)))
                       (error condition)))))
-              (calls        (provider-result-tool-calls result))
+              (calls           (provider-result-tool-calls result))
               (completion-details
                 (list :request-number    request-number
                       :response-id       (provider-result-response-id result)
@@ -2124,6 +2132,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
             result
             :request-number request-number
             :call-plans     call-plans)
+           (provider-context-note-response context-request result)
            (agent--answer-tool-searches
             agent result tool-namespaces :request-number request-number)
            (agent--note-persisted-assistant-response

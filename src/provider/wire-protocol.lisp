@@ -71,6 +71,9 @@ local retention estimate, which only schedules idle compaction."
 (defparameter *provider-cache-volatile-history* nil
   "Projected history from the first one-response item onward, scoped to one request.")
 
+(defparameter *provider-context-request* nil
+  "Ordinary request-local projection and transport evidence for conversation accounting.")
+
 (defmethod provider-request-object :around
     ((provider model-provider) (conversation conversation)
      (tool-namespaces vector) &key goal-context compaction-p)
@@ -103,6 +106,10 @@ The encoder's second value counts its volatile suffix. One-response history
 may also change an earlier merged message, so compare its durable projection
 before bounding the prefix the next request may reuse."
   (declare (ignore goal-context))
+  (when (and *provider-context-request* (not compaction-p))
+    (setf (getf *provider-context-request* :encoder) provider
+          (getf *provider-context-request* :projection) projection
+          (getf *provider-context-request* :tools) tool-namespaces))
   (if (or compaction-p (null *provider-cache-prefix-function*))
       (call-next-method)
       (multiple-value-bind (request volatile-items)

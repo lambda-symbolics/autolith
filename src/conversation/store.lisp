@@ -359,6 +359,11 @@ not yet been told that work from the previous process is gone.")
     :type     (option (integer 0))
     :documentation
     "The user-turn count during which the resume note is being delivered.")
+   (context-usage-sample
+    :initform      nil
+    :accessor      conversation-context-usage-sample
+    :type          list
+    :documentation "Process-local ordinary usage matched to retained history and wire fingerprints; never restored from storage.")
    (last-total-tokens
     :initform      0
     :accessor      conversation-last-total-tokens
@@ -3046,6 +3051,14 @@ later picker searches read it without scanning the log."
   (:documentation "Project KIND-specific record PROPERTIES into CONVERSATION.")
   (:method ((kind t) conversation properties)
     nil))
+
+(defmethod conversation-append-record :after ((conversation conversation) (record list))
+  "Discard process-local token measurements after durable context and model changes."
+  (let ((kind       (first record))
+        (properties (rest record)))
+    (when (or (member kind '(:summary :native-compaction :context-adoption :configuration))
+              (and (eq kind ':provider) (getf (getf properties :metadata) :compaction)))
+      (setf (conversation-context-usage-sample conversation) nil))))
 
 (defmethod conversation--project-record
     ((kind (eql :message)) conversation properties)

@@ -2317,9 +2317,12 @@ Before transport, admission checks the encoded request, including current tools
 and temporary context, with output headroom. Set
 =(settings :context-output-reserve 8192)= to reserve at least 8,192 tokens, or use
 =AUTOLITH_CONTEXT_OUTPUT_RESERVE=. A larger explicit generation cap takes precedence.
-The local count is an estimate, with separate image allowances, rather than a
-provider tokenizer or paid usage. Candidate checkpoints are admitted with arrivals
-before publication; a rejected candidate leaves the previous projection intact.
+When the provider and covered prompt projection match an ordinary response,
+this estimate uses its reported input and output occupancy, then adds new input.
+Cached input occupies context at its full token count. Otherwise, admission uses
+a local text estimate with separate image allowances. Candidate checkpoints
+are admitted with arrivals before publication; a rejected candidate leaves the
+previous projection intact.
 
 Set =ANALYTICS_EVENTS_FILE= to export completed streaming calls as UTF-8 JSONL
 usage events. =ANALYTICS_ACTOR= overrides the operating-system username. Each

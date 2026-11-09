@@ -1671,6 +1671,7 @@ changes also invalidate the cache. External files are sampled at these boundarie
                      configuration conversation
                      :hurry-up-p (application-hurry-up-p application)
                      :family     family
+                     :provider   provider
                      :tool-registry
                      (and (slot-boundp application 'tool-registry)
                           (application-tool-registry application))))
