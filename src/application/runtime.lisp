@@ -87,11 +87,12 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-lisp-hinted-command-names
     :type          list
     :documentation "Canonical slash commands already given a Lisp spelling hint.")
-   (goal
-    :initform      nil
-    :accessor      application-goal
-    :type          list
-    :documentation "The session goal plist holding objective, status, and continuations.")
+   (participant-state
+    :initarg       :participant-state
+    :initform      (make-instance 'participant-state)
+    :accessor      application-participant-state
+    :type          participant-state
+    :documentation "The resident participant shared with its current execution.")
    (deferred-goal-continuation
     :initform      nil
     :accessor      application-deferred-goal-continuation
@@ -269,6 +270,12 @@ Clicking the rendered call's header inserts it into the composer.")
     :type          (option cons)
     :documentation "The pending exact-heap checkpoint scheduled after the current turn."))
   (:documentation "The globally rooted logical state and reconnectable resources of Autolith."))
+
+(defgeneric application-goal (application)
+  (:documentation "Return the resident participant's ordinary goal."))
+
+(defgeneric (setf application-goal) (goal application)
+  (:documentation "Set the resident participant's ordinary goal."))
 
 
 ;;;; -- Setting-Backed Application State --
@@ -968,12 +975,13 @@ failed, such as another live session owning the conversation."
                    (tool-registry-capability-diff old-registry new-registry))
                  (setf new-agent
                        (agent-create
-                        :configuration configuration
-                        :provider      new-provider
-                        :conversation  (application-conversation application)
-                        :tool-registry new-registry
-                         :hurry-up-p   (application-hurry-up-p application)
-                        :worker        (application-worker application))
+                        :participant-state (application-participant-state application)
+                        :configuration     configuration
+                        :provider          new-provider
+                        :conversation      (application-conversation application)
+                        :tool-registry     new-registry
+                         :hurry-up-p       (application-hurry-up-p application)
+                        :worker            (application-worker application))
                        retirement-started-p t
                        failure-stage ':retire)
                  (application-disconnect-task-presentation application)
@@ -1706,13 +1714,14 @@ changes also invalidate the cache. External files are sampled at these boundarie
            (if previous-provider
                (provider-with-configuration previous-provider configuration)
                (provider-create configuration)))
-         (agent               (agent-create :configuration configuration
-                                            :provider      provider
-                                            :conversation  active-conversation
-                                            :tool-registry (application-tool-registry
-                                                            application)
-                                             :hurry-up-p   (application-hurry-up-p application)
-                                            :worker        (application-worker application))))
+         (agent               (agent-create :participant-state (application-participant-state application)
+                                             :configuration    configuration
+                                            :provider          provider
+                                            :conversation      active-conversation
+                                            :tool-registry     (application-tool-registry
+                                                                application)
+                                             :hurry-up-p       (application-hurry-up-p application)
+                                            :worker            (application-worker application))))
     (setf (application-configuration application) configuration
           (application-conversation application) active-conversation
           (application-provider application) provider
@@ -1770,13 +1779,13 @@ runtimes, which the replacement must retain while retiring the old registry."
               :shared-mcp-manager (and share-mcp-p previous-registry
                                        (mcp-tool-registry-manager previous-registry))))
            (let ((agent
-                   (agent-create
-                    :configuration configuration
-                    :provider      provider
-                    :conversation  conversation
-                    :tool-registry registry
-                     :hurry-up-p   (application-hurry-up-p application)
-                    :worker        (application-worker application))))
+                   (agent-create :participant-state (application-participant-state application)
+                    :configuration                  configuration
+                    :provider                       provider
+                    :conversation                   conversation
+                    :tool-registry                  registry
+                     :hurry-up-p                    (application-hurry-up-p application)
+                    :worker                         (application-worker application))))
              (setf completed-p t)
              (values provider registry agent retained)))
       (unless completed-p
@@ -3649,9 +3658,9 @@ A fullscreen transcript evicts its oldest output; those records page in again."
   (setf (application-deferred-goal-continuation application) nil))
 
 (defmethod (setf application-conversation) :after (value (application application))
-  "Discard deferred continuation authority when switching conversations, and let clients follow the new one."
-  (declare (ignore value))
-  (setf (application-deferred-goal-continuation application) nil)
+  "Retarget participant context, revoke continuation authority and follow the new conversation."
+  (setf (participant-state-conversation (application-participant-state application)) value
+        (application-deferred-goal-continuation application) nil)
   (when (application-clients-attached-p application)
     (application-clients--follow-conversation application)))
 
@@ -4749,3 +4758,29 @@ of quietly queueing prose as follow-up work."
            controller #'run)
           (run steering-function steering-persisted-function))))
   nil)
+
+(defmethod initialize-instance :around ((application application) &key)
+  "Share the resident participant after all application initialization hooks."
+  (prog1 (call-next-method)
+    (when (and (slot-boundp application 'agent) (application-agent application))
+      (setf (application-participant-state application)
+            (agent-participant-state (application-agent application))))
+    (when (slot-boundp application 'conversation)
+      (setf (participant-state-conversation (application-participant-state application))
+            (application-conversation application)))))
+
+(defmethod (setf application-agent) :after (agent (application application))
+  "Share state when replacing an execution; adopt state when changing participants."
+  (when agent
+    (if (eq (agent-conversation agent) (application-conversation application))
+        (setf (agent-participant-state agent) (application-participant-state application))
+        (setf (application-participant-state application) (agent-participant-state agent)
+              (application-conversation application) (agent-conversation agent)))))
+
+(defmethod application-goal ((application application))
+  "Read the ordinary goal from the resident participant."
+  (participant-state-goal (application-participant-state application)))
+
+(defmethod (setf application-goal) (goal (application application))
+  "Write the ordinary GOAL on the resident participant."
+  (setf (participant-state-goal (application-participant-state application)) goal))

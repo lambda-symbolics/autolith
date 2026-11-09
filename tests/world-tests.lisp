@@ -2462,7 +2462,7 @@
                    (test-assert (= (application-world-deliver application) 1)
                                 "a message to the channel is queued for its agent")
                    (let ((result (world-park-agent configuration first-agent
-                                                   :application application)))
+                                                   :environment application)))
                      (test-assert (and (= (getf result :dropped) 2)
                                        (search "is parked" (recording-terminal-output terminal)))
                                   "parking the agent drops the prompt and the message it had not started, and says so")

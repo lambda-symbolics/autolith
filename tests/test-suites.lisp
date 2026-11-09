@@ -707,6 +707,8 @@
   test-world-server-person-unread
   test-world-server-open-before-checkpoint
   test-world-server-move
+  test-world-execution-owner-claims
+  test-world-execution-owner-staging
   test-world-server-move-running-child
   test-world-server-move-goal
   test-world-server-adoption-recovery
@@ -1351,6 +1353,7 @@
   test-task-orchestration
   test-task-child-execution-job-controls
   test-task-child-cancels-lisp-executions
+  test-task-participant-state
   test-task-child-shared-agent-loop)
 
 (define-test-suite inference

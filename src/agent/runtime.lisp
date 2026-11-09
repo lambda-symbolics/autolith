@@ -91,6 +91,17 @@
     :documentation "The operation that generated this message, such as a channel delivery, or NIL for the person's own input."))
   (:documentation "One identified steering message awaiting durable conversation append."))
 
+(defclass participant-state ()
+  ((identity :initarg :identity :initform nil :accessor participant-state-identity
+             :documentation "The durable participant record, once registered.")
+   (conversation :initarg :conversation :initform nil
+                 :accessor      participant-state-conversation
+                 :type          (option conversation)
+                 :documentation "The actual live provider context backing, or NIL while stored.")
+   (goal :initarg :goal :initform nil :accessor participant-state-goal :type list
+         :documentation "The ordinary goal, independent of execution assignments."))
+  (:documentation "The identity, live context and ordinary goal carried by one participant."))
+
 (defclass agent ()
   ((configuration
     :initarg       :configuration
@@ -102,11 +113,12 @@
     :accessor      agent-provider
     :type          model-provider
     :documentation "The replaceable streaming model provider.")
-   (conversation
-    :initarg       :conversation
-    :reader        agent-conversation
-    :type          conversation
-    :documentation "The durable conversation owned by this agent.")
+   (participant-state
+    :initarg       :participant-state
+    :initform      (make-instance 'participant-state)
+    :accessor      agent-participant-state
+    :type          participant-state
+    :documentation "The participant this execution runs, shared with its host.")
    (tool-registry
     :initarg       :tool-registry
     :accessor      agent-tool-registry
@@ -446,36 +458,31 @@ recorded as automatic input that the transcript shows as that operation."
                  :tool-authorization-callback tool-authorization-callback))
 
 (-> agent-create
-    (&key
-     (:configuration configuration)
-     (:provider (option model-provider))
-     (:conversation (option conversation))
-     (:tool-registry (option tool-registry))
-     (:hurry-up-p boolean)
-     (:worker t))
+    (&key (:configuration configuration) (:provider (option model-provider))
+          (:conversation (option conversation)) (:tool-registry (option tool-registry))
+          (:hurry-up-p boolean) (:worker t) (:participant-state (option participant-state))
+          (:class symbol) (:initargs list))
     agent)
-(defun agent-create
-    (&key
-       configuration
-       provider
-       conversation
-       tool-registry
-       (hurry-up-p nil)
-       worker)
-  "Create an agent, filling unspecified provider, conversation, registry, and worker roles."
+(defun agent-create (&key configuration provider conversation tool-registry
+                          (hurry-up-p nil) worker participant-state (class 'agent)
+                          initargs)
+  "Create an execution of CLASS for PARTICIPANT-STATE, filling missing resources.
+INITARGS supplies subclass assignment metadata, never participant state."
   (unless (typep configuration 'configuration)
-    (error 'configuration-error
-           :message "AGENT-CREATE requires a CONFIGURATION instance."))
-  (make-instance 'agent
-                 :configuration   configuration
-                 :provider        (or provider (provider-create configuration))
-                 :conversation    (or conversation
-                                      (conversation-create configuration))
-                   :tool-registry (or tool-registry
-                                      (make-default-tool-registry
-                                       :configuration configuration))
-                 :hurry-up-p      hurry-up-p
-                 :worker          (or worker (lisp-worker-pool-create configuration))))
+    (error 'configuration-error :message "AGENT-CREATE requires a CONFIGURATION instance."))
+  (apply #'make-instance class
+         :configuration     configuration
+         :provider          (or provider (provider-create configuration))
+         :participant-state (or participant-state
+                                (make-instance 'participant-state
+                                               :conversation (or conversation
+                                                                 (conversation-create configuration))))
+         :conversation      conversation
+         :tool-registry     (or tool-registry
+                                (make-default-tool-registry :configuration configuration))
+         :hurry-up-p        hurry-up-p
+         :worker            (or worker (lisp-worker-pool-create configuration))
+         initargs))
 
 (defgeneric agent-run-user-turn
     (agent content
@@ -2171,3 +2178,16 @@ loop, so compaction ahead of the user message shares the turn's budget."
                     (return result))
                   (agent--apply-steering-input
                    agent observer request-number)))))))))
+
+(defmethod initialize-instance :after ((agent agent) &key conversation)
+  "Attach a new execution to its participant's context backing."
+  (when (and conversation
+             (null (participant-state-conversation (agent-participant-state agent))))
+    (setf (participant-state-conversation (agent-participant-state agent)) conversation)))
+
+(defgeneric agent-conversation (agent)
+  (:documentation "Return the live context backing of AGENT's participant, or NIL before setup."))
+
+(defmethod agent-conversation ((agent agent))
+  "Read AGENT's participant backing without retaining execution-owned context."
+  (participant-state-conversation (agent-participant-state agent)))

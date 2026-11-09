@@ -757,12 +757,7 @@ endpoint and controller locks; opening another host waits until this batch ends.
 
 (-> world-server-move (world-server t t) list)
 (defun world-server-move (server participant channel)
-  "Move agent PARTICIPANT into CHANNEL, both designators, and answer with what happened.
-
-The channel it leaves, when served, stops it first; the destination, when
-served, adopts it with the context it carries, else that context waits for
-the channel's next open. Nothing changes when the agent cannot stop or the
-destination cannot take it."
+  "Move PARTICIPANT into CHANNEL through the server's execution-owner resolver."
   (unless (and (stringp participant) (stringp channel))
     (error 'world-error
            :message   "A move names the participant to move and the channel to move it into."
@@ -771,52 +766,22 @@ destination cannot take it."
          (world         (world-load configuration))
          (agent         (world-server--designated-participant world participant ':move))
          (target        (channel-identifier (world-channel-designated world configuration channel)))
-         (source-host   (and (participant-residence agent)
-                             (world-server--find-host server (participant-residence agent))))
-         (target-host   (world-server--find-host server target))
-         (result        (world-move-agent configuration agent target
-                                          :source-application      (and source-host
-                                                                        (world-host-application source-host))
-                                          :destination-application (and target-host
-                                                                        (world-host-application target-host))
-                                          :interrupt-task          (lambda (participant)
-                                                                     (world-server--interrupt-task
-                                                                      server participant)))))
+         (result        (world-move-agent configuration agent target :environment server)))
     (list :ok :operation ':move :participant (participant-identifier agent)
-              :source (getf result :source) :channel target :dropped (getf result :dropped))))
+          :source (getf result :source) :channel target :dropped (getf result :dropped))))
 
 (-> world-server-dismiss (world-server t) list)
 (defun world-server-dismiss (server participant)
-  "Park agent PARTICIPANT, a designator, leaving its channel without an agent, and answer with what happened.
-
-The channel, when served, stops the agent first. The context it carries
-waits in its context file for the channel a later move brings it into."
+  "Park PARTICIPANT through the server's execution-owner resolver."
   (unless (stringp participant)
-    (error 'world-error
-           :message   "A dismissal names the agent to park."
-           :operation ':park))
+    (error 'world-error :message "A dismissal names the agent to park." :operation ':park))
   (let* ((configuration (world-server-configuration server))
          (world         (world-load configuration))
          (agent         (world-server--designated-participant world participant ':park))
-         (residence     (participant-residence agent))
-         (host          (and residence (world-server--find-host server residence)))
-         (result        (world-park-agent configuration agent
-                                          :application    (and host (world-host-application host))
-                                          :interrupt-task (lambda (participant)
-                                                            (world-server--interrupt-task
-                                                             server participant)))))
+         (result        (world-park-agent configuration agent :environment server)))
     (list :ok :operation ':park :participant (participant-identifier agent)
-              :name (participant-name agent)
-              :channel (getf result :channel) :dropped (getf result :dropped))))
-
-(-> world-server--interrupt-task (world-server participant) boolean)
-(defun world-server--interrupt-task (server participant)
-  "Stop the child task any channel SERVER hosts runs agent PARTICIPANT in, and return true when there was one."
-  (let ((interrupted-p nil))
-    (dolist (host (world-server--hosts server))
-      (when (application-world-interrupt-task (world-host-application host) participant)
-        (setf interrupted-p t)))
-    interrupted-p))
+          :name (participant-name agent)
+          :channel (getf result :channel) :dropped (getf result :dropped))))
 
 (-> world-server--designated-participant (world string keyword) participant)
 (defun world-server--designated-participant (world designator operation)
@@ -1732,3 +1697,18 @@ notice directly if it never paused, as when a checkpoint fails early."
           (sb-thread:condition-broadcast
            (application-input-controller-condition-variable controller))))))
   nil)
+
+(defmethod participant-execution-owner ((server world-server) configuration participant)
+  "Resolve a pooled assignment across hosts before choosing a channel host."
+  (or (loop for host in (world-server--hosts server)
+            for owner = (participant-execution-owner (world-host-application host)
+                                                     configuration participant)
+            when (typep owner 'pooled-execution-owner) return owner)
+      (channel-execution-owner server configuration participant
+                               :channel (participant-residence participant))))
+
+(defmethod channel-execution-owner ((server world-server) configuration participant &key channel)
+  "Resolve a hosted destination, or use durable stored adoption."
+  (let ((host (and channel (world-server--find-host server channel))))
+    (channel-execution-owner (and host (world-host-application host))
+                             configuration participant :channel channel)))
