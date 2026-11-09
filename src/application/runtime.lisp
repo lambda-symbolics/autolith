@@ -8,6 +8,9 @@
 
 Clicking the rendered call's header inserts it into the composer.")
 
+(defparameter *application-transcript-layout-columns* nil
+  "Dynamic column count when replaying a resident transcript source.")
+
 ;;;; -- Active Application --
 
 (defclass application ()
@@ -2229,9 +2232,7 @@ CONVERSATION must be in the child role the current one is in, or in none."
 (-> application--transcript-width (application) integer)
 (defun application--transcript-width (application)
   "Return APPLICATION's terminal width available to wrapped transcript bodies."
-  (max 20
-       (- (terminal-columns (terminal-ui-terminal (application-ui application)))
-          3)))
+  (max 1 (- (application--transcript-columns application) 3)))
 
 (-> application--indented-body (application string) string)
 (defun application--indented-body (application text)
@@ -2246,9 +2247,7 @@ CONVERSATION must be in the child role the current one is in, or in none."
 (defun application--markdown-renderer (application)
   "Return a markdown renderer sized to APPLICATION's current terminal width."
   (termdown:markdown-renderer-create
-   :width (max 24
-               (1- (terminal-columns
-                    (terminal-ui-terminal (application-ui application)))))))
+   :width (max 1 (1- (application--transcript-columns application)))))
 
 (-> application--markdown-rows (termdown:markdown-renderer string) list)
 (defun application--markdown-rows (renderer line)
@@ -2261,7 +2260,7 @@ CONVERSATION must be in the child role the current one is in, or in none."
   (nth-value 0
              (terminal-ui--markdown-render
               (list :source text :finished-p t)
-              (terminal-columns (terminal-ui-terminal (application-ui application))))))
+              (application--transcript-columns application))))
 
 (-> application--markdown-presentation
     (application string (option timestamp) &key (:finished-p boolean) (:stream-p boolean)) list)
@@ -2415,8 +2414,7 @@ line above."
         (detail (or detail
                     (application--turn-timestamp-text application timestamp))))
     (when detail
-      (let ((available   (- (terminal-columns
-                             (terminal-ui-terminal (application-ui application)))
+      (let ((available   (- (application--transcript-columns application)
                             3
                             (text-cell-width header)))
             (safe-detail (sanitize-text detail :single-line-p t)))
@@ -2586,8 +2584,7 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
                               (sanitize-text summary)))
          (body-width
            (max 1
-                (- (terminal-columns
-                    (terminal-ui-terminal (application-ui application)))
+                 (- (application--transcript-columns application)
                    5))))
     (cons
      (list (terminal-span ':hint "◇ reasoning summary"))
@@ -2649,8 +2646,7 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
     (when names
       (let* ((maximum-width
                (max 1
-                    (1- (terminal-columns
-                         (terminal-ui-terminal (application-ui application))))))
+                     (1- (application--transcript-columns application))))
              (row
                (append
                 (list (terminal-span ':tool "▸ tool schemas: "))
@@ -3063,6 +3059,26 @@ The channel's structured clients receive its text as a :PRESENT event."
          (setf kind ':job-completion))))
     (list :entry-kind kind :group group)))
 
+(-> application--record-layout (application list) function)
+(defun application--record-layout (application record)
+  "Retain RECORD's logical source, rendering fresh spans only for a new layout."
+  (lambda (columns)
+    (let ((*application-transcript-layout-columns* columns))
+      (conversation-record-entry application record))))
+
+(-> application--record-source-characters (list) (integer 0))
+(defun application--record-source-characters (record)
+  "Estimate retained logical RECORD storage for viewport eviction accounting."
+  (labels ((weight (value)
+             (typecase value
+               (string
+                (length value))
+               (cons
+                (+ 8 (weight (first value)) (weight (rest value))))
+               (t
+                0))))
+    (weight record)))
+
 (-> application--record-presentation
     (application list &key (:outcomes (option hash-table))) (option list))
 (defun application--record-presentation (application record &key outcomes)
@@ -3080,8 +3096,12 @@ The channel's structured clients receive its text as a :PRESENT event."
                                    application text (getf (rest record) :time)))))))))
          (resolved (and outcomes (getf metadata :call-key)
                         (gethash (getf metadata :call-key) outcomes))))
+    (when (and entry (terminal-ui-fullscreen-p (application-ui application))
+               (not (getf metadata :markdown)))
+      (setf (getf metadata :entry-layout) (application--record-layout application record)
+            (getf metadata :source-characters) (application--record-source-characters record)))
     (when resolved
-      (dolist (key '(:state :job-key :retain-output-p :body))
+      (dolist (key '(:state :job-key :retain-output-p :body :body-layout :body-source-characters))
         (setf (getf metadata key) (getf resolved key))))
     (when (or entry (getf metadata :kind))
       (list (application--record-presentation-identifier application record)
@@ -4231,22 +4251,28 @@ clients as :TEXT, :REASONING and :STATUS events."
                        :sequence sequence))
               (with-recursive-lock-held
                   ((application-render-lock application))
-                (terminal-ui-append-finalized
-                 ui
-                 (list :conversation
-                       (conversation-identifier
-                        (application-conversation application))
-                       sequence)
-                 (cond
-                   (continuation-p
-                    (application--continuation-entry
-                     (user-message-input-text user-message-input)))
-                   (operation-request
-                    (application--operation-request-entry
-                     application operation-request timestamp))
-                   (t
-                    (application--user-message-entry
-                     application (user-message-input-text user-message-input) timestamp))))
+                (let* ((identifier
+                         (list :conversation
+                               (conversation-identifier (application-conversation application))
+                               sequence))
+                       (text  (user-message-input-text user-message-input))
+                       (layout
+                         (lambda (columns)
+                           (let ((*application-transcript-layout-columns* columns))
+                             (cond
+                               (continuation-p
+                                (application--continuation-entry text))
+                               (operation-request
+                                (application--operation-request-entry
+                                 application operation-request timestamp))
+                               (t
+                                (application--user-message-entry application text timestamp))))))
+                       (entry (funcall layout (application--transcript-columns application))))
+                  (if (terminal-ui-fullscreen-p ui)
+                      (terminal-ui-present-records
+                       ui (list (list identifier entry
+                                      (list :entry-layout layout :source-characters (length text)))))
+                      (terminal-ui-append-finalized ui identifier entry)))
                 (setf (application-rendered-sequence application) sequence)))
             (application-publish-recovery-session application))
            (:related-memories

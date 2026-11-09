@@ -96,9 +96,9 @@
                                ((not (application-compact-view-p application))
                                 (application--entry-body entry)))))))
 
-(-> application--record-tool-outcome (application list list) (option list))
-(defun application--record-tool-outcome (application record entry)
-  "Extract invocation identity and lifecycle metadata for a fullscreen RECORD."
+(-> application--record-tool-outcome-basic (application list list) (option list))
+(defun application--record-tool-outcome-basic (application record entry)
+  "Extract RECORD's invocation identity, lifecycle state and rendered ENTRY body."
   (case (first record)
     (:provider-item
      (let* ((wire-json (getf (rest record) :wire-json))
@@ -114,3 +114,18 @@
     (:message
      (when (application--job-completion-message-p (rest record))
        (application--job-completion-outcome application (rest record) entry)))))
+
+(-> application--record-tool-outcome (application list list) (option list))
+(defun application--record-tool-outcome (application record entry)
+  "Retain the logical outcome source alongside its current fullscreen metadata."
+  (let ((metadata (application--record-tool-outcome-basic application record entry)))
+    (when (and entry (getf metadata :retain-output-p)
+               (terminal-ui-fullscreen-p (application-ui application)))
+      (setf (getf metadata :body-source-characters)
+            (application--record-source-characters record)
+            (getf metadata :body-layout)
+            (lambda (columns)
+              (let* ((*application-transcript-layout-columns* columns)
+                     (entry                                   (conversation-record-entry application record)))
+                (getf (application--record-tool-outcome-basic application record entry) :body)))))
+    metadata))
