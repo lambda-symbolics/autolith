@@ -751,29 +751,31 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
         do (setf preview-limit (floor preview-limit 2))))
 
 (-> task--job-native-form
-    (session-job list agent &key (:preview-limit integer)
-                                 (:wrapper (option function)))
+    ((option session-job) list agent &key (:preview-limit integer)
+     (:artifact-path (option pathname)) (:wrapper (option function)))
     (values list string))
 (defun task--job-native-form
-    (job snapshot viewer &key (preview-limit 6000) wrapper)
-  "Fit one session JOB snapshot into a bounded native tool result."
+    (job snapshot viewer &key (preview-limit 6000) artifact-path wrapper)
+  "Fit a canonical live or durable SNAPSHOT into a bounded native tool result."
+  (when artifact-path
+    (setf snapshot (copy-list snapshot)
+          (getf snapshot :result)
+          (append (copy-list (getf snapshot :result))
+                  (list :output-path (namestring artifact-path)))))
   (loop for limit = preview-limit then (floor limit 2)
-        for record =
-          (session-job-native-record
-           job snapshot viewer
-           :preview-limit      limit
-           :include-progress-p t)
-        for form = (if wrapper
-                       (funcall wrapper record)
-                       (list :job record))
+        for record = (if job
+                         (session-job-native-record job snapshot viewer
+                                                    :preview-limit limit :include-progress-p t)
+                         (task--job-native-record snapshot :artifact-path (namestring artifact-path)
+                                                          :preview-limit  limit))
+        for form = (if wrapper (funcall wrapper record) (list :job record))
         for content = (task--write-readable-sexp form :pretty-p t)
         when (<= (length content) *task-tool-content-limit*)
           return (values form content)
         when (zerop limit)
           do (error 'task-error
-                    :message
-                    "The mandatory job snapshot exceeds its native result bound."
-                    :tool-name "job.wait")))
+                    :message   "The mandatory job snapshot exceeds its native result bound."
+                    :tool-name (if artifact-path "job.get" "job.wait"))))
 
 (-> task--durable-job-result
     (agent string string)
@@ -808,40 +810,43 @@ Only the current primary conversation's artifact root is searched."
                :tool-name tool-name
                :task-id   identifier)))))
 
-(-> task--durable-job-native-form
-    (list pathname string)
-    (values list string))
-(defun task--durable-job-native-form (result path execution-identifier)
-  "Fit one durable RESULT artifact into a bounded job.get response."
-  (let ((snapshot
-          (list :job-id       (or (getf result :id) execution-identifier)
-                :execution-id execution-identifier
-                :agent        (getf result :agent)
-                :state        (case (getf result :status)
-                                (:success
-                                 ':completed)
-                                (:aborted
-                                 ':aborted)
-                                (otherwise
-                                 ':failed))
-                :detached     (and (getf result :detached) t)
-                :result       (append (copy-list result)
-                                      (list :output-path (namestring path))))))
-    (loop for limit = *task-result-preview-limit* then (floor limit 2)
-          for record =
-            (task--job-native-record
-             snapshot
-             :artifact-path (namestring path)
-             :preview-limit limit)
-          for form = (list :job-get :durable-p t :job record)
-          for content = (task--write-readable-sexp form :pretty-p t)
-          when (<= (length content) *task-tool-content-limit*)
-            return (values form content)
-          when (zerop limit)
-            do (error 'task-error
-                      :message
-                      "The durable job result exceeds its native result bound."
-                      :tool-name "job.get"))))
+(-> task-query-job
+    (task-orchestrator agent &key (:identifier string) (:tool-name string)
+     (:execution-alias-p boolean))
+    (values (option list) (option session-job) (option pathname)))
+(defun task-query-job (orchestrator viewer &key identifier tool-name (execution-alias-p t))
+  "Return a canonical snapshot, retained job and durable result pathname.
+
+Live jobs take precedence. Durable lookup uses only VIEWER's primary artifact
+root. EXECUTION-ALIAS-P also accepts a live job's execution identifier. Missing
+jobs return three NIL values; each frontend owns its error and presentation."
+  (let ((job (if execution-alias-p
+                 (task-orchestrator-visible-job-named orchestrator viewer identifier)
+                 (find identifier (task-orchestrator-list-visible-jobs orchestrator viewer)
+                       :key #'session-job-identifier :test #'string=))))
+    (if job
+        (values (session-job-snapshot job) job nil)
+        (multiple-value-bind (result path)
+            (task--durable-job-result viewer identifier tool-name)
+          (values
+           (when result
+             (list :job-id       (or (getf result :id) identifier)
+                   :execution-id identifier
+                   :parent-id    (getf result :parent-id)
+                   :agent        (getf result :agent)
+                   :tool         (getf result :tool)
+                   :state        (case (getf result :status)
+                                   (:success
+                                    ':completed)
+                                   (:aborted
+                                    ':aborted)
+                                   (otherwise
+                                    ':failed))
+                   :detached     (and (getf result :detached) t)
+                   :progress     (list :duration-ms (getf result :duration-ms)
+                                       :usage       (getf result :usage))
+                   :result       result))
+           nil path)))))
 
 (-> task--tool-execution-handoff-result
     (tool-execution-job agent keyword)
@@ -1232,28 +1237,22 @@ poll a job whose completion will wake it."
                 (task--validate-job-identifier
                  (tool-argument arguments "id" :required t)
                  "job.get"))
-              (job
-                (task-orchestrator-visible-job-named orchestrator viewer identifier)))
-         (if job
-             (let ((snapshot (session-job-snapshot job)))
-               (multiple-value-bind (form content)
-                   (task--job-native-form
-                    job snapshot viewer
-                    :wrapper
-                    (lambda (record)
-                      (list :job-get :durable-p nil :job record)))
-                 (task-tool-result content form)))
-             (multiple-value-bind (result path)
-                 (task--durable-job-result viewer identifier "job.get")
-               (unless result
-                 (error 'task-error
-                        :message   (format nil "No visible job named ~A exists. Jobs from before a restart, and jobs that ended without a result, are listed by job.continuity."
-                                           identifier)
-                        :tool-name "job.get"
-                        :task-id   identifier))
-               (multiple-value-bind (form content)
-                   (task--durable-job-native-form result path identifier)
-                 (task-tool-result content form))))))
+              (tool-name "job.get"))
+          (multiple-value-bind (snapshot job path)
+              (task-query-job orchestrator viewer :identifier identifier :tool-name tool-name)
+            (unless snapshot
+              (error 'task-error
+                     :message (format nil "No visible job named ~A exists. Jobs from before a restart, and jobs that ended without a result, are listed by job.continuity."
+                                      identifier)
+                     :tool-name tool-name :task-id identifier))
+            (multiple-value-bind (form content)
+                (task--job-native-form
+                 job snapshot viewer
+                 :artifact-path path
+                 :preview-limit (if job 6000 *task-result-preview-limit*)
+                 :wrapper       (lambda (record)
+                                  (list :job-get :durable-p (null job) :job record)))
+              (task-tool-result content form)))))
       ((member operation '("wait" "cancel") :test #'string=)
        (task--validate-tool-arguments
         arguments

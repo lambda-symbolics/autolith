@@ -473,6 +473,38 @@
                                    "durable result is projected by job detail")
                       (test-assert (string= expected (agentcomms:json-get row "state"))
                                    "durable success, failure and cancellation retain their outcomes")))
+           (let* ((result      (acp-extension-job-tests--result job (conversation-pathname conversation)))
+                  (registry    (agent-tool-registry viewer))
+                  (identifier  (make-identifier))
+                  (result-path (merge-pathnames
+                                (format nil "~A/result.sexp" identifier)
+                                (task--artifact-group-root
+                                 configuration (conversation-identifier (agent-conversation viewer))))))
+            (setf (getf result :id) "stored-child"
+                  (getf result :state) ':queued
+                  (getf result :parent-id) "parent-job"
+                  (getf result :artifact-path) "declared-artifact")
+            (ensure-directories-exist result-path)
+            (snapshot-write result-path result)
+            (let* ((row    (application-client-job application (agentcomms:json-object "jobId" identifier)))
+                   (native (tool-execute
+                            (tool-registry-find registry "job" "get")
+                            (make-instance 'tool-context :configuration configuration
+                                           :worker nil :conversation (agent-conversation viewer)
+                                           :registry registry :agent viewer :call-id "query-projection")
+                            (json-object "id" identifier)))
+                   (record (getf (rest (tool-result-details native)) :job)))
+              (test-assert (and (string= identifier (agentcomms:json-get row "id"))
+                                (string= "pending" (agentcomms:json-get row "state"))
+                                (string= "parent-job" (agentcomms:json-get row "parentId"))
+                                (string= "declared-artifact"
+                                         (agentcomms:json-get (agentcomms:json-get row "artifacts") "result")))
+                           "ACP retains requested identity, explicit state and declared artifact")
+              (test-assert (and (string= "stored-child" (getf record :id))
+                                (eq ':completed (getf record :state))
+                                (string= (namestring result-path)
+                                         (getf (getf (getf record :result) :artifact) :path)))
+                           "Native inspection uses stored identity, terminal status and actual artifact pathname")))
            (let ((transcript (application-client-job-transcript
                               (acp-session-test--application session) (agentcomms:json-object "jobId" identifier "offset" 0 "limit" 4096))))
              (test-assert (search needle (agentcomms:json-get transcript "content"))
