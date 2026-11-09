@@ -1435,3 +1435,132 @@
           (test-assert (gethash ':next (fullscreen-terminal-ui-presentation-records active))
                        "a subsequent block publishes normally after active eviction")))))
   nil)
+
+
+;;;; -- General Resident Sources and Publication Work --
+
+(-> test-terminal-fullscreen-source-tool-reflow () null)
+(defun test-terminal-fullscreen-source-tool-reflow ()
+  "Rerender original call arguments and folded outcomes across inline/table layouts."
+  (with-test-configuration (configuration)
+    (let* ((terminal    (make-instance 'recording-terminal :columns 120 :rows 16))
+           (ui          (fullscreen-test--ui terminal))
+           (application (make-instance 'application :configuration configuration
+                                       :conversation (conversation-create configuration) :ui ui))
+           (call        (list :provider-item :seq 1
+                              :wire-json
+                              (json-encode
+                               (agent-test-call :call-id "source-call" :namespace "test" :name "echo"
+                                                :arguments "{\"value\":\"alpha beta gamma delta epsilon zeta eta theta\"}"))))
+           (result      (list :tool-result :seq 2 :call-id "source-call" :tool "test.echo"
+                              :status ':error :output "A detailed failure whose source wraps under the call.")))
+      (with-terminal-ui (active ui)
+        (terminal-ui-present-records active (list (application--record-presentation application call)))
+        (let* ((viewport (fullscreen-terminal-ui-viewport active))
+               (wide     (clinedi:transcript-viewport-chunk-text viewport 0))
+               (tag      (clinedi:transcript-viewport-last-tag viewport)))
+          (test-assert (search " :value " wide)
+                       "a wide call retains its argument in the inline header")
+          (terminal-ui-resize active 32 :rows 16)
+          (test-assert
+           (and (> (clinedi:transcript-viewport-row-count viewport) 1)
+                (search "theta" (clinedi:transcript-viewport-chunk-text viewport 0)))
+           "a narrow call uses fresh table/continuation rows rather than clipping its old header")
+          (terminal-ui-resize active 120 :rows 16)
+          (test-assert (string= wide (clinedi:transcript-viewport-chunk-text viewport 0))
+                       "widening restores the original argument source and inline header")
+          (terminal-ui-present-records active (list (application--record-presentation application result)))
+          (test-assert (= 1 (fullscreen-test--chunk-count active))
+                       "the outcome folds into the source-backed invocation")
+          (loop for width in '(32 90 120)
+                do (terminal-ui-resize active width :rows 16)
+                   (let* ((index  (fullscreen-terminal-ui-presentation-records active))
+                          (record (gethash (first tag) index)))
+                     (multiple-value-bind (text display regions)
+                         (terminal-ui-fullscreen--record-content active record width)
+                       (declare (ignore display regions))
+                       (test-assert
+                        (and (string= text (clinedi:transcript-viewport-chunk-text viewport 0))
+                             (search "! " text)
+                             (search "detailed" text)
+                             (functionp (getf record :body-layout))
+                             (eq (getf record :state) ':failure)
+                             (equal tag (clinedi:transcript-viewport-last-tag viewport)))
+                        "folded outcome source reflows with its original call and lifecycle state"))))))))
+  nil)
+
+(-> test-terminal-fullscreen-source-prose-reflow () null)
+(defun test-terminal-fullscreen-source-prose-reflow ()
+  "Restore user prose wrapping from source rather than from a width-baked span list."
+  (with-test-configuration (configuration)
+    (let* ((terminal    (make-instance 'recording-terminal :columns 32 :rows 12))
+           (ui          (fullscreen-test--ui terminal))
+           (application (make-instance 'application :configuration configuration
+                                       :conversation (conversation-create configuration) :ui ui))
+           (source      (format nil "~{~A ~}~%An intentional second line."
+                                (loop repeat 8 append '("alpha" "beta" "gamma"))))
+           (record      (list :message :seq 1 :role ':user :content source)))
+      (with-terminal-ui (active ui)
+        (let ((presentation (application--record-presentation application record)))
+          (terminal-ui-present-records active (list presentation))
+          (let* ((viewport (fullscreen-terminal-ui-viewport active))
+                 (narrow   (clinedi:transcript-viewport-row-count viewport)))
+            (loop for width in '(80 24 80 32)
+                  do (terminal-ui-resize active width :rows 12)
+                     (let* ((metadata (gethash (first presentation)
+                                               (fullscreen-terminal-ui-presentation-records active)))
+                            (entry    (let ((*application-transcript-layout-columns* width))
+                                        (conversation-record-entry application record))))
+                       (multiple-value-bind (text display regions)
+                           (terminal-ui--finalized-content active entry :group (getf metadata :group))
+                         (declare (ignore display regions))
+                         (test-assert
+                          (string= (concatenate 'string (getf metadata :prefix) text)
+                                   (clinedi:transcript-viewport-chunk-text viewport 0))
+                          "resident prose matches fresh source rendering at every width")))
+                     (when (= width 80)
+                       (test-assert (< (clinedi:transcript-viewport-row-count viewport) narrow)
+                                    "a wider pane unwraps user prose")))
+            (test-assert (= 1 (fullscreen-test--chunk-count active))
+                         "prose round trips retain one publication"))))))
+  nil)
+
+(-> test-terminal-fullscreen-idle-publication-work () null)
+(defun test-terminal-fullscreen-idle-publication-work ()
+  "Keep idle/editor/scroll paints independent of resident transcript storage."
+  (let* ((terminal (make-instance 'recording-terminal :columns 40 :rows 12))
+         (ui       (fullscreen-test--ui terminal)))
+    (with-terminal-ui (active ui)
+      (loop for identifier below 30
+            do (terminal-ui-stream-markdown active identifier
+                                            :source     "Resident paragraph with enough words to wrap."
+                                            :finished-p t))
+      (let ((checkpoints 0)
+            (copies      0)
+            (renders     0)
+            (checkpoint  (symbol-function 'clinedi:transcript-viewport-checkpoint))
+            (copy        (symbol-function 'terminal-ui-fullscreen--copy-publication-value))
+            (render      (symbol-function 'terminal-ui-fullscreen--record-content)))
+        (test-call-with-function-replacements
+         (list
+          (list 'clinedi:transcript-viewport-checkpoint
+                (lambda (viewport) (incf checkpoints) (funcall checkpoint viewport)))
+          (list 'terminal-ui-fullscreen--copy-publication-value
+                (lambda (value) (incf copies) (funcall copy value)))
+          (list 'terminal-ui-fullscreen--record-content
+                (lambda (observed record width &rest arguments)
+                  (incf renders) (apply render observed record width arguments))))
+         (lambda ()
+           (terminal-ui--present-live active)
+           (terminal-ui-set-input active "typing")
+           (terminal-ui-process-event active ':scroll-top)
+           (terminal-ui--present-live active)
+           (test-assert (and (zerop checkpoints) (zerop copies) (zerop renders))
+                        "idle, composer and scroll paints do no resident snapshot or source-layout work")
+           (terminal-ui-resize active 72 :rows 12)
+           (test-assert (and (zerop checkpoints) (zerop copies) (= renders 30))
+                        "a real resize replays each source once without a publication snapshot")
+           (terminal-ui-present-records active (list (list ':new "new output" nil)))
+           (test-assert (and (= checkpoints 1) (plusp copies) (= renders 31))
+                        "semantic publication alone checkpoints its recoverable mutation"))))))
+  nil)

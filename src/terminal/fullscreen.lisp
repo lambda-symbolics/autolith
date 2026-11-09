@@ -95,7 +95,8 @@ Older output is evicted past it and stays loadable with (history).")
                   (fullscreen-terminal-ui-markdown-stream ui) nil
                   (terminal-ui-stream-tail ui) nil))
           (dolist (key (list identifier (getf record :call-key) (getf record :job-key)))
-            (when key (remhash key index)))
+            (when (and key (eq record (gethash key index)))
+              (remhash key index)))
           (dolist (outcome (getf record :identifiers))
             (terminal-ui-fullscreen--forget-sequence ui outcome))))
       (terminal-ui-fullscreen--forget-sequence ui identifier)))
@@ -218,65 +219,26 @@ sequence, so it lands in the normal screen where it stays readable."
                 (termdown:shift-regions regions (length prefix))
                 tail)))))
 
-(-> terminal-ui-fullscreen--charge-markdown (fullscreen-terminal-ui &key (:all-p boolean)) null)
-(defun terminal-ui-fullscreen--charge-markdown (ui &key all-p)
-  "Charge retained Markdown to its resident chunk, then apply the existing eviction policy.
-
-The pinned Clinedi viewport recomputes all chunk weights on replace and resize;
-ALL-P adds source weight once after those operations. Append charges only the
-newest chunk. Keep this adapter next to the bulk reflow adapter below."
-  (let* ((viewport (fullscreen-terminal-ui-viewport ui))
-         (chunks   (clinedi::transcript-viewport--chunks viewport)))
-    (loop for index from (if all-p 0 (max 0 (1- (length chunks)))) below (length chunks)
-          for chunk = (aref chunks index)
-          for record = (terminal-ui-fullscreen--markdown-record ui (clinedi::viewport-chunk-tag chunk))
-          for markdown = (getf record :markdown)
-          when markdown
-            do (let ((weight (+ (length (getf markdown :source))
-                                (loop for span in (getf markdown :header)
-                                      sum (length (terminal-span-text span))))))
-                 (incf (clinedi::viewport-chunk-weight chunk) weight)
-                 (incf (clinedi::transcript-viewport--weight viewport) weight)))
-    (clinedi::viewport--evict viewport))
-  nil)
-
 (-> terminal-ui-fullscreen--ensure-width (fullscreen-terminal-ui integer) null)
 (defun terminal-ui-fullscreen--ensure-width (ui width)
-  "Replay resident semantic sources once at WIDTH, preserving chunk/offset anchors.
-
-Clinedi 58b has no bulk replacement operation. Stage immutable chunks through
-this narrow adapter, then use its single resize pass for rows, anchoring and
-weights. Offsets identify rendered characters, not Markdown source positions."
+  "Replay resident source callbacks once when WIDTH changes."
   (let ((viewport (fullscreen-terminal-ui-viewport ui)))
     (unless (= width (clinedi:transcript-viewport-width viewport))
-      (let* ((previous          (clinedi::transcript-viewport--chunks viewport))
-             (chunks            (make-array (length previous) :adjustable t :fill-pointer t
-                                                              :initial-contents previous))
-             (stream-rendered-p nil))
-        (loop for index below (length chunks)
-              for chunk = (aref chunks index)
-              for tag = (clinedi::viewport-chunk-tag chunk)
-              for record = (terminal-ui-fullscreen--markdown-record ui tag)
-              when record
-                do (multiple-value-bind (text display regions tail)
-                       (terminal-ui-fullscreen--markdown-content ui record width)
-                     (setf (aref chunks index)
-                           (clinedi::%make-viewport-chunk text display regions tag))
-                     (when (equal (getf record :identifier)
-                                  (fullscreen-terminal-ui-markdown-stream ui))
-                      (setf (terminal-ui-stream-tail ui) tail
-                            stream-rendered-p t))))
-        (unless stream-rendered-p
-          (let ((record (gethash (fullscreen-terminal-ui-markdown-stream ui)
-                                (fullscreen-terminal-ui-presentation-records ui))))
-            (when record
-              (setf (terminal-ui-stream-tail ui)
-                    (nth-value 3 (terminal-ui-fullscreen--markdown-content ui record width))))))
-        ;; Render every source before changing the retained viewport representation.
-        (setf (clinedi::transcript-viewport--chunks viewport) chunks)
-        (clinedi:transcript-viewport-resize viewport width)
-        (terminal-ui-fullscreen--charge-markdown ui :all-p t)
-        (terminal-ui-fullscreen-invalidate ui))))
+      (let ((tail (terminal-ui-stream-tail ui))
+            (done nil))
+        (unwind-protect
+             (progn
+               ;; An unfinished block may consist solely of an unpublished live tail.
+               (let ((record (gethash (fullscreen-terminal-ui-markdown-stream ui)
+                                      (fullscreen-terminal-ui-presentation-records ui))))
+                 (when (and record (not (getf record :published-p)))
+                   (setf (terminal-ui-stream-tail ui)
+                         (nth-value 3 (terminal-ui-fullscreen--markdown-content ui record width)))))
+               (clinedi:transcript-viewport-resize viewport width)
+               (terminal-ui-fullscreen-invalidate ui)
+               (setf done t))
+          (unless done
+            (setf (terminal-ui-stream-tail ui) tail))))))
   nil)
 
 (defmethod terminal-ui-stream-markdown
@@ -315,16 +277,16 @@ weights. Offsets identify rendered characters, not Markdown source positions."
               (unless (getf markdown :finished-p) identifier))
         (when (or (getf previous :published-p) (plusp (length text)))
           (if (getf previous :published-p)
-              (progn
-                (clinedi:transcript-viewport-replace
-                 (fullscreen-terminal-ui-viewport ui) (getf record :tag)
-                 :text text :display display :regions regions)
-                (terminal-ui-fullscreen--charge-markdown ui :all-p t))
-              (progn
-                (clinedi:transcript-viewport-append
-                 (fullscreen-terminal-ui-viewport ui) text display
-                 :regions regions :tag (getf record :tag))
-                (terminal-ui-fullscreen--charge-markdown ui)))
+              (clinedi:transcript-viewport-replace
+               (fullscreen-terminal-ui-viewport ui) (getf record :tag)
+               :text text :display display :regions regions
+               :layout-function   (terminal-ui-fullscreen--record-layout-function ui record)
+               :source-characters (terminal-ui-fullscreen--record-source-characters record))
+              (clinedi:transcript-viewport-append
+               (fullscreen-terminal-ui-viewport ui) text display
+               :regions regions :tag (getf record :tag)
+               :layout-function   (terminal-ui-fullscreen--record-layout-function ui record)
+               :source-characters (terminal-ui-fullscreen--record-source-characters record)))
           (setf (terminal-ui-fullscreen-welcome-p ui) nil
                 (terminal-ui-compact-tail-group ui) nil))
         display))))
@@ -759,16 +721,19 @@ drag is a click: the selection ends and the transcript action there runs."
      nil)
     (t
      (let* ((terminal (terminal-ui-terminal ui))
-            (saved    (loop for slot in '(presentation-records evicted-sequences
-                                          finalized-identifiers finalized-order finalized-stamp
-                                          compact-tail-group welcome-p deferred-operations
-                                          stream-tail markdown-stream evicted-markdown-stream
-                                          deferred-base-group deferred-live-appended-text
-                                          deferred-live-appended-display deferred-live-appended-regions)
-                            collect (cons slot (slot-value ui slot))))
+            (pending  (fullscreen-terminal-ui-deferred-operations ui))
+            (saved    (when pending
+                        (loop for slot in '(presentation-records evicted-sequences
+                                            finalized-identifiers finalized-order finalized-stamp
+                                            compact-tail-group welcome-p deferred-operations
+                                            stream-tail markdown-stream evicted-markdown-stream
+                                            deferred-base-group deferred-live-appended-text
+                                            deferred-live-appended-display deferred-live-appended-regions)
+                              collect (cons slot (slot-value ui slot)))))
             (done     nil))
-       (let ((checkpoint (clinedi:transcript-viewport-checkpoint
-                          (fullscreen-terminal-ui-viewport ui))))
+       (let ((checkpoint (when pending
+                           (clinedi:transcript-viewport-checkpoint
+                            (fullscreen-terminal-ui-viewport ui)))))
          (unwind-protect
               (progn
                 (dolist (binding saved)
@@ -807,7 +772,8 @@ drag is a click: the selection ends and the transcript action there runs."
                       (fullscreen-terminal-ui-deferred-base-group ui) nil
                       done t))
            (unless done
-             (clinedi:transcript-viewport-rollback (fullscreen-terminal-ui-viewport ui) checkpoint)
+             (when checkpoint
+               (clinedi:transcript-viewport-rollback (fullscreen-terminal-ui-viewport ui) checkpoint))
              (dolist (binding saved)
                (setf (slot-value ui (first binding)) (rest binding)))
              (terminal-ui-fullscreen-invalidate ui)))))))

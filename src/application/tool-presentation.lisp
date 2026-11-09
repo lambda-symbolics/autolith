@@ -3,6 +3,12 @@
 ;;;; -- Tool Transcript Presentation --
 
 
+(-> application--transcript-columns (application) (integer 1))
+(defun application--transcript-columns (application)
+  "Return the effective columns for one source-backed transcript layout."
+  (or *application-transcript-layout-columns*
+      (max 1 (terminal-columns (terminal-ui-terminal (application-ui application))))))
+
 (defparameter *application-tool-output-lines* 12
   "The maximum tool output lines shown in the terminal transcript.")
 
@@ -132,8 +138,7 @@ ones and written as a string when it has none."
          (safe-header (sanitize-text call-header :single-line-p t))
          (maximum-width
            (max 1
-                (1- (terminal-columns
-                     (terminal-ui-terminal (application-ui application)))))))
+                 (1- (application--transcript-columns application)))))
     (cond
       ((<= (text-cell-width safe-header) maximum-width)
        safe-header)
@@ -147,8 +152,7 @@ ones and written as a string when it has none."
 (-> application--tool-row-spans (application list) list)
 (defun application--tool-row-spans (application row)
   "Return one indented, sanitized, width-bounded tool transcript ROW."
-  (let* ((columns       (terminal-columns
-                         (terminal-ui-terminal (application-ui application))))
+  (let* ((columns       (application--transcript-columns application))
          (maximum-width (max 1 (1- columns)))
          (indented      (append (list (terminal-span ':plain "  ")) row)))
     (if (<= (terminal--spans-width indented) maximum-width)
@@ -200,8 +204,7 @@ header without participating in compaction."
                               (third row)))
                 (list (terminal-span style ")"))))
              (available-width
-               (max 1 (1- (terminal-columns
-                            (terminal-ui-terminal (application-ui application)))))))
+               (max 1 (1- (application--transcript-columns application)))))
         (when (<= (terminal--spans-width spans) available-width)
           (return-from application--inline-tool-call-header
             (values spans (nthcdr (length arguments) rows))))))
@@ -265,8 +268,7 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
                                :style (or (getf field :style) ':plain))))
          (available-width
            (max 0
-                (- (terminal-columns
-                    (terminal-ui-terminal (application-ui application)))
+                 (- (application--transcript-columns application)
                    3)))
          (column-widths
            (layout-column-widths
@@ -671,8 +673,7 @@ structural discriminator as a readable heading instead."
     (application text &key style initial-prefix continuation-prefix)
   "Return styled wrapped plan TEXT rows after the supplied prefix spans."
   (let* ((columns
-           (terminal-columns
-            (terminal-ui-terminal (application-ui application))))
+           (application--transcript-columns application))
          (prefix-width
            (max (terminal--spans-width initial-prefix)
                 (terminal--spans-width continuation-prefix)))
@@ -846,8 +847,7 @@ structural discriminator as a readable heading instead."
   "Return bounded wrapped prose rows with a subdued rail."
   (let* ((prefix        (format nil "~A│ " indent))
          (columns
-           (terminal-columns
-            (terminal-ui-terminal (application-ui application))))
+           (application--transcript-columns application))
          (width         (max 1
                              (- columns
                                 3
@@ -886,8 +886,7 @@ structural discriminator as a readable heading instead."
   "Return one indented compact preview row for item-specific CONTEXT."
   (let* ((prefix "    context  ")
          (columns
-           (terminal-columns
-            (terminal-ui-terminal (application-ui application))))
+           (application--transcript-columns application))
          (width  (max 0 (- columns 3 (text-cell-width prefix)))))
     (list
      (terminal-span ':dim prefix)
@@ -917,8 +916,7 @@ structural discriminator as a readable heading instead."
                   (application--task-run-summary-text
                    (getf item :task)))))
          (columns
-           (terminal-columns
-            (terminal-ui-terminal (application-ui application))))
+           (application--transcript-columns application))
          (widths
            (layout-column-widths
             values

@@ -42,7 +42,9 @@
          (old-job  (getf previous :job-key)))
     (when (and old-job (not (equal old-job (getf record :job-key))))
       (remhash old-job index))
-    (dolist (key (list (getf record :identifier) (getf record :call-key) (getf record :job-key)))
+    (dolist (key (cons (getf record :identifier)
+                       (when (eq (getf record :kind) ':call)
+                         (list (getf record :call-key) (getf record :job-key)))))
       (when key
         (setf (gethash key index) record))))
   nil)
@@ -65,64 +67,114 @@
             (terminal-ui-fullscreen--index-record ui next))))))
   nil)
 
+(-> terminal-ui-fullscreen--record-content
+    (fullscreen-terminal-ui list integer &key (:entry (or string list)))
+    (values string string list list))
+(defun terminal-ui-fullscreen--record-content (ui record width &key (entry nil entry-p))
+  "Lay out resident RECORD at WIDTH, optionally reusing its initial ENTRY."
+  (when (getf record :markdown)
+    (return-from terminal-ui-fullscreen--record-content
+      (terminal-ui-fullscreen--markdown-content ui record width)))
+  (let* ((layout      (getf record :entry-layout))
+         (entry       (if entry-p entry
+                          (if layout (funcall layout width) (getf record :entry))))
+         (body-layout (getf record :body-layout))
+         (body        (when (and (eq (getf record :kind) ':call) (getf record :retain-output-p))
+                        (if (and body-layout (not entry-p))
+                            (funcall body-layout width)
+                            (getf record :body))))
+         (prefix      (getf record :prefix "")))
+    (multiple-value-bind (text display regions)
+        (terminal-ui--finalized-content
+         ui (if (eq (getf record :kind) ':call)
+                (terminal-ui-fullscreen--record-entry entry (getf record :state) body)
+                entry)
+         :group (getf record :group))
+      (values (concatenate 'string prefix text) (concatenate 'string prefix display)
+              (termdown:shift-regions regions (length prefix)) nil))))
+
+(-> terminal-ui-fullscreen--record-source-characters (list) (integer 0))
+(defun terminal-ui-fullscreen--record-source-characters (record)
+  "Charge logical sources retained by RECORD to its bounded viewport chunk."
+  (+ (or (getf record :source-characters) 0)
+     (or (getf record :body-source-characters) 0)
+     (let ((markdown (getf record :markdown)))
+       (if markdown
+           (+ (length (getf markdown :source))
+              (loop for span in (getf markdown :header)
+                    sum (length (terminal-span-text span))))
+           0))))
+
+(-> terminal-ui-fullscreen--record-layout-function
+    (fullscreen-terminal-ui list) (option function))
+(defun terminal-ui-fullscreen--record-layout-function (ui record)
+  "Keep RECORD's source callback with its chunk until replacement or eviction."
+  (when (or (getf record :markdown) (getf record :entry-layout) (getf record :body-layout))
+    (lambda (width)
+      (multiple-value-bind (text display regions tail)
+          (terminal-ui-fullscreen--record-content ui record width)
+        (when (equal (getf record :identifier) (fullscreen-terminal-ui-markdown-stream ui))
+          (setf (terminal-ui-stream-tail ui) tail))
+        (values text display regions)))))
+
 (-> terminal-ui-fullscreen--append-entry
     (fullscreen-terminal-ui t (or string list) &key (:metadata list)) string)
 (defun terminal-ui-fullscreen--append-entry (ui identifier entry &key metadata)
-  "Append and tag one resident ENTRY, retaining original call spans when supplied."
+  "Append one resident source-backed entry under stable IDENTIFIER."
   (let* ((group  (getf metadata :group))
-         (prefix (if (terminal-ui--separated-p (terminal-ui-compact-tail-group ui) group)
-                     (string #\Newline)
-                     "")))
+         (record (append
+                  (list :identifier identifier
+                        :entry      (unless (or (getf metadata :markdown)
+                                                (getf metadata :entry-layout)) entry)
+                        :prefix     (if (terminal-ui--separated-p
+                                         (terminal-ui-compact-tail-group ui) group)
+                                        (string #\Newline) "")
+                        :tag (list identifier) :identifiers (list identifier))
+                  metadata)))
     (multiple-value-bind (text display regions)
-        (terminal-ui--finalized-content
-         ui (if (eq (getf metadata :kind) ':call)
-                (terminal-ui-fullscreen--record-entry
-                 entry (getf metadata :state)
-                 (when (getf metadata :retain-output-p) (getf metadata :body)))
-                entry)
-         :group group)
-      (when (or (eq (getf metadata :kind) ':call) (getf metadata :markdown))
-        (terminal-ui-fullscreen--index-record
-         ui (append (list :identifier identifier
-                          :entry (unless (getf metadata :markdown) entry) :prefix prefix
-                          :tag (list identifier) :identifiers (list identifier))
-                    metadata)))
+        (terminal-ui-fullscreen--record-content
+         ui record (clinedi:transcript-viewport-width (fullscreen-terminal-ui-viewport ui)) :entry entry)
+      (unless (eq (getf record :kind) ':call)
+        (setf (getf record :body-layout) nil
+              (getf record :body-source-characters) 0
+              (getf record :body) nil))
+      (when (getf record :body-layout)
+        (setf (getf record :body) nil))
+      (when (or (eq (getf record :kind) ':call) (getf record :markdown)
+                (getf record :entry-layout))
+        (terminal-ui-fullscreen--index-record ui record))
       (clinedi:transcript-viewport-append
-       (fullscreen-terminal-ui-viewport ui)
-       (concatenate 'string prefix text) (concatenate 'string prefix display)
-       :regions (termdown:shift-regions regions (length prefix)) :tag (list identifier))
-      (when (getf metadata :markdown)
-        (terminal-ui-fullscreen--charge-markdown ui))
+       (fullscreen-terminal-ui-viewport ui) text display :regions regions :tag (getf record :tag)
+       :layout-function   (terminal-ui-fullscreen--record-layout-function ui record)
+       :source-characters (terminal-ui-fullscreen--record-source-characters record))
       (unless (eq group ':attached)
         (setf (terminal-ui-compact-tail-group ui) group))
       (setf (terminal-ui-fullscreen-welcome-p ui) nil)
       (terminal-ui--remember-finalized ui (list identifier) :note-output-p nil)
-      (concatenate 'string prefix display))))
+      display)))
 
 (-> terminal-ui-fullscreen--replace-record
     (fullscreen-terminal-ui list &key (:identifier t) (:metadata list)) boolean)
 (defun terminal-ui-fullscreen--replace-record (ui record &key identifier metadata)
-  "Replace RECORD's resident invocation with the outcome in METADATA."
-  (let* ((prefix (getf record :prefix))
-         (entry  (terminal-ui-fullscreen--record-entry
-                  (getf record :entry) (getf metadata :state)
-                  (when (getf metadata :retain-output-p) (getf metadata :body))))
-         (next   (copy-list record)))
+  "Replace RECORD's invocation with its latest source-backed outcome."
+  (let ((next (copy-list record)))
     (setf (getf next :identifiers) (cons identifier (getf record :identifiers))
           (getf next :job-key) (or (getf metadata :job-key) (getf record :job-key)))
-    (dolist (key '(:state :retain-output-p :body))
+    (dolist (key '(:state :retain-output-p :body :body-layout :body-source-characters))
       (setf (getf next key) (getf metadata key)))
-    ;; Install the new immutable index value before replacement can evict its chunk.
-    (terminal-ui-fullscreen--index-record ui next)
     (multiple-value-bind (text display regions)
-        (terminal-ui--finalized-content ui entry :group (getf record :group))
+        (terminal-ui-fullscreen--record-content
+         ui next (clinedi:transcript-viewport-width (fullscreen-terminal-ui-viewport ui)))
+      (when (getf next :body-layout)
+        (setf (getf next :body) nil))
+      ;; Index before replacement can evict this chunk and release its sources.
+      (terminal-ui-fullscreen--index-record ui next)
       (if (clinedi:transcript-viewport-replace
            (fullscreen-terminal-ui-viewport ui) (getf record :tag)
-           :text    (concatenate 'string prefix text)
-           :display (concatenate 'string prefix display)
-           :regions (termdown:shift-regions regions (length prefix)))
+           :text text :display display :regions regions
+           :layout-function   (terminal-ui-fullscreen--record-layout-function ui next)
+           :source-characters (terminal-ui-fullscreen--record-source-characters next))
           (progn
-            (terminal-ui-fullscreen--charge-markdown ui :all-p t)
             (when (gethash (getf record :identifier) (fullscreen-terminal-ui-presentation-records ui))
               (terminal-ui--remember-finalized ui (list identifier) :note-output-p nil))
             t)
