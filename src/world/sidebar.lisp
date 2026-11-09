@@ -61,7 +61,7 @@
     :initform      (make-hash-table :test #'equal)
     :reader        world-sidebar-pathnames
     :type          hash-table
-    :documentation "Conversation identity pathnames by channel, found once: finding a child's searches every task directory.")
+    :documentation "Active storage identities cached by the shared conversation locator.")
    (actions
     :initform      #()
     :accessor      world-sidebar-actions
@@ -87,11 +87,6 @@
     :accessor      world-sidebar-refreshed-at
     :type          (option real)
     :documentation "The internal real time of the last refresh, or NIL before the first.")
-   (server-entry
-    :initform      nil
-    :accessor      world-sidebar-server-entry
-    :type          (option cons)
-    :documentation "The world server's endpoint entry while it answers, or NIL.")
    (clock-function
     :initarg       :clock-function
     :initform      #'get-internal-real-time
@@ -307,12 +302,14 @@ The choice stays when the terminal moves to another channel."
 
 (-> world-sidebar--gather (world-sidebar) list)
 (defun world-sidebar--gather (sidebar)
-  "Return the world as it is now, as the keyword arguments of `world-sidebar--entries'."
+  "Return the current catalogue as WORLD-SIDEBAR--ENTRIES arguments."
   (let* ((configuration (world-sidebar-configuration sidebar))
          (statuses      (world-sidebar--statuses sidebar))
-         (world         (world-presented configuration)))
+         (world         (handler-case (world-channel-catalogue configuration :statuses statuses)
+                          (autolith-error ()
+                            (make-instance 'world)))))
     (list :inbox    (world-inbox-channel world)
-          :channels (world-sidebar--channels sidebar world statuses)
+          :channels (world-sidebar--channels sidebar world)
           :names    (world-sidebar--names world)
           :statuses statuses
           :pending  (world-sidebar--pending configuration))))
@@ -325,61 +322,29 @@ The choice stays when the terminal moves to another channel."
                   (participant-residence participant))
           collect (cons (participant-residence participant) (participant-name participant))))
 
-(-> world-sidebar--channels (world-sidebar world list) list)
-(defun world-sidebar--channels (sidebar world statuses)
-  "Return WORLD's channels but the inbox, and the hosted ones STATUSES report beyond them, the latest touched first.
+(-> world-sidebar--channels (world-sidebar world) list)
+(defun world-sidebar--channels (sidebar world)
+  "Return catalogue channels except the inbox, newest history first.
 
-Latest touched is the newest write of a channel's conversation file. A hosted
-channel the world does not know yet has no file: it started just now, shows
-first, and belongs to the workspace its status names."
-  (let* ((now    (get-universal-time))
-         (person (world-human-participant world))
-         (fresh  (loop for status in statuses
-                       for identifier = (getf status :session-id)
-                       for directory = (getf status :cwd)
-                       when (and (stringp identifier)
-                                 (stringp directory)
-                                 (null (world-channel-find world identifier)))
-                         collect (make-instance 'channel
-                                                :identifier identifier
-                                                :owner      (if person
-                                                                (participant-identifier person)
-                                                                identifier)
-                                                :workspace  (world-workspace-name directory)
-                                                :title      (getf status :conversation-title)
-                                                :created-at now
-                                                :updated-at now))))
+A newly hosted channel without durable history sorts by its creation time."
+  (let* ((channels   (remove-if #'channel-inbox-p (world-channels world)))
+         (identities (conversation-pathnames-for-ids
+                      (world-sidebar-configuration sidebar)
+                      (mapcar #'channel-identifier channels)
+                      :cache (world-sidebar-pathnames sidebar))))
     (mapcar #'rest
             (stable-sort
-             (append (mapcar (lambda (channel) (cons now channel)) fresh)
-                     (mapcar (lambda (channel)
-                               (cons (conversation-storage-write-date
-                                      (world-sidebar--pathname sidebar (channel-identifier channel)))
-                                     channel))
-                             (remove-if #'channel-inbox-p (world-channels world))))
+             (mapcar (lambda (channel)
+                       (let ((date (conversation-storage-write-date
+                                    (gethash (channel-identifier channel) identities))))
+                         (cons (if (plusp date) date (channel-created-at channel)) channel)))
+                     channels)
              #'> :key #'first))))
-
-(-> world-sidebar--pathname (world-sidebar string) pathname)
-(defun world-sidebar--pathname (sidebar identifier)
-  "Return the identity pathname of channel IDENTIFIER's conversation, found once per sidebar."
-  (let ((pathnames (world-sidebar-pathnames sidebar)))
-    (or (gethash identifier pathnames)
-        (setf (gethash identifier pathnames)
-              (conversation-pathname-for-id (world-sidebar-configuration sidebar) identifier)))))
 
 (-> world-sidebar--statuses (world-sidebar) list)
 (defun world-sidebar--statuses (sidebar)
-  "Return the statuses of the channels the world server hosts, or NIL without a server."
-  (let* ((configuration (world-sidebar-configuration sidebar))
-         (entry         (or (world-sidebar-server-entry sidebar)
-                            (setf (world-sidebar-server-entry sidebar)
-                                  (world-client-entry configuration)))))
-    (and entry
-         (handler-case
-             (mapcar #'rest (getf (rest (localgroup-query-record entry ':channels)) :channels))
-           (autolith-error ()
-             (setf (world-sidebar-server-entry sidebar) nil)
-             nil)))))
+  "Return the current live channel statuses for SIDEBAR's catalogue."
+  (world-channel-statuses (world-sidebar-configuration sidebar)))
 
 (-> world-sidebar--pending (configuration) list)
 (defun world-sidebar--pending (configuration)

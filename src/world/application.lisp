@@ -262,10 +262,9 @@ well, since the steer persists first and the queued turn then skips."
 
 (-> world-presented (configuration) world)
 (defun world-presented (configuration)
-  "Return CONFIGURATION's world for presentation: as it is, or empty when it cannot be read."
-  (handler-case (world-load configuration)
-    (autolith-error ()
-      (make-instance 'world))))
+  "Return CONFIGURATION's channel catalogue, or an empty world when unreadable."
+  (handler-case (world-channel-catalogue configuration)
+                (autolith-error nil (make-instance 'world))))
 
 (-> application-world (application) world)
 (defun application-world (application)
@@ -556,14 +555,14 @@ shares nothing. A delivery that fails is reported and never stops the turn."
 
 (-> application-world-agent-present-p (application) boolean)
 (defun application-world-agent-present-p (application)
-  "Return true while APPLICATION's channel has a resident agent, or before it is a channel at all.
+  "Return true while APPLICATION's durable channel has a resident agent, or before it exists.
 
-A world that cannot be read counts as present: the world never blocks a
-session."
+Hosted-only catalogue entries do not establish agent absence. A world that
+cannot be read counts as present: the world never blocks a session."
   (let ((channel (application-world--served-channel application)))
     (or (null channel)
         (handler-case
-            (let ((world (application-world application)))
+            (let ((world (world-load (application-configuration application))))
               (or (null (world-channel-find world channel))
                   (not (null (find ':agent (world-channel-residents world channel)
                                    :key #'participant-kind)))))

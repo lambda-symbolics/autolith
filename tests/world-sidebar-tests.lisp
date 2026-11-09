@@ -334,25 +334,27 @@
 
 (-> test-world-sidebar-finds-conversations-once () null)
 (defun test-world-sidebar-finds-conversations-once ()
-  "Test the sidebar finds each channel's conversation once, however often it gathers."
+  "Test repeated sidebar gathers share active storage discovery across task channels."
   (with-test-configuration (configuration)
-    (world-tests--persisted-conversation configuration "bfirst1" 1000)
-    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
-    (world-server--reconcile configuration)
-    (let ((sidebar (world-sidebar-create configuration))
-          (find    (symbol-function 'conversation-pathname-for-id))
-          (found   nil))
-      (test-call-with-function-replacements
-       (list (list 'world-sidebar--statuses (lambda (candidate) (declare (ignore candidate)) nil))
-             (list 'conversation-pathname-for-id
-                   (lambda (candidate identifier)
-                     (push identifier found)
-                     (funcall find candidate identifier))))
-       (lambda ()
-         (dotimes (index 3)
-           (world-sidebar--gather sidebar))))
-      (test-assert (equal (sort (copy-list found) #'string<) '("bfirst1" "bsecnd2"))
-                   "three gathers look each channel's conversation up once")))
+   (world-tests--persisted-conversation configuration "bfirst1" 1000)
+   (world-tests--child-conversation configuration "bcachedkid" :root "bfirst1" :parent "bfirst1"
+    :name "cached" :created-at 1500)
+   (world-tests--child-conversation configuration "bcachedtwo" :root "bfirst1" :parent "bfirst1"
+    :name "cachedtwo" :created-at 1600)
+   (world-server--reconcile configuration)
+   (let ((sidebar        (world-sidebar-create configuration))
+         (subdirectories (symbol-function 'uiop/filesystem:subdirectories))
+         (root           (merge-pathnames "tasks/" (config :data-root configuration)))
+         (scans          0))
+     (test-call-with-function-replacements
+      (list (list 'world-sidebar--statuses (lambda (candidate) (declare (ignore candidate)) nil))
+            (list 'uiop/filesystem:subdirectories
+                  (lambda (directory)
+                    (when (equal directory root) (incf scans))
+                    (funcall subdirectories directory))))
+      (lambda () (dotimes (index 3) (world-sidebar--gather sidebar))))
+     (test-assert (= scans 1)
+      "one batch scans task roots once across repeated sidebar refreshes")))
   nil)
 
 (-> test-world-sidebar-gathers-apart () null)

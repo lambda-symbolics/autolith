@@ -560,7 +560,7 @@
                 (localgroup-registry-pathname configuration session-id)
                 (list :localgroup-endpoint :version 1 :session-id session-id :pid pid
                       :address "127.0.0.1" :port 4000 :token "token" :created-at 1)))
-      (test-assert (equal (channel-resource--served-channels configuration) '("bserved"))
+      (test-assert (equal (world-channel-served-identifiers configuration) '("bserved"))
                    "a channel counts as served while the process of its endpoint lives")))
   nil)
 
@@ -1797,7 +1797,7 @@
              (survivor          (find ':agent (world-channel-residents world "bracebb") :key #'participant-kind))
              (agent-id          (participant-identifier (if (eq race ':incoming) survivor selected)))
              (context           (world-context-pathname configuration agent-id))
-             (quiesce           (symbol-function 'task-child--quiesce))
+             (quiesce           (symbol-function 'channel--quiesce))
              (delete-worktree   (symbol-function 'task-worktree-discard))
              (destructive-calls 0))
         (world-channel-create configuration :id "bracedst" :parent "brace11"
@@ -1806,7 +1806,7 @@
         (snapshot-write context '(:test-context))
         (test-call-with-function-replacements
          (list
-          (list 'task-child--quiesce
+          (list 'channel--quiesce
                 (lambda (&rest arguments)
                   (apply quiesce arguments)
                   (ecase race
@@ -2513,4 +2513,164 @@
                                           (conversation-input-items-for-request first))
                                   "the new agent's requests carry nothing of the agent before it")))
               (application-input-controller-stop controller)))))))
+  nil)
+
+(-> test-world-channel-catalogue nil null)
+(defun test-world-channel-catalogue ()
+  "Test shared live discovery at picker, sidebar and resource boundaries."
+  (with-test-configuration (configuration)
+   (let* ((conversation (world-tests--persisted-conversation configuration "bcatalog" 1000))
+          (application
+           (make-instance 'application :configuration configuration :conversation conversation))
+          (sidebar      (world-sidebar-create configuration))
+          (statuses
+           (list
+            (list :session-id "bcatalog" :cwd
+                  (namestring (config :working-directory configuration)) :conversation-title
+                  "stale live title")
+            (list :session-id "blivecat" :cwd
+                  (namestring (config :working-directory configuration)) :conversation-title
+                  "fresh hosted channel"))))
+     (world-reconcile-sessions configuration)
+     (test-call-with-function-replacements
+      (list
+       (list 'world-channel-statuses
+             (lambda (&rest arguments) (declare (ignore arguments)) statuses)))
+      (lambda ()
+        (let* ((durable   (world-load configuration))
+               (catalogue (world-channel-catalogue configuration))
+               (items     (application--channel-items application))
+               (gathered  (world-sidebar--gather sidebar))
+               (channels  (getf gathered :channels))
+               (survey    (world-tests--read configuration conversation "list")))
+          (test-assert
+           (and
+            (= 1 (count "blivecat" items :key (lambda (item) (getf item :value)) :test #'equal))
+            (= 1 (count "blivecat" channels :key #'channel-identifier :test #'equal))
+            (search "fresh hosted channel" survey))
+           "every consumer includes a newly hosted channel exactly once")
+          (let ((write-date-function (symbol-function 'conversation-storage-write-date)))
+             (dolist (case (list (list 1000 '("blivecat" "bcatalog"))
+                                (list (+ (get-universal-time) 60)
+                                      '("bcatalog" "blivecat"))))
+               (test-call-with-function-replacements
+                (list (list 'conversation-storage-write-date
+                            (lambda (pathname)
+                              (if (equal pathname (conversation-pathname conversation))
+                                  (first case)
+                                  (funcall write-date-function pathname)))))
+                (lambda ()
+                  (test-assert
+                   (equal (second case)
+                          (mapcar #'channel-identifier
+                                  (world-sidebar--channels sidebar catalogue)))
+                   "fresh hosted creation and persisted history sort newest first")))))
+          (test-assert
+           (and (world-channel-find catalogue "blivecat")
+                (not (world-channel-find durable "blivecat"))
+                (not (world-channel-find (world-load configuration) "blivecat")))
+           "discovery projects live channels without publishing them")
+          (test-assert
+           (equal (channel-title (world-channel-find catalogue "bcatalog"))
+                  (channel-title (world-channel-find durable "bcatalog")))
+           "durable metadata takes precedence over live discovery")
+          (test-assert
+           (search "fresh hosted channel"
+                   (world-tests--read configuration conversation "id/blivecat"))
+           "a discovered channel resolves even before history exists"))))))
+  nil)
+
+(-> test-world-channel-storage nil null)
+(defun test-world-channel-storage ()
+  "Test nested task history resolution and exact primary/task storage preference."
+  (with-test-configuration (configuration)
+   (let* ((current  (world-tests--persisted-conversation configuration "bcstoroot" 1000))
+          (child
+           (world-tests--child-conversation configuration "bcstokid" :root "bcstoroot" :parent
+            "bcstoroot" :name "child" :created-at 1500))
+          (grandchild
+           (world-tests--child-conversation configuration "bcstogrand" :root "bcstoroot" :parent
+            "bcstokid" :name "grandchild" :created-at 1600))
+          (identity (conversation-pathname grandchild))
+          (cache    (make-hash-table :test #'equal)))
+     (declare (ignore child))
+     (world-reconcile-sessions configuration)
+     (test-assert
+      (equal identity
+             (gethash "bcstogrand"
+                      (conversation-pathnames-for-ids configuration '("bcstogrand") :cache cache)))
+      "the batch locator preserves the exact stable child identity")
+     (test-assert
+      (search "work for bcstokid" (world-tests--read configuration current "id/bcstogrand"))
+      "a resource reads nested task history using its actual storage root")
+     (let* ((primary (world-tests--persisted-conversation configuration "bcstogrand" 2000))
+            (batch   (conversation-pathnames-for-ids configuration '("bcstogrand") :cache cache))
+            (task-batch
+             (conversation-pathnames-for-ids configuration '("bcstogrand") :prefer-task-p t)))
+       (test-assert
+        (and
+         (equal (conversation-pathname primary)
+                (conversation-pathname-for-id configuration "bcstogrand"))
+         (equal (conversation-pathname primary) (gethash "bcstogrand" batch))
+         (equal identity (gethash "bcstogrand" task-batch)))
+        "primary discovery and task cleanup share explicit storage precedence"))
+     (let ((other
+            (world-tests--child-conversation configuration "bcstoraw" :root "CaseRoot" :parent
+             "bcstoroot" :name "casechild" :created-at 2500)))
+       (test-assert
+        (equal (conversation-pathname other)
+               (conversation-pathname-for-id configuration "bcstoraw"))
+        "storage discovery retains the exact discovered root pathname"))))
+  nil)
+
+(-> test-world-removal-intent-states nil null)
+(defun test-world-removal-intent-states ()
+  "Test unpublished, conflicting and fully published cleanup intent recovery."
+  (with-test-configuration (configuration)
+   (dolist (identifier '("bintentaa" "bintentbb"))
+     (world-tests--persisted-conversation configuration identifier 1000))
+   (world-reconcile-sessions configuration)
+   (let* ((channels   '("bintentaa" "bintentbb"))
+          (identities (conversation-pathnames-for-ids configuration channels))
+          (intent     (merge-pathnames "states.sexp" (channel--removal-root configuration)))
+          (participants
+           (loop for identifier in channels
+                 append (mapcar #'participant-identifier
+                                (world-channel-residents (world-load configuration) identifier))))
+          (plan
+           (list :version 1 :channels channels :participants participants :identities
+                 (mapcar
+                  (lambda (identifier)
+                    (list identifier (namestring (gethash identifier identities))))
+                  channels))))
+     (snapshot-write intent plan)
+     (channel-remove-recover configuration)
+     (test-assert
+      (and (not (probe-file intent))
+           (every
+            (lambda (identifier)
+              (conversation-storage-active-pathname (gethash identifier identities)))
+            channels))
+      "an unpublished intent retires without deleting histories")
+     (snapshot-write intent plan)
+     (world-channels-delete configuration '("bintentaa") :participants participants)
+     (test-assert
+      (handler-case (progn (channel-remove-recover configuration) nil) (task-error nil t))
+      "partially live identities refuse recovery")
+     (test-assert
+      (and (probe-file intent)
+           (every
+            (lambda (identifier)
+              (conversation-storage-active-pathname (gethash identifier identities)))
+            channels))
+      "a conflicting intent and all its storage remain available for recovery")
+     (world-channels-delete configuration '("bintentbb") :participants participants)
+     (channel-remove-recover configuration)
+     (test-assert
+      (and (not (probe-file intent))
+           (every
+            (lambda (identifier)
+              (not (conversation-storage-active-pathname (gethash identifier identities))))
+            channels))
+      "fully absent identities permit exact-path cleanup")))
   nil)

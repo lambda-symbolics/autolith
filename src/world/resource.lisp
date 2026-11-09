@@ -68,32 +68,21 @@
 
 (-> channel-resource--world (tool-context) world)
 (defun channel-resource--world (context)
-  "Return CONTEXT's world."
-  (world-load (tool-context-configuration context)))
+  "Return CONTEXT's channel catalogue, including newly hosted channels."
+  (world-channel-catalogue (tool-context-configuration context)))
 
 (-> channel-resource--history (tool-context channel) (option conversation))
 (defun channel-resource--history (context channel)
-  "Return the conversation holding CHANNEL's history, or NIL if it is unavailable.
-
-A child task's history lives in its root conversation's task directory,
-which the channel's parent names."
+  "Return CHANNEL's history through the shared stable storage locator."
   (let ((configuration (tool-context-configuration context))
         (identifier    (channel-identifier channel))
         (current       (tool-context-conversation context)))
-    (cond
-      ((string= identifier (conversation-identifier current))
-       current)
-      (t
-       (handler-case
-           (conversation-replay-load configuration identifier)
-         (autolith-error ()
-           (let ((root (channel-parent channel)))
-             (and root
-                  (handler-case
-                      (conversation-replay-load-identity
-                       (conversation-task-identity-pathname configuration root identifier))
-                    (autolith-error ()
-                      nil))))))))))
+    (if (string= identifier (conversation-identifier current))
+        current
+        (handler-case
+         (conversation-replay-load-identity
+          (conversation-pathname-for-id configuration identifier))
+         (autolith-error nil nil)))))
 
 (-> channel-resource--make
     (channel-resolver &key (:uri-identifier string) (:context tool-context) (:world world)
@@ -168,15 +157,6 @@ which the channel's parent names."
 
 ;;;; -- Rendering --
 
-(-> channel-resource--served-channels (configuration) list)
-(defun channel-resource--served-channels (configuration)
-  "Return the identifiers of CONFIGURATION's channels a live process serves now."
-  (loop for entry in (handler-case (localgroup-endpoint-records configuration)
-                       (autolith-error ()
-                         nil))
-        for properties = (rest (rest entry))
-        unless (eq (image-daemon:daemon-process-state (getf properties :pid)) ':dead)
-          collect (getf properties :session-id)))
 
 (-> channel-resource--availability (participant list) (option string))
 (defun channel-resource--availability (participant served)
@@ -323,7 +303,7 @@ names contain it, ignoring case."
              :tool-name "resource.read"))
     (tool-success (channel-resource--list-text
                    (channel-list-resource-world resource)
-                   (channel-resource--served-channels (tool-context-configuration context))
+                   (world-channel-served-identifiers (tool-context-configuration context))
                    :query   query
                    :maximum maximum))))
 
@@ -351,7 +331,7 @@ names contain it, ignoring case."
          (conversation (channel-resource-conversation resource))
          (state        (channel-resource--state-text
                         world channel
-                        :served        (channel-resource--served-channels
+                        :served        (world-channel-served-identifiers
                                         (tool-context-configuration context))
                         :configuration (tool-context-configuration context))))
     (if conversation

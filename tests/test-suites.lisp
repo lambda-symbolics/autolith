@@ -647,6 +647,8 @@
   test-world-agent-keeps-model-choice
   test-world-application-sync
   test-world-channel-resource
+  test-world-channel-catalogue
+  test-world-channel-storage
   test-world-participant-availability
   test-world-agent-name-header
   test-world-channel-resolve
@@ -668,6 +670,7 @@
   test-world-child-removal-batch
   test-world-child-removal-interleavings
   test-world-child-removal-recovery
+  test-world-removal-intent-states
   test-world-placing-needs-server
   test-world-agent-hierarchy
   test-world-parent-mention
