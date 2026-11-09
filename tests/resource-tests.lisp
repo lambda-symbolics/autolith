@@ -15,6 +15,15 @@
     :documentation "The resolver marker retained by this fixture."))
   (:documentation "A resource used to test registry dispatch."))
 
+(defclass test-unimplemented-edit-resource (resource)
+  ()
+  (:documentation "An edit-capable resource with no model edit implementation."))
+
+(defmethod resource-capabilities ((resource test-unimplemented-edit-resource) context)
+  "Advertise editing without supplying the model-facing adapter."
+  (declare (ignore resource context))
+  '(:edit))
+
 (defclass test-resource-resolver (resource-resolver)
   ((marker
     :initarg       :marker
@@ -95,6 +104,15 @@
                                        :conversation  conversation)))
     (unwind-protect
          (progn
+           (test-assert
+            (handler-case
+                (resource-tool-edit
+                 (make-instance 'test-unimplemented-edit-resource :uri "unimplemented:item")
+                 (tool-registry-find registry "resource" "edit")
+                 context (json-object))
+              (resource-operation-unsupported ()
+                t))
+            "unimplemented edits signal unsupported before parsing arguments")
            (resource-registry-register
             (tool-registry-resource-registry registry) resolver)
            (dolist (uri '("missing-separator" "unknown:item"))
