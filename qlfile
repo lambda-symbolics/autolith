@@ -24,7 +24,7 @@ git cl-jobpond https://github.com/lambda-symbolics/cl-jobpond.git :ref 005b52f41
 git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 3b4af05627c024383cbd08c2c9adc27b300b8956
 git cl-rfc8252 https://github.com/lambda-symbolics/cl-rfc8252.git :ref e2bbd2374ec159f86123c046c020fce27fce2d99
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref 38d5b6ae81a24031ad6c95b4f42ba99f2cf0a6c3
-git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref 2e8800e12629d357d1e409d3a0ec489936833004
+git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref 3b47a27c99a278620cd8d61bd75b1f92804dd54e
 git cl-lsp https://github.com/lambda-symbolics/cl-lsp.git :ref 83a5fc4d7cb8e584edff4674f746654251711f5f
 git cl-resources https://github.com/lambda-symbolics/cl-resources.git :ref 6fa84c8ab0a87706b2dc266aafb54696c26d919f
 git clasted https://github.com/lambda-symbolics/clasted.git :ref 669dbf5ef7c9d8b6d31678f7d4b9677f3a2166b7
@@ -52,7 +52,7 @@ git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref cded0
 git surgeon https://github.com/lambda-symbolics/surgeon.git :ref b159c64231f35d2b20aedd41544f8621d16a0c29
 git structlisp https://github.com/lambda-symbolics/structlisp.git :ref 987829546bd07030e25ed1b2e4d3246d11b532db
 git llh2 https://github.com/lambda-symbolics/llh2.git :ref f516c92cff438d65fb42d31f4c552b39001e2edc
-git argo https://github.com/lambda-symbolics/argo.git :ref c8034c208f43436b19af2858bfb6112ac7e66e1f
+git argo https://github.com/lambda-symbolics/argo.git :ref ff1d0643973278e3b282825fbdc604c1256070a2
 git setinka https://github.com/lambda-symbolics/setinka.git :ref ce63dce34287b20ad81f08f6d208e6e18bc3163f
 git lambda-debugger https://github.com/lambda-symbolics/lambda-debugger.git :ref 8299ae17be78a489321de5e035f1f6cc8ede88bc
 git yolokuva https://github.com/lambda-symbolics/yolokuva.git :ref e35d37d21bf07bb99473c0144144fa73c313d898

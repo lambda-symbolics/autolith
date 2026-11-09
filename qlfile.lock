@@ -104,8 +104,8 @@
   :version "git-38d5b6ae81a24031ad6c95b4f42ba99f2cf0a6c3"))
 ("cl-llm-provider-api" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "2e8800e12629d357d1e409d3a0ec489936833004")
-  :version "git-2e8800e12629d357d1e409d3a0ec489936833004"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "3b47a27c99a278620cd8d61bd75b1f92804dd54e")
+  :version "git-3b47a27c99a278620cd8d61bd75b1f92804dd54e"))
 ("cl-lsp" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-lsp.git" :ref "83a5fc4d7cb8e584edff4674f746654251711f5f")
@@ -216,8 +216,8 @@
   :version "git-f516c92cff438d65fb42d31f4c552b39001e2edc"))
 ("argo" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/argo.git" :ref "c8034c208f43436b19af2858bfb6112ac7e66e1f")
-  :version "git-c8034c208f43436b19af2858bfb6112ac7e66e1f"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/argo.git" :ref "ff1d0643973278e3b282825fbdc604c1256070a2")
+  :version "git-ff1d0643973278e3b282825fbdc604c1256070a2"))
 ("setinka" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/setinka.git" :ref "ce63dce34287b20ad81f08f6d208e6e18bc3163f")
