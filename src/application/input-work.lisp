@@ -95,11 +95,11 @@
     (user-message-input
      (list :user-message-input
            :version 1
-           :text (copy-seq (user-message-input-text input))
+           :text       (copy-seq (user-message-input-text input))
            :image-pathnames
            (mapcar #'namestring
                     (user-message-input-image-pathnames input))
-            :submission (copy-tree (user-message-input-submission input))))))
+           :submission (copy-tree (user-message-input-submission input))))))
 
 (-> input-value-from-form
     (t)
@@ -121,7 +121,7 @@
              (let ((image-pathnames (mapcar #'pathname image-names)))
                (when (every #'uiop:absolute-pathname-p image-pathnames)
                  (user-message-input-create
-                  :text            (copy-seq text)
+                  :text             (copy-seq text)
                    :image-pathnames image-pathnames
                    :submission      (getf (rest form) :submission))))
            (error ()
@@ -129,14 +129,25 @@
     (t
      nil)))
 
+(-> input-work--form-shape-p (t) boolean)
+(defun input-work--form-shape-p (form)
+  "Return true for a work form with optional validated submission provenance."
+  (and (proper-list-p form)
+       (member (length form) '(2 4))
+       (not (null (member (first form) '(:message :command :lisp :native-lisp))))
+       (or (= (length form) 2)
+           (and (eq (third form) ':submission)
+                (user-message-submission-p (fourth form))))))
+
 (-> input-work->form
     (list)
     (option list))
 (defun input-work->form (work)
-  "Return the durable form for one restorable WORK item."
+  "Return a portable WORK form, retaining its submitting client and source."
   (when (input-work-editable-p work)
-    (list (first work)
-          (input-value->form (second work)))))
+    (append (list (first work) (input-value->form (second work)))
+            (when (getf (nthcdr 2 work) :submission)
+              (list :submission (copy-tree (getf (nthcdr 2 work) :submission)))))))
 
 (-> input-work-list->forms (list) list)
 (defun input-work-list->forms (work-items)
@@ -148,11 +159,10 @@
 (-> input-work-from-form (t) (option list))
 (defun input-work-from-form (form)
   "Return one validated in-memory work item restored from durable FORM."
-  (when (and (listp form)
-             (member (first form) '(:message :command :lisp :native-lisp) :test #'eq))
+  (when (input-work--form-shape-p form)
     (let ((input (input-value-from-form (second form))))
       (when input
-        (list (first form) input)))))
+        (append (list (first form) input) (copy-tree (nthcdr 2 form)))))))
 
 (-> input-steering->form
     (agent-steering-input)
@@ -179,8 +189,7 @@
 (-> input-work--native-entry-p (t) boolean)
 (defun input-work--native-entry-p (form)
   "Return true for a finite native work entry containing unevaluated source."
-  (and (proper-list-p form)
-       (= (length form) 2)
+  (and (input-work--form-shape-p form)
        (eq (first form) ':native-lisp)
        (stringp (second form))))
 
@@ -204,7 +213,7 @@
            (proper-list-p work)
            (every
             (lambda (entry)
-              (and (proper-list-p entry) (= (length entry) 2)
+              (and (input-work--form-shape-p entry)
                    (member (first entry) '(:message :command :lisp))))
             work)
            (or (null active)
@@ -213,7 +222,7 @@
                               :maximum-length 4 :fields
                               '((:indicator :identifier :required t)
                                 (:indicator :work :required t)))
-                (proper-list-p (getf active :work)) (= (length (getf active :work)) 2)
+                (input-work--form-shape-p (getf active :work))
                 (member (first (getf active :work)) '(:message :command :lisp)))))
         (return-from restore nil))
       (let* ((native-active (getf native :active-work))

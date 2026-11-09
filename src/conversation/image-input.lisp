@@ -44,6 +44,19 @@
   "Plain string INPUT carries no image attachments."
   (declare (ignore input)))
 
+(-> user-message-submission-p (t) boolean)
+(defun user-message-submission-p (submission)
+  "Return true for complete portable user submission provenance."
+  (and (record-check submission :properties-p t :allow-other-keys nil
+                     :maximum-length 6
+                     :fields         '((:indicator :id :required t)
+                                       (:indicator :client :required t)
+                                       (:indicator :source :required t)))
+       (non-empty-string-p (getf submission :id))
+       (non-empty-string-p (getf submission :client))
+       (not (null (member (getf submission :source) '("prompt" "queue" "steering")
+                          :test #'equal)))))
+
 (-> user-message-input-create
     (&key (:text string) (:image-pathnames list) (:submission list))
     user-message-input)
@@ -58,12 +71,8 @@
   (unless (every #'uiop:absolute-pathname-p image-pathnames)
     (error 'configuration-error
            :message "Every attached image pathname must be absolute."))
-  (when submission
-    (unless (and (= (length submission) 6)
-                 (non-empty-string-p (getf submission :id))
-                 (non-empty-string-p (getf submission :client))
-                 (member (getf submission :source) '("prompt" "queue" "steering") :test #'equal))
-      (error 'configuration-error :message "Invalid user submission provenance.")))
+  (when (and submission (not (user-message-submission-p submission)))
+    (error 'configuration-error :message "Invalid user submission provenance."))
   (make-instance 'user-message-input
                  :text            text
                  :image-pathnames (copy-list image-pathnames)
