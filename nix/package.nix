@@ -155,6 +155,7 @@ let
     ];
     src = qlotSource "cl-llm-provider-api";
     lispLibs = with lispPackages; [
+      argo
       babel
       bordeaux-threads
       ironclad
