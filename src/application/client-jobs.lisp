@@ -23,25 +23,18 @@
   "Return the application agent that owns the visible job view."
   (application-agent application))
 
-(-> application-client--live-job (application string string) (or session-job list))
-(defun application-client--live-job (application identifier tool-name)
-  "Return owned live IDENTIFIER, or NIL when it has completed durably."
-  (let ((viewer (application-client--job-viewer application)))
-    (or (find identifier
-              (task-orchestrator-list-visible-jobs
-               (application-client--job-orchestrator application) viewer)
-              :key #'session-job-identifier :test #'string=)
-        (multiple-value-bind (record path)
-            (task--durable-job-result viewer identifier tool-name)
-          (declare (ignore path))
-          (and record (list :durable record))))))
-
-(-> application-client--find-job (application string string) (or session-job list))
+(-> application-client--find-job (application string string)
+    (values (or session-job list) list))
 (defun application-client--find-job (application identifier tool-name)
-  "Find IDENTIFIER only when it is owned by SESSION's application agent."
-  (or (application-client--live-job application identifier tool-name)
+  "Return the owned live job or durable record wrapper, and its canonical snapshot."
+  (multiple-value-bind (snapshot job)
+      (task-query-job (application-client--job-orchestrator application)
+                      (application-client--job-viewer application)
+                      :identifier identifier :tool-name tool-name :execution-alias-p nil)
+    (unless snapshot
       (error 'task-error :message (format nil "No visible job named ~A exists." identifier)
-             :tool-name tool-name :task-id identifier)))
+             :tool-name tool-name :task-id identifier))
+    (values (or job (list :durable (getf snapshot :result))) snapshot)))
 
 (-> application-client--job-state ((option keyword)) string)
 (defun application-client--job-state (state)
@@ -57,14 +50,6 @@
      "cancelled")
     (otherwise
      (string-downcase (symbol-name (or state ':unknown))))))
-
-(-> application-client--job-parent-id (session-job) (option string))
-(defun application-client--job-parent-id (job)
-  "Return JOB's parent job identity, not its tool-call identifier."
-  (when (typep job 'task-job)
-    (let ((parent (task-job-parent-agent job)))
-      (and (typep parent 'task-child-agent)
-           (session-job-identifier (task-child-agent-job parent))))))
 
 (-> application-client--job-usage (t) t)
 (defun application-client--job-usage (usage)
@@ -86,38 +71,24 @@
    "result" (or (getf record :artifact-path) ':null)
    "shellLogs" (coerce (getf record :shell-log-references) 'vector)))
 
-(-> application-client--job-row (session-job) hash-table)
-(defun application-client--job-row (job)
-  "Project one owned live JOB into a bounded ACP row."
-  (let* ((snapshot (session-job-snapshot job))
-         (progress (getf snapshot :progress))
-         (result   (getf snapshot :result)))
+(-> application-client--job-row (list &key (:identifier (option string))
+                                 (:job (option session-job))) hash-table)
+(defun application-client--job-row (snapshot &key identifier job)
+  "Project a canonical SNAPSHOT into ACP fields without changing native values."
+  (let ((progress (getf snapshot :progress))
+        (result   (getf snapshot :result)))
     (agentcomms:json-object
-     "id" (session-job-identifier job)
-     "parentId" (or (application-client--job-parent-id job) ':null)
-     "role" (or (and (typep job 'task-job) (task-job-agent-name job))
-                (and (typep job 'tool-execution-job) (tool-execution-job-tool-name job)) ':null)
-     "state" (application-client--job-state (getf snapshot :state))
+     "id" (or identifier (getf snapshot :job-id))
+     "parentId" (or (getf snapshot :parent-id) ':null)
+     "role" (or (getf snapshot :agent) (getf snapshot :tool) ':null)
+     "state" (application-client--job-state
+              (if job (getf snapshot :state) (or (getf result :state) (getf result :status))))
      "startedAt" (or (getf progress :started-at) ':null)
      "elapsedSeconds" (if (getf progress :duration-ms) (floor (getf progress :duration-ms) 1000) ':null)
      "usage" (application-client--job-usage (getf progress :usage))
      "artifacts" (application-client--job-artifacts result)
      "activity" (or (getf progress :current-tool)
-                    (getf (session-job-live-activity job) :description) ':null))))
-
-(-> application-client--durable-row (string list) hash-table)
-(defun application-client--durable-row (identifier record)
-  "Project a validated durable task RECORD into an ACP row."
-  (agentcomms:json-object
-   "id" identifier
-   "parentId" (or (getf record :parent-id) ':null)
-   "role" (or (getf record :agent) (getf record :tool) ':null)
-   "state" (application-client--job-state (or (getf record :state) (getf record :status)))
-   "startedAt" ':null
-   "elapsedSeconds" (if (getf record :duration-ms) (floor (getf record :duration-ms) 1000) ':null)
-   "usage" (application-client--job-usage (getf record :usage))
-   "artifacts" (application-client--job-artifacts record)
-   "activity" ':null))
+                    (and job (getf (session-job-live-activity job) :description)) ':null))))
 
 (-> application-client-jobs (application hash-table) hash-table)
 (defun application-client-jobs (application params)
@@ -132,23 +103,25 @@
          (limit  (or (agentcomms:acp-field params "limit" :type ':integer) 100)))
     (unless (and (<= 0 offset) (<= 1 limit 200))
       (agentcomms:acp-invalid-params "Invalid jobs page bounds."))
-    (let* ((jobs  (sort (copy-list (task-orchestrator-list-visible-jobs
-                                    (application-client--job-orchestrator application)
-                                    (application-client--job-viewer application))) #'< :key #'session-job-order))
+    (let* ((jobs  (task-orchestrator-list-visible-jobs
+                   (application-client--job-orchestrator application)
+                   (application-client--job-viewer application)))
            (start (min offset (length jobs)))
            (end   (min (+ start limit) (length jobs))))
       (agentcomms:json-object
-       "items" (map 'vector #'application-client--job-row (subseq jobs start end))
+       "items" (map 'vector (lambda (job)
+                              (application-client--job-row (session-job-snapshot job) :job job))
+                    (subseq jobs start end))
        "nextCursor" (if (< end (length jobs)) (princ-to-string end) ':null)))))
 
 (-> application-client-job (application hash-table) hash-table)
 (defun application-client-job (application params)
   "Return one owned job row selected by JOB-ID."
-  (let* ((identifier (agentcomms:acp-field params "jobId" :type ':string :required-p t))
-         (found      (application-client--find-job application identifier "_autolith/job")))
-    (if (and (consp found) (eq (first found) :durable))
-        (application-client--durable-row identifier (second found))
-        (application-client--job-row found))))
+  (let ((identifier (agentcomms:acp-field params "jobId" :type ':string :required-p t)))
+    (multiple-value-bind (found snapshot)
+        (application-client--find-job application identifier "_autolith/job")
+      (application-client--job-row snapshot :identifier identifier
+                                  :job                  (and (typep found 'session-job) found)))))
 
 (-> application-client--job-transcript-path (application t) (option pathname))
 (defun application-client--job-transcript-path (application job)

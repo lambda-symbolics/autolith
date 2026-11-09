@@ -856,6 +856,17 @@ values from either side of a terminal transition."
   (:documentation
    "Return a coherent portable lifecycle snapshot for session JOB."))
 
+(defmethod session-job-snapshot :around ((job session-job))
+  "Enrich lifecycle snapshots with stable lineage shared by task query clients."
+  (append (list :owners            (copy-list (job-owner-identifiers job))
+                :root-conversation (session-job-root-conversation-identifier job)
+                :parent-id
+                (when (typep job 'task-job)
+                  (let ((parent (task-job-parent-agent job)))
+                    (when (typep parent 'task-child-agent)
+                      (session-job-identifier (task-child-agent-job parent))))))
+          (call-next-method)))
+
 (defmethod session-job-snapshot ((job task-job))
   "Return task JOB's child-agent snapshot."
   (task-job-snapshot job))
