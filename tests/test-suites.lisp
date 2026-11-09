@@ -719,6 +719,15 @@
   test-world-client-switch-navigates
   test-world-client-refusal-ends-start)
 
+(define-test-suite portable-values
+  test-portable-client-values
+  test-portable-operation-values
+  test-portable-task-values
+  test-portable-shared-subtrees
+  test-portable-cycles
+  test-portable-structural-bounds
+  test-portable-operation-rejections)
+
 (define-test-suite client-protocol
   test-client-protocol-channel
   test-client-operation-admission
