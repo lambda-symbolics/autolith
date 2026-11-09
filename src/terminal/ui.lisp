@@ -2294,6 +2294,85 @@ and the modeline last, so the response being received stays in view."
        :cursor-row    (+ (length prefix) cursor-row)
        :cursor-offset cursor-offset))))
 
+
+;;;; -- Semantic Markdown Publications --
+
+(-> terminal-ui--markdown-line (termdown:markdown-renderer string) list)
+(defun terminal-ui--markdown-line (renderer line)
+  "Render LINE and attach the original fenced source to its copy widget."
+  (let ((rows   (terminal-markdown-render-line renderer line))
+        (source (termdown:markdown-renderer-closed-code-source renderer)))
+    (if (null source)
+        rows
+        (loop for row in rows
+              collect (loop for span in row
+                            collect (if (eq (terminal-span-style span) ':code-copy)
+                                        (termdown:make-widget
+                                         ':code-copy (terminal-span-text span)
+                                         (list ':copy source))
+                                        span))))))
+
+(-> terminal-ui--markdown-mark (list list) list)
+(defun terminal-ui--markdown-mark (rows marker)
+  "Replace the first content row's indent with the immutable MARKER specification."
+  (let ((position (and marker (position-if-not #'null rows))))
+    (if (null position)
+        rows
+        (let* ((row    (nth position rows))
+               (first  (first row))
+               (text   (and (not (termdown:widget-p first))
+                            (terminal-span-text first)))
+               (marked (cons (terminal-span (first marker) (second marker))
+                             (if (and text (uiop:string-prefix-p "  " text))
+                                 (append (when (> (length text) 2)
+                                           (list (terminal-span (terminal-span-style first)
+                                                                (subseq text 2))))
+                                         (rest row))
+                                 row))))
+          (append (subseq rows 0 position) (list marked) (nthcdr (1+ position) rows))))))
+
+(-> terminal-ui--markdown-render (list integer) (values list list))
+(defun terminal-ui--markdown-render (publication width)
+  "Replay PUBLICATION's source at WIDTH, returning committed spans and speculative rows.
+
+A fresh renderer reconstructs fence and table state. Only a finished publication
+flushes the renderer; resizing an open stream does not complete its pending line."
+  (let* ((stream-p   (getf publication :stream-p))
+         (finished-p (getf publication :finished-p))
+         (source     (sanitize-text (getf publication :source)))
+         (text       (if stream-p source
+                         (string-right-trim '(#\Space #\Tab #\Newline #\Return) source)))
+         (renderer   (termdown:markdown-renderer-create :width (max 24 (1- width))))
+         (start      0)
+         (rows       nil)
+         (tail       nil))
+    (loop for newline = (position #\Newline text :start start)
+          while newline
+          do (setf rows (nconc rows (terminal-ui--markdown-line renderer (subseq text start newline)))
+                   start (1+ newline)))
+    (let ((pending (subseq text start)))
+      (if finished-p
+          (setf rows (nconc rows
+                            (when (or (plusp (length pending)) (not stream-p))
+                              (terminal-ui--markdown-line renderer pending))
+                            (termdown:markdown-render-finish renderer)
+                            (when stream-p (list nil))))
+          (multiple-value-bind (committed speculative retained)
+              (termdown:markdown-render-partial renderer pending)
+            (declare (ignore retained))
+            (setf rows (nconc rows committed)
+                  tail speculative))))
+    (let* ((marker   (getf publication :marker))
+           (marked-p (and marker (some #'identity rows))))
+      (values
+       (append (getf publication :header)
+               (loop for row in (terminal-ui--markdown-mark rows marker)
+                     append (append row (list (terminal-span ':plain (string #\Newline))))))
+       (if marked-p tail (terminal-ui--markdown-mark tail marker))))))
+
+(defgeneric terminal-ui-stream-markdown (ui identifier &key source header marker finished-p)
+  (:documentation "Publish a semantic Markdown stream under a stable IDENTIFIER at UI's pane width."))
+
 (-> terminal-ui--stream-output (terminal list) (values string string))
 (defun terminal-ui--stream-output (terminal rows)
   "Return streamed ROWS as plain output, styled output, and click regions.

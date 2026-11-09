@@ -2252,35 +2252,45 @@ CONVERSATION must be in the child role the current one is in, or in none."
 
 (-> application--markdown-rows (termdown:markdown-renderer string) list)
 (defun application--markdown-rows (renderer line)
-  "Render LINE through RENDERER, giving a closing fence's copy label its source.
-
-cl-termdown marks the closing fence row with a :CODE-COPY span and exposes
-the fence's raw source; that span becomes a widget copying the source."
-  (let ((rows   (terminal-markdown-render-line renderer line))
-        (source (termdown:markdown-renderer-closed-code-source renderer)))
-    (if (null source)
-        rows
-        (loop for row in rows
-              collect (loop for span in row
-                            collect (if (eq (terminal-span-style span) ':code-copy)
-                                        (termdown:make-widget ':code-copy
-                                                              (terminal-span-text span)
-                                                              (list ':copy source))
-                                        span))))))
+  "Render LINE through RENDERER with fenced-source copy widgets."
+  (terminal-ui--markdown-line renderer line))
 
 (-> application--markdown-body (application string) list)
 (defun application--markdown-body (application text)
-  "Return sanitized TEXT rendered as markdown transcript spans."
-  (let ((renderer (application--markdown-renderer application))
-        (trimmed  (string-right-trim '(#\Space #\Tab #\Newline #\Return)
-                                     (sanitize-text text))))
-    (loop for row in (append
-                      (loop for line in (or (uiop:split-string trimmed :separator '(#\Newline))
-                                            (list ""))
-                            append (application--markdown-rows renderer line))
-                      (termdown:markdown-render-finish renderer))
-          append (append row
-                         (list (terminal-span ':plain (string #\Newline)))))))
+  "Return sanitized TEXT rendered as Markdown at the current effective pane width."
+  (nth-value 0
+             (terminal-ui--markdown-render
+              (list :source text :finished-p t)
+              (terminal-columns (terminal-ui-terminal (application-ui application))))))
+
+(-> application--markdown-presentation
+    (application string (option timestamp) &key (:finished-p boolean) (:stream-p boolean)) list)
+(defun application--markdown-presentation
+    (application text timestamp &key (finished-p t) stream-p)
+  "Retain TEXT and immutable message decorations without retaining APPLICATION."
+  (let ((repl-p (application--repl-transcript-p application)))
+    (list :source (sanitize-text text)
+          :finished-p finished-p :stream-p stream-p
+          :header (if repl-p
+                      (let ((row (application--message-timestamp-row application timestamp)))
+                        (when row
+                          (append row (list (terminal-span ':plain (string #\Newline))))))
+                      (application--message-entry application :role ':assistant
+                                                  :timestamp timestamp :body nil))
+          :marker (when repl-p (copy-list (getf *application-message-markers* :assistant))))))
+
+(-> application--stream-markdown-update
+    (application t &key (:source string) (:timestamp (option timestamp)) (:finished-p boolean))
+    terminal-ui)
+(defun application--stream-markdown-update
+    (application identifier &key source timestamp finished-p)
+  "Publish the current source of one streamed block with immutable decorations."
+  (let ((publication (application--markdown-presentation
+                      application source timestamp :finished-p finished-p :stream-p t)))
+    (terminal-ui-stream-markdown
+     (application-ui application) identifier
+     :source (getf publication :source) :header (getf publication :header)
+     :marker (getf publication :marker) :finished-p finished-p)))
 
 (-> application--timestamp-text
     ((option timestamp))
@@ -3061,7 +3071,13 @@ The channel's structured clients receive its text as a :PRESENT event."
          (metadata (append
                     (application--record-entry-semantics record entry)
                     (when (terminal-ui-fullscreen-p (application-ui application))
-                      (application--record-tool-outcome application record entry))))
+                       (append
+                        (application--record-tool-outcome application record entry)
+                        (let ((text (application--assistant-message-record-text record)))
+                          (when text
+                            (list :markdown
+                                  (application--markdown-presentation
+                                   application text (getf (rest record) :time)))))))))
          (resolved (and outcomes (getf metadata :call-key)
                         (gethash (getf metadata :call-key) outcomes))))
     (when resolved
@@ -4045,6 +4061,8 @@ clients as :TEXT, :REASONING and :STATUS events."
         (reasoning-text           (text-buffer-create))
         (presented-reasoning-text nil)
         (stream-text              (text-buffer-create))
+        (stream-source            (text-buffer-create))
+        (stream-presentation      nil)
         (stream-pending           "")
         (stream-open-p            nil)
         (stream-marker-pending-p  nil)
@@ -4079,9 +4097,29 @@ clients as :TEXT, :REASONING and :STATUS events."
                     (application--reasoning-summary-entry application summary))
                    (setf presented-reasoning-text summary))))
 
+             (stream-markdown-delta (delta)
+               "Retain and publish one fullscreen Markdown block independently of the turn."
+               (unless stream-open-p
+                 (reasoning-flush)
+                 (setf stream-open-p t
+                       stream-started-at (get-universal-time)
+                       stream-presentation (gensym "MARKDOWN-"))
+                 (text-buffer-clear stream-source)
+                 (application-set-activity application "receiving response" :label-p nil))
+               (terminal-ui-note-status-progress ui)
+               (text-buffer-append stream-text delta)
+               (text-buffer-append stream-source delta)
+               (application--stream-markdown-update
+                application stream-presentation :source (text-buffer-string stream-source)
+                :timestamp                              stream-started-at))
+
              (stream-text-delta (delta)
                "Commit DELTA's completed markdown rows and repaint the fluid tail."
                (when (plusp (length delta))
+                  (when (and (terminal-ui-fullscreen-p ui)
+                             (or (terminal-interactive-p (terminal-ui-terminal ui))
+                                 (not (terminal-plain-output-p (terminal-ui-terminal ui)))))
+                    (return-from stream-text-delta (stream-markdown-delta delta)))
                  (terminal-ui-note-status-progress ui)
                  (text-buffer-append stream-text delta)
                  (setf stream-pending
@@ -4128,19 +4166,25 @@ clients as :TEXT, :REASONING and :STATUS events."
                       :tail (stream-tail-mark tail-rows))))))
 
              (stream-flush ()
-               "Finish the streamed block with its remaining text and separator."
+               "Finish the streamed block from its semantic source or native renderer."
                (when stream-open-p
-                 (terminal-ui-stream-update
-                  ui
-                  :rows (append (stream-mark
-                                 (append (when (plusp (length stream-pending))
-                                           (application--markdown-rows stream-renderer
-                                                                       stream-pending))
-                                         (termdown:markdown-render-finish stream-renderer)))
-                                (list nil))
-                  :tail nil)
+                  (if stream-presentation
+                     (application--stream-markdown-update
+                      application stream-presentation :source (text-buffer-string stream-source)
+                      :timestamp stream-started-at :finished-p t)
+                     (terminal-ui-stream-update
+                      ui
+                      :rows (append (stream-mark
+                                     (append (when (plusp (length stream-pending))
+                                               (application--markdown-rows stream-renderer
+                                                                           stream-pending))
+                                             (termdown:markdown-render-finish stream-renderer)))
+                                    (list nil))
+                      :tail nil))
+                 (text-buffer-clear stream-source)
                  (setf stream-pending ""
                        stream-open-p nil
+                       stream-presentation nil
                        stream-marker-pending-p nil
                        stream-renderer nil))))
       (callback-agent-observer-create

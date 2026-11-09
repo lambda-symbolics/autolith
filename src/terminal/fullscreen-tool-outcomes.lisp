@@ -81,15 +81,18 @@
                  (when (getf metadata :retain-output-p) (getf metadata :body)))
                 entry)
          :group group)
-      (when (eq (getf metadata :kind) ':call)
+      (when (or (eq (getf metadata :kind) ':call) (getf metadata :markdown))
         (terminal-ui-fullscreen--index-record
-         ui (append (list :identifier identifier :entry entry :prefix prefix
+         ui (append (list :identifier identifier
+                          :entry (unless (getf metadata :markdown) entry) :prefix prefix
                           :tag (list identifier) :identifiers (list identifier))
                     metadata)))
       (clinedi:transcript-viewport-append
        (fullscreen-terminal-ui-viewport ui)
        (concatenate 'string prefix text) (concatenate 'string prefix display)
        :regions (termdown:shift-regions regions (length prefix)) :tag (list identifier))
+      (when (getf metadata :markdown)
+        (terminal-ui-fullscreen--charge-markdown ui))
       (unless (eq group ':attached)
         (setf (terminal-ui-compact-tail-group ui) group))
       (setf (terminal-ui-fullscreen-welcome-p ui) nil)
@@ -119,6 +122,7 @@
            :display (concatenate 'string prefix display)
            :regions (termdown:shift-regions regions (length prefix)))
           (progn
+            (terminal-ui-fullscreen--charge-markdown ui :all-p t)
             (when (gethash (getf record :identifier) (fullscreen-terminal-ui-presentation-records ui))
               (terminal-ui--remember-finalized ui (list identifier) :note-output-p nil))
             t)
