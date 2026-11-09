@@ -95,13 +95,8 @@ switches. The default methods leave the choice local to each screen."))
    (frame
     :initform      nil
     :accessor      localgroup-screen-frame
-    :type          (option vector)
-    :documentation "The session's rows as last received, or NIL before a complete frame.")
-   (frame-width
-    :initform      0
-    :accessor      localgroup-screen-frame-width
-    :type          (integer 0)
-    :documentation "The width of the cached frame, including its delta baseline.")
+    :type          (option clinedi:frame-snapshot)
+    :documentation "The session's frame snapshot, or NIL before a complete frame.")
    (painted-layout
     :initform      nil
     :accessor      localgroup-screen-painted-layout
@@ -402,24 +397,13 @@ client it has not synchronized."
 (defun localgroup-screen--apply-frame (screen properties)
   "Record the frame PROPERTIES describe and return whether there is a frame to paint."
   (localgroup-screen--take-whole-screen screen (not (null (getf properties :whole-screen-p))))
-  (let* ((height     (getf properties :height))
-         (width      (getf properties :width))
-         (complete-p (not (null (getf properties :complete-p))))
-         (previous   (localgroup-screen-frame screen))
-         (frame      (cond
-                       (complete-p
-                        (make-array height :initial-element ""))
-                       ((and previous (= (length previous) height)
-                             (= width (localgroup-screen-frame-width screen)))
-                        (copy-seq previous))
-                       (t
-                        nil))))
+  (let ((frame (clinedi:frame-snapshot-apply
+                (localgroup-screen-frame screen) (getf properties :rows)
+                :height     (getf properties :height)
+                :width      (getf properties :width)
+                :complete-p (not (null (getf properties :complete-p))))))
     (when frame
-      (dolist (row (getf properties :rows))
-        (when (< (first row) height)
-          (setf (aref frame (first row)) (second row))))
       (setf (localgroup-screen-frame screen) frame
-            (localgroup-screen-frame-width screen) width
             (localgroup-screen-cursor screen)
             (list (getf properties :cursor-row)
                   (getf properties :cursor-column)
@@ -467,10 +451,11 @@ client tells the session, and the next paint rewrites the whole screen."
 (-> localgroup-screen--frame-fits-p (localgroup-screen) boolean)
 (defun localgroup-screen--frame-fits-p (screen)
   "Return whether the cached frame matches the requested pane geometry."
-  (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
-    (and (localgroup-screen-frame screen)
-         (= height (length (localgroup-screen-frame screen)))
-         (= width (localgroup-screen-frame-width screen)))))
+  (let ((frame (localgroup-screen-frame screen)))
+    (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
+      (and frame
+           (= height (clinedi:frame-snapshot-height frame))
+           (= width (clinedi:frame-snapshot-width frame))))))
 
 (-> localgroup-screen--paint (localgroup-screen) null)
 (defun localgroup-screen--paint (screen)
@@ -481,15 +466,16 @@ client tells the session, and the next paint rewrites the whole screen."
       (destructuring-bind (cursor-row cursor-column cursor-visible-p)
           (localgroup-screen-cursor screen)
         (let ((terminal (localgroup-screen-terminal screen))
-              (painter  (localgroup-screen-painter screen)))
+              (painter  (localgroup-screen-painter screen))
+              (rows     (clinedi:frame-snapshot-rows frame)))
           (ecase (localgroup-screen-layout screen)
             (:session
-             (terminal-screen-paint terminal painter (coerce frame 'list)
+             (terminal-screen-paint terminal painter (coerce rows 'list)
                                     :cursor-row       cursor-row
                                     :cursor-column    cursor-column
                                     :cursor-visible-p cursor-visible-p))
             (:beside
-             (terminal-screen-paint terminal painter (localgroup-screen--composed-rows screen frame)
+             (terminal-screen-paint terminal painter (localgroup-screen--composed-rows screen rows)
                                     :cursor-row       cursor-row
                                     :cursor-column    (+ cursor-column 1 (localgroup-screen--panel-width screen))
                                     :cursor-visible-p cursor-visible-p))

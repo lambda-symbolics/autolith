@@ -1568,6 +1568,7 @@
   test-localgroup-open-instruction-relay
   test-localgroup-relay-exit
   test-localgroup-relay-frames
+  test-localgroup-frame-snapshots
   test-localgroup-screen-paints-frames
   test-localgroup-screen-panel
   test-localgroup-screen-geometry

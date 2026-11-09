@@ -816,7 +816,7 @@
                   (not (search question (image-daemon:relay-history-text terminal)))
                   "Detached fullscreen streaming does not spill into normal-screen relay text")
                  (attach)
-                 (let ((frame (localgroup-terminal-screen-frame terminal)))
+                 (let ((frame (clinedi:frame-snapshot-rows (localgroup-terminal-screen-frame terminal))))
                    (test-assert
                     (= 1 (count-if (lambda (row)
                                      (search question (clinedi:ansi-strip row)))
