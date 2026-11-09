@@ -273,7 +273,7 @@ Conflicted facts come first, then the rest by predicate and text."
       (knowledge-viewer-changes configuration viewer view)
     (cond
       (first-p
-       (format nil "First look: ~D current fact~:P. Later reads of memory:changes report what changed since this read."
+        (format nil "First look: ~D fact~:P hold now. Later reads of memory:changes report what changed since this one."
                (length (knowledge-view-snapshot view))))
       (changes
        (format nil "Changes since ~A:~%~{~A~%~}"

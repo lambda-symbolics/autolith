@@ -199,7 +199,7 @@ Later changes to those facts can be reported without rerunning the step."
                               (getf details :unmet)))))
             (:exhausted
              (tool-success
-              (format nil "Could not finish expanding ~A after trying ~D tasks; the plan is unchanged. The methods may recurse or branch too widely."
+               (format nil "Expanding ~A tried ~D tasks without finishing; the plan is unchanged. The methods may recurse or branch too widely."
                       (knowledge-pattern-text task) (getf details :nodes)))))))
     (knowledge-error (condition)
       (error 'tool-error :message (autolith-error-message condition) :tool-name "plan.expand"))
