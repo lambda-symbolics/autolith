@@ -602,42 +602,39 @@ for JOB's next verbal response."
         (return (values nil ':empty)))
       (when (> characters *task-steering-maximum-characters*)
         (return (values nil ':content-too-large)))
-      (with-lock-held ((cl-jobpond::job--lock job))
-        (unless (eq (job-state job) ':running)
-          (return (values nil ':not-running)))
-        (when (or (job-cancellation-reason job)
-                  (cl-jobpond::job--publication-claimed-p job))
-          (return (values nil ':closing)))
-        (with-lock-held ((task-job-steering-lock job))
-          (when (task-job-steering-closed-p job)
-            (return (values nil ':closed)))
-          (let ((count
-                  (+ (deque-count (task-job-steering-items job))
-                     (deque-count (task-job-steering-in-flight-items job))))
-                (retained-characters
-                  (+ (deque-total-weight (task-job-steering-items job))
-                     (deque-total-weight
-                      (task-job-steering-in-flight-items job)))))
-            (when (or (>= count *task-steering-maximum-items*)
-                      (and promote-response-p
-                           (>= (+ (deque-count
-                                   (task-job-response-promotion-pending-identifiers job))
-                                  (deque-count
-                                   (task-job-response-promotion-identifiers job)))
-                               *task-response-promotion-maximum-items*))
-                      (> (+ retained-characters characters)
-                         *task-steering-maximum-total-characters*))
-              (return (values nil ':full))))
-          (let ((entry
-                  (agent-steering-input-create
-                   :identifier (make-identifier)
-                   :content    copy)))
-            (deque-push-back (task-job-steering-items job) entry)
-            (when promote-response-p
-              (deque-push-back
-               (task-job-response-promotion-pending-identifiers job)
-               (agent-steering-input-identifier entry)))
-            (values entry ':accepted)))))))
+      (cl-jobpond:job-call-with-admission
+       job
+       (lambda ()
+         (with-lock-held ((task-job-steering-lock job))
+           (when (task-job-steering-closed-p job)
+             (return (values nil ':closed)))
+           (let ((count
+                   (+ (deque-count (task-job-steering-items job))
+                      (deque-count (task-job-steering-in-flight-items job))))
+                 (retained-characters
+                   (+ (deque-total-weight (task-job-steering-items job))
+                      (deque-total-weight
+                       (task-job-steering-in-flight-items job)))))
+             (when (or (>= count *task-steering-maximum-items*)
+                       (and promote-response-p
+                            (>= (+ (deque-count
+                                    (task-job-response-promotion-pending-identifiers job))
+                                   (deque-count
+                                    (task-job-response-promotion-identifiers job)))
+                                *task-response-promotion-maximum-items*))
+                       (> (+ retained-characters characters)
+                          *task-steering-maximum-total-characters*))
+               (return (values nil ':full))))
+           (let ((entry
+                   (agent-steering-input-create
+                    :identifier (make-identifier)
+                    :content    copy)))
+             (deque-push-back (task-job-steering-items job) entry)
+             (when promote-response-p
+               (deque-push-back
+                (task-job-response-promotion-pending-identifiers job)
+                (agent-steering-input-identifier entry)))
+             (values entry ':accepted))))))))
 
 (-> task-job-take-steering (task-job) list)
 (defun task-job-take-steering (job)

@@ -500,54 +500,40 @@ parent, and borrowed capabilities are released at terminal state."))
   (or (not (deque-empty-p (task-job-steering-items job)))
       (not (deque-empty-p (task-job-steering-in-flight-items job)))))
 
-(-> task-job--terminal-admission-reason-locked
-    (task-job)
-    (option keyword))
-(defun task-job--terminal-admission-reason-locked (job)
-  "Return lifecycle reason locked JOB cannot accept a terminal claim, or NIL."
-  (cond
-    ((not (eq (job-state job) ':running))
-     ':not-running)
-    ((or (job-cancellation-reason job)
-         (cl-jobpond::job--publication-claimed-p job))
-     ':closing)
-    (t
-     nil)))
-
 (-> task-job--claim-normal-completion (task-job) boolean)
 (defun task-job--claim-normal-completion (job)
   "Atomically close running JOB for normal completion unless steering is pending."
-  (with-lock-held ((cl-jobpond::job--lock job))
-    (unless (task-job--terminal-admission-reason-locked job)
-      (with-lock-held ((task-job-steering-lock job))
-        (cond
-          ((task-job-steering-closed-p job)
-           t)
-          ((task-job--steering-pending-p job)
-           nil)
-          (t
-           (setf (task-job-steering-closed-p job) t)
-           t))))))
+  (cl-jobpond:job-call-with-admission
+   job
+   (lambda ()
+     (with-lock-held ((task-job-steering-lock job))
+       (cond
+         ((task-job-steering-closed-p job)
+          t)
+         ((task-job--steering-pending-p job)
+          nil)
+         (t
+          (setf (task-job-steering-closed-p job) t)
+          t))))))
 
 (-> task-job--call-with-yield-claim
     (task-job function)
     (values boolean keyword))
 (defun task-job--call-with-yield-claim (job function)
   "Call FUNCTION under JOB's terminal-yield claim, or return its rejection reason."
-  (with-lock-held ((cl-jobpond::job--lock job))
-    (let ((reason (task-job--terminal-admission-reason-locked job)))
-      (if reason
-          (values nil reason)
-          (with-lock-held ((task-job-steering-lock job))
-            (cond
-              ((task-job-steering-closed-p job)
-               (values nil ':closed))
-              ((task-job--steering-pending-p job)
-               (values nil ':steering-pending))
-              (t
-               (setf (task-job-steering-closed-p job) t)
-               (funcall function)
-               (values t ':accepted))))))))
+  (cl-jobpond:job-call-with-admission
+   job
+   (lambda ()
+     (with-lock-held ((task-job-steering-lock job))
+       (cond
+         ((task-job-steering-closed-p job)
+          (values nil ':closed))
+         ((task-job--steering-pending-p job)
+          (values nil ':steering-pending))
+         (t
+          (setf (task-job-steering-closed-p job) t)
+          (funcall function)
+          (values t ':accepted)))))))
 
 (defclass task-child-agent (agent)
   ((definition :initarg :definition :reader task-child-agent-definition
