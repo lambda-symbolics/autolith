@@ -166,51 +166,72 @@
 (defparameter *application-client-job-structured-limit* 200
   "Maximum ACP updates returned by one structured job transcript request.")
 
+(-> application-client--transcript-page
+    ((option pathname) &key (:offset integer) (:limit integer) (:mapper function) (:collector function))
+    (values integer integer integer))
+(defun application-client--transcript-page (path &key offset limit mapper collector)
+  "Count semantic extents while projecting only the requested page.
+
+MAPPER receives the header-only conversation and an emitter taking an extent and
+lazy producer. COLLECTOR receives that producer and relative overlap bounds;
+returning NIL stops projection but not counting. Return total, start and next."
+  (let ((total 0) (next offset) (collect-p t))
+    (when path
+      (funcall mapper (conversation-replay-load-identity (conversation-storage-identity-pathname path))
+               (lambda (extent producer)
+                 (let* ((end   (+ total extent))
+                        (first (max total offset))
+                        (last  (min end (+ offset limit))))
+                   (when (and collect-p (< first last))
+                     (if (funcall collector producer (- first total) (- last total))
+                         (setf next last)
+                         (setf collect-p nil)))
+                   (setf total end)))))
+    (values total (min offset total) (min next total))))
+
 (-> application-client--job-window (application t &key (:offset integer) (:limit integer)) hash-table)
 (defun application-client--job-window (application job &key offset limit)
   "Render readable records while retaining only the requested character range."
   (let ((path   (application-client--job-transcript-path application job))
-        (total  0)
         (stream (make-string-output-stream)))
-    (labels ((emit (text)
-               "Count TEXT and retain its overlap with the requested range."
-               (when (stringp text)
-                 (let* ((end   (+ total (length text)))
-                        (first (max total offset))
-                        (last  (min end (+ offset limit))))
-                   (when (< first last)
-                     (write-string text stream :start (- first total) :end (- last total)))
-                   (setf total end))))
+    (labels ((map-text (conversation emit)
+               "Emit readable spans with character extents."
+               (labels ((text (value)
+                          (when (stringp value)
+                            (funcall emit (length value) (lambda () value))))
 
-             (line (label text)
-               "Emit one labeled transcript entry without concatenating its body."
-               (when text
-                 (emit label) (emit text) (emit (string #\Newline)))))
-      (when path
-        (conversation-replay--map-records
-         (conversation-load path)
-         (lambda (record)
-           (let ((fields (rest record)))
-             (case (first record)
-               (:message
-                (line (if (eq (getf fields :role) ':user) "User: " "Assistant: ")
-                      (getf fields :content)))
-               (:provider-item
-                (let ((item (json-decode (getf fields :wire-json))))
-                  (cond ((equal (json-get item "type") "message")
-                         (line "Assistant: " (response-item-assistant-text item)))
-                        ((equal (json-get item "type") "reasoning")
-                         (line "Thought: " (response-item-reasoning-summary item)))
-                        ((equal (json-get item "type") "function_call")
-                         (line "Tool: " (function-call-canonical-name item))
-                         (line "Arguments: " (json-get item "arguments"))))))
-               (:tool-result
-                (line "Result: " (getf fields :output)))))))))
-    (let* ((content (get-output-stream-string stream))
-           (start   (min offset total))
-           (next    (+ start (length content))))
-      (agentcomms:json-object "content" content "offset" start "nextOffset" next
-                              "total" total "complete" (if (= next total) t (argo:json-false))))))
+                        (line (label value)
+                          "Emit one labeled entry without concatenating its body."
+                          (when value
+                            (text label) (text value) (text (string #\Newline)))))
+                 (conversation-replay--map-records
+                  conversation
+                  (lambda (record)
+                    (let ((fields (rest record)))
+                      (case (first record)
+                        (:message
+                         (line (if (eq (getf fields :role) ':user) "User: " "Assistant: ")
+                               (getf fields :content)))
+                        (:provider-item
+                         (let ((item (json-decode (getf fields :wire-json))))
+                           (cond ((equal (json-get item "type") "message")
+                                  (line "Assistant: " (response-item-assistant-text item)))
+                                 ((equal (json-get item "type") "reasoning")
+                                  (line "Thought: " (response-item-reasoning-summary item)))
+                                 ((equal (json-get item "type") "function_call")
+                                  (line "Tool: " (function-call-canonical-name item))
+                                  (line "Arguments: " (json-get item "arguments"))))))
+                        (:tool-result
+                         (line "Result: " (getf fields :output))))))))))
+      (multiple-value-bind (total start next)
+          (application-client--transcript-page
+           path :offset offset :limit limit :mapper #'map-text
+           :collector (lambda (producer first last)
+                        (write-string (funcall producer) stream :start first :end last)
+                        t))
+        (agentcomms:json-object
+         "content" (get-output-stream-string stream) "offset" start "nextOffset" next
+         "total" total "complete" (if (= next total) t (argo:json-false)))))))
 
 (-> application-client-job-transcript (application hash-table) hash-table)
 (defun application-client-job-transcript (application params)

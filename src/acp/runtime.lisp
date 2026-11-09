@@ -85,56 +85,68 @@ subsequent events after its bounded history snapshot."
   (let ((session (acp-service--open-session service :cwd cwd :mcp-servers mcp-servers)))
     (values (channel-subscription-identifier session) (acp-service--modes session))))
 
-(-> acp-replay--record-update (list integer) (option hash-table))
-(defun acp-replay--record-update (record turn-sequence)
-  "Project one durable record into the canonical ACP transcript update."
+(-> acp-replay--record-producer (list integer) (option function))
+(defun acp-replay--record-producer (record turn-sequence)
+  "Classify RECORD, returning a lazy constructor for its canonical ACP update."
   (let ((fields (rest record)))
     (case (first record)
       (:message
        (unless (getf fields :automatic-p)
-         (funcall (if (eq (getf fields :role) ':user)
-                      #'agentcomms:acp-update-user-message
-                      #'agentcomms:acp-update-agent-message)
-                  (agentcomms:acp-text-content (getf fields :content)))))
+         (lambda ()
+           (funcall (if (eq (getf fields :role) ':user)
+                        #'agentcomms:acp-update-user-message
+                        #'agentcomms:acp-update-agent-message)
+                    (agentcomms:acp-text-content (getf fields :content))))))
       (:side-status
-       (agentcomms:acp-update-agent-message
-        (agentcomms:acp-text-content
-         (format nil "~{~A~}" (mapcar #'terminal-span-text (getf fields :spans))))))
+       (lambda ()
+         (agentcomms:acp-update-agent-message
+          (agentcomms:acp-text-content
+           (format nil "~{~A~}" (mapcar #'terminal-span-text (getf fields :spans)))))))
       (:provider-item
        (let* ((item (json-decode (getf fields :wire-json)))
               (type (json-get item "type")))
          (cond
-           ((equal type "message")
-            (let ((text (response-item-assistant-text item)))
+           ((member type '("message" "reasoning") :test #'equal)
+            (let ((text (if (equal type "message")
+                            (response-item-assistant-text item)
+                            (response-item-reasoning-summary item))))
               (when text
-                (agentcomms:acp-update-agent-message (agentcomms:acp-text-content text)))))
-           ((equal type "reasoning")
-            (let ((text (response-item-reasoning-summary item)))
-              (when text
-                (agentcomms:acp-update-agent-thought (agentcomms:acp-text-content text)))))
+                (lambda ()
+                  (funcall (if (equal type "message")
+                               #'agentcomms:acp-update-agent-message
+                               #'agentcomms:acp-update-agent-thought)
+                           (agentcomms:acp-text-content text))))))
            ((equal type "function_call")
-            (let ((name      (function-call-canonical-name item))
-                  (arguments (json-decode (json-get item "arguments"))))
-              (agentcomms:acp-update-tool-call
-               (agentcomms:acp-tool-call
-                (acp-tool-identifier turn-sequence (json-get item "call_id"))
-                (acp-tool-title name arguments)
-                :name name :kind (acp-tool-kind name) :status ':pending
-                :raw-input arguments)))))))
+            (lambda ()
+              (let ((name      (function-call-canonical-name item))
+                    (arguments (json-decode (json-get item "arguments"))))
+                (agentcomms:acp-update-tool-call
+                 (agentcomms:acp-tool-call
+                  (acp-tool-identifier turn-sequence (json-get item "call_id"))
+                  (acp-tool-title name arguments)
+                  :name name :kind (acp-tool-kind name) :status ':pending
+                  :raw-input arguments))))))))
       (:tool-result
-       (let ((output (getf fields :output)))
-         (agentcomms:acp-update-tool-call-progress
-          (agentcomms:acp-tool-call-update
-           (acp-tool-identifier turn-sequence (getf fields :call-id))
-           :status     (if (member (getf fields :status) '(:ok :success)) ':completed ':failed)
-           :raw-output output
-           :content    (list (agentcomms:acp-tool-call-content
-                              (agentcomms:acp-text-content output))))))))))
+       (lambda ()
+         (let ((output (getf fields :output)))
+           (agentcomms:acp-update-tool-call-progress
+            (agentcomms:acp-tool-call-update
+             (acp-tool-identifier turn-sequence (getf fields :call-id))
+             :status     (if (member (getf fields :status) '(:ok :success)) ':completed ':failed)
+             :raw-output output
+             :content    (list (agentcomms:acp-tool-call-content
+                                (agentcomms:acp-text-content output)))))))))))
 
-(-> acp-replay-map-updates
+(-> acp-replay--record-update (list integer) (option hash-table))
+(defun acp-replay--record-update (record turn-sequence)
+  "Project one durable record into the canonical ACP transcript update."
+  (let ((producer (acp-replay--record-producer record turn-sequence)))
+    (when producer (funcall producer))))
+
+(-> acp-replay--map-records
     (conversation function &key (:through-sequence (option integer))) (values null integer))
-(defun acp-replay-map-updates (conversation function &key through-sequence)
-  "Call FUNCTION on updates through the durable watermark and return NIL and the last turn sequence."
+(defun acp-replay--map-records (conversation function &key through-sequence)
+  "Call FUNCTION on records and their turn sequences; return NIL and the last turn."
   (let ((turn-sequence 0))
     (conversation-replay--map-records
      conversation
@@ -143,9 +155,19 @@ subsequent events after its bounded history snapshot."
          (when (and (eq (first record) ':message)
                     (eq (getf (rest record) :role) ':user))
            (setf turn-sequence (getf (rest record) :seq)))
-         (let ((update (acp-replay--record-update record turn-sequence)))
-           (when update (funcall function update))))))
+         (funcall function record turn-sequence))))
     (values nil turn-sequence)))
+
+(-> acp-replay-map-updates
+    (conversation function &key (:through-sequence (option integer))) (values null integer))
+(defun acp-replay-map-updates (conversation function &key through-sequence)
+  "Call FUNCTION on updates through the durable watermark and return NIL and the last turn sequence."
+  (acp-replay--map-records
+   conversation
+   (lambda (record turn-sequence)
+     (let ((update (acp-replay--record-update record turn-sequence)))
+       (when update (funcall function update))))
+   :through-sequence through-sequence))
 
 (-> acp-session-replay (acp-session &key (:through-sequence (option integer))) null)
 (defun acp-session-replay (session &key through-sequence)

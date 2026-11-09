@@ -1985,6 +1985,7 @@
   test-acp-extension-conversations-invalid-bounds
   test-acp-extension-job-foreign-rejection
   test-acp-extension-job-transcript-window
+  test-acp-extension-job-transcript-streaming
   test-acp-extension-job-steer-and-cancel-authority
   test-acp-extension-job-durable-fallback
   test-acp-extension-resource-windows
