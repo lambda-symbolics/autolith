@@ -472,76 +472,13 @@ under the progress lock before releasing it to other threads."
 
 (-> task-progress--usage-summary (t) list)
 (defun task-progress--usage-summary (usage)
-  "Project numeric token counters without traversing provider attribution.
-
-Inspect at most 64 fields per object. The fixed schema bounds nesting and
-retained fields, including when reading progress kept by an older image."
-  (labels ((field (object name)
-             "Read NAME from a JSON object or bounded portable association list."
-             (if (json-object-p object)
-                 (json-get object name)
-                 (loop for tail = object then (rest tail)
-                       for entry = (and (consp tail) (first tail))
-                       repeat 64
-                       while (consp tail)
-                       when (and (consp entry)
-                                 (equal name (first entry))
-                                 (consp (rest entry))
-                                 (null (nthcdr 2 entry)))
-                         return (second entry))))
-
-           (project (object schema)
-             "Copy only SCHEMA's numeric leaves from OBJECT."
-             (loop for (name . nested) in schema
-                   for value = (field object name)
-                   for retained = (if nested
-                                      (project value nested)
-                                      (and (typep value '(integer 0)) value))
-                   when retained
-                     collect (list (copy-seq name) retained))))
-    (project usage
-             '(("input_tokens")
-               ("output_tokens")
-               ("total_tokens")
-               ("cached_input_tokens")
-               ("cache_creation_input_tokens")
-               ("reasoning_tokens")
-               ("prompt_tokens")
-               ("completion_tokens")
-               ("cache_read_input_tokens")
-               ("prompt_cache_hit_tokens")
-               ("prompt_cache_miss_tokens")
-               ("input_tokens_details" ("cached_tokens") ("cache_write_tokens")
-                                       ("audio_tokens") ("text_tokens") ("image_tokens"))
-               ("prompt_tokens_details" ("cached_tokens") ("cache_write_tokens")
-                                        ("audio_tokens") ("text_tokens") ("image_tokens"))
-               ("output_tokens_details" ("reasoning_tokens") ("audio_tokens")
-                                        ("accepted_prediction_tokens")
-                                        ("rejected_prediction_tokens") ("text_tokens"))
-               ("completion_tokens_details" ("reasoning_tokens") ("audio_tokens")
-                                            ("accepted_prediction_tokens")
-                                            ("rejected_prediction_tokens") ("text_tokens"))
-               ("cache_creation" ("ephemeral_5m_input_tokens")
-                                 ("ephemeral_1h_input_tokens"))))))
+  "Return a detached bounded provider-counter snapshot of USAGE."
+  (cl-llm-provider-api:provider-usage-snapshot usage))
 
 (-> task-progress--merge-usage (t t) list)
 (defun task-progress--merge-usage (aggregate usage)
-  "Sum bounded numeric USAGE counters into a fresh projection of AGGREGATE."
-  (labels ((merge-counters (left right)
-             "Merge already projected counter objects without retaining metadata."
-             (dolist (entry right left)
-               (let* ((name     (first entry))
-                      (value    (second entry))
-                      (existing (assoc name left :test #'string=)))
-                 (if existing
-                     (setf (second existing)
-                           (let ((old-value (second existing)))
-                             (if (and (integerp old-value) (integerp value))
-                                 (+ old-value value)
-                                 (merge-counters old-value value))))
-                     (setf left (append left (list entry))))))))
-    (merge-counters (task-progress--usage-summary aggregate)
-                    (task-progress--usage-summary usage))))
+  "Sum one provider observation into a detached counter aggregate."
+  (cl-llm-provider-api:provider-usage-merge aggregate usage))
 
 (-> task-progress--event-usage (t) list)
 (defun task-progress--event-usage (usage)
