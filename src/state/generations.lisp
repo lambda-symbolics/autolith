@@ -492,7 +492,7 @@ persisted identity, in this process."
 
 (-> checkpoint--call-with-fork-guard (t function) t)
 (defun checkpoint--call-with-fork-guard (worker thunk)
-  "Call THUNK exclusively and detach inherited WORKER state in its forked child."
+  "Call THUNK exclusively and detach inherited runtime state in its forked child."
   (telemetry-call-with-quiescence
    (lambda ()
      (let ((parent-pid (checkpoint--process-identifier)))
@@ -501,6 +501,8 @@ persisted identity, in this process."
           (with-live-mutation
             (multiple-value-prog1 (funcall thunk)
               (unless (= parent-pid (checkpoint--process-identifier))
+                ;; The coordinator must stay thread-free until it forks the saver.
+                (telemetry-detach)
                 (checkpoint--detach-worker worker))))))))))
 
 (-> checkpoint--prepare-saver (t t) null)

@@ -657,6 +657,7 @@
          (guard
            (sbcl-generations::checkpoint-backend-fork-guard-function backend))
          (process-identifiers nil)
+         (telemetry-active-p  t)
          (events              nil))
     (unwind-protect
          (progn
@@ -667,11 +668,25 @@
                     (detach-worker (detached-worker)
                       "Record inherited worker detachment."
                       (push (list ':detach detached-worker) events)
-                      nil))
+                      nil)
+
+                    (detach-telemetry ()
+                      "Detach the simulated inherited telemetry controller."
+                      (setf telemetry-active-p nil)
+                      (push ':telemetry-detach events)
+                      nil)
+
+                    (call-quiesced (function)
+                      "Resume telemetry only when its controller is still attached."
+                      (unwind-protect (funcall function)
+                        (when telemetry-active-p
+                          (push ':telemetry-resume events)))))
              (setf process-identifiers '(100 101))
              (test-call-with-function-replacements
               (list (list 'checkpoint--process-identifier #'process-identifier)
-                    (list 'checkpoint--detach-worker #'detach-worker))
+                    (list 'checkpoint--detach-worker #'detach-worker)
+                    (list 'telemetry-detach #'detach-telemetry)
+                    (list 'telemetry-call-with-quiescence #'call-quiesced))
               (lambda ()
                 (test-assert
                  (eq (funcall guard
@@ -681,19 +696,24 @@
                      ':complete)
                  "the checkpoint fork guard preserves its thunk result")))
              (test-assert
-              (equal (reverse events)
-                     (list ':thunk (list ':detach worker)))
-              "the forked coordinator detaches worker state after the guarded fork")
+              (and (not telemetry-active-p)
+                   (equal (reverse events)
+                          (list ':thunk ':telemetry-detach (list ':detach worker))))
+              "the coordinator detaches inherited state without resuming telemetry")
              (setf process-identifiers '(100 100)
+                   telemetry-active-p t
                    events nil)
              (test-call-with-function-replacements
               (list (list 'checkpoint--process-identifier #'process-identifier)
-                    (list 'checkpoint--detach-worker #'detach-worker))
+                    (list 'checkpoint--detach-worker #'detach-worker)
+                    (list 'telemetry-detach #'detach-telemetry)
+                    (list 'telemetry-call-with-quiescence #'call-quiesced))
               (lambda ()
                 (funcall guard (lambda () (push ':thunk events)))))
              (test-assert
-              (equal events '(:thunk))
-              "the live parent keeps ownership of its worker state"))
+              (and telemetry-active-p
+                   (equal (reverse events) '(:thunk :telemetry-resume)))
+              "the live parent retains its state and resumes telemetry"))
            (let ((*credentials-in-request-scope* (list "test credential"))
                  (*active-secret-use-count*      2)
                  (*secret-use-depth*             2)
