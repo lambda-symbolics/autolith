@@ -111,6 +111,7 @@
            (conversation-append-user-message conversation needle)
           (dotimes (turn 2)
             (when (plusp turn)
+              (conversation-append-summary conversation "Continue in a new segment.")
               (conversation-append-user-message conversation "automatic continuation" :automatic-p t))
             (conversation-append-record
              conversation
@@ -179,6 +180,22 @@
                 (updates   (agentcomms:json-get whole "updates"))
                 (collected nil)
                 (offset    0))
+            (let ((replayed  nil)
+                  (calls     0)
+                  (projector (symbol-function 'acp-replay--record-update)))
+              (test-call-with-function-replacements
+               (list (list 'acp-replay--record-update
+                           (lambda (record turn-sequence)
+                             (incf calls)
+                             (funcall projector record turn-sequence))))
+               (lambda ()
+                 (acp-replay-map-updates
+                  (conversation-replay-load-identity (conversation-pathname conversation))
+                  (lambda (update) (push update replayed)))))
+              (test-assert (and (plusp calls)
+                                (string= (json-encode updates)
+                                         (json-encode (coerce (nreverse replayed) 'vector))))
+                           "replay resolves the current named projector and matches the segmented query"))
            (loop
              (let* ((response (agentcomms:client-agent-request
                                client "_autolith/job-transcript"
@@ -213,6 +230,18 @@
              (test-assert (and (equal "done" (gethash "rawOutput" result))
                                (plusp (length (gethash "content" result))))
                           "structured tool results include their visible output"))
+           (let* ((prefix (application-client-job-transcript
+                           application (agentcomms:json-object "jobId" (job-identifier job)
+                                                              "output" "structured" "limit" 5)))
+                  (*application-client-job-structured-response-limit*
+                    (length (utf8-string-to-octets
+                             (json-encode (acp-extension-result ':ok :value prefix))))))
+             (let ((page (application-client-job-transcript
+                          application (agentcomms:json-object "jobId" (job-identifier job)
+                                                             "output" "structured" "limit" 20))))
+               (test-assert (and (= 5 (length (gethash "updates" page)))
+                                 (= 5 (gethash "nextOffset" page)))
+                            "byte admission stops before a giant update rather than skipping to later small updates")))
            (let ((*application-client-job-structured-response-limit* 512))
              (test-assert
               (handler-case
@@ -245,6 +274,125 @@
              (agentcomms:acp-error () (setf invalid t)))
            (test-assert invalid "negative structured offsets are rejected"))
         nil)))))
+
+(-> test-acp-extension-job-transcript-streaming () null)
+(defun test-acp-extension-job-transcript-streaming ()
+  "Bound actual ACP construction independently of transcript size and preserve wire admission."
+  (with-test-configuration (configuration root)
+    (acp-session-test--call-with-client
+     configuration
+     (lambda (service client)
+       (let* ((session-id   (agentcomms:client-new-session client (namestring root)))
+              (application  (acp-session-test--application (acp-service--session service session-id)))
+              (orchestrator (application--task-orchestrator application))
+              (job          (task-tests--register-job orchestrator (application-agent application)
+                                                      (acp-extension-job-tests--definition)
+                                                      :name "streaming"))
+              (conversation (agent-conversation (task-tests--child-viewer configuration job)))
+              (body         (format nil "λ\"\\~%"))
+              (constructed  0)
+              (constructor  (symbol-function 'agentcomms:acp-text-content)))
+         (labels ((query (output offset limit)
+                    "Read the owned transcript through its public endpoint."
+                    (application-client-job-transcript
+                     application (agentcomms:json-object "jobId" (job-identifier job)
+                                                        "output" output "offset" offset "limit" limit)))
+
+                  (wire-size (page)
+                    "Measure the complete typed success response."
+                    (length (utf8-string-to-octets
+                             (json-encode (acp-extension-result ':ok :value page))))))
+           (test-call-with-function-replacements
+            (list (list 'conversation-load
+                        (lambda (&rest arguments)
+                          (declare (ignore arguments))
+                          (error "Transcript queries must not reconstruct conversation state.")))
+                  (list 'agentcomms:acp-text-content
+                        (lambda (&rest arguments)
+                          (incf constructed)
+                          (apply constructor arguments))))
+            (lambda ()
+              (dolist (output '("text" "structured"))
+                (let ((empty (query output 100 2)))
+                  (test-assert (and (= 0 (gethash "total" empty))
+                                    (= 0 (gethash "offset" empty))
+                                    (eq t (gethash "complete" empty)))
+                               "missing transcript clamps an off-end cursor")))
+              (conversation-append-record conversation (list :provider :metadata nil))
+              (task-tests--publish-terminal
+               job :completed (acp-extension-job-tests--result job (conversation-pathname conversation)))
+              (dolist (output '("text" "structured"))
+                (let ((empty (query output 100 2)))
+                  (test-assert (and (= 0 (gethash "total" empty))
+                                    (= 0 (gethash "offset" empty))
+                                    (eq t (gethash "complete" empty)))
+                               "empty durable transcript clamps an off-end cursor")))
+              (dolist (count '(20 180))
+                (dotimes (index count)
+                  (conversation-append-user-message conversation body))
+                (let* ((total (if (= count 20) 20 200))
+                       (late  (- total 2)))
+                  (setf constructed 0)
+                  (let ((page (query "structured" late 1)))
+                    (test-assert (and (= 1 constructed) (= total (gethash "total" page))
+                                      (= (1+ late) (gethash "nextOffset" page))
+                                      (= 1 (length (gethash "updates" page))))
+                                 "late logical offsets skip projection and count every update"))
+                  (setf constructed 0)
+                  (let ((page (query "structured" (+ total 10) 2)))
+                    (test-assert (and (zerop constructed) (= total (gethash "offset" page))
+                                      (eq t (gethash "complete" page))
+                                      (eq ':null (gethash "nextOffset" page)))
+                                 "off-end structured pages construct nothing"))
+                  (let* ((text-total (* total (+ 7 (length body))))
+                         (page       (query "text" (- text-total 3) 2)))
+                    (test-assert (and (= text-total (gethash "total" page))
+                                      (= 2 (length (gethash "content" page)))
+                                      (= (1- text-total) (gethash "nextOffset" page)))
+                                 "text offsets count characters rather than encoded bytes")
+                    (let ((empty (query "text" (+ text-total 10) 2)))
+                      (test-assert (and (= text-total (gethash "offset" empty))
+                                        (= text-total (gethash "nextOffset" empty))
+                                        (zerop (length (gethash "content" empty)))
+                                        (eq t (gethash "complete" empty)))
+                                   "off-end text pages clamp to the exact character total")))
+                  (dolist (offset (list 0 (1- total)))
+                    (let* ((one                                                (query "structured" offset 1))
+                           (*application-client-job-structured-response-limit* (wire-size one)))
+                      (setf constructed 0)
+                      (let ((page (query "structured" offset 200)))
+                        (test-assert (and (= 1 (length (gethash "updates" page)))
+                                          (= total (gethash "total" page))
+                                          (eq (gethash "complete" one) (gethash "complete" page))
+                                          (eql (gethash "nextOffset" one) (gethash "nextOffset" page))
+                                          (= (wire-size page) *application-client-job-structured-response-limit*)
+                                          (< constructed 10))
+                                     "terminal and nonterminal escaped multibyte pages admit the exact envelope bound"))
+                      (decf *application-client-job-structured-response-limit*)
+                      (test-assert
+                       (handler-case (progn (query "structured" offset 200) nil)
+                         (agentcomms:acp-error () t))
+                       "one byte below either exact envelope rejects the first update")))))
+              (let ((*application-client-job-structured-response-limit* 1))
+                (setf constructed 0)
+                (test-assert
+                 (handler-case (progn (query "structured" 0 200) nil)
+                   (agentcomms:acp-error () t))
+                 "a failing array lower bound retains the original oversized-first rejection")
+                (test-assert (= 1 constructed) "lower-bound failure stops constructors immediately"))
+              ;; Replay accepts durable sequence gaps and ignores an incomplete last form.
+              (with-open-file (stream (conversation-log-pathname conversation)
+                                      :direction ':output :if-exists ':append)
+                (let ((*print-readably* t))
+                  (print (list :message :seq (+ 10 (conversation-next-sequence conversation))
+                               :role ':user :content "gap") stream))
+                (write-string "(" stream))
+              (let ((page (query "structured" 200 5)))
+                (test-assert (and (= 201 (gethash "total" page))
+                                  (= 1 (length (gethash "updates" page)))
+                                  (eq t (gethash "complete" page)))
+                             "gap-tolerant streaming ignores a torn final form")))))))))
+  nil)
 
 (-> test-acp-extension-job-steer-and-cancel-authority () null)
 (defun test-acp-extension-job-steer-and-cancel-authority ()
