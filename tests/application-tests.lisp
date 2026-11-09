@@ -8028,7 +8028,9 @@
                              (item      (first (task-normalize-arguments
                                                 arguments :definitions definitions)))
                              (call      (json-object
-                                         "type" "function_call" "namespace" "task" "name" "run"
+                                         "type" "function_call"
+                                         "namespace" (tool-namespace run-tool)
+                                         "name" (tool-name run-tool)
                                          "arguments" (json-encode arguments))))
                         (test-assert (eq mode (getf item :mode))
                                      "normalized requests include effective role blocking")
@@ -8056,8 +8058,10 @@
                                    (json-object "tasks"
                                                 (vector (json-object "task" "Invalid item policy"
                                                                      "completion-policy" "invalid")))))
-                      (let ((call (json-object "type" "function_call" "namespace" "task"
-                                               "name" "run" "arguments" (json-encode arguments))))
+                      (let ((call (json-object "type" "function_call"
+                                               "namespace" (tool-namespace run-tool)
+                                               "name" (tool-name run-tool)
+                                               "arguments" (json-encode arguments))))
                         (dolist (restored-call (list call (json-decode (json-encode call))))
                           (test-assert
                            (search "invalid task request"
