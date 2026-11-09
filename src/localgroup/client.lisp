@@ -473,7 +473,7 @@ HEADER-P renders field labels rather than status values."
      stream
      (if (eq operation ':stop)
          (list (terminal-span ':dim "· ")
-               (terminal-span ':plain "the world server stops, with every channel it hosts"))
+               (terminal-span ':plain "stopping all channels and terminating the world server"))
          (list (terminal-span ':dim "· ")
                (terminal-span ':plain "channel ")
                (terminal-span ':code channel)
