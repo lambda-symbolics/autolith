@@ -319,15 +319,52 @@
 
 (-> test-bounded-string-limit () null)
 (defun test-bounded-string-limit ()
-  "Test a truncated string stays within its limit, its notice included, and says what it left out."
-  (loop for (limit uri) in '((100 nil) (100 "conversation:current") (40 nil))
-        for text = (bounded-string (make-string 5000 :initial-element #\x)
-                                   :limit                 limit
-                                   :overflow-uri-function (and uri (constantly uri)))
-        do (test-assert (and (<= (length text) limit)
-                             (search "characters omitted" text)
-                             (or (null uri) (search uri text)))
-                        (format nil "a ~D-character limit holds with~:[out~;~] an overflow URI" limit uri)))
+  "Test bounded prefixes, notice capacity, omission counts and invalid limits."
+  (dolist (source (mapcar (lambda (size) (make-string size :initial-element #\x))
+                          '(1000 5000)))
+    (dolist (uri (list nil "conversation:current" (make-string 200 :initial-element #\u)))
+      (let ((notice-size (length (bounded-string--notice (length source) uri))))
+        (dolist (limit (list 0 1 40 100 (1- notice-size) notice-size (1+ notice-size)))
+          (let* ((saved nil)
+                 (text  (bounded-string source
+                                        :limit limit
+                                        :overflow-uri-function
+                                        (lambda (complete)
+                                          (setf saved complete)
+                                          uri))))
+            (multiple-value-bind (kept notice)
+                (bounded-string-prefix-length (length source) :limit limit :uri uri)
+              (test-assert
+               (and (eq saved source)
+                    (<= (length text) limit)
+                    (string= text (concatenate 'string (subseq source 0 kept) notice))
+                    (eq (not (null notice)) (<= notice-size limit))
+                    (if notice
+                        (and (search (format nil "~:D" (- (length source) kept)) notice)
+                             (or (null uri) (search uri notice)))
+                        (string= text (subseq source 0 limit))))
+               (format nil "a ~D-character limit retains a fitting prefix and optional notice" limit))))))))
+  (dolist (example '(("" 0) ("abc" 3) ("abc" 4)))
+    (destructuring-bind (source limit) example
+      (multiple-value-bind (kept notice)
+          (bounded-string-prefix-length (length source) :limit limit)
+        (test-assert
+         (and (= kept (length source))
+              (null notice)
+              (eq source (bounded-string source
+                                         :limit limit
+                                         :overflow-uri-function
+                                         (lambda (text)
+                                           (declare (ignore text))
+                                           (error "Unexpected overflow.")))))
+         "fitting text needs no overflow storage or notice"))))
+  (dolist (operation (list (lambda () (bounded-string "abc" :limit -1))
+                          (lambda () (bounded-string-prefix-length 3 :limit -1))))
+    (test-assert (handler-case
+                     (progn (funcall operation) nil)
+                   (type-error ()
+                     t))
+                 "negative limits signal a recoverable type error"))
   nil)
 
 (-> test-make-identifier () null)
