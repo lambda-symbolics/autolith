@@ -693,7 +693,7 @@ the root's cache key. Siblings with matching prefixes still share one key."
                (provider-child-reference-history-p provider))
       (conversation-append-inherited-reference
        conversation
-       (conversation-identifier (agent-conversation parent))
+       (session-job-completion-owner-conversation job)
        (task-job-inherited-reference-items job)))))
 
 (-> task-job-note-agent-status (task-job keyword list) null)
@@ -751,7 +751,7 @@ Live executions retain their pool ownership and remain inspectable after return.
                      :prompt-cache-key  (task--child-prompt-cache-key
                                          (task-job-root-conversation-identifier job))
                      :storage-root      (task--artifact-root configuration job)
-                     :parent-identifier (conversation-identifier (agent-conversation parent))
+                     :parent-identifier (session-job-completion-owner-conversation job)
                      :agent-name        (job-name job)
                      :role              (task-agent-definition-name definition))))
               (setf (getf (task-job-execution-metadata job) :conversation-file)
@@ -767,13 +767,14 @@ Live executions retain their pool ownership and remain inspectable after return.
          (provider
           (provider-with-configuration (agent-provider parent) configuration))
          (child
-          (make-instance 'task-child-agent :configuration configuration
+          (agent-create :class          'task-child-agent
+                         :configuration configuration
                          :provider provider :conversation conversation
                          :tool-registry registry :worker worker
-                         :definition                      definition
-                         :identity (task-job-identity job) :depth depth
-                         :completion completion :orchestrator orchestrator :job
-                         job))
+                         :initargs      (list :definition definition
+                                              :identity (task-job-identity job) :depth depth
+                                              :completion completion
+                                              :orchestrator orchestrator :job job)))
          (progress     (task-job-progress job))
          (observer
           (callback-agent-observer-create
@@ -805,6 +806,7 @@ Live executions retain their pool ownership and remain inspectable after return.
            (task-job-command-authorization-function job)
            :tool-authorization-callback
            (task-job-tool-authorization-function job))))
+    (setf (task-job-participant-state job) (agent-participant-state child))
     (mission-context-bind (task-job-mission-context job) configuration)
     (mission-context-bind (task-job-mission-context job) conversation)
     (mission-review-bind-checkpoint (task-job-review-checkpoint job) conversation)
@@ -825,11 +827,16 @@ Live executions retain their pool ownership and remain inspectable after return.
                     :child           child
                     :conversation    conversation
                     :completion      completion)))
-        (task-job-cancel-execution-descendants job ':parent-finished)
+        (unwind-protect
+             (progn
+               (task-job-cancel-execution-descendants job ':parent-finished)
+               (when (participant-state-goal (agent-participant-state child))
+                 (conversation-append-record
+                  conversation (goal->record (participant-state-goal (agent-participant-state child))))))
         ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
-        (ignore-errors (task-completion-release child))
+         (ignore-errors (task-completion-release child))
         ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
-        (ignore-errors (context-forget-conversation (conversation-identifier conversation)))
+         (ignore-errors (context-forget-conversation (conversation-identifier conversation)))
         ; mallet:suppress no-ignore-errors -- best-effort worker shutdown must not mask the child result
-        (ignore-errors (lisp-worker-pool-stop-all worker))
-        (conversation-lease-release lease)))))
+         (ignore-errors (lisp-worker-pool-stop-all worker))
+         (conversation-lease-release lease))))))

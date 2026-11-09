@@ -270,6 +270,7 @@ that a body returned. An artifact that cannot be written downgrades the state to
           (task-job-definition-summary job) definition-summary
           (task-job-definition job) nil
           (task-job-parent-agent job) nil
+          (task-job-participant-state job) nil
           (task-job-inherited-reference-p job) nil
           (task-job-inherited-reference-items job) nil
           (task-job-command-authorization-function job) nil

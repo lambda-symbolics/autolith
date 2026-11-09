@@ -785,3 +785,50 @@
              (test-assert (not (string= key root))
                           "the child cache key never equals the root's own key")))
   nil)
+
+(-> test-task-participant-state () null)
+(defun test-task-participant-state ()
+  "Exercise real task setup through the shared execution factory and goal persistence."
+  (with-test-configuration (configuration)
+    (let* ((definition   (task-agent-definition-create
+                          :name "state" :description "Check participant setup."
+                          :instructions "Yield this assignment." :source ':test))
+           (orchestrator (task-tests--orchestrator))
+           (provider     (make-instance 'task-test-provider :mode ':concurrent))
+           (parent       (agent-create :configuration configuration :provider provider
+                                       :tool-registry (make-instance 'tool-registry)))
+           (job          (task-tests--make-job orchestrator :identifier "participant-task"
+                                              :definition definition :parent-agent parent
+                                              :item                     (list :task "Do the assignment.")))
+           (factory      (fdefinition 'agent-create))
+           (state        nil)
+           (result       nil))
+      (unwind-protect
+           (progn
+             (with-lock-held ((cl-jobpond::job--lock job))
+               (setf (job-state job) ':running))
+             (test-call-with-function-replacements
+              (list (list 'agent-create
+                          (lambda (&rest arguments)
+                            (let ((child (apply factory arguments)))
+                              (when (typep child 'task-child-agent)
+                                (setf state (agent-participant-state child)
+                                      (participant-state-goal state)
+                                      '(:objective "ordinary participant goal" :status :active
+                                        :continuations 0 :created-at 1)))
+                              child))))
+              (lambda () (setf result (task-run-child job))))
+             (test-assert (and (eq (getf result :status) ':success)
+                               (eq state (task-job-participant-state job))
+                               (typep (participant-state-conversation state) 'conversation)
+                               (eq definition (task-job-definition job)))
+                          "pooled task setup shares the factory's actual state, keeping assignment metadata on the job")
+             (test-assert
+              (equal (goal-record->goal
+                      (conversation-latest-goal-record
+                       (conversation-load (conversation-pathname
+                                           (participant-state-conversation state)))))
+                     (participant-state-goal state))
+              "task settlement persists the ordinary participant goal independently of its yield contract"))
+        (lisp-worker-pool-stop-all (agent-worker parent)))))
+  nil)

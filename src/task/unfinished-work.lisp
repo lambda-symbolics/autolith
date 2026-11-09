@@ -204,7 +204,7 @@ available through job.continuity and ordinary job operations. Partial agents
 without a configured conversation return an empty snapshot. This performs no
 completion delivery, recovery, mission mutation or persistence."
   (check-type limit (integer 0))
-  (let* ((conversation (and (slot-boundp agent 'conversation) (agent-conversation agent)))
+  (let* ((conversation (agent-conversation agent))
          (owner        (and conversation (conversation-identifier conversation)))
          (runtime      (task-completion--runtime agent))
          (snapshot     (list :format 1 :owner-conversation owner :total 0 :omitted-count 0 :jobs nil)))
@@ -267,7 +267,7 @@ completion delivery, recovery, mission mutation or persistence."
 (define-context-contributor task-unfinished-work (request)
   "Supply read-only job state at ordinary safe provider request boundaries."
   (when (and (typep *task-unfinished-work-agent* 'agent)
-             (slot-boundp *task-unfinished-work-agent* 'conversation)
+             (agent-conversation *task-unfinished-work-agent*)
              (not (request-context-compaction-p request))
              (equal (conversation-identifier (request-context-conversation request))
                     (conversation-identifier (agent-conversation *task-unfinished-work-agent*))))

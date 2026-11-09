@@ -359,6 +359,11 @@ nesting depth, and lifecycle listeners."))
     :documentation "Compact non-instruction role metadata retained at terminal state.")
    (item :initarg :item :accessor task-job-item :type list :documentation
          "The normalized assignment plist.")
+   (participant-state
+    :initform      nil
+    :accessor      task-job-participant-state
+    :type          (option participant-state)
+    :documentation "The child's live participant, retained through execution settlement.")
    (parent-agent
     :initarg       :parent-agent
     :accessor      task-job-parent-agent

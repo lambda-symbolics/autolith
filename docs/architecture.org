@@ -88,6 +88,24 @@ terminal prompt          local Lisp result       finalized scrollback
 - Local operations that don't conflict with a turn can run immediately
 - Modal, terminal-owning, authorization-gated, and similar actions wait for a safe point
 
+* Participant execution
+
+=participant-state= in =src/agent/runtime.lisp= holds the durable participant
+identity reference, live conversation backing and ordinary goal. The hosted
+application and its agent share this object; a pooled task publishes its agent's
+state on the job until terminal compaction. Task definitions, depth, assignment
+identity and yield contracts belong to the assignment execution.
+
+=src/world/application.lisp= defines execution owners for hosted, pooled and
+stored participants. The world server resolves an owner across its hosts once.
+A move claims and quiesces that owner, exports its context, prepares the
+arrival runtime, stages context and commits the expected residence. Precommit
+failure restores staging and resumes a hosted source. After commitment,
+departure detaches the source and adoption uses the durable arrival stages for
+retry. Hosted handoff transfers the same participant state; park and stored
+arrival release its live backing after serialization. Channel leases, queues,
+attachments and independent child jobs follow their own channel lifetimes.
+
 * Library boundaries
 
 | Library | Generic implementation | Autolith integration |
