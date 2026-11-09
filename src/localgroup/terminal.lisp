@@ -11,13 +11,8 @@
    (screen-frame
     :initform      nil
     :accessor      localgroup-terminal-screen-frame
-    :type          (option vector)
-    :documentation "The rows of the frame last sent, or NIL before the first complete frame.")
-   (screen-width
-    :initform      0
-    :accessor      localgroup-terminal-screen-width
-    :type          (integer 0)
-    :documentation "The width the frame last sent was composed for.")
+    :type          (option clinedi:frame-snapshot)
+    :documentation "The canonical frame snapshot, or NIL before the first complete frame.")
    (screen-cursor
     :initform      (list 0 0 t)
     :accessor      localgroup-terminal-screen-cursor
@@ -106,22 +101,14 @@ own once it reads the request, so the relay keeps serving until then."
            (image-daemon:relay-observers terminal))
    :test #'eq))
 
-(-> localgroup-terminal--frame-rows (vector) list)
-(defun localgroup-terminal--frame-rows (frame)
-  "Return FRAME's non-empty rows as (INDEX ROW) pairs."
-  (loop for row across frame
-        for index from 0
-        unless (zerop (length row))
-          collect (list index row)))
-
 (-> localgroup-terminal--frame-packet (localgroup-terminal list boolean) list)
 (defun localgroup-terminal--frame-packet (terminal rows complete-p)
   "Return the packet carrying ROWS of TERMINAL's screen, complete or as the rows that changed."
   (destructuring-bind (cursor-row cursor-column cursor-visible-p)
       (localgroup-terminal-screen-cursor terminal)
     (list :frame
-          :height           (length (localgroup-terminal-screen-frame terminal))
-          :width            (localgroup-terminal-screen-width terminal)
+          :height           (clinedi:frame-snapshot-height (localgroup-terminal-screen-frame terminal))
+          :width            (clinedi:frame-snapshot-width (localgroup-terminal-screen-frame terminal))
           :complete-p       complete-p
           :rows             rows
           :cursor-row       cursor-row
@@ -161,34 +148,24 @@ own once it reads the request, so the relay keeps serving until then."
   (if (image-daemon:relay-direct-terminal terminal)
       (call-next-method)
       (with-lock-held ((image-daemon:relay-lock terminal))
-        (let* ((height      (max 1 (terminal-rows terminal)))
-               (width       (max 1 (terminal-columns terminal)))
-               (previous    (localgroup-terminal-screen-frame terminal))
-               (frame       (make-array height :initial-element ""))
+        (let* ((frame       (clinedi:make-frame-snapshot rows
+                                                       :height (max 1 (terminal-rows terminal))
+                                                       :width  (max 1 (terminal-columns terminal))))
                (cursor      (list cursor-row cursor-column (not (null cursor-visible-p))))
                (attachments (localgroup-terminal--attachments terminal))
-               (resized-p   (or (null previous)
-                                (/= height (length previous))
-                                (/= width (localgroup-terminal-screen-width terminal))))
                (moved-p     (not (equal cursor (localgroup-terminal-screen-cursor terminal))))
                (whole-p     (not (null whole-screen-p)))
                (hinted-p    (not (eq whole-p (localgroup-terminal-screen-whole-p terminal)))))
-          (loop for row in rows
-                for index from 0 below height
-                do (setf (aref frame index) row))
-          (let ((changed (unless resized-p
-                           (loop for index below height
-                                 unless (string= (aref frame index) (aref previous index))
-                                   collect (list index (aref frame index))))))
+          (multiple-value-bind (changed resized-p)
+              (clinedi:frame-snapshot-delta frame (localgroup-terminal-screen-frame terminal))
             (setf (localgroup-terminal-screen-frame terminal) frame
-                  (localgroup-terminal-screen-width terminal) width
                   (localgroup-terminal-screen-cursor terminal) cursor
                   (localgroup-terminal-screen-whole-p terminal) whole-p
                   (localgroup-terminal-screen-synced terminal)
                   (remove-if-not (lambda (attachment) (member attachment attachments))
                                  (localgroup-terminal-screen-synced terminal)))
             (let ((complete (localgroup-terminal--frame-packet
-                             terminal (localgroup-terminal--frame-rows frame) t))
+                             terminal (if resized-p changed (clinedi:frame-snapshot-delta frame nil)) t))
                   (delta    (localgroup-terminal--frame-packet terminal changed nil)))
               (dolist (attachment attachments)
                 (cond
@@ -219,7 +196,7 @@ own once it reads the request, so the relay keeps serving until then."
                  (not (member attachment (localgroup-terminal-screen-synced terminal))))
         (image-daemon:attachment-send
          attachment
-         (localgroup-terminal--frame-packet terminal (localgroup-terminal--frame-rows frame) t))
+         (localgroup-terminal--frame-packet terminal (clinedi:frame-snapshot-delta frame nil) t))
         (push attachment (localgroup-terminal-screen-synced terminal)))))
   nil)
 

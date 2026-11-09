@@ -199,6 +199,80 @@
       (terminal-stop terminal)))
   nil)
 
+(-> test-localgroup-frame-snapshots () null)
+(defun test-localgroup-frame-snapshots ()
+  "Test relay snapshot ownership, metadata-only packets and complete-frame synchronization."
+  (let* ((terminal   (localgroup-terminal-create :rows 3 :columns 20))
+         (painter    (clinedi:make-frame-painter))
+         (controller (make-instance 'image-daemon:attachment :socket nil
+                                    :stream (make-broadcast-stream) :mode ':control))
+         (observer   (make-instance 'image-daemon:attachment :socket nil
+                                    :stream (make-broadcast-stream) :mode ':read-only))
+         (text       (copy-seq "row")))
+    (labels ((paint (&key (cursor-row 0) whole-screen-p)
+               "Paint the current mutable text and a blank tail."
+               (terminal-screen-paint terminal painter (list text)
+                                      :cursor-row cursor-row :whole-screen-p whole-screen-p))
+
+             (latest (attachment)
+               "Return the last frame queued for ATTACHMENT."
+               (rest (first (last (localgroup-tests--frames attachment))))))
+      (image-daemon:relay-attach terminal controller :rows 3 :columns 20 :styled-p nil
+                                 :session-id "snapshots")
+      (unwind-protect
+           (progn
+             (terminal-screen-enter terminal)
+             (terminal-screen-paint terminal painter (list text "clear"))
+             (setf (char text 0) #\R)
+             (paint)
+             (test-assert (and (not (getf (latest controller) :complete-p))
+                               (equal (getf (latest controller) :rows) '((0 "Row") (1 ""))))
+                          "mutable caller rows cannot alter the relay baseline, and blanking is sent")
+             (let ((count (length (localgroup-tests--frames controller))))
+               (paint)
+               (test-assert (= count (length (localgroup-tests--frames controller)))
+                            "identical rows and metadata do not queue another frame"))
+             (paint :cursor-row 1)
+             (test-assert (and (null (getf (latest controller) :rows))
+                               (= 1 (getf (latest controller) :cursor-row)))
+                          "a cursor-only paint queues a row-free delta")
+             (paint :cursor-row 1 :whole-screen-p t)
+             (test-assert (and (null (getf (latest controller) :rows))
+                               (getf (latest controller) :whole-screen-p))
+                          "a whole-screen hint queues a row-free delta")
+             (image-daemon:relay-attach terminal observer :rows 3 :columns 20 :styled-p nil
+                                        :session-id "snapshots")
+             (let ((count (length (localgroup-tests--frames controller))))
+               (paint :cursor-row 1 :whole-screen-p t)
+               (test-assert (and (= count (length (localgroup-tests--frames controller)))
+                                 (getf (latest observer) :complete-p)
+                                 (equal (getf (latest observer) :rows) '((0 "Row"))))
+                            "an unsynchronized observer receives sparse complete rows without a controller update"))
+             (terminal-set-dimensions terminal 21 :rows 3)
+             (paint :cursor-row 1 :whole-screen-p t)
+             (test-assert (every (lambda (attachment)
+                                   (and (getf (latest attachment) :complete-p)
+                                        (= 21 (getf (latest attachment) :width))))
+                                 (list controller observer))
+                          "a width-only resize sends complete frames to both synchronized attachments"))
+        (terminal-stop terminal))))
+  (let* ((terminal (make-instance 'recording-terminal :columns 21 :rows 3))
+         (screen   (localgroup-screen-create :terminal terminal))
+         (text     (copy-seq "owned")))
+    (unwind-protect
+         (progn
+           (localgroup-screen-handle-packet
+            screen (list :frame :height 3 :width 21 :complete-p t :rows (list (list 0 text))
+                         :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+           (setf (char text 0) #\X
+                 (recording-terminal-chunks terminal) nil)
+           (localgroup-screen-resized screen)
+           (test-assert (some (lambda (chunk) (search "owned" chunk))
+                              (recording-terminal-chunks terminal))
+                        "a forced repaint uses client-owned rows rather than mutated packet strings"))
+      (localgroup-screen-close screen)))
+  nil)
+
 (-> test-localgroup-screen-paints-frames () null)
 (defun test-localgroup-screen-paints-frames ()
   "Test a client painting a session's frames on its own terminal."
