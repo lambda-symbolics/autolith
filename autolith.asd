@@ -93,7 +93,6 @@
                                           (:file "core/conditions")
                                           (:file "core/lists")
                                           (:file "core/portable-values")
-                                          (:file "core/layered-registry")
                                           (:file "core/version")
                                           (:file "localgroup/protocol")
                                           (:file "core/bounded-text")

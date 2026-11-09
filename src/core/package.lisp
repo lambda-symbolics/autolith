@@ -1268,6 +1268,16 @@
                 #:publication-rollback-failed
                 #:publication-rollback-failed-failures)
   (:import-from #:structlisp
+                #:layered-registry-replace
+                #:layered-registry-remove
+                #:layered-registry-remove-source
+                #:layered-registry-effective
+                #:layered-registry-restore-position
+                #:registry-lifecycle
+                #:make-registry-lifecycle
+                #:registry-snapshot
+                #:registry-restore
+                #:registry-remove-source
                 #:bounded-sequence-builder
                 #:bounded-sequence-builder-maximum-count
                 #:bounded-sequence-builder-overflowed-p
