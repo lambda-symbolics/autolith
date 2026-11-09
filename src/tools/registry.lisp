@@ -829,6 +829,40 @@ A missing file's failure also carries its observation for resource.edit."
          :uri       (resource-uri resource)
          :operation ':edit))
 
+(defmethod resource-tool-edit
+    ((resource single-operation-resource) (tool resource-edit-tool)
+     (context tool-context) (arguments hash-table))
+  "Apply one guarded operation and retain its fresh model-facing observation."
+  (declare (ignore tool))
+  (let* ((uri             (tool-argument arguments "uri" :required t))
+         (base-revision   (tool-argument arguments "base-revision" :required t))
+         (operation-array (tool-argument arguments "operations" :required t)))
+    (unless (non-empty-string-p base-revision)
+      (error 'tool-error
+             :message   "Resource edit base-revision must be a non-empty string."
+             :tool-name "resource.edit"))
+    (unless (and (vectorp operation-array) (= (length operation-array) 1))
+      (error 'tool-error
+             :message   (format nil "~A: resources require exactly one operation per resource.edit call."
+                                (single-operation-resource-scheme resource))
+             :tool-name "resource.edit"))
+    (handler-case
+        (multiple-value-bind (observation summary exact-uri)
+            (resource-apply-operations resource context
+                                       :base-revision base-revision
+                                       :operations    (coerce operation-array 'list))
+          (let ((state
+                   (resource-observation-state-ensure
+                    (tool-context-conversation context)
+                    observation)))
+            (tool-success
+             (format nil "~A~@[~%Exact URI: ~A~]~%~A"
+                     summary exact-uri (resource-item-read-result state)))))
+      (resource-revision-stale (condition)
+        (tool-failure
+         (single-operation-resource-stale-message
+          resource condition :uri uri :base-revision base-revision))))))
+
 (-> resource-tool--resolve (resource-tool tool-context json-object) resource)
 (defun resource-tool--resolve (tool context arguments)
   "Resolve TOOL's resource URI, absolute native path, or scheme-less relative path under CONTEXT.

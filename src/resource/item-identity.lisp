@@ -7,6 +7,17 @@
 ;;; exact items. The scheme-independent machinery lives here once; each
 ;;; resource supplies its identity protocol methods and nouns.
 
+(defclass single-operation-resource (resource)
+  ()
+  (:documentation "A resource accepting one revision-gated operation per model edit."))
+
+(defgeneric single-operation-resource-scheme (resource)
+  (:documentation "Return the URI scheme used in RESOURCE's edit diagnostics."))
+
+(defgeneric single-operation-resource-stale-message
+    (resource condition &key uri base-revision)
+  (:documentation "Describe CONDITION for RESOURCE's edit at URI and BASE-REVISION."))
+
 (-> resource-uri-unreserved-octet-p ((unsigned-byte 8)) boolean)
 (defun resource-uri-unreserved-octet-p (octet)
   "Return true when OCTET is an RFC 3986 unreserved ASCII character."

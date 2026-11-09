@@ -40,7 +40,7 @@
 (defvar *papercut-resource-digest-key* (random-data 16)
   "The process-local key identifying exact current-workspace papercut snapshots.")
 
-(defclass papercut-resource (resource)
+(defclass papercut-resource (single-operation-resource)
   ((identifier
     :initarg       :identifier
     :reader        papercut-resource-identifier
@@ -598,37 +598,13 @@
              observation)))
     (tool-success (resource-item-read-result state))))
 
-(defmethod resource-tool-edit
-    ((resource papercut-resource) (tool resource-edit-tool)
-     (context tool-context) (arguments hash-table))
-  "Apply one revision-gated papercut operation and return a fresh exact observation."
-  (declare (ignore tool))
-  (let* ((uri             (tool-argument arguments "uri" :required t))
-         (base-revision   (tool-argument arguments "base-revision" :required t))
-         (operation-array (tool-argument arguments "operations" :required t)))
-    (unless (non-empty-string-p base-revision)
-      (error 'tool-error
-             :message   "Resource edit base-revision must be a non-empty string."
-             :tool-name "resource.edit"))
-    (unless (and (vectorp operation-array) (= (length operation-array) 1))
-      (error 'tool-error
-             :message   "papercut: resources require exactly one operation per resource.edit call."
-             :tool-name "resource.edit"))
-    (handler-case
-        (multiple-value-bind (observation summary exact-uri)
-            (resource-apply-operations resource context
-                                       :base-revision base-revision
-                                       :operations    (coerce operation-array 'list))
-          (let ((state
-                   (resource-observation-state-ensure
-                    (tool-context-conversation context)
-                    observation)))
-            (tool-success
-             (format nil "~A~@[~%Exact URI: ~A~]~%~A"
-                     summary
-                     exact-uri
-                     (resource-item-read-result state)))))
-      (resource-revision-stale ()
-        (tool-failure
-         (format nil "Resource revision ~A is stale, expired, for another papercut URI or workspace, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
-                 base-revision uri))))))
+(defmethod single-operation-resource-scheme ((resource papercut-resource))
+  "Return the papercut URI scheme for edit diagnostics."
+  "papercut")
+
+(defmethod single-operation-resource-stale-message
+    ((resource papercut-resource) (condition resource-revision-stale)
+     &key uri base-revision)
+  "Describe a stale papercut alias, including its workspace confinement."
+  (format nil "Resource revision ~A is stale, expired, for another papercut URI or workspace, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
+          base-revision uri))

@@ -29,7 +29,7 @@
 (defvar *memory-resource-digest-key* (random-data 16)
   "The process-local key identifying exact persistent-memory snapshots.")
 
-(defclass memory-resource (resource)
+(defclass memory-resource (single-operation-resource)
   ((identifier
     :initarg       :identifier
     :reader        memory-resource-identifier
@@ -913,44 +913,19 @@ them, so a replacement that omits them keeps the recorded versions."
                observation)))
       (tool-success (resource-item-read-result state)))))
 
-(defmethod resource-tool-edit
-    ((resource memory-resource) (tool resource-edit-tool)
-     (context tool-context) (arguments hash-table))
-  "Apply one revision-gated memory operation and return a fresh exact observation."
-  (declare (ignore tool))
-  (let* ((uri             (tool-argument arguments "uri" :required t))
-         (base-revision   (tool-argument arguments "base-revision" :required t))
-         (operation-array (tool-argument arguments "operations" :required t)))
-    (unless (non-empty-string-p base-revision)
-      (error 'tool-error
-             :message   "Resource edit base-revision must be a non-empty string."
-             :tool-name "resource.edit"))
-    (unless (and (vectorp operation-array) (= (length operation-array) 1))
-      (error 'tool-error
-             :message   "memory: resources require exactly one operation per resource.edit call."
-             :tool-name "resource.edit"))
-    (handler-case
-        (multiple-value-bind (observation summary exact-uri)
-            (resource-apply-operations resource context
-                                       :base-revision base-revision
-                                       :operations    (coerce operation-array 'list))
-          (let ((state
-                   (resource-observation-state-ensure
-                    (tool-context-conversation context)
-                    observation)))
-            (tool-success
-             (format nil "~A~@[~%Exact URI: ~A~]~%~A"
-                     summary
-                     exact-uri
-                     (resource-item-read-result state)))))
-        (resource-revision-stale (condition)
-          (tool-failure
-           (if (resource-revision-stale-actual-revision condition)
-               (format nil "Resource revision ~A is stale: ~A changed to revision ~A. Reread ~A with resource.read and retry against the returned revision."
-                       base-revision
-                       (resource-revision-stale-uri condition)
-                       (resource-revision-stale-actual-revision condition)
-                       uri)
-               (format nil "Resource revision ~A is stale, expired, for another memory URI, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
-                       base-revision
-                       uri)))))))
+(defmethod single-operation-resource-scheme ((resource memory-resource))
+  "Return the memory URI scheme for edit diagnostics."
+  "memory")
+
+(defmethod single-operation-resource-stale-message
+    ((resource memory-resource) (condition resource-revision-stale)
+     &key uri base-revision)
+  "Distinguish changed memory revisions from unobserved or mismatched aliases."
+  (if (resource-revision-stale-actual-revision condition)
+      (format nil "Resource revision ~A is stale: ~A changed to revision ~A. Reread ~A with resource.read and retry against the returned revision."
+              base-revision
+              (resource-revision-stale-uri condition)
+              (resource-revision-stale-actual-revision condition)
+              uri)
+      (format nil "Resource revision ~A is stale, expired, for another memory URI, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
+              base-revision uri)))
