@@ -613,6 +613,7 @@
   test-cli-model-override-errors
   test-private-startup-replay
   test-user-init
+  test-user-init-registry-lifecycle
   test-user-init-settings
   test-local-source-tree-registration
   test-directory-user-init)

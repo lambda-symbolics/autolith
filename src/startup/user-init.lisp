@@ -11,6 +11,36 @@
 (defvar *user-init-layer* nil
   "The site, directory, or user initialization layer currently being loaded.")
 
+(-> user-init--registry-lifecycle (symbol symbol symbol) registry-lifecycle)
+(defun user-init--registry-lifecycle
+    (snapshot-function restore-function remove-source-function)
+  "Adapt named registry operations, resolving their current definitions on each call."
+  (make-registry-lifecycle
+   :snapshot-function      (lambda () (funcall snapshot-function))
+   :restore-function       (lambda (snapshot) (funcall restore-function snapshot))
+   :remove-source-function (lambda (source) (funcall remove-source-function source))))
+
+(defparameter *extension-registry-lifecycles*
+  (list
+   (user-init--registry-lifecycle
+    'context--registry-snapshot
+    'context--registry-restore
+    'context--remove-registration-source)
+   (user-init--registry-lifecycle
+    'application-command--registry-snapshot
+    'application-command--registry-restore
+    'application-command--remove-registration-source)
+   (user-init--registry-lifecycle
+    'mcp--registry-snapshot
+    'mcp--registry-restore
+    'mcp--remove-registration-source)
+   (user-init--registry-lifecycle
+    'provider--registry-snapshot
+    'provider--registry-restore
+    'provider--remove-registration-source))
+  "Ordered participants in executable initialization's registration transaction.
+Each participant retains its own locks, validation, and derived-state publication.")
+
 (-> user-init--present-entry (pathname keyword string) list)
 (defun user-init--present-entry (pathname layer description)
   "Return one LAYER entry when PATHNAME is a present regular file."
@@ -73,20 +103,16 @@ They execute with the user's full privileges. Registration changes roll back
 after failure, but arbitrary Lisp side effects do not generally have reversible
 semantics."
   (with-extension-registry-transaction
-    (let ((entries                (user-init--entries configuration))
-          (context-registrations  (context--registry-snapshot))
-          (command-registrations  (application-command--registry-snapshot))
-          (mcp-registrations      (mcp--registry-snapshot))
-          (provider-registrations (provider--registry-snapshot))
-          (loaded-pathname        nil)
-          (current-entry          nil))
+    (let* ((entries         (user-init--entries configuration))
+           (registries      (copy-list *extension-registry-lifecycles*))
+           (snapshots       (mapcar #'registry-snapshot registries))
+           (loaded-pathname nil)
+           (current-entry   nil))
       (handler-case
           (progn
             (dolist (source '(:site :user))
-              (context--remove-registration-source source)
-              (application-command--remove-registration-source source)
-              (mcp--remove-registration-source source)
-              (provider--remove-registration-source source))
+              (dolist (registry registries)
+                (registry-remove-source registry source)))
             (dolist (entry entries loaded-pathname)
               (setf current-entry entry)
               (let* ((layer                     (first entry))
@@ -102,10 +128,7 @@ semantics."
                 (load pathname :verbose nil :print nil)
                 (setf loaded-pathname pathname))))
         (serious-condition (cause)
-          (context--registry-restore context-registrations)
-          (application-command--registry-restore command-registrations)
-          (mcp--registry-restore mcp-registrations)
-          (provider--registry-restore provider-registrations)
+          (mapc #'registry-restore registries snapshots)
           (let* ((entry    (or current-entry
                                (first entries)
                                (list ':user

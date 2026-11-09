@@ -166,6 +166,95 @@
                          (first arguments) selection)))))))))
   nil)
 
+(-> test-user-init-registry-lifecycle () null)
+(defun test-user-init-registry-lifecycle ()
+  "Test participant-wide clearing and rollback after loading or clearing fails."
+  (let* ((registry  (first *extension-registry-lifecycles*))
+         (names     '(context--registry-snapshot context--registry-restore
+                      context--remove-registration-source))
+         (originals (mapcar #'symbol-function names))
+         (events    nil))
+    (unwind-protect
+         (progn
+           (mapc (lambda (name callback) (setf (symbol-function name) callback))
+                 names
+                 (list (lambda () (push ':snapshot events) ':current)
+                       (lambda (snapshot) (push (list ':restore snapshot) events))
+                       (lambda (source) (push (list ':remove source) events))))
+           (test-assert (eq (registry-snapshot registry) ':current)
+                        "initialized participants use the current snapshot definition")
+           (registry-remove-source registry ':user)
+           (registry-restore registry ':current)
+           (test-assert
+            (equal (reverse events)
+                   '(:snapshot (:remove :user) (:restore :current)))
+            "initialized participants use current removal and restoration definitions"))
+      (mapc (lambda (name original) (setf (symbol-function name) original))
+            names originals)))
+  (with-test-configuration (configuration)
+    (let* ((states  (make-hash-table))
+           (events  nil)
+           (failure nil)
+           (*extension-registry-lifecycles*
+             (mapcar
+              (lambda (name)
+                (make-registry-lifecycle
+                 :snapshot-function
+                 (lambda ()
+                   (push (list ':snapshot name) events)
+                   (copy-list (gethash name states)))
+                 :restore-function
+                 (lambda (snapshot)
+                   (push (list ':restore name) events)
+                   (setf (gethash name states) (copy-list snapshot)))
+                 :remove-source-function
+                 (lambda (source)
+                   (push (list ':remove name source) events)
+                   (setf (gethash name states)
+                         (remove source (gethash name states)))
+                   (when (and (eq failure ':remove)
+                              (eq name ':second)
+                              (eq source ':user))
+                     (error "broken registry clearing")))))
+              '(:first :second))))
+      (dolist (name '(:first :second))
+        (setf (gethash name states) (list ':runtime ':site ':user)))
+      (test-assert (null (user-init-load configuration))
+                   "empty initialization clears every participant's old layers")
+      (test-assert
+       (every (lambda (name) (equal (gethash name states) '(:runtime)))
+              '(:first :second))
+       "clearing preserves unrelated registration sources")
+      (test-mcp-configuration--write
+       (configuration-user-init-path configuration)
+       "(error \"broken registry initialization\")")
+      (dolist (mode '(:load :remove))
+        (setf failure mode events nil)
+        (dolist (name '(:first :second))
+          (setf (gethash name states) (list ':runtime ':site ':user)))
+        (test-assert
+         (handler-case
+             (progn (user-init-load configuration) nil)
+           (user-init-error (condition)
+             (and (eq (user-init-error-layer condition) ':user)
+                  (equal (user-init-error-pathname condition)
+                         (configuration-user-init-path configuration))
+                  (typep (user-init-error-cause condition) 'simple-error))))
+         "participant and init failures retain the startup error boundary")
+        (test-assert
+         (every (lambda (name)
+                  (equal (gethash name states) '(:runtime :site :user)))
+                '(:first :second))
+         "every participant restores its snapshot after either failure")
+        (test-assert
+         (equal (reverse events)
+                '((:snapshot :first) (:snapshot :second)
+                  (:remove :first :site) (:remove :second :site)
+                  (:remove :first :user) (:remove :second :user)
+                  (:restore :first) (:restore :second)))
+         "snapshot, source clearing, and restoration preserve participant order"))))
+  nil)
+
 (-> test-user-init () null)
 (defun test-user-init ()
   "Test user initialization discovery, package binding, and typed failure."
