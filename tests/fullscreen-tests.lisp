@@ -1160,3 +1160,278 @@
                (conversation-input-items (conversation-load (conversation-pathname conversation))))
          "clearing the display preserves the previous conversation on disk"))))
   nil)
+
+
+;;;; -- Semantic Markdown Reflow --
+
+(-> fullscreen-test--markdown-presentation (application string integer) list)
+(defun fullscreen-test--markdown-presentation (application source sequence)
+  "Build a durable assistant presentation through APPLICATION's normal renderer."
+  (application--record-presentation
+   application
+   (list :provider-item :seq sequence
+         :wire-json     (json-encode (agent-test-message source)))))
+
+(-> fullscreen-test--assert-markdown-replay (fullscreen-terminal-ui integer) null)
+(defun fullscreen-test--assert-markdown-replay (ui width)
+  "Check resident Markdown and its speculative tail against fresh WIDTH rendering."
+  (let* ((viewport (fullscreen-terminal-ui-viewport ui))
+         (chunks   (clinedi::transcript-viewport--chunks viewport)))
+    (loop for chunk across chunks
+          for index from 0
+          for record = (terminal-ui-fullscreen--markdown-record
+                        ui (clinedi::viewport-chunk-tag chunk))
+          when record
+            do (multiple-value-bind (text display regions tail)
+                   (terminal-ui-fullscreen--markdown-content ui record width)
+                 (declare (ignore display regions))
+                 (test-assert
+                  (string= text (clinedi:transcript-viewport-chunk-text viewport index))
+                  "resident Markdown is freshly rendered from its original source")
+                 (when (equal (getf record :identifier)
+                              (fullscreen-terminal-ui-markdown-stream ui))
+                   (test-assert (equalp tail (terminal-ui-stream-tail ui))
+                                "the speculative tail uses the current pane width")))))
+  nil)
+
+(-> test-terminal-fullscreen-markdown-reflow () null)
+(defun test-terminal-fullscreen-markdown-reflow ()
+  "Reflow application Markdown, preserving structure, widgets and viewport identity."
+  (with-test-configuration (configuration)
+    (let* ((terminal     (make-instance 'recording-terminal :columns 32 :rows 12))
+           (ui           (fullscreen-test--ui terminal))
+           (application  (make-instance 'application :configuration configuration
+                                        :conversation               (conversation-create configuration)
+                                        :ui                         ui))
+           (source       (format nil "~{~A ~}~%~%Intentional first line~%Intentional second line~%~%- first list item with several words to wrap~%- second item~%~%```lisp~%(print :first)~%(print :second)~%```~%~%| Name | Description |~%| --- | --- |~%| alpha | a sufficiently long table cell to wrap |~%~%```mermaid~%graph TD~%A --> B~%```"
+                                 (loop repeat 12 append '("alpha" "beta" "gamma" "delta"))))
+           (presentation (fullscreen-test--markdown-presentation application source 1)))
+      (with-terminal-ui (active ui)
+        (terminal-ui-present-records active (list presentation))
+        (let* ((viewport (fullscreen-terminal-ui-viewport active))
+               (tag      (clinedi:transcript-viewport-last-tag viewport))
+               (narrow   (clinedi:transcript-viewport-row-count viewport)))
+          (terminal-ui-process-event active ':scroll-top)
+          (terminal-ui-resize active 72 :rows 12)
+          (fullscreen-test--assert-markdown-replay active 72)
+          (test-assert (< (clinedi:transcript-viewport-row-count viewport) narrow)
+                       "a wider pane unwraps existing paragraph rows")
+          (terminal-ui-resize active 32 :rows 12)
+          (fullscreen-test--assert-markdown-replay active 32)
+          (test-assert
+           (and (= narrow (clinedi:transcript-viewport-row-count viewport))
+                (= 1 (fullscreen-test--chunk-count active))
+                (equal tag (clinedi:transcript-viewport-last-tag viewport))
+                (integerp (fullscreen-test--top active)))
+           "width round trips preserve the resident publication and scrolled mode")
+          (test-assert (zerop (terminal-ui-present-records active (list presentation)))
+                       "replaying the durable record does not duplicate the answer")
+          ;; Lay out every committed row to exercise widget hits after both resizes.
+          (clinedi:transcript-viewport-layout viewport 10000)
+          (let ((actions
+                  (loop for row below (clinedi:transcript-viewport-row-count viewport)
+                        for text = (fullscreen-test--row-text active row)
+                        for column = (search "⧉ copy" text)
+                        when column
+                          collect (nth-value 0 (clinedi:transcript-viewport-hit
+                                                viewport (1+ column) (1+ row))))))
+            (test-assert
+             (some (lambda (action)
+                     (and (eq (first action) ':copy)
+                          (string= (string-trim '(#\Newline) (second action))
+                                   (format nil "(print :first)~%(print :second)"))))
+                   actions)
+             "reflow retains a code-copy widget with the original multiline source"))))))
+  nil)
+
+(-> test-terminal-fullscreen-markdown-stream-reflow () null)
+(defun test-terminal-fullscreen-markdown-stream-reflow ()
+  "Resize incomplete Markdown between provider deltas and reconcile its durable answer."
+  (with-test-configuration (configuration)
+    (let* ((terminal     (make-instance 'recording-terminal :columns 32 :rows 16))
+           (ui           (fullscreen-test--ui terminal))
+           (conversation (conversation-create configuration))
+           (application  (make-instance 'application :configuration configuration
+                                        :conversation conversation :ui ui))
+           (observer     (application-agent-observer application))
+           (send-text    (callback-agent-observer-text-callback observer))
+           (send-status  (callback-agent-observer-status-callback observer))
+           (parts        (list (format nil "A paragraph with enough words to wrap at the narrow width.~%~%```lisp~%(print :incomplete")
+                               (format nil ")~%```~%~%| Name | Description |~%| --- | --- |~%| alpha | pending cell")
+                               (format nil " completed |~%~%```mermaid~%graph TD~%A --> B")
+                               (format nil "~%```~%~%FINAL-MARKER"))))
+      (with-terminal-ui (active ui)
+        (funcall send-status ':provider-request-started nil)
+        (loop for part in parts
+              for width in '(72 32 61 40)
+              do (funcall send-text part)
+                 (terminal-ui-resize active width :rows 16)
+                 (fullscreen-test--assert-markdown-replay active width)
+                 (test-assert (= 1 (fullscreen-test--chunk-count active))
+                              "provider deltas replace one stable Markdown publication"))
+        (conversation-append-provider-item conversation (agent-test-message (apply #'concatenate 'string parts)))
+        (funcall send-status ':provider-request-completed nil)
+        (terminal-ui-resize active 72 :rows 16)
+        (fullscreen-test--assert-markdown-replay active 72)
+        (test-assert
+         (and (= 1 (fullscreen-test--chunk-count active))
+              (null (terminal-ui-stream-tail active))
+              (null (fullscreen-terminal-ui-markdown-stream active))
+              (= 1 (terminal-tests--substring-count
+                    "FINAL-MARKER"
+                    (clinedi:transcript-viewport-chunk-text
+                     (fullscreen-terminal-ui-viewport active) 0))))
+         "completion clears speculative state and durable reconciliation emits the answer once")))
+    (let* ((terminal     (make-instance 'recording-terminal :columns 60 :rows 12))
+           (ui           (fullscreen-test--ui terminal))
+           (conversation (conversation-create configuration))
+           (application  (make-instance 'application :configuration configuration
+                                        :conversation conversation :ui ui))
+           (observer     (application-agent-observer application))
+           (send-text    (callback-agent-observer-text-callback observer))
+           (send-status  (callback-agent-observer-status-callback observer))
+           (source       (format nil "PIPE-FIRST~%PIPE-SECOND~%")))
+      (with-terminal-ui (active ui)
+        (setf (terminal-interactive-p (terminal-ui-terminal active)) nil
+              (recording-terminal-chunks terminal) nil)
+        (funcall send-status ':provider-request-started nil)
+        (funcall send-text (format nil "PIPE-FIRST~%"))
+        (funcall send-text (format nil "PIPE-SECOND~%"))
+        (conversation-append-provider-item conversation (agent-test-message source))
+        (funcall send-status ':provider-request-completed nil)
+        (let ((output (clinedi:ansi-strip (recording-terminal-output terminal))))
+          (test-assert
+           (and (= 1 (terminal-tests--substring-count "PIPE-FIRST" output))
+                (= 1 (terminal-tests--substring-count "PIPE-SECOND" output)))
+           "a plain output sink emits each incremental prefix once"))))
+    ;; A REPL fragment without a newline has no committed header or native chunk.
+    (let* ((terminal (make-instance 'recording-terminal :columns 32 :rows 12))
+           (ui       (fullscreen-test--ui terminal))
+           (source   "A pending REPL fragment whose wrapping changes with the pane width."))
+      (with-terminal-ui (active ui)
+        (terminal-ui-stream-markdown active ':pending :source source :marker '(:brand "● "))
+        (terminal-ui-resize active 72 :rows 12)
+        (multiple-value-bind (spans tail)
+            (terminal-ui--markdown-render
+             (list :source source :stream-p t :marker '(:brand "● ")) 72)
+          (declare (ignore spans))
+          (test-assert (equalp tail (terminal-ui-stream-tail active))
+                       "tail-only REPL fragments reflow before their first committed row"))
+        (terminal-ui-stream-markdown active ':pending :source source
+                                     :marker '(:brand "● ") :finished-p t)
+        (test-assert (and (= 1 (fullscreen-test--chunk-count active))
+                          (null (terminal-ui-stream-tail active)))
+                     "finishing a tail-only stream commits it once"))))
+  nil)
+
+(-> test-terminal-fullscreen-markdown-rollback-residency () null)
+(defun test-terminal-fullscreen-markdown-rollback-residency ()
+  "Roll back failed semantic reflow and charge source to bounded resident chunks."
+  (let* ((terminal (make-instance 'recording-terminal :columns 32 :rows 12))
+         (ui       (fullscreen-test--ui terminal))
+         (source   (format nil "~{~A ~}~%" (loop repeat 20 collect "paragraph"))))
+    (with-terminal-ui (active ui)
+      (terminal-ui-stream-markdown active ':first :source source :finished-p t)
+      (terminal-ui-stream-markdown active ':second :source (concatenate 'string source "pending"))
+      (terminal-ui-process-event active ':scroll-top)
+      (let* ((viewport (fullscreen-terminal-ui-viewport active))
+             (text     (clinedi:transcript-viewport-chunk-text viewport 0))
+             (tail     (terminal-ui-stream-tail active))
+             (index    (fullscreen-terminal-ui-presentation-records active))
+             (top      (fullscreen-test--top active))
+             (render   (symbol-function 'terminal-ui-fullscreen--markdown-content))
+             (calls    0))
+        ;; A publication notices geometry before applying its new operation.
+        (setf (terminal-columns terminal) 72)
+        (test-call-with-function-replacements
+         (list (list 'terminal-ui-fullscreen--markdown-content
+                     (lambda (observed record width)
+                       (when (= 2 (incf calls))
+                         (error 'simple-error :format-control "Synthetic Markdown render failure."))
+                       (funcall render observed record width))))
+         (lambda ()
+           (test-assert
+            (handler-case (progn (terminal-ui-append-finalized active ':retry "later") nil)
+              (simple-error () t))
+            "a renderer failure aborts the pending publication")))
+        (test-assert
+         (and (= 32 (clinedi:transcript-viewport-width viewport))
+              (= 2 (fullscreen-test--chunk-count active))
+              (string= text (clinedi:transcript-viewport-chunk-text viewport 0))
+              (equalp tail (terminal-ui-stream-tail active))
+              (eq index (fullscreen-terminal-ui-presentation-records active))
+              (eql top (fullscreen-test--top active))
+              (not (gethash ':retry (terminal-ui-finalized-identifiers active))))
+         "failed reflow restores geometry, chunks, source index, tail, anchor and deduplication state")
+        (test-assert (terminal-ui-append-finalized active ':retry "later")
+                     "the same publication succeeds after the renderer recovers")
+        (fullscreen-test--assert-markdown-replay active 72))))
+  (let ((*fullscreen-transcript-character-limit* 3000))
+    (let* ((terminal (make-instance 'recording-terminal :columns 40 :rows 12))
+           (ui       (fullscreen-test--ui terminal))
+           (source   (format nil "~{~A ~}" (loop repeat 35 collect "resident"))))
+      (with-terminal-ui (active ui)
+        (loop for identifier below 50
+              do (terminal-ui-stream-markdown active identifier :source source :finished-p t))
+        (let* ((viewport (fullscreen-terminal-ui-viewport active))
+               (chunks   (clinedi::transcript-viewport--chunks viewport))
+               (index    (fullscreen-terminal-ui-presentation-records active)))
+          (test-assert
+           (and (plusp (clinedi:transcript-viewport-evicted-count viewport))
+                (= (hash-table-count index) (length chunks))
+                (not (gethash 0 index))
+                (<= (clinedi::transcript-viewport--weight viewport)
+                    *fullscreen-transcript-character-limit*))
+           "source records share native chunk residency and disappear with eviction")
+          (loop for width in '(72 32 72)
+                do (terminal-ui-resize active width :rows 12)
+                   (loop for chunk across (clinedi::transcript-viewport--chunks viewport)
+                         for record = (terminal-ui-fullscreen--markdown-record
+                                       active (clinedi::viewport-chunk-tag chunk))
+                         for markdown = (getf record :markdown)
+                         do (multiple-value-bind (text display regions)
+                                (terminal-ui-fullscreen--markdown-content active record width)
+                              (let ((fresh (clinedi:make-transcript-viewport :width width)))
+                                (clinedi:transcript-viewport-append fresh text display :regions regions)
+                                (test-assert
+                                 (= (clinedi::viewport-chunk-weight chunk)
+                                    (+ (clinedi::viewport-chunk-weight
+                                        (aref (clinedi::transcript-viewport--chunks fresh) 0))
+                                       (length (getf markdown :source))
+                                       (loop for span in (getf markdown :header)
+                                             sum (length (terminal-span-text span)))))
+                                 "each width replay charges retained source exactly once")))))
+          (terminal-ui-reset-transcript active)
+          (terminal-ui-stream-markdown active ':empty :source (format nil "old content~%"))
+          (let* ((current (fullscreen-terminal-ui-viewport active))
+                 (weight  (clinedi::transcript-viewport--weight current)))
+            (terminal-ui-stream-markdown active ':empty :source "")
+            (test-assert
+             (and (= 1 (fullscreen-test--chunk-count active))
+                  (string= "" (clinedi:transcript-viewport-chunk-text current 0))
+                  (< (clinedi::transcript-viewport--weight current) weight)
+                  (null (terminal-ui-stream-tail active)))
+             "an empty cumulative replacement clears committed text and its retained weight"))
+          (terminal-ui-reset-transcript active)
+          (terminal-ui-stream-markdown active ':evicted :source (format nil "committed~%pending"))
+          (terminal-ui-append-finalized active ':newer (make-string 4000 :initial-element #\x))
+          (test-assert
+           (and (null (terminal-ui-stream-tail active))
+                (null (fullscreen-terminal-ui-markdown-stream active))
+                (eq ':evicted (fullscreen-terminal-ui-evicted-markdown-stream active))
+                (not (gethash ':evicted (fullscreen-terminal-ui-presentation-records active))))
+           "evicting an active chunk releases its source and speculative tail")
+          (terminal-ui-resize active 61 :rows 12)
+          (terminal-ui-stream-markdown active ':evicted :source (format nil "committed~%pending later"))
+          (test-assert
+           (and (= 1 (fullscreen-test--chunk-count active))
+                (null (terminal-ui-stream-tail active))
+                (not (gethash ':evicted (fullscreen-terminal-ui-presentation-records active))))
+           "resize and later cumulative deltas cannot resurrect an evicted stream")
+          (terminal-ui-stream-markdown active ':evicted :source "finished" :finished-p t)
+          (test-assert (null (fullscreen-terminal-ui-evicted-markdown-stream active))
+                       "finishing the evicted block releases its bounded identity tombstone")
+          (terminal-ui-stream-markdown active ':next :source "fresh" :finished-p t)
+          (test-assert (gethash ':next (fullscreen-terminal-ui-presentation-records active))
+                       "a subsequent block publishes normally after active eviction")))))
+  nil)

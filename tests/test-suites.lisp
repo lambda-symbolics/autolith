@@ -354,6 +354,9 @@
   test-terminal-compact-success-stream-and-retry
   test-terminal-compact-call-groups
   test-terminal-fullscreen-viewport
+  test-terminal-fullscreen-markdown-reflow
+  test-terminal-fullscreen-markdown-stream-reflow
+  test-terminal-fullscreen-markdown-rollback-residency
   test-terminal-fullscreen-pinned-activities
   test-terminal-fullscreen-new-conversation
   test-terminal-fullscreen-small-windows
