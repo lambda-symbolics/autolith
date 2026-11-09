@@ -3627,36 +3627,27 @@ later picker searches read it without scanning the log."
 
 (-> conversation-pathname-for-id (configuration string) pathname)
 (defun conversation-pathname-for-id (configuration identifier)
-  "Return CONFIGURATION's stable conversation identity for IDENTIFIER.
+  "Return CONFIGURATION's stable conversation identity for IDENTIFIER."
+  (gethash identifier (conversation-pathnames-for-ids configuration (list identifier))))
 
-A child agent's conversation lives below its root's task directory; it is
-found there when no top-level conversation has IDENTIFIER."
-  (let* ((resolved  (conversation-identifier-migration-resolve configuration identifier))
-         (top-level (merge-pathnames (make-pathname :name resolved :type "sexp")
-                                     (configuration-conversation-root configuration))))
-    (if (conversation-storage-active-pathname top-level)
-        top-level
-        (or (conversation-task-pathname-for-id configuration resolved)
-            top-level))))
-
-(-> conversation-task-pathname-for-id (configuration string) (option pathname))
-(defun conversation-task-pathname-for-id (configuration identifier)
-  "Return the identity of child conversation IDENTIFIER below whichever root runs it, or NIL."
-  (let ((tasks (merge-pathnames "tasks/" (config :data-root configuration))))
-    ;; Child identifiers are idsmall identifiers or UUIDs: letters, digits
-    ;; and hyphens, safe as one path segment.
-    (when (and (plusp (length identifier))
-               (every (lambda (character)
-                        (or (alphanumericp character) (char= character #\-)))
-                      identifier)
-               (uiop:directory-exists-p tasks))
-      (loop for group in (uiop:subdirectories tasks)
-            for identity = (merge-pathnames (make-pathname :directory (list ':relative identifier)
-                                                           :name      identifier
-                                                           :type      "sexp")
-                                            group)
-            when (conversation-storage-active-pathname identity)
-              return identity))))
+(-> conversation-task-pathname-for-id (configuration string &key (:roots list)) (option pathname))
+(defun conversation-task-pathname-for-id
+    (configuration identifier &key
+       (roots (let ((directory (merge-pathnames "tasks/" (config :data-root configuration))))
+                (when (uiop:directory-exists-p directory)
+                  (uiop:subdirectories directory)))))
+  "Return the stable child identity for IDENTIFIER among task ROOTS, or NIL."
+  (when (and (plusp (length identifier))
+             (every (lambda (character)
+                      (or (alphanumericp character) (char= character #\-)))
+                    identifier))
+    (loop for group in roots
+          for identity = (merge-pathnames
+                          (make-pathname :directory (list ':relative identifier)
+                                         :name identifier :type "sexp")
+                          group)
+          when (conversation-storage-active-pathname identity)
+            return identity)))
 
 (-> conversation-load-by-id (configuration string) conversation)
 (defun conversation-load-by-id (configuration identifier)
@@ -3844,3 +3835,56 @@ is missing."
                :pathname pathname
                :sequence nil)))
     pathname))
+
+(-> conversation-pathnames-for-ids
+    (configuration list &key (:prefer-task-p boolean) (:cache (option hash-table))) hash-table)
+(defun conversation-pathnames-for-ids (configuration identifiers &key prefer-task-p cache)
+  "Resolve stable IDENTIFIERS once, sharing task-root discovery across a batch.
+
+PREFER-TASK-P selects task history ahead of a same-ID primary conversation.
+CACHE optionally retains active identities across batches, keyed by precedence
+and identifier. Missing histories retain an uncached primary pathname so later
+history creation is discoverable."
+  (let ((identities   (make-hash-table :test #'equal))
+        (roots        nil)
+        (discovered-p nil))
+    (flet ((task-roots ()
+             (unless discovered-p
+               (let ((directory (merge-pathnames "tasks/" (config :data-root configuration))))
+                 (setf roots (when (uiop:directory-exists-p directory)
+                               (uiop:subdirectories directory))
+                       discovered-p t)))
+             roots))
+      (dolist (identifier identifiers)
+        (let* ((resolved (conversation-identifier-migration-resolve configuration identifier))
+               (key      (cons prefer-task-p resolved))
+               (cached   (and cache (gethash key cache)))
+               (primary  (merge-pathnames (make-pathname :name resolved :type "sexp")
+                                          (configuration-conversation-root configuration)))
+               (identity (or (when (and (not prefer-task-p)
+                                        (conversation-storage-active-pathname primary))
+                               primary)
+                             (and cached (conversation-storage-active-pathname cached) cached)
+                             (conversation-task-pathname-for-id configuration resolved
+                                                                :roots (task-roots))
+                             primary)))
+          (setf (gethash identifier identities) identity)
+          (when (and cache (or (not prefer-task-p) (not (equal identity primary)))
+                     (conversation-storage-active-pathname identity))
+            (setf (gethash key cache) identity)))))
+    identities))
+
+(-> conversation-task-storage-root (configuration pathname)
+    (values (option string) (option pathname)))
+(defun conversation-task-storage-root (configuration identity)
+  "Return the task root identifier and child directory owning stable IDENTITY.
+
+Primary conversation identities return NIL, NIL. Keep task layout knowledge at
+this storage boundary, shared by channel cleanup and task delivery evidence."
+  (if (equal (pathname-directory identity)
+             (pathname-directory (configuration-conversation-root configuration)))
+      (values nil nil)
+      (let ((directory (uiop:pathname-directory-pathname identity)))
+        (values (first (last (pathname-directory
+                              (uiop:pathname-parent-directory-pathname directory))))
+                directory))))

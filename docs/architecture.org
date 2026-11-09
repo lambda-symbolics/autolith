@@ -106,6 +106,24 @@ retry. Hosted handoff transfers the same participant state; park and stored
 arrival release its live backing after serialization. Channel leases, queues,
 attachments and independent child jobs follow their own channel lifetimes.
 
+* Channel discovery and removal
+
+=src/world/catalogue.lisp= projects the durable world index and current host
+statuses for the picker, sidebar and channel resources. Newly hosted channels
+appear before their first world record; durable metadata takes precedence.
+Presentation order, labels and confirmation belong to each frontend.
+=conversation-pathnames-for-ids= resolves stable storage identities for a batch,
+including task history below its actual root rather than its immediate parent.
+
+=src/world/removal.lisp= owns channel subtree planning, fresh-state validation,
+quiescence, all-channel leases and one batched world deletion. Every task root's
+delivery evidence and the durable cleanup intent precede publication. Exact
+identity paths in that intent support idempotent cleanup and recovery after a
+partial storage failure. =src/task/storage.lisp= handles task-owned directories
+under those leases; channel removal also retires contexts, inboxes, worktrees,
+artifacts and session mappings. Recovery retires an unpublished intent, refuses
+a partially live identity set, or resumes cleanup for a published deletion.
+
 * Library boundaries
 
 | Library | Generic implementation | Autolith integration |

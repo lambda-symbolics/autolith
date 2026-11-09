@@ -1651,33 +1651,30 @@ An item names the channel's agent, or else its title or identifier, and says
 what the channel is about and whether a terminal session serves it. The
 workspace of this channel comes first; within one, the channel changed last
 comes first."
-  (let* ((world   (handler-case (application-world application)
-                    (autolith-error ()
-                      nil)))
+  (let* ((world   (handler-case (application-world application) (autolith-error nil nil)))
          (current (conversation-identifier (application-conversation application)))
-         (server  (application-world-server application)))
+         (served  (world-channel-served-identifiers (application-configuration application))))
     (when world
-      (let ((inbox    (world-inbox-channel world))
-            (channels (application--channels-newest-first application
-                                                          (remove-if #'channel-inbox-p (world-channels world)))))
+      (let ((inbox (world-inbox-channel world))
+            (channels
+             (application--channels-newest-first application
+              (remove-if #'channel-inbox-p (world-channels world)))))
         (labels ((item (channel depth group)
                    "Return the picker item of CHANNEL nested DEPTH deep in GROUP."
                    (let* ((identifier (channel-identifier channel))
-                          (agent      (find ':agent (world-channel-residents world identifier)
-                                            :key #'participant-kind))
-                          (name       (or (and agent (participant-name agent))
-                                          (channel-title channel)
-                                          (conversation-identifier-display identifier))))
-                     (list :name        (format nil "~A~A"
-                                                (make-string (* 2 depth) :initial-element #\Space)
-                                                name)
-                           :value       identifier
-                           :argument    nil
-                           :group       group
-                           :description (format nil "~@[~A · ~]~A~:[~; · open~]"
-                                                (and agent (channel-title channel))
-                                                (conversation-identifier-display identifier)
-                                                (and server (world-server--find-host server identifier))))))
+                          (agent
+                           (find ':agent (world-channel-residents world identifier) :key
+                                 #'participant-kind))
+                          (name
+                           (or (and agent (participant-name agent)) (channel-title channel)
+                               (conversation-identifier-display identifier))))
+                     (list :name
+                           (format nil "~A~A" (make-string (* 2 depth) :initial-element #\ ) name)
+                           :value identifier :argument nil :group group :description
+                           (format nil "~@[~A · ~]~A~:[~; · open~]"
+                                   (and agent (channel-title channel))
+                                   (conversation-identifier-display identifier)
+                                   (member identifier served :test #'equal)))))
 
                  (items (node depth group)
                    "Return the items of NODE and the channels nested in it."
@@ -1686,10 +1683,9 @@ comes first."
                                append (items child (1+ depth) group)))))
           (append
            (when (and inbox (not (string= (channel-identifier inbox) current)))
-             (list (list :name        *world-inbox-designator*
-                         :value       (channel-identifier inbox)
-                         :argument    nil
-                         :description "messages for you")))
+             (list
+              (list :name *world-inbox-designator* :value (channel-identifier inbox) :argument nil
+                    :description "messages for you")))
            (loop for (workspace . members) in (world-channel-groups channels current)
                  for group = (format nil "~A · ~A" (world-workspace-leaf workspace)
                                      (application--abbreviated-directory workspace))

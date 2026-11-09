@@ -2471,6 +2471,12 @@
              (conversation-append-user-message conversation (make-string 600000 :initial-element #\x))
              (conversation-append-provider-item conversation (agent-test-message "Wire earlier answer."))
              (conversation-append-user-message conversation (make-string 1000 :initial-element #\q))
+             (test-assert (null (world-channel-find (world-load configuration) identifier))
+                          "Fixture history precedes durable channel registration.")
+             (test-assert (world-channel-find (application-world application) identifier)
+                          "The hosted channel is already visible in the presentation catalogue.")
+             (test-assert (application-world-agent-present-p application)
+                          "A hosted-only projection does not refuse agent admission.")
              (expanded-native-test--transport
               application :status 404 :expected-posts 0
               :function
