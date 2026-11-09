@@ -1055,10 +1055,10 @@
                     "A deliberate secondary-root consent write changes the owner.")
        (test-assert (null (config :telemetry-enabled-p secondary))
                     "A copied snapshot is not the consent authority.")
-       (test-assert (eq (json-get (acp-extension--setting-item
+       (test-assert (eq (json-get (application-client--setting-item
                                    application secondary (find-setting :telemetry-enabled-p))
-                                "value") t)
-                    "ACP displays process-authoritative consent.")
+                               "value") t)
+                   "ACP displays process-authoritative consent.")
        (telemetry-call-with-run
         secondary
         (lambda ()

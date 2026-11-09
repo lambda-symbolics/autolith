@@ -24,13 +24,13 @@
        (lambda (service client)
          (let* ((identifier  (agentcomms:client-new-session client (namestring root)))
                 (session     (acp-service--session service identifier))
-                (first       (acp-extension-conversations
+                (first       (application-client-conversations
                               (acp-session-test--application session) (agentcomms:json-object "limit" 2)))
                 (first-items (gethash "items" first))
                 (cursor      (gethash "nextCursor" first))
-                (second      (acp-extension-conversations
+                (second      (application-client-conversations
                               (acp-session-test--application session) (agentcomms:json-object "cursor" cursor "limit" 2)))
-                (filtered    (acp-extension-conversations
+                (filtered    (application-client-conversations
                               (acp-session-test--application session)
                               (agentcomms:json-object
                                "cwd" (namestring (config :working-directory configuration))
@@ -64,7 +64,7 @@
                                (agentcomms:json-object "cursor" "not-an-integer")))
              (let ((rejected nil))
                (handler-case
-                   (acp-extension-conversations (acp-session-test--application session) params)
+                   (application-client-conversations (acp-session-test--application session) params)
                  (agentcomms:acp-method-error () (setf rejected t))
                  (agentcomms:acp-error () (setf rejected t)))
                (test-assert rejected "invalid conversation paging parameters are rejected")))))))

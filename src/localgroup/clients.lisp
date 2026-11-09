@@ -137,14 +137,15 @@
            (list :accepted-p (application-answer-approval application approval value))))
         (:mode
          (let ((mode (getf arguments :value)))
-           (unless (member mode *localgroup-client-permission-modes*)
+           (unless (member mode (application-client-permission-modes))
              (refuse (format nil "The permission mode must be one of ~{~(~A~)~^, ~}."
-                             *localgroup-client-permission-modes*)))
-           (when (and (eq mode ':sandboxed)
-                      (not (application--command-sandbox-available-p)))
-             (refuse (application--command-sandbox-unavailable-message)))
-           (setf (application-permission-mode application) mode)
-           (application-clients-publish-state application)
+                             (application-client-permission-modes))))
+           (let* ((operation (application-client-operation-find application "permissions"))
+                  (input     (application-client-permission-input mode)))
+             (application-client-operation-invoke
+              application operation
+              (application-client-command-invocation
+               (application-operation-backend operation) input)))
            nil))
         (:state
          (list :state (localgroup-status-snapshot session)))
@@ -153,8 +154,9 @@
                (params (client-json (getf arguments :params))))
            (unless (stringp method)
              (refuse "An operation names its method."))
-           (list :result (acp-extension-run application method
-                                            (if (hash-table-p params) params (json-object))))))
+           (list :result (application-client-run
+                          application method
+                          (if (hash-table-p params) params (json-object))))))
         (otherwise
          (refuse (format nil "Unknown client command ~S." command)))))))
 

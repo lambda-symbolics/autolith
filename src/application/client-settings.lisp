@@ -2,8 +2,8 @@
 
 ;;;; -- ACP Settings and Models Extensions --
 
-(-> acp-extension--setting-type (setting configuration) string)
-(defun acp-extension--setting-type (setting configuration)
+(-> application-client--setting-type (setting configuration) string)
+(defun application-client--setting-type (setting configuration)
   "Project registered types and dynamic options into the setting editor's wire types."
   (let ((type (setting-type setting)))
     (cond
@@ -20,8 +20,8 @@
       (t
        "string"))))
 
-(-> acp-extension--setting-scope (t) string)
-(defun acp-extension--setting-scope (setting)
+(-> application-client--setting-scope (t) string)
+(defun application-client--setting-scope (setting)
   "Return SETTING's canonical ACP scope name."
   (case (setting-scope setting)
     (:process
@@ -35,8 +35,8 @@
     (t
      "process")))
 
-(-> acp-extension--setting-source (configuration setting) string)
-(defun acp-extension--setting-source (configuration setting)
+(-> application-client--setting-source (configuration setting) string)
+(defun application-client--setting-source (configuration setting)
   "Return CONFIGURATION's source label for SETTING."
   (case (configuration-setting-source configuration (setting-name setting))
     (:environment
@@ -50,8 +50,8 @@
     (t
      "default")))
 
-(-> acp-extension--setting-value (setting t) t)
-(defun acp-extension--setting-value (setting value)
+(-> application-client--setting-value (setting t) t)
+(defun application-client--setting-value (setting value)
   "Preserve boolean false, unknown optional values, and portable choice spellings."
   (cond
     ((eq (setting-type setting) 'boolean)
@@ -59,46 +59,46 @@
     ((and (realp value) (not (integerp value)))
      (princ-to-string value))
     (t
-     (acp-extension-value value))))
+     (application-client-value value))))
 
-(-> acp-extension--setting-options (setting configuration) vector)
-(defun acp-extension--setting-options (setting configuration)
+(-> application-client--setting-options (setting configuration) vector)
+(defun application-client--setting-options (setting configuration)
   "Return SETTING's typed options as a JSON vector."
-  (map 'vector (lambda (value) (acp-extension--setting-value setting value))
+  (map 'vector (lambda (value) (application-client--setting-value setting value))
        (setting-options setting configuration)))
 
-(-> acp-extension--setting-adjustable-p (application setting) boolean)
-(defun acp-extension--setting-adjustable-p (application setting)
+(-> application-client--setting-adjustable-p (application setting) boolean)
+(defun application-client--setting-adjustable-p (application setting)
   "Use the application's ordinary runtime setting admission."
   (declare (ignore application))
   (application--setting-adjustable-p setting))
 
-(-> acp-extension--setting-item (application configuration setting) hash-table)
-(defun acp-extension--setting-item (application configuration setting)
+(-> application-client--setting-item (application configuration setting) hash-table)
+(defun application-client--setting-item (application configuration setting)
   "Return the JSON object describing SETTING in CONFIGURATION."
   (let* ((configuration (if (member (setting-name setting)
                                   '(:telemetry-enabled-p :telemetry-diagnostics-p))
                             (telemetry-consent-configuration configuration)
                             configuration))
          (value         (configuration-setting-value configuration setting))
-         (adjustable-p  (acp-extension--setting-adjustable-p application setting)))
+         (adjustable-p  (application-client--setting-adjustable-p application setting)))
     (agentcomms:json-object
      "name" (string-downcase (symbol-name (setting-name setting)))
      "label" (setting-label setting)
      "documentation" (or (setting-documentation setting) ':null)
      "group" (string-downcase (symbol-name (setting-group setting)))
-     "type" (acp-extension--setting-type setting configuration)
-     "options" (acp-extension--setting-options setting configuration)
-     "value" (acp-extension--setting-value setting value)
-     "source" (acp-extension--setting-source configuration setting)
-     "scope" (acp-extension--setting-scope setting)
+     "type" (application-client--setting-type setting configuration)
+     "options" (application-client--setting-options setting configuration)
+     "value" (application-client--setting-value setting value)
+     "source" (application-client--setting-source configuration setting)
+     "scope" (application-client--setting-scope setting)
      "adjustable" (if adjustable-p t (argo:json-false))
      "reason" (if adjustable-p
                   ':null
                   "The setting is fixed by process configuration."))))
 
-(-> acp-extension-settings (application hash-table) hash-table)
-(defun acp-extension-settings (application params)
+(-> application-client-settings (application hash-table) hash-table)
+(defun application-client-settings (application params)
   "Return all visible settings and their current portable values."
   (declare (ignore params))
   (let* ((application   application)
@@ -107,11 +107,11 @@
      "items"
      (coerce (loop for setting in (configuration-setting-list configuration)
                    when (setting-visible-p setting)
-                     collect (acp-extension--setting-item application configuration setting))
+                     collect (application-client--setting-item application configuration setting))
              'vector))))
 
-(-> acp-extension--credential-stored-p (configuration provider-registration) boolean)
-(defun acp-extension--credential-stored-p (configuration registration)
+(-> application-client--credential-stored-p (configuration provider-registration) boolean)
+(defun application-client--credential-stored-p (configuration registration)
   "Probe stored credentials within transient secret accounting, without refreshing them."
   (handler-case
       (call-with-secret-use
@@ -122,8 +122,8 @@
     (credentials-unavailable ()
       nil)))
 
-(-> acp-extension--model-item (application provider-registration provider-model &key (:stored-p boolean)) hash-table)
-(defun acp-extension--model-item (application registration model &key stored-p)
+(-> application-client--model-item (application provider-registration provider-model &key (:stored-p boolean)) hash-table)
+(defun application-client--model-item (application registration model &key stored-p)
   "Return model metadata and only locally observed credential verification."
   (let ((verified-at (gethash (provider-model-name model)
                               (client-hub-verified-models (application-client-hub application)))))
@@ -135,21 +135,21 @@
                             t (argo:json-false))
      "contextWindow" (or (provider-model-context-window model) ':null))))
 
-(-> acp-extension-models (application hash-table) hash-table)
-(defun acp-extension-models (application params)
+(-> application-client-models (application hash-table) hash-table)
+(defun application-client-models (application params)
   "Return the registered provider models without exposing credentials."
   (declare (ignore params))
   (let ((configuration (application-configuration application)))
     (agentcomms:json-object
      "items"
      (coerce (loop for registration in (provider-registrations)
-                   for stored-p = (acp-extension--credential-stored-p configuration registration)
+                   for stored-p = (application-client--credential-stored-p configuration registration)
                    append (loop for model in (provider-registration-models registration)
-                                collect (acp-extension--model-item application registration model :stored-p stored-p)))
+                                collect (application-client--model-item application registration model :stored-p stored-p)))
              'vector))))
 
-(-> acp-extension-set-setting (application hash-table) hash-table)
-(defun acp-extension-set-setting (application params)
+(-> application-client-set-setting (application hash-table) hash-table)
+(defun application-client-set-setting (application params)
   "Apply one existing adjustable setting and return its complete updated item."
   (let* ((application   application)
          (configuration (application-configuration application))
@@ -160,10 +160,10 @@
                               :key  (lambda (item)
                                       (string-downcase (symbol-name (setting-name item)))))))
     (unless setting
-      (error 'acp-extension-unavailable :reason "The requested setting does not exist."))
-    (unless (acp-extension--setting-adjustable-p application setting)
-      (error 'acp-extension-unavailable :reason "The requested setting is not adjustable."))
+      (error 'application-client-unavailable :reason "The requested setting does not exist."))
+    (unless (application-client--setting-adjustable-p application setting)
+      (error 'application-client-unavailable :reason "The requested setting is not adjustable."))
     (application-apply-setting application (setting-name setting)
                                (if (argo:json-false-p value) nil value))
     (application-clients-publish-state application)
-    (acp-extension--setting-item application (application-configuration application) setting)))
+    (application-client--setting-item application (application-configuration application) setting)))

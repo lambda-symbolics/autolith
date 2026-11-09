@@ -170,6 +170,11 @@ sharing one it already served."
 ;;; until the form closes. The channel runs each submission to its end before
 ;;; the next, and the transcript goes to standard output as plain text.
 
+(defclass script-channel-subscription (channel-subscription)
+  ((output :initarg :output :reader script-channel-subscription-output :type stream
+           :documentation "The plain transcript destination."))
+  (:documentation "A plain-text client with shared channel lifecycle and submission admission."))
+
 (-> world-client--next-submission (stream) (option string))
 (defun world-client--next-submission (stream)
   "Read the next submission from STREAM, or return NIL at its end.
@@ -217,6 +222,10 @@ after it until the form closes or the input ends."
     (force-output output))
   nil)
 
+(defmethod channel-subscription-present-event ((subscription script-channel-subscription) event)
+  "Render one ordered channel event before acknowledging it."
+  (world-client--script-event event (script-channel-subscription-output subscription)))
+
 (-> world-client-run-script
     (configuration &key (:input stream) (:output stream) (:conversation-id (option string))
                         (:permission-mode keyword) (:immutable-p boolean) (:launch list))
@@ -224,66 +233,32 @@ after it until the form closes or the input ends."
 (defun world-client-run-script
     (configuration &key (input *standard-input*) (output *standard-output*) conversation-id
                         (permission-mode ':ask) immutable-p launch)
-  "Run INPUT's submissions in a channel of CONFIGURATION's world server and write the transcript to OUTPUT.
-
-The channel is CONVERSATION-ID's, or a new one for the launch directory. Each
-submission is echoed, run to its end, and followed by its output. This client
-answers no approvals, so the channel decides them as it would without a
-terminal. A channel the server started for this run closes once it ends."
+  "Run INPUT's submissions, waiting for each submission's own completion."
   (multiple-value-bind (channel started-p)
-      (world-client-open configuration
-                         :directory       (config :working-directory configuration)
-                         :channel         conversation-id
-                         :new-p           (null conversation-id)
-                         :permission-mode permission-mode
-                         :immutable-p     immutable-p
-                         :launch          launch)
-    (let* ((lock       (make-lock "Autolith script client"))
-           (condition  (make-condition-variable :name "Autolith script client"))
-           (idle-count 0)
-           (closed-p   nil)
-           (connection nil))
+      (world-client-open configuration :directory       (config :working-directory configuration)
+                                       :channel         conversation-id
+                                       :new-p           (null conversation-id)
+                                       :permission-mode permission-mode
+                                       :immutable-p     immutable-p
+                                       :launch          launch)
+    (let ((subscription (make-instance 'script-channel-subscription
+                                       :identifier    channel
+                                       :configuration configuration
+                                       :started-p     started-p
+                                       :name          "script"
+                                       :approves-p    nil
+                                       :output        output)))
       (unwind-protect
            (progn
-             (setf connection
-                   (localgroup-client-connect
-                    (localgroup--find-record configuration channel)
-                    :name           "script"
-                    :approves-p     nil
-                    :event-function (lambda (event)
-                                      (with-lock-held (lock)
-                                        (world-client--script-event event output)
-                                        (case (first event)
-                                          (:work-finished
-                                           (when (getf (rest event) :idle-p)
-                                             (incf idle-count)))
-                                          (:closed
-                                           (setf closed-p t)))
-                                        (sb-thread:condition-broadcast condition)))))
+             (channel-subscription-attach subscription)
              (loop for text = (world-client--next-submission input)
                    while text
-                   do (let ((mark   (with-lock-held (lock)
-                                      (fresh-line output)
-                                      (format output "› ~A~%" text)
-                                      (force-output output)
-                                      idle-count))
-                            (busy-p (getf (localgroup-client-call connection ':submit :text text)
-                                          :busy-p)))
-                        (with-lock-held (lock)
-                          (loop until (or closed-p (not busy-p) (> idle-count mark))
-                                do (condition-wait condition lock)))
-                        (when closed-p
-                          (return)))))
-        (when connection
-          (localgroup-client-close connection))
-        (when started-p
-          (let ((world (world-client-entry configuration)))
-            (when world
-              (handler-case
-                  (localgroup-query-record world ':close
-                                           (list :channel channel :unattached-only-p t))
-                (localgroup-error ()
-                  nil))))))))
+                   do (with-lock-held ((channel-subscription-event-lock subscription))
+                        (fresh-line output)
+                        (format output "› ~A~%" text)
+                        (force-output output))
+                     (channel-subscription-await-submission subscription text)))
+        (channel-subscription-close subscription))))
   nil)
 
 

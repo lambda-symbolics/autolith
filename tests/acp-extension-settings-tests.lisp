@@ -64,7 +64,7 @@
               (session    (acp-service--session service identifier))
               (model      (config :model (application-configuration (acp-session-test--application session)))))
          (test-call-with-function-replacements
-          (list (list 'acp-extension--credential-stored-p
+          (list (list 'application-client--credential-stored-p
                       (lambda (configuration registration)
                         (declare (ignore configuration registration)) t)))
           (lambda ()

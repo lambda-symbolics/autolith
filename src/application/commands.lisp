@@ -2533,7 +2533,9 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
        (application-present application (list (terminal-span ':success "Saved command approvals were cleared."))))
       (t
        (error 'configuration-error
-              :message "Usage: (permissions), or (permissions :MODE) with :ask, :auto, :sandbox, :full, :list, or :clear."))))
+              :message "Usage: (permissions), or (permissions :MODE) with :ask, :auto, :sandbox, :full, :list, or :clear.")))
+    (when (member choice '(:ask :auto :sandbox :full) :test #'eq)
+      (application-clients-publish-state application)))
   nil)
 
 (-> application-set-hurry-up (application boolean) null)

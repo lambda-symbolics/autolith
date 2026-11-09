@@ -1536,8 +1536,8 @@
       (application-mission-schedule-add application :id "no-fit" :content "Perform scheduled work." :at 100 :interval 10)
       (setf ticket (mission-schedule-tests--ticket (first (application-mission-schedules-wake application)))))
     (when (eq entry :acp-queue)
-      (acp-session-submit session "Actual queued ACP input." :source "queue")
-      (acp-session-submit session "Remaining queued ACP input." :source "queue"))
+      (channel-subscription-submit session "Actual queued ACP input." :source "queue")
+      (channel-subscription-submit session "Remaining queued ACP input." :source "queue"))
     (when (eq entry :acp-completion)
       (setf completion-id (expanded-native-test--ready-completion application)))
     (test-call-with-function-replacements
@@ -1605,7 +1605,7 @@
       (test-assert (null (application-idle-compaction-episode application)) "Idle maintenance consumes its episode once."))
     (test-assert (not (application-input-controller-active-p controller)) "The channel releases work ownership.")
     (when session
-      (test-assert (not (acp-session-prompt-active-p session)) "The ACP adapter releases prompt ownership."))
+      (test-assert (not (channel-subscription-submission-active-p session)) "The ACP adapter releases prompt ownership."))
     (unless session (setf (application-input-controller application) nil)))
   nil)
 
@@ -1991,7 +1991,7 @@
        (task-augment-tool-registry (agent-tool-registry (application-agent application)))
        (when session
          (setf (acp-session-update-buffer session)
-               (agentcomms:make-agent-update-buffer service (acp-session-identifier session))))
+               (agentcomms:make-agent-update-buffer service (channel-subscription-identifier session))))
        (unwind-protect
             (test-call-with-function-replacements
              (list
@@ -2016,17 +2016,13 @@
                           (setf queued-boundary nil
                                 (application-deferred-goal-continuation application) nil)
                           (application-input-controller--persist-pending controller))
-                        (when session
-                          (case (first event)
-                            (:work-started
-                             (acp-session--work-started session (rest event)))
-                            (:work-finished
-                             (acp-session--work-finished session (rest event))))))))
+                        (when (and session (member (first event) '(:work-started :work-finished)))
+                          (channel-subscription-event session event)))))
               (list 'acp-extension-notify
                     (lambda (recipient kind &optional data)
                       (declare (ignore recipient))
                       (push (list :extension kind data) (first events))))
-              (list 'acp-session-call
+              (list 'channel-subscription-call
                     (lambda (recipient command &rest arguments)
                       (test-assert (eq recipient session) "The editor addresses its channel session.")
                       (ecase command
@@ -2076,8 +2072,8 @@
            (setf (config :prompt-cache-retention-seconds configuration) 300)
            (idle-compaction-tests--prime application))
          (when (eq entry :acp-queue)
-           (acp-session-submit session "Matrix claimed queued input." :source "queue")
-           (acp-session-submit session "Matrix unclaimed queued tail." :source "queue"))
+           (channel-subscription-submit session "Matrix claimed queued input." :source "queue")
+           (channel-subscription-submit session "Matrix unclaimed queued tail." :source "queue"))
          (when (eq entry :acp-completion)
            (setf completion-id (expanded-native-test--ready-completion application)))
          (unwind-protect
@@ -2149,7 +2145,7 @@
                                :ui-compacting-p         (terminal-ui-compacting-p (application-ui application))
                                :controller-active-p     (application-input-controller-active-p controller)
                                :paused-p                (application-input-controller-queued-work-paused-p controller)
-                               :prompt-active-p         (and session (acp-session-prompt-active-p session))
+                               :prompt-active-p         (and session (channel-subscription-submission-active-p session))
                                :turn-open-p             (and session (acp-session-turn session))
                                :episode-p               (not (null (application-idle-compaction-episode application)))
                                :finished-count          (count :work-finished (first wire) :key #'first)
@@ -2192,6 +2188,7 @@
                                                                                   :tools-p nil :goal-continuations-p nil)))
                            (serious-condition (condition) (setf later-failure condition))))))
                      (setf (getf snapshot :later-failure) (and later-failure (type-of later-failure))
+                            (getf snapshot :later-failure-message) (and later-failure (princ-to-string later-failure))
                            (getf snapshot :later-result) later-result
                            (getf snapshot :later-context-conditions) conditions
                            (getf snapshot :later-opens) (- (length (expanded-native-input-snapshots provider)) before)
@@ -2201,7 +2198,7 @@
                            (getf snapshot :window) (config :context-window configuration)
                            (getf snapshot :later-owner-clean-p)
                            (and (not (application-input-controller-active-p controller))
-                                (or (null session) (not (acp-session-prompt-active-p session)))
+                                (or (null session) (not (channel-subscription-submission-active-p session)))
                                 (zerop (getf (application-goal application) :requests-outstanding 0))
                                 (zerop (getf (application-goal application) :tokens-reserved 0))))))))
            (when completion-id (task-orchestrator-close (task-completion--runtime (application-agent application)))))
@@ -2256,7 +2253,12 @@
     (test-assert (getf snapshot :later-owner-clean-p) "Later explicit work releases ownership and reservations.")
     (test-assert (getf snapshot :prior-history-preserved-p) "Later input retains the earlier canonical history.")
     (test-assert (= 144000 (getf snapshot :window)) "Explicit retry uses the same configured window.")
-    (test-assert (null (getf snapshot :later-failure)) "Later input is not a leaked owner failure.")
+    (test-assert (null (getf snapshot :later-failure))
+                 (format nil "Later input failed in ~S: ~A (~A)."
+                         (loop for key in '(:entry :status :owned-p :signaled-p :arrival-size)
+                               append (list key (getf snapshot key)))
+                         (getf snapshot :later-failure)
+                         (getf snapshot :later-failure-message)))
     (if (getf snapshot :arrival-size)
         (progn
           (test-assert (getf snapshot :later-context-conditions) "The oversized protected arrival still reaches real admission.")

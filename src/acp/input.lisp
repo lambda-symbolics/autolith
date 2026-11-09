@@ -14,11 +14,11 @@
       (agentcomms:acp-invalid-params "Input text must not be blank."))
     (when (> (length text) 262144)
       (agentcomms:acp-invalid-params "Input text exceeds the character limit."))
-    (with-lock-held ((acp-session-lock session))
-      (when (acp-session-closed-p session)
+    (with-lock-held ((channel-subscription-lock session))
+      (when (channel-subscription-closed-p session)
         (error 'acp-extension-unavailable :reason "The session is closing.")))
-    (let ((reply (acp-session-submit session text :steer-p steer-p
-                                     :source               (if steer-p "steering" "queue"))))
+    (let ((reply (channel-subscription-submit session text :steer-p steer-p
+                                     :source                        (if steer-p "steering" "queue"))))
       (agentcomms:json-object "accepted" t
                               "delivery" (if (and steer-p (getf reply :busy-p)) "steering" "queued")))))
 

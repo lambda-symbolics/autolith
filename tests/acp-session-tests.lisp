@@ -92,8 +92,8 @@
 (defun acp-session-test--application (session)
   "Return the application of the channel SESSION follows, as the test's world server hosts it."
   (world-host-application
-   (or (world-server--find-host *acp-session-test-server* (acp-session-identifier session))
-       (error "Channel ~A is not hosted." (acp-session-identifier session)))))
+   (or (world-server--find-host *acp-session-test-server* (channel-subscription-identifier session))
+       (error "Channel ~A is not hosted." (channel-subscription-identifier session)))))
 
 (-> acp-session-test--call-with-client
     (configuration function &key (:results list) (:provider (option model-provider))) t)
@@ -207,7 +207,7 @@
                         "load returns the durable assistant response"))
          (let ((session (acp-service--session service identifier)))
            (agentcomms:client-close-session client identifier)
-           (test-assert (acp-session-closed-p session) "close leaves the channel"))
+           (test-assert (channel-subscription-closed-p session) "close leaves the channel"))
          (test-assert (task-tests--wait-until
                        (lambda ()
                          (notany (lambda (host) (equal (world-host-channel host) identifier))
@@ -250,7 +250,7 @@
                   (let ((session  (acp-service--session service identifier))
                         (deadline (+ (get-internal-real-time)
                                      (* 5 internal-time-units-per-second))))
-                    (loop until (with-lock-held ((acp-session-lock session))
+                    (loop until (with-lock-held ((channel-subscription-lock session))
                                   (acp-session-cancelled-p session))
                           do (when (> (get-internal-real-time) deadline)
                                (error "The ACP service did not admit the cancellation notification."))
@@ -307,7 +307,7 @@
          (setf identifier (agentcomms:client-new-session client (namestring root))
                session (acp-service--session service identifier))
          (agentcomms:connection-close (agentcomms:acp-client-connection client))))
-      (test-assert (acp-session-closed-p session) "disconnect completes session cleanup")
+      (test-assert (channel-subscription-closed-p session) "disconnect completes session cleanup")
       (let ((lease (conversation-lease-acquire configuration identifier)))
         (unwind-protect
              (test-assert lease "disconnect releases the durable conversation lease")
@@ -542,15 +542,15 @@
              (acp-session-test-gated-release provider)
              (join-thread thread))
            (test-assert (eq result ':end-turn) "the prompt completes with its own submission")
-           (with-lock-held ((acp-session-lock session))
+           (with-lock-held ((channel-subscription-lock session))
              (test-assert
               (loop until (plusp (acp-session-idle-count session))
-                    do (unless (condition-wait (acp-session-condition-variable session)
-                                               (acp-session-lock session) :timeout 5)
+                    do (unless (condition-wait (channel-subscription-condition-variable session)
+                                               (channel-subscription-lock session) :timeout 5)
                          (return nil))
                     finally (return t))
               "queued follow-up work reaches its terminal outcome"))
-           (with-lock-held ((acp-session-event-lock session)))
+           (with-lock-held ((channel-subscription-event-lock session)))
            (let* ((conversation (application-conversation (acp-session-test--application session)))
                   (records      nil))
              (conversation-map-records
@@ -566,7 +566,7 @@
                                          records))
                           "durable records retain source across steering and follow-up queues")
              (test-assert (every (lambda (record)
-                                   (equal (acp-session-client-identifier session)
+                                   (equal (channel-subscription-client-identifier session)
                                           (getf (getf (rest record) :submission) :client)))
                                  records)
                           "all three records retain their submitting editor identity"))
@@ -621,7 +621,7 @@
                     (apply-input (symbol-function 'application-input-controller--schedule-apply))
                     (result      nil)
                     (thread      nil))
-               (localgroup-client-call (acp-session-connection session) ':submit :text "background")
+               (localgroup-client-call (channel-subscription-connection session) ':submit :text "background")
                (acp-session-test-gated-wait provider)
                (unwind-protect
                     (test-call-with-function-replacements
@@ -661,7 +661,108 @@
                                     (format nil "~S receives its own outcome, got ~S" text result))))
                  (acp-session-test-gated-release provider)
                  (when (and thread (sb-thread:thread-alive-p thread))
-                   (acp-session-close session)
+                   (channel-subscription-close session)
                    (sb-thread:join-thread thread :timeout 5 :default nil)))))
            :provider provider)))))
+  nil)
+
+(-> test-acp-session-disconnect-cancels-active-submission () null)
+(defun test-acp-session-disconnect-cancels-active-submission ()
+  "Cancel an active submission over its installed transport after editor admission closes."
+  (with-test-configuration (configuration root)
+    (let ((provider     (make-instance 'acp-session-test-gated-provider
+                                       :configuration configuration
+                                       :results       (list (acp-session-test-text-result "interrupted"))))
+          (cancel-count 0)
+          (cancelled    (sb-thread:make-semaphore :count 0)))
+      (acp-session-test--call-with-client
+       configuration
+       (lambda (service client)
+         (let* ((identifier (agentcomms:client-new-session client (namestring root)))
+                (idle-id    (agentcomms:client-new-session client (namestring root)))
+                (session    (acp-service--session service identifier))
+                (transport  (channel-subscription-connection session))
+                (call       (symbol-function 'localgroup-client-call))
+                (thread     nil))
+           (declare (ignore idle-id))
+           (test-call-with-function-replacements
+            (list (list 'localgroup-client-call
+                        (lambda (connection command &rest arguments)
+                          (when (eq command ':cancel)
+                            (incf cancel-count)
+                            (test-assert (eq connection transport)
+                                         "shutdown cancels only the active editor's installed transport")
+                            (test-assert (acp-service-closed-p service)
+                                         "editor admission closes before cancellation is transmitted")
+                            (test-assert
+                             (handler-case
+                                 (progn (channel-subscription-call session ':state) nil)
+                               (agentcomms:acp-state-error () t))
+                             "ordinary requests cannot use the shutdown cancellation path"))
+                          (multiple-value-prog1 (apply call connection command arguments)
+                            (when (eq command ':cancel)
+                              (sb-thread:signal-semaphore cancelled))))))
+            (lambda ()
+              (unwind-protect
+                   (progn
+                     (setf thread
+                           (make-thread
+                            (lambda ()
+                              (handler-case
+                                  (agentcomms:client-prompt
+                                   client identifier (list (agentcomms:acp-text-content "blocked")))
+                                (agentcomms:acp-error () nil)))
+                            :name "ACP disconnected prompt"))
+                     (acp-session-test-gated-wait provider)
+                     (agentcomms:connection-close (agentcomms:acp-client-connection client))
+                     (test-assert (sb-thread:wait-on-semaphore cancelled :timeout 5)
+                                  "disconnect transmits cancellation despite closed service admission"))
+                (acp-session-test-gated-release provider)
+                (when thread
+                  (sb-thread:join-thread thread :timeout 5 :default nil)))))))
+       :provider provider)
+      (test-assert (= 1 cancel-count)
+                   (format nil "Shutdown sent ~D cancellations; expected one for the active session."
+                           cancel-count))))
+  nil)
+
+(-> test-acp-session-scheduled-mode-follows-state () null)
+(defun test-acp-session-scheduled-mode-follows-state ()
+  "Treat a busy turn's scheduled mode reply as acceptance, not an applied state."
+  (with-test-configuration (configuration)
+    (let* ((service  (make-instance 'acp-service :configuration configuration))
+           (session  (make-instance 'acp-session :service service :identifier "channel"
+                                                :configuration configuration :mode ':ask))
+           (updates  nil)
+           (requests nil))
+      (setf (gethash "channel" (acp-service-sessions service)) session)
+      (test-call-with-function-replacements
+       (list (list 'channel-subscription-call
+                   (lambda (recipient command &rest arguments)
+                     (test-assert (eq recipient session) "mode admission uses the selected session")
+                     (push (cons command arguments) requests)
+                     '(:result "scheduled" :delivery "scheduled")))
+             (list 'agentcomms:agent-send-update
+                   (lambda (recipient identifier update)
+                     (declare (ignore recipient identifier))
+                     (push update updates)))
+             (list 'acp-extension-notify
+                   (lambda (&rest arguments) (declare (ignore arguments)) nil)))
+       (lambda ()
+         (agentcomms:agent-set-mode service "channel" "full-access")
+         (test-assert (equal '((:mode :value :full-access)) requests)
+                      "set-mode requests native mode admission once")
+         (test-assert (eq ':ask (acp-session-mode session))
+                      "scheduling does not change the editor's observed mode")
+         (test-assert (null updates) "scheduling emits no optimistic current-mode update")
+         (channel-subscription-event
+          session '(:state :sequence 1 :state (:state :permission-mode :full-access)))
+         (test-assert (eq ':full-access (acp-session-mode session))
+                      "the actual state event changes the observed mode")
+         (test-assert (and (= 1 (length updates))
+                           (equal "full-access" (agentcomms:json-get (first updates) "currentModeId")))
+                      "the applied state emits exactly one current-mode update")
+         (channel-subscription-event
+          session '(:state :sequence 2 :state (:state :permission-mode :full-access)))
+         (test-assert (= 1 (length updates)) "repeated applied state does not duplicate the mode update")))))
   nil)
