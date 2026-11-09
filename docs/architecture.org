@@ -138,21 +138,33 @@ in the channel's work queue. Each waiting caller owns and closes its job pool;
 the channel thread runs the job between turns. A local condition adapter preserves
 original errors, and a list result preserves all return values.
 
+=src/localgroup/subscription.lisp= owns client-side attachment buffering, event
+cursors, checkpoint reconnection, closure and exact submission waiting. ACP and
+script clients specialize synchronous presentation. A matching submission finishes
+after its terminal event is presented and its cursor advances; unrelated work and
+channel idleness do not release its waiter. Reconnection drains buffered events
+before admitting new requests and never resends a transmitted command.
+
+=src/application/client-operations.lisp= admits headless command and tool calls
+through the application-operation protocol. Commands use their registered parser,
+terminal-ownership requirements and active-turn policy. Permission-mode requests
+use the permissions command, including safe-boundary application and persistence;
+state publication follows execution rather than scheduling acceptance.
+
 * ACP service
 
 An ACP session is a client of one world-server channel.
-=src/acp/session.lisp= holds the session's connection and translation state.
-=observer.lisp= turns channel events into ACP updates, turn and state
-notifications, and editor permission requests. =runtime.lisp= supplies the
-agent methods, opens channels in the world server, replays durable history
-from disk before following live events, and waits for a prompt's channel to
-go idle. =extensions.lisp= forwards extension requests: steer and queue run
-in the ACP process as submissions, the rest run in the server against the
-channel's application through =acp-extension-run=. The =extension-*.lisp=
-handlers project native settings, model/operation catalogs, conversations,
-owned jobs and structured resource windows; =invoke= runs as one of the
-channel's work items. =mcp.lisp= builds the registry a channel started for an
-editor uses, with its client MCP declarations and credential scopes.
+=src/acp/session.lisp= holds editor registration and translation state above the
+shared channel subscription. =observer.lisp= projects admitted events into ACP
+updates, turn and state notifications, and permission requests. =runtime.lisp=
+supplies agent methods, opens channels in the world server and replays durable
+history before following live events. It awaits each prompt's exact submission.
+ACP extension adapters retain session-scoped routing and typed wire outcomes;
+steer and queue submit in the ACP process. Shared application handlers project
+native settings, model and operation catalogues, conversations, owned jobs and
+resource windows. Registered command and tool invocations use shared operation
+admission. =mcp.lisp= builds the registry for a channel started for an editor,
+including client MCP declarations and credential scopes.
 
 The source entry and stable launcher route ACP diagnostics to stderr and avoid
 interactive recovery. The serving lifetime holds the secret-use guard while

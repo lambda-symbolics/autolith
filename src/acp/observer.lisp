@@ -99,7 +99,7 @@
 (defun acp-session-flush (session)
   "Deliver pending thoughts before a permission request or a prompt's answer."
   (unless (acp-service-closed-p (acp-session-service session))
-    (with-lock-held ((acp-session-lock session))
+    (with-lock-held ((channel-subscription-lock session))
       (agentcomms:update-buffer-flush (acp-session-update-buffer session))))
   nil)
 
@@ -112,7 +112,7 @@
           (agentcomms:agent-client-notify
            (acp-session-service session) "_autolith/event"
            (agentcomms:json-object
-            "sessionId" (acp-session-identifier session)
+            "sessionId" (channel-subscription-identifier session)
             "sequence" (incf (acp-session-extension-sequence session))
             "kind" kind "data" (or data (agentcomms:json-object))))
         (agentcomms:acp-error ()
@@ -122,7 +122,7 @@
 (-> acp-session--plan (acp-session) null)
 (defun acp-session--plan (session)
   "Send the workspace plan as it stands."
-  (let ((plan (plan-load (acp-session-configuration session))))
+  (let ((plan (plan-load (channel-subscription-configuration session))))
     (acp-session--send
      session
      (agentcomms:acp-update-plan
@@ -140,48 +140,31 @@
                 (workspace-plan-steps plan))))))
   nil)
 
-
-;;;; -- Events --
-
-(-> acp-session-event (acp-session list) null)
-(defun acp-session-event (session event)
-  "Buffer events during initial replay, otherwise deliver each cursor exactly once."
-  (with-lock-held ((acp-session-event-lock session))
-    (if (acp-session-attaching-p session)
-        (deque-push-back (acp-session-attachment-events session) event)
-        (acp-session--consume-event session event)))
-  nil)
-
-(-> acp-session--consume-event (acp-session list) null)
-(defun acp-session--consume-event (session event)
-  "Deliver EVENT under the event lock and advance its cursor only after processing."
-  (let* ((fields   (rest event))
-         (sequence (getf fields :sequence)))
-    (unless (and (not (eq (first event) ':checkpoint-reconnect))
-                 sequence (<= sequence (acp-session-event-sequence session)))
-      (cond
-        ((eq (first event) ':record)
-         (let* ((record          (getf fields :record))
-                (record-sequence (getf (rest record) :seq)))
-           (when (or (null record-sequence)
-                     (> record-sequence (acp-session-replay-boundary session)))
-             (if (acp-session-catch-up-p session)
-                 (acp-session--catch-up-record session record)
-                 (acp-session--dispatch-event session event)))))
-        ((and (acp-session-catch-up-p session)
-              (or (member (first event) '(:text :reasoning))
-                  (and (eq (first event) ':status)
-                       (member (getf fields :status)
-                               '(:assistant-response-persisted :tool-call-started :tool-call-completed)))))
-         nil)
-        (t
-         (when (or (eq (first event) ':work-started)
-                   (and (eq (first event) ':status)
-                        (eq (getf fields :status) ':provider-request-started)))
-           (setf (acp-session-catch-up-p session) nil))
-         (acp-session--dispatch-event session event)))
-      (when (and sequence (not (eq (first event) ':checkpoint-reconnect)))
-        (setf (acp-session-event-sequence session) sequence))))
+(defmethod channel-subscription-present-event ((session acp-session) event)
+  "Project admitted events through ACP's durable replay and live streaming policy."
+  (let ((fields (rest event)))
+    (cond
+      ((eq (first event) ':record)
+       (let* ((record   (getf fields :record))
+              (sequence (getf (rest record) :seq)))
+         (when (or (null sequence) (> sequence (acp-session-replay-boundary session)))
+           (if (acp-session-catch-up-p session)
+               (acp-session--catch-up-record session record)
+               (acp-session--dispatch-event session event)))))
+      ((and (acp-session-catch-up-p session)
+            (or (member (first event) '(:text :reasoning))
+                (and (eq (first event) ':status)
+                     (member (getf fields :status)
+                             '(:assistant-response-persisted :tool-call-started :tool-call-completed)))))
+       (when (eq (getf fields :status) ':tool-call-started)
+         (with-lock-held ((channel-subscription-lock session))
+           (setf (acp-session-tool-call session) (getf (getf fields :details) :call-id)))))
+      (t
+       (when (or (eq (first event) ':work-started)
+                 (and (eq (first event) ':status)
+                      (eq (getf fields :status) ':provider-request-started)))
+         (setf (acp-session-catch-up-p session) nil))
+       (acp-session--dispatch-event session event))))
   nil)
 
 (-> acp-session--catch-up-record (acp-session list) null)
@@ -194,7 +177,7 @@
         (acp-session--record session record))
       (let ((update (acp-replay--record-update record (acp-session-turn-sequence session))))
         (when update
-          (with-lock-held ((acp-session-lock session))
+          (with-lock-held ((channel-subscription-lock session))
             (acp-session--send session update)))))
   nil)
 
@@ -212,24 +195,19 @@
       (:present
        (let ((text (getf fields :text)))
          (when (non-empty-string-p text)
-           (with-lock-held ((acp-session-lock session))
-             (acp-session--send session (agentcomms:acp-update-agent-message
-                                         (agentcomms:acp-text-content text)))))))
+           (with-lock-held ((channel-subscription-lock session))
+             (acp-session--send session
+                                (agentcomms:acp-update-agent-message (agentcomms:acp-text-content text)))))))
       (:record
        (acp-session--record session (getf fields :record)))
       (:approval
-       (make-thread (lambda () (acp-session--approve session fields))
-                    :name "Autolith ACP approval"))
+       (make-thread (lambda () (acp-session--approve session fields)) :name "Autolith ACP approval"))
       (:work-started
        (acp-session--work-started session fields))
       (:work-finished
        (acp-session--work-finished session fields))
       (:state
-       (acp-session--state session (getf fields :state)))
-      (:checkpoint-reconnect
-       (acp-session--checkpoint-reconnect session fields))
-      (:closed
-       (acp-session--connection-closed session))))
+       (acp-session--state session (getf fields :state)))))
   nil)
 
 (-> acp-session--text (acp-session t) null)
@@ -239,7 +217,7 @@
 Empty text sends nothing: an empty message chunk would split the thought
 fragments that providers interleave with empty content deltas."
   (when (and (stringp text) (plusp (length text)))
-    (with-lock-held ((acp-session-lock session))
+    (with-lock-held ((channel-subscription-lock session))
       (text-buffer-append (acp-session-streamed-text session) text)
       (acp-session--send session (agentcomms:acp-update-agent-message (agentcomms:acp-text-content text)))))
   nil)
@@ -248,7 +226,7 @@ fragments that providers interleave with empty content deltas."
 (defun acp-session--reasoning (session text)
   "Stream visible reasoning, separating summaries of distinct provider responses."
   (when (and (stringp text) (plusp (length text)))
-    (with-lock-held ((acp-session-lock session))
+    (with-lock-held ((channel-subscription-lock session))
       (acp-session--send
        session
        (agentcomms:acp-update-agent-thought
@@ -261,7 +239,7 @@ fragments that providers interleave with empty content deltas."
 (-> acp-session--status (acp-session t list) null)
 (defun acp-session--status (session status details)
   "Translate the channel's provider and tool lifecycle STATUS into ACP updates."
-  (with-lock-held ((acp-session-lock session))
+  (with-lock-held ((channel-subscription-lock session))
     (case status
       (:user-message-persisted
        (let ((sequence (getf details :sequence)))
@@ -320,7 +298,7 @@ fragments that providers interleave with empty content deltas."
   (cond
     ((eq (first record) ':side-status)
      (let ((update (acp-replay--record-update record (acp-session-turn-sequence session))))
-       (with-lock-held ((acp-session-lock session))
+       (with-lock-held ((channel-subscription-lock session))
          (acp-session--send session update))))
     ((and (eq (first record) ':message)
           (eq (getf (rest record) :role) ':user)
@@ -328,10 +306,10 @@ fragments that providers interleave with empty content deltas."
      (let* ((fields     (rest record))
             (submission (getf fields :submission))
             (content    (getf fields :content)))
-       (unless (and (equal (getf submission :client) (acp-session-client-identifier session))
+       (unless (and (equal (getf submission :client) (channel-subscription-client-identifier session))
                     (equal (getf submission :source) "prompt"))
          (when (stringp content)
-           (with-lock-held ((acp-session-lock session))
+           (with-lock-held ((channel-subscription-lock session))
              (acp-session--send session (agentcomms:acp-update-user-message
                                          (agentcomms:acp-text-content content)))))))))
   nil)
@@ -342,7 +320,7 @@ fragments that providers interleave with empty content deltas."
   (let ((kind (getf fields :kind)))
     (when (member kind *acp-turn-work-kinds*)
       (let ((turn nil))
-        (with-lock-held ((acp-session-lock session))
+        (with-lock-held ((channel-subscription-lock session))
           (setf turn (cons (incf (acp-session-epoch session))
                            (case kind
                              (:message
@@ -362,7 +340,7 @@ fragments that providers interleave with empty content deltas."
 
 (-> acp-session--work-finished (acp-session list) null)
 (defun acp-session--work-finished (session fields)
-  "Close the open turn and settle only a matching editor submission."
+  "Finish ACP turn presentation before the shared subscription releases its waiter."
   (let ((outcome (case (getf fields :outcome)
                    (:cancelled
                     ':cancelled)
@@ -371,19 +349,13 @@ fragments that providers interleave with empty content deltas."
                    (t
                     ':end-turn)))
         (turn    nil))
-    (with-lock-held ((acp-session-lock session))
-      (let ((submission (getf fields :submission)))
-        (when (and (acp-session-prompt-submission session)
-                   (equal (getf submission :id) (acp-session-prompt-submission session))
-                   (equal (getf submission :client) (acp-session-client-identifier session)))
-          (setf (acp-session-prompt-outcome session) outcome)))
+    (with-lock-held ((channel-subscription-lock session))
       (when (member (getf fields :kind) *acp-turn-work-kinds*)
-        (setf turn                               (acp-session-turn session)
-              (acp-session-turn session)         nil
+        (setf turn (acp-session-turn session)
+              (acp-session-turn session) nil
               (acp-session-last-outcome session) outcome))
       (when (getf fields :idle-p)
-        (incf (acp-session-idle-count session)))
-      (sb-thread:condition-broadcast (acp-session-condition-variable session)))
+        (incf (acp-session-idle-count session))))
     (when turn
       (acp-session-flush session)
       (acp-extension-notify session "turn"
@@ -398,12 +370,12 @@ fragments that providers interleave with empty content deltas."
   "Follow the channel's permission mode, telling the editor when it changed."
   (let ((mode (and (consp state) (getf (rest state) :permission-mode))))
     (when (and (keywordp mode)
-               (with-lock-held ((acp-session-lock session))
+               (with-lock-held ((channel-subscription-lock session))
                  (unless (eq mode (acp-session-mode session))
                    (setf (acp-session-mode session) mode)
                    t)))
       (handler-case
-          (agentcomms:agent-send-update (acp-session-service session) (acp-session-identifier session)
+          (agentcomms:agent-send-update (acp-session-service session) (channel-subscription-identifier session)
                                         (agentcomms:acp-update-current-mode
                                          (string-downcase (symbol-name mode))))
         (agentcomms:acp-error ()
@@ -434,7 +406,7 @@ fragments that providers interleave with empty content deltas."
          (values  (mapcar (lambda (option) (getf option :value)) options))
          (kind    (getf approval :kind))
          (title   (or (getf approval :title) "approval"))
-         (report  (with-lock-held ((acp-session-lock session))
+         (report  (with-lock-held ((channel-subscription-lock session))
                     (agentcomms:acp-tool-call
                      (acp-tool-identifier (acp-session-turn-sequence session)
                                           (or (acp-session-tool-call session) (make-identifier)))
@@ -449,14 +421,14 @@ fragments that providers interleave with empty content deltas."
           (handler-case
               (multiple-value-bind (outcome identifier)
                   (agentcomms:agent-request-permission
-                   (acp-session-service session) (acp-session-identifier session) report
+                   (acp-session-service session) (channel-subscription-identifier session) report
                    :options (mapcar #'acp-session--permission-option options)
                    :timeout *acp-permission-timeout-seconds*)
                 (and (eq outcome ':selected)
                      (find identifier values :test #'equal)))
             (agentcomms:acp-error ()
               nil)))
-    (handler-case (acp-session-call session ':answer
+    (handler-case (channel-subscription-call session ':answer
                                     :approval (getf approval :id)
                                     :value    (or choice (if (member "deny" values :test #'equal)
                                                              "deny"

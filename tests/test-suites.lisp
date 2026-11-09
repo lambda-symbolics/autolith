@@ -727,6 +727,15 @@
 
 (define-test-suite client-protocol
   test-client-protocol-channel
+  test-client-operation-admission
+  test-client-operation-catalog-authority
+  test-client-subscription-exact-completion
+  test-client-subscription-early-completion
+  test-client-subscription-presentation-boundary
+  test-client-subscription-attachment-cursor
+  test-client-subscription-closure-wakes-waiter
+  test-client-subscription-reconnect-drain-admission
+  test-client-subscription-replay-refusal-wakes-waiter
   test-client-approval-terminal-arbitration
   test-client-work-values
   test-client-work-shutdown
@@ -1920,6 +1929,7 @@
 (define-test-suite acp
   test-acp-observer-tool-title-previews
   test-acp-observer-submission-provenance
+  test-acp-observer-catch-up-approval-identity
   test-acp-prompt-submission-outcomes
   test-acp-attachment-history-boundary
   test-acp-session-wire-new-prompt-replay-close
@@ -1930,6 +1940,8 @@
   test-acp-session-cwd-mode-and-unsupported-content
   test-acp-session-disconnect-releases-lease
   test-acp-observer-disconnected-updates
+  test-acp-session-disconnect-cancels-active-submission
+  test-acp-session-scheduled-mode-follows-state
   test-acp-session-live-and-replayed-tool-identities
   test-acp-session-replay-metadata-and-tool-statuses
   test-acp-session-flushes-thoughts-on-prompt-exit

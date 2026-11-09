@@ -23,9 +23,9 @@
        (lambda (service client)
          (let* ((identifier (agentcomms:client-new-session client (namestring root)))
                 (session    (acp-service--session service identifier))
-                (one        (acp-extension-resource
+                (one        (application-client-resource
                              (acp-session-test--application session) (agentcomms:json-object "uri" uri "startLine" 2 "lineCount" 1)))
-                (default    (acp-extension-resource (acp-session-test--application session) (agentcomms:json-object "uri" uri)))
+                (default    (application-client-resource (acp-session-test--application session) (agentcomms:json-object "uri" uri)))
                 (window     (gethash "window" default)))
            (test-assert (equal "line-2" (gethash "content" one)) "Exact nonempty line content")
            (test-assert (equal (gethash "revision" one) (gethash "revision" default))
@@ -39,22 +39,22 @@
              (write-line "changed" stream))
            (test-assert
             (not (equal (gethash "revision" one)
-                        (gethash "revision" (acp-extension-resource
+                        (gethash "revision" (application-client-resource
                                              (acp-session-test--application session) (agentcomms:json-object "uri" uri)))))
             "Content mutation changes the resource revision")
            (dolist (arguments (list (agentcomms:json-object "uri" uri "startLine" 0)
                                     (agentcomms:json-object "uri" uri "lineCount" 1001)
                                     (agentcomms:json-object "uri" uri "byteCount" 1)))
              (acp-extension-resource-test--reject
-              (lambda () (acp-extension-resource (acp-session-test--application session) arguments)) 'agentcomms:acp-method-error))
+              (lambda () (application-client-resource (acp-session-test--application session) arguments)) 'agentcomms:acp-method-error))
            (acp-extension-resource-test--reject
-            (lambda () (acp-extension-resource (acp-session-test--application session) (agentcomms:json-object "uri" "workspace:.")))
-            'acp-extension-unavailable)
+            (lambda () (application-client-resource (acp-session-test--application session) (agentcomms:json-object "uri" "workspace:.")))
+            'application-client-unavailable)
            (with-open-file (stream path :direction ':output :if-exists ':supersede)
              (write-string (make-string 65537 :initial-element #\x) stream))
            (acp-extension-resource-test--reject
-            (lambda () (acp-extension-resource (acp-session-test--application session) (agentcomms:json-object "uri" uri)))
-            'acp-extension-unavailable))))))
+            (lambda () (application-client-resource (acp-session-test--application session) (agentcomms:json-object "uri" uri)))
+            'application-client-unavailable))))))
   nil)
 
 (-> test-acp-extension-resource-authorization () null)
@@ -84,11 +84,11 @@
           artifact (make-instance 'cl-exec-sandbox:sandbox-result
                                   :output-capture capture :exit-code 0
                                   :timed-out-p nil :cancelled-p nil :status ':exited))
-         (let* ((result  (acp-extension-resource
+         (let* ((result  (application-client-resource
                           (acp-session-test--application session) (agentcomms:json-object "uri" uri "byteOffset" 2 "byteCount" 3)))
                 (window  (gethash "window" result))
-                (default (acp-extension-resource (acp-session-test--application session) (agentcomms:json-object "uri" uri)))
-                (end     (acp-extension-resource
+                (default (application-client-resource (acp-session-test--application session) (agentcomms:json-object "uri" uri)))
+                (end     (application-client-resource
                           (acp-session-test--application session) (agentcomms:json-object "uri" uri "byteOffset" 99999))))
            (test-assert (equal "cde" (gethash "content" result)) "Owned raw bytes are content")
            (test-assert (and (= 2 (gethash "byteOffset" window))
@@ -104,12 +104,12 @@
                                   (agentcomms:json-object "uri" uri "byteOffset" -1)
                                   (agentcomms:json-object "uri" uri "startLine" 1)))
            (acp-extension-resource-test--reject
-            (lambda () (acp-extension-resource (acp-session-test--application session) arguments)) 'agentcomms:acp-method-error))
+            (lambda () (application-client-resource (acp-session-test--application session) arguments)) 'agentcomms:acp-method-error))
          (acp-extension-resource-test--reject
-          (lambda () (acp-extension-resource
+          (lambda () (application-client-resource
                       (acp-session-test--application session) (agentcomms:json-object "uri" "shell-log:foreign/execution/artifact/output")))
           'resource-access-denied)
          (acp-extension-resource-test--reject
-          (lambda () (acp-extension-resource (acp-session-test--application session) (agentcomms:json-object "uri" "memory:all")))
-          'acp-extension-unavailable)))))
+          (lambda () (application-client-resource (acp-session-test--application session) (agentcomms:json-object "uri" "memory:all")))
+          'application-client-unavailable)))))
   nil)

@@ -14,15 +14,15 @@
 
 (-> acp-service--modes (acp-session) hash-table)
 (defun acp-service--modes (session)
-  "Return the permission modes and current selection for SESSION."
+  "Project the registered permissions command's supported modes for SESSION."
   (agentcomms:json-object
    "modes"
    (agentcomms:acp-session-mode-state
     (string-downcase (symbol-name (acp-session-mode session)))
-    (list (agentcomms:acp-session-mode "ask" "Ask" :description "Approve commands and external tools in the editor.")
-          (agentcomms:acp-session-mode "auto" "Auto" :description "Classify commands using the configured permission policy.")
-          (agentcomms:acp-session-mode "sandboxed" "Sandboxed" :description "Run commands in the configured workspace sandbox.")
-          (agentcomms:acp-session-mode "full-access" "Full access" :description "Allow commands and external tools without approval.")))))
+    (loop for mode in (application-client-permission-modes)
+          for identifier = (string-downcase (symbol-name mode))
+          collect (agentcomms:acp-session-mode
+                   identifier (string-capitalize (substitute #\Space #\- identifier)))))))
 
 (-> acp-service--open-session
     (acp-service &key (:cwd string) (:identifier (option string)) (:mcp-servers t)) acp-session)
@@ -66,28 +66,15 @@ subsequent events after its bounded history snapshot."
              (progn
                (when (and identifier (not (equal identifier channel)))
                  (agentcomms:acp-invalid-params "Use the canonical conversation identifier."))
-               (acp-session-begin-attachment session)
-               (let ((connection (localgroup-client-connect
-                                  (localgroup--find-record configuration channel)
-                                  :name           "acp"
-                                  :event-function (lambda (event)
-                                                    (acp-session-event session event)))))
-                 (setf (acp-session-connection session) connection)
-                 (let ((mode (getf (rest (getf (rest (localgroup-client-connection-attached connection)) :state))
-                                   :permission-mode)))
-                   (when (keywordp mode)
-                     (setf (acp-session-mode session) mode))))
-               (acp-session-finish-attachment
-                session (localgroup-client-connection-attached (acp-session-connection session))
-                :replay-p (not (null identifier)))
+               (channel-subscription-attach session :replay-p (not (null identifier)))
                (with-lock-held ((acp-service-lock service))
-                 (when (or (acp-service-closed-p service) (acp-session-closed-p session))
+                 (when (or (acp-service-closed-p service) (channel-subscription-closed-p session))
                    (error 'agentcomms:acp-connection-closed))
                  (setf (gethash channel (acp-service-sessions service)) session
                        completed-p                                      t))
                session)
           (unless completed-p
-            (acp-session-close session)))))))
+            (channel-subscription-close session)))))))
 
 (defmethod agentcomms:agent-new-session
     ((service acp-service) &key cwd mcp-servers additional-directories params)
@@ -96,7 +83,7 @@ subsequent events after its bounded history snapshot."
   (when additional-directories
     (agentcomms:acp-invalid-params "Additional directories are not supported."))
   (let ((session (acp-service--open-session service :cwd cwd :mcp-servers mcp-servers)))
-    (values (acp-session-identifier session) (acp-service--modes session))))
+    (values (channel-subscription-identifier session) (acp-service--modes session))))
 
 (-> acp-replay--record-update (list integer) (option hash-table))
 (defun acp-replay--record-update (record turn-sequence)
@@ -163,47 +150,15 @@ subsequent events after its bounded history snapshot."
 (-> acp-session-replay (acp-session &key (:through-sequence (option integer))) null)
 (defun acp-session-replay (session &key through-sequence)
   "Replay durable history through THROUGH-SEQUENCE, then the channel's current plan."
-  (let ((conversation (conversation-replay-load (acp-session-configuration session)
-                                                (acp-session-identifier session))))
-    (with-lock-held ((acp-session-lock session))
+  (let ((conversation (conversation-replay-load (channel-subscription-configuration session)
+                                                (channel-subscription-identifier session))))
+    (with-lock-held ((channel-subscription-lock session))
       (setf (acp-session-turn-sequence session)
             (nth-value 1 (acp-replay-map-updates
                           conversation (lambda (update) (acp-session--send session update))
                           :through-sequence through-sequence)))
       (acp-session--plan session)))
   (acp-session-flush session)
-  nil)
-
-(-> acp-session-begin-attachment (acp-session) integer)
-(defun acp-session-begin-attachment (session)
-  "Buffer incoming callbacks until the connection is installed; return its processed cursor."
-  (with-lock-held ((acp-session-event-lock session))
-    (setf (acp-session-attaching-p session) t)
-    (acp-session-event-sequence session)))
-
-(-> acp-session-drain-events (acp-session) null)
-(defun acp-session-drain-events (session)
-  "Deliver buffered callbacks in order before admitting live delivery."
-  (with-lock-held ((acp-session-event-lock session))
-    (loop until (deque-empty-p (acp-session-attachment-events session))
-          do (acp-session--consume-event session (deque-pop-front (acp-session-attachment-events session))))
-    (setf (acp-session-attaching-p session) nil))
-  nil)
-
-(-> acp-session-finish-attachment (acp-session list &key (:replay-p boolean)) null)
-(defun acp-session-finish-attachment (session greeting &key replay-p)
-  "Replay through GREETING's watermark, then deliver buffered later events before going live."
-  (let ((sequence (getf (rest greeting) :sequence))
-        (boundary (getf (rest greeting) :record-sequence)))
-    (unless (and (integerp sequence) (integerp boundary))
-      (error 'agentcomms:acp-state-error :message "The channel did not provide an attachment cursor."))
-    (setf (acp-session-replay-boundary session) boundary
-          (acp-session-catch-up-p session) t)
-    (when replay-p
-      (acp-session-replay session :through-sequence boundary))
-    (with-lock-held ((acp-session-event-lock session))
-      (setf (acp-session-event-sequence session) sequence))
-    (acp-session-drain-events session))
   nil)
 
 (defmethod agentcomms:agent-load-session
@@ -239,38 +194,24 @@ subsequent events after its bounded history snapshot."
 
 (-> acp-session-prompt (acp-session string) keyword)
 (defun acp-session-prompt (session text)
-  "Submit TEXT and await this submission's terminal outcome, independently of other channel work."
-  (let ((submission-id (make-identifier)))
-    (with-lock-held ((acp-session-lock session))
-      (when (acp-session-closed-p session)
-        (error 'agentcomms:acp-state-error :message "The session is closed."))
-      (when (acp-session-prompt-active-p session)
-        (error 'agentcomms:acp-state-error :message "A prompt is already running in this session."))
-      (setf (acp-session-prompt-active-p session) t
-            (acp-session-cancelled-p session) nil
-            (acp-session-prompt-submission session) submission-id
-            (acp-session-prompt-outcome session) nil))
-    (unwind-protect
-         (progn
-           (acp-session-submit session text :submission-id submission-id)
-           (let ((outcome
-                   (with-lock-held ((acp-session-lock session))
-                     (loop until (or (acp-session-closed-p session)
-                                     (acp-session-prompt-outcome session))
-                           do (condition-wait (acp-session-condition-variable session)
-                                              (acp-session-lock session)))
-                     (or (acp-session-prompt-outcome session)
-                         (error 'agentcomms:acp-state-error
-                                :message "The channel went away before the submission finished.")))))
-             (acp-session-flush session)
-             (when (eq outcome ':condition)
-               (error 'agentcomms:acp-method-error
-                      :code    -32603
-                      :message "The turn failed; the channel's transcript has its report."))
-             outcome))
-      (with-lock-held ((acp-session-lock session))
-        (setf (acp-session-prompt-active-p session) nil
-              (acp-session-prompt-submission session) nil)))))
+  "Submit TEXT and await this client's fully delivered terminal outcome."
+  (handler-case
+      (let ((fields (progn
+                      (with-lock-held ((channel-subscription-lock session))
+                        (setf (acp-session-cancelled-p session) nil))
+                      (channel-subscription-await-submission session text))))
+        (acp-session-flush session)
+        (case (getf fields :outcome)
+          (:cancelled
+           ':cancelled)
+          (:failed
+           (error 'agentcomms:acp-method-error
+                  :code    -32603
+                  :message "The turn failed; the channel's transcript has its report."))
+          (t
+           ':end-turn)))
+    (channel-subscription-unavailable (condition)
+      (error 'agentcomms:acp-state-error :message (autolith-error-message condition)))))
 
 (defmethod agentcomms:agent-prompt ((service acp-service) session-id prompt &key params)
   "Run one editor prompt in the session's channel."
@@ -278,39 +219,35 @@ subsequent events after its bounded history snapshot."
   (acp-session-prompt (acp-service--session service session-id) (acp-prompt->text prompt)))
 
 (defmethod agentcomms:agent-cancel ((service acp-service) session-id)
-  "Cancel the turn the session's channel runs."
-  (acp-session-cancel (acp-service--session service session-id)))
+  "Cancel channel work, restricting endpoint shutdown to this editor's pending submissions."
+  (let ((session (acp-service--session service session-id)))
+    (when (or (not (acp-service-closed-p service))
+              (with-lock-held ((channel-subscription-lock session))
+                (channel-subscription-submission-active-p session)))
+      (acp-session-cancel session))))
 
 (defmethod agentcomms:agent-set-mode ((service acp-service) session-id mode-id &key params)
-  "Set the channel's permission mode and tell the editor."
+  "Request a permission mode through channel admission; follow actual state events."
   (declare (ignore params))
   (let* ((session (acp-service--session service session-id))
-         (mode    (find mode-id '(:ask :auto :sandboxed :full-access)
+         (mode    (find mode-id (application-client-permission-modes)
                         :key (lambda (value) (string-downcase (symbol-name value))) :test #'equal)))
-    (unless mode (agentcomms:acp-invalid-params "Unknown mode ~A." mode-id))
-    (acp-session-call session ':mode :value mode)
-    (with-lock-held ((acp-session-lock session))
-      (setf (acp-session-mode session) mode))
-    (agentcomms:agent-send-update service session-id (agentcomms:acp-update-current-mode mode-id)))
+    (unless mode
+      (agentcomms:acp-invalid-params "Unknown mode ~A." mode-id))
+    (channel-subscription-call session ':mode :value mode))
   nil)
 
 (defmethod agentcomms:agent-close-session ((service acp-service) session-id params)
   "Leave the session's channel."
   (declare (ignore params))
-  (acp-session-close (acp-service--session service session-id))
+  (channel-subscription-close (acp-service--session service session-id))
   nil)
 
 (defmethod agentcomms:peer-connection-closed :before ((service acp-service) connection reason)
-  "Stop admission and cancel the turns the editor's prompts started."
+  "Stop admission before the library cancels sessions and joins request handlers."
   (declare (ignore connection reason))
-  (let ((sessions nil))
-    (with-lock-held ((acp-service-lock service))
-      (setf (acp-service-closed-p service) t
-            sessions (loop for session being the hash-values of (acp-service-sessions service)
-                           collect session)))
-    (dolist (session sessions)
-      (when (acp-session-prompt-active-p session)
-        (acp-session-cancel session)))))
+  (with-lock-held ((acp-service-lock service))
+    (setf (acp-service-closed-p service) t)))
 
 (defmethod agentcomms:agent-extension-request ((service acp-service) method params)
   "Run the editor's extension METHOD: in the ACP process, or in the session's channel.
@@ -333,7 +270,7 @@ its way, answers with a typed :CONDITION outcome; a closed service refuses."
                  (handler-case (acp-extension-result ':ok :value (funcall (second entry) session params))
                    (acp-extension-unavailable (condition)
                      (acp-extension-result ':unsupported :report (acp-extension-unavailable-reason condition))))
-                 (let ((outcome (getf (acp-session-call session ':operation
+                 (let ((outcome (getf (channel-subscription-call session ':operation
                                                         :method method
                                                         :params (client-portable params))
                                       :result)))
@@ -361,7 +298,7 @@ its way, answers with a typed :CONDITION outcome; a closed service refuses."
                                         (if (string= method "session/new") response params) "sessionId")))
                        (with-lock-held ((acp-service-lock service))
                          (let ((session (gethash identifier (acp-service-sessions service))))
-                           (unless (and session (not (acp-session-closed-p session))
+                           (unless (and session (not (channel-subscription-closed-p session))
                                         (not (acp-service-closed-p service)))
                              ;; Setup may have lost its socket before the library registered it.
                              (agentcomms::agent--forget-session service identifier)
@@ -383,7 +320,7 @@ its way, answers with a typed :CONDITION outcome; a closed service refuses."
             sessions (loop for session being the hash-values of (acp-service-sessions service)
                            collect session))
       (clrhash (acp-service-sessions service)))
-    (mapc #'acp-session-close sessions))
+    (mapc #'channel-subscription-close sessions))
   nil)
 
 (-> acp-service-serve (acp-service agentcomms:acp-channel) null)
@@ -427,4 +364,15 @@ starts when none runs."
                  (serve channel))))
       (when channel
         (agentcomms:channel-close channel))))
+  nil)
+
+(defmethod channel-subscription-prepare-attachment ((session acp-session) greeting &key replay-p)
+  "Set the editor's mode and durable replay watermark before draining live callbacks."
+  (let* ((fields   (rest greeting))
+         (boundary (getf fields :record-sequence))
+         (mode     (getf (rest (getf fields :state)) :permission-mode)))
+    (when (keywordp mode) (setf (acp-session-mode session) mode))
+    (setf (acp-session-replay-boundary session) boundary
+          (acp-session-catch-up-p session) t)
+    (when replay-p (acp-session-replay session :through-sequence boundary)))
   nil)

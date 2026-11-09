@@ -21,7 +21,7 @@
               (application (acp-session-test--application session)))
          (application-clients-publish application (list :present :text "before-restart"))
          (dolist (fail-p '(nil t))
-           (let* ((previous (acp-session-connection session))
+           (let* ((previous (channel-subscription-connection session))
                   (during   (if fail-p "during-failed-restart" "during-restart"))
                   (after    (if fail-p "after-failed-restart" "after-restart")))
              (test-assert
@@ -42,16 +42,16 @@
              (let ((reconnected-p
                      (task-tests--wait-until
                       (lambda ()
-                        (let ((connection (acp-session-connection session)))
+                        (let ((connection (channel-subscription-connection session)))
                           (and connection (not (eq previous connection))
                                (not (localgroup-client-connection-closed-p connection))
-                               (not (acp-session-closed-p session)))))
+                               (not (channel-subscription-closed-p session)))))
                       10)))
               (test-assert reconnected-p
                            (format nil "the same ACP session reconnects automatically (closed ~S, restart ~S, failure ~S)"
-                                   (acp-session-closed-p session)
-                                   (acp-session-reconnect-id session)
-                                   (acp-session-reconnect-failure session)))
+                                   (channel-subscription-closed-p session)
+                                   (channel-subscription-reconnect-id session)
+                                   (channel-subscription-reconnect-failure session)))
               (unless reconnected-p
                 (return-from test-acp-session-checkpoint-reconnect nil)))
              (test-assert (eq session (acp-service--session service identifier))
@@ -84,7 +84,7 @@
               (session    (acp-service--session service identifier)))
          (conversation-append-user-message
           (application-conversation (acp-session-test--application session)) "saved")
-         (localgroup-client-close (acp-session-connection session))
+         (localgroup-client-close (channel-subscription-connection session))
          (test-assert
           (task-tests--wait-until
            (lambda ()
@@ -115,14 +115,14 @@
                         (error 'localgroup-error :message  "Injected reconnect refusal."
                                                 :operation ':attach))))
           (lambda ()
-            (acp-session-event session (list :checkpoint-reconnect :id (make-identifier)))
-            (localgroup-client-close (acp-session-connection session))
+            (channel-subscription-event session (list :checkpoint-reconnect :id (make-identifier)))
+            (localgroup-client-close (channel-subscription-connection session))
             (test-assert
-             (task-tests--wait-until (lambda () (acp-session-closed-p session)) 2)
+             (task-tests--wait-until (lambda () (channel-subscription-closed-p session)) 2)
              "a refused reconnect closes the session")
-            (let ((worker (acp-session-reconnect-thread session)))
+            (let ((worker (channel-subscription-reconnect-thread session)))
               (when worker (join-thread worker)))
-            (test-assert (non-empty-string-p (acp-session-reconnect-failure session))
+            (test-assert (non-empty-string-p (channel-subscription-reconnect-failure session))
                          "reconnect failure retains a diagnostic")
             (test-assert
              (with-lock-held ((acp-service-lock service))
@@ -142,17 +142,17 @@
      (lambda (service client)
        (let* ((identifier (agentcomms:client-new-session client (namestring root)))
               (session    (acp-service--session service identifier)))
-         (acp-session-event session (list :checkpoint-reconnect :id (make-identifier)))
-         (localgroup-client-close (acp-session-connection session))
+         (channel-subscription-event session (list :checkpoint-reconnect :id (make-identifier)))
+         (localgroup-client-close (channel-subscription-connection session))
          (test-assert (task-tests--wait-until
-                       (lambda () (acp-session-reconnect-thread session)) 2)
+                       (lambda () (channel-subscription-reconnect-thread session)) 2)
                       "endpoint discovery starts after planned closure")
-         (let ((worker (acp-session-reconnect-thread session)))
-           (acp-session-close session)
+         (let ((worker (channel-subscription-reconnect-thread session)))
+           (channel-subscription-close session)
            (test-assert (or (null worker) (not (thread-alive-p worker)))
                         "close joins the cancelled reconnect worker"))
-         (test-assert (and (acp-session-closed-p session)
-                           (null (acp-session-reconnect-id session)))
+         (test-assert (and (channel-subscription-closed-p session)
+                           (null (channel-subscription-reconnect-id session)))
                       "closed session admits no replacement connection")
          (test-assert
           (with-lock-held ((acp-service-lock service))
@@ -170,7 +170,7 @@
        (let* ((identifier   (agentcomms:client-new-session client (namestring root)))
               (session      (acp-service--session service identifier))
               (application  (acp-session-test--application session))
-              (connection   (acp-session-connection session))
+              (connection   (channel-subscription-connection session))
               (original     (symbol-function 'localgroup--client-reply))
               (lock         (make-lock "Interrupted request test"))
               (condition    (make-condition-variable :name "Interrupted request test"))
@@ -219,7 +219,7 @@
                 (condition-notify condition))
               (localgroup-client-close connection)
               (when caller (join-thread caller))
-              (acp-session-close session))))))))
+              (channel-subscription-close session))))))))
   nil)
 
 (-> acp-reconnect-test--checkpoint (application function &key (:server world-server)) t)
@@ -239,7 +239,7 @@
        (let* ((identifier  (agentcomms:client-new-session client (namestring root)))
               (session     (acp-service--session service identifier))
               (application (acp-session-test--application session))
-              (previous    (acp-session-connection session))
+              (previous    (channel-subscription-connection session))
               (original    (symbol-function 'localgroup-client-connect))
               (server      *acp-session-test-server*)
               (raced-p     nil))
@@ -260,12 +260,12 @@
             (test-assert
              (task-tests--wait-until
               (lambda ()
-                (and raced-p (not (acp-session-closed-p session))
-                     (not (eq previous (acp-session-connection session)))
-                     (null (acp-session-reconnect-id session)))) 10)
+                (and raced-p (not (channel-subscription-closed-p session))
+                     (not (eq previous (channel-subscription-connection session)))
+                     (null (channel-subscription-reconnect-id session)))) 10)
              (format nil "checkpoint race reconnects (raced ~S closed ~S id ~S failure ~S worker ~S)"
-                     raced-p (acp-session-closed-p session) (acp-session-reconnect-id session)
-                     (acp-session-reconnect-failure session) (acp-session-reconnect-thread session)))
+                     raced-p (channel-subscription-closed-p session) (channel-subscription-reconnect-id session)
+                     (channel-subscription-reconnect-failure session) (channel-subscription-reconnect-thread session)))
             (application-clients-publish application (list :present :text "after-race"))
             (test-assert
              (task-tests--wait-until
@@ -284,23 +284,23 @@
      (lambda (service client)
        (dolist (phase '(:attachment :protocol-registration))
          (let* ((name     (if (eq phase ':attachment)
-                              'acp-session-finish-attachment 'agentcomms::agent--register-session))
+                              'channel-subscription-finish-attachment 'agentcomms::agent--register-session))
                 (original (symbol-function name)))
            (test-call-with-function-replacements
             (list (list name
                         (lambda (&rest arguments)
                           (when (eq phase ':protocol-registration)
                             (let ((session (acp-service--session service (second arguments))))
-                              (localgroup-client-close (acp-session-connection session))
+                              (localgroup-client-close (channel-subscription-connection session))
                               (test-assert (task-tests--wait-until
-                                            (lambda () (acp-session-closed-p session)) 2)
+                                            (lambda () (channel-subscription-closed-p session)) 2)
                                            "EOF arrives before protocol registration")))
                           (multiple-value-prog1 (apply original arguments)
                             (when (eq phase ':attachment)
                               (let ((session (first arguments)))
-                                (localgroup-client-close (acp-session-connection session))
+                                (localgroup-client-close (channel-subscription-connection session))
                                 (test-assert (task-tests--wait-until
-                                              (lambda () (acp-session-closed-p session)) 2)
+                                              (lambda () (channel-subscription-closed-p session)) 2)
                                              "EOF arrives before application registration")))))))
             (lambda ()
               (test-assert
@@ -416,15 +416,15 @@
                    (acp-reconnect-test--checkpoint application (lambda () nil))
                    (test-assert (task-tests--wait-until (lambda () entered-p) 2)
                                 "the replacement reaches the greeting barrier")
-                   (let ((worker (acp-session-reconnect-thread session)))
+                   (let ((worker (channel-subscription-reconnect-thread session)))
                      ;; Closing the channel is independent of handshake cancellation.
                      (test-call-with-function-replacements
                       (list (list 'world-client-entry
                                   (lambda (&rest arguments) (declare (ignore arguments)) nil)))
-                      (lambda () (acp-session-close session)))
+                      (lambda () (channel-subscription-close session)))
                      (test-assert (and worker (not (thread-alive-p worker)))
                                   "close joins the worker before releasing its greeting")
-                     (test-assert (acp-session-closed-p session)
+                     (test-assert (channel-subscription-closed-p session)
                                   "the cancelled attachment cannot install a connection")))
               (with-lock-held (lock)
                 (setf released-p t)
@@ -441,10 +441,10 @@
                                                     :configuration configuration))
            (replacement (make-instance 'acp-session :service service :identifier identifier
                                                     :configuration configuration))
-           (original    (symbol-function 'acp-session-close)))
+           (original    (symbol-function 'channel-subscription-close)))
       (setf (gethash identifier (acp-service-sessions service)) previous)
       (test-call-with-function-replacements
-       (list (list 'acp-session-close
+       (list (list 'channel-subscription-close
                    (lambda (session)
                      (setf (gethash identifier (acp-service-sessions service)) replacement)
                      (funcall original session))))
