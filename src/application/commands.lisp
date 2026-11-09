@@ -2881,19 +2881,28 @@ The current value and its source sit in aligned columns of their own."
      :terminal-behavior :shared
      :callable          t)
     (application)
-  (let ((configuration (application-configuration application))
-        (terminal      (terminal-ui-terminal (application-ui application))))
+  (let* ((configuration (application-configuration application))
+         (ui            (application-ui application))
+         (terminal      (terminal-ui-terminal ui)))
     (if (and (application-hosted-p application) (typep terminal 'localgroup-terminal))
         ;; A hosted channel keeps its conversation and its agent; the new
         ;; conversation is a channel of its own, and the terminal goes there.
-        (let* ((identifier (getf (rest (world-server-open
-                                        (application-world-server application)
-                                        (list :directory    (namestring (config :working-directory configuration))
-                                              :new-p        t
-                                              :switch-p     t
-                                              :fullscreen-p (not (null (config :fullscreen-p configuration))))))
-                                 :session-id))
-               (display    (conversation-identifier-display identifier)))
+        (let* ((presentation
+                 (with-terminal-ui-locked (ui)
+                   (list :rows     (terminal-rows terminal)
+                         :columns  (terminal-columns terminal)
+                         :styled-p (not (null (terminal-styled-p terminal))))))
+               (identifier
+                 (getf (rest (world-server-open
+                              (application-world-server application)
+                              (append
+                               (list :directory    (namestring (config :working-directory configuration))
+                                     :new-p        t
+                                     :switch-p     t
+                                     :fullscreen-p (not (null (config :fullscreen-p configuration))))
+                               presentation)))
+                       :session-id))
+               (display (conversation-identifier-display identifier)))
           (unless (localgroup-terminal-switch-controller terminal identifier)
             (application-present
              application

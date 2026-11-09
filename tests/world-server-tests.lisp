@@ -246,34 +246,87 @@ run once the wake has."
 
 (-> test-world-server-new-channel () null)
 (defun test-world-server-new-channel ()
-  "Test (new) in a hosted channel opens another channel in its workspace and moves the terminal there."
-  (world-server-tests--call
-   (lambda (server configuration root)
-     (let* ((entry       (world-client-entry configuration))
-            (first-id    (getf (rest (world-server-tests--open entry (world-tests--workspace root "new")))
-                               :session-id))
-            (application (world-host-application (world-server--find-host server first-id)))
-            (attachment  (make-instance 'image-daemon:attachment
-                                        :socket nil
-                                        :stream (make-broadcast-stream)
-                                        :mode   ':control)))
-       (image-daemon:relay-attach (terminal-ui-terminal (application-ui application)) attachment
-                                  :rows 24 :columns 80 :styled-p nil :session-id first-id)
-       (application--builtin-new-command application)
-       (let* ((hosts   (mapcar #'world-host-channel (world-server--hosts server)))
-              (second  (find-if-not (lambda (identifier) (string= identifier first-id)) hosts))
-              (packets (coerce (structlisp:deque->vector (image-daemon:attachment-queue attachment))
-                               'list)))
-         (test-assert (and (= (length hosts) 2)
-                           (string= (conversation-identifier (application-conversation application))
-                                    first-id))
-                      "the channel keeps its conversation, and a second channel runs beside it")
-         (test-assert (and second
-                           (some (lambda (packet)
-                                   (and (search ":SWITCH" (string-upcase packet))
-                                        (search second packet)))
-                                 packets))
-                      "the terminal is sent to the new channel")))))
+  "Test (new) inherits presentation before attachment and renders its first attached frame."
+  (dolist (presentation '((nil nil 30 90) (t nil 31 97) (t t 37 109)))
+    (destructuring-bind (attached-p styled-p rows columns) presentation
+      (world-server-tests--call
+       (lambda (server configuration root)
+         (let* ((entry       (world-client-entry configuration))
+                (first-id    (getf (rest (world-server-tests--open
+                                          entry (world-tests--workspace root "new") :fullscreen-p t))
+                                  :session-id))
+                (application (world-host-application (world-server--find-host server first-id)))
+                (ui          (application-ui application))
+                (terminal    (terminal-ui-terminal ui))
+                (attachment  (when attached-p
+                               (make-instance 'image-daemon:attachment
+                                              :socket nil
+                                              :stream (make-broadcast-stream)
+                                              :mode   ':control))))
+           (when attachment
+             (image-daemon:relay-attach terminal attachment
+                                        :rows rows :columns columns :styled-p styled-p
+                                        :session-id first-id)
+             (test-assert
+              (task-tests--wait-until
+               (lambda ()
+                 (with-terminal-ui-locked (ui)
+                   (and (= rows (terminal-rows terminal))
+                        (= columns (terminal-columns terminal)))))
+               30)
+              "the current channel applies its controlling terminal's dimensions"))
+           (application--builtin-new-command application)
+           (let* ((hosts  (mapcar #'world-host-channel (world-server--hosts server)))
+                  (second (find-if-not (lambda (identifier) (string= identifier first-id)) hosts)))
+             (test-assert (and (= (length hosts) 2)
+                               (string= (conversation-identifier (application-conversation application))
+                                        first-id))
+                          "the old channel keeps its conversation while the new channel runs beside it")
+             (when attachment
+               (let ((packets (coerce (structlisp:deque->vector
+                                       (image-daemon:attachment-queue attachment))
+                                     'list)))
+                 (test-assert (and second
+                                   (some (lambda (packet)
+                                           (and (search ":SWITCH" (string-upcase packet))
+                                                (search second packet)))
+                                         packets))
+                              "the terminal is sent to the new channel")))
+             (let* ((next-application (world-host-application (world-server--find-host server second)))
+                    (next-ui          (application-ui next-application))
+                    (next-terminal    (terminal-ui-terminal next-ui))
+                    (next-attachment  (make-instance 'image-daemon:attachment
+                                                     :socket nil
+                                                     :stream (make-broadcast-stream)
+                                                     :mode   ':control)))
+               (with-terminal-ui-locked (next-ui)
+                 (test-assert (and (= rows (terminal-rows next-terminal))
+                                   (= columns (terminal-columns next-terminal)))
+                              "the new relay inherits the current channel's dimensions before attachment")
+                 (test-assert (eql styled-p (terminal-styled-p next-terminal))
+                              "the new relay inherits the current channel's styling before attachment"))
+               (application-present next-application
+                                    (list (terminal-span ':brand "new-channel presentation")))
+               (image-daemon:relay-attach next-terminal next-attachment
+                                          :rows rows :columns columns :styled-p styled-p
+                                          :session-id second)
+               (test-assert
+                (task-tests--wait-until
+                 (lambda () (localgroup-terminal-screen-frame next-terminal)) 30)
+                "the new channel prepares its first full frame when a terminal attaches")
+               (with-terminal-ui-locked (next-ui)
+                 (let ((frame (localgroup-terminal-screen-frame next-terminal)))
+                   (test-assert (and frame
+                                     (= rows (clinedi:frame-snapshot-height frame))
+                                     (= columns (clinedi:frame-snapshot-width frame)))
+                                "the initial frame uses the current channel's dimensions")
+                   (test-assert
+                    (and frame
+                         (eql styled-p
+                              (not (null (some (lambda (line)
+                                                 (search (terminal-style-sequence ':brand) line))
+                                               (clinedi:frame-snapshot-rows frame))))))
+                    "the initial frame preserves styling of output prepared before attachment"))))))))))
   nil)
 
 (-> test-world-server-tell () null)
