@@ -43,7 +43,7 @@
       ((member operation '("query" "rewrite") :test #'equal)
        (unless program
          (structural--fail ':unavailable "Optional structural backend is disabled; configure an ast-grep executable."))
-       (multiple-value-bind (resource snapshot)
+       (multiple-value-bind (resource snapshot observation)
            (structural--snapshot context (tool-argument arguments "uri" :required t)
                                  (tool-argument arguments "base-revision" :required t))
          (let ((backend  (structural--backend context program :cancelled-p cancelled-p))
@@ -58,7 +58,7 @@
                (let ((plan (clasted:rewrite backend snapshot :language language :pattern pattern
                                             :replacement (tool-argument arguments "replacement" :required t))))
                  (structural--present
-                  (structural--prepare state context :resource resource :plan plan)))))))
+                  (structural--prepare state context :resource resource :plan plan :observation observation)))))))
       ((member operation '("inspect" "apply") :test #'equal)
        (let ((proposal (structural--find state context (tool-argument arguments "proposal" :required t))))
          (if (equal operation "inspect")
@@ -123,7 +123,7 @@ launch a backend. Existing registries may opt in explicitly after ASDF load."
             ((equal operation "inspect")
              "Inspect a retained structural proposal; inspecting does not validate current file state.")
             (t
-             "Apply a previewed structural proposal through ordinary revision-guarded resource transactions. Stale or expired snapshots fail; success consumes the proposal."))
+             "Apply a previewed structural proposal through ordinary revision-guarded resource transactions. Changed baselines fail; successful publication consumes the proposal."))
           :parameters (tool-object-schema properties required))))))
   registry)
 

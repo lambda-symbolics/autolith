@@ -27,25 +27,18 @@
   "Preserve the semantic policy failure code while marking the authority refusal."
   ':tool-failure)
 
-(defclass lsp-semantic-state ()
-  ((entries :initform      (make-hash-table :test #'eq :weakness :key)
-            :reader        lsp-semantic-state-entries
-            :documentation "Conversation-keyed bounded choices, without owning conversations."))
-  (:documentation "Registry-owned semantic choices serialized by the LSP manager lock."))
+(defclass lsp-semantic-state (edit-proposal-store) ()
+  (:documentation "Semantic choices with independent entry and snapshot retention budgets."))
 
-(defclass lsp-semantic-entry ()
-  ((identifier :initform (daemon-random-token) :reader lsp-semantic-entry-identifier
-               :documentation "Opaque conversation-local choice identifier.")
-   (client :initarg :client :reader lsp-semantic-entry-client
+(defclass lsp-semantic-entry (edit-proposal)
+  ((client :initarg :client :reader lsp-semantic-entry-client
            :documentation "Server that returned this choice.")
    (transport :initarg :transport :reader lsp-semantic-entry-transport
               :documentation "Exact request transport, invalidated by restart.")
    (value :initarg :value :reader lsp-semantic-entry-value
           :documentation "Normalized proposal or raw action row.")
    (kind :initarg :kind :reader lsp-semantic-entry-kind
-         :documentation "Either :proposal or :action.")
-   (snapshots :initarg :snapshots :reader lsp-semantic-entry-snapshots
-              :documentation "URI-keyed resource, proposal-owned observation state and exact document version."))
+         :documentation "Either :proposal or :action."))
   (:documentation "An immutable proposed transformation against exact retained snapshots."))
 
 (declaim (inline lsp-semantic--fail))
@@ -134,64 +127,64 @@
                        (resource-observation-content observation))
                   (third record) (workspace-file-observation-kind observation)))))))
 
+(defmethod edit-proposal-store-limits ((store lsp-semantic-state))
+  "Preserve semantic entry, snapshot-count and byte budgets."
+  (values *lsp-semantic-maximum-entries* *lsp-semantic-maximum-snapshots*
+          *lsp-semantic-maximum-snapshot-bytes*))
+
+(defmethod edit-proposal-fail ((store lsp-semantic-state) code message)
+  "Preserve semantic policy conditions."
+  (declare (ignore code))
+  (lsp-semantic--fail message))
+
+(-> lsp-semantic-entry-identifier (lsp-semantic-entry) string)
+(defun lsp-semantic-entry-identifier (entry)
+  "Return the shared conversation-local proposal identity."
+  (edit-proposal-identifier entry))
+
+(-> lsp-semantic-entry-snapshots (lsp-semantic-entry) hash-table)
+(defun lsp-semantic-entry-snapshots (entry)
+  "Return independently owned semantic baselines."
+  (edit-proposal-snapshots entry))
+
 (-> lsp-semantic--store (lsp-semantic-state tool-context lsp-semantic-entry) string)
 (defun lsp-semantic--store (state context entry)
-  "Retain the newest choices within entry, snapshot-count and UTF-8 byte budgets."
+  "Validate semantic payload limits and admit it to the common bounded store."
   (when (> (length (json-encode (lsp-semantic-entry-value entry)))
            *lsp-semantic-maximum-characters*)
     (lsp-semantic--fail "Semantic proposal exceeds the retained choice limit; narrow the request."))
-  (let* ((snapshots    (lsp-semantic-entry-snapshots entry))
-         (conversation (tool-context-conversation context))
-         (entries      (cons entry (gethash conversation (lsp-semantic-state-entries state)))))
-    (when (or (> (hash-table-count snapshots)
-                 (min *lsp-semantic-maximum-snapshots-per-entry* *lsp-semantic-maximum-snapshots*))
-              (> (lsp-semantic--snapshot-bytes snapshots) *lsp-semantic-maximum-snapshot-bytes*))
-      (lsp-semantic--fail "Semantic snapshots exceed the retained resource budget; narrow the request."))
-    (setf (gethash conversation (lsp-semantic-state-entries state))
-          (loop for candidate in entries
-                for index from 0
-                for snapshots = (lsp-semantic-entry-snapshots candidate)
-                sum (hash-table-count snapshots) into count
-                sum (lsp-semantic--snapshot-bytes snapshots) into bytes
-                while (and (< index *lsp-semantic-maximum-entries*)
-                           (<= count *lsp-semantic-maximum-snapshots*)
-                           (<= bytes *lsp-semantic-maximum-snapshot-bytes*))
-                  collect candidate)))
-  (lsp-semantic-entry-identifier entry))
+  (when (> (hash-table-count (edit-proposal-snapshots entry))
+           *lsp-semantic-maximum-snapshots-per-entry*)
+    (lsp-semantic--fail "Semantic proposal addresses too many resources; narrow the request."))
+  (edit-proposal-retain state context entry)
+  (edit-proposal-identifier entry))
 
 (-> lsp-semantic--find
     (lsp-semantic-state tool-context &key (:identifier string) (:kind symbol)) lsp-semantic-entry)
 (defun lsp-semantic--find (state context &key identifier kind)
-  "Find an unexpired choice of KIND in the current conversation only."
-  (or (find-if (lambda (entry)
-                 (and (equal identifier (lsp-semantic-entry-identifier entry))
-                      (eq kind (lsp-semantic-entry-kind entry))))
-               (gethash (tool-context-conversation context) (lsp-semantic-state-entries state)))
-      (lsp-semantic--fail "Unknown or expired semantic choice; request a fresh proposal.")))
+  "Find an unexpired semantic choice of KIND in the current conversation."
+  (let ((entry (edit-proposal-find state context identifier)))
+    (unless (eq kind (lsp-semantic-entry-kind entry))
+      (lsp-semantic--fail "Semantic choice has the wrong kind; request a fresh proposal."))
+    entry))
 
-(-> lsp-semantic--validate (tool-context lsp-semantic-entry) null)
-(defun lsp-semantic--validate (context entry)
-  "Reauthorize every snapshot and reject disk or server-version drift."
+(defmethod edit-proposal-validate :after ((context tool-context) (entry lsp-semantic-entry))
+  "Reject server restarts and synchronized-document version drift."
   (let ((client (lsp-semantic-entry-client entry)))
     (unless (eq (lsp-semantic-entry-transport entry) (lsp-client-transport client))
       (lsp-semantic--fail "Language server restarted; request a fresh proposal."))
-    (maphash
-     (lambda (uri record)
-       (destructuring-bind (resource state version) record
-         (let ((observation (resource-observation-state-observation state)))
-           (workspace-file--call-with-authorized-access
-            resource context ':edit
-            :function
-            (lambda ()
-              (let ((current (resource-observe resource context)))
-                (unless (workspace-file--same-observation-p observation current)
-                  (workspace-file--signal-stale resource observation current)))))
-           (with-lock-held ((cl-lsp:lsp-client-lock client))
-             (let ((document (gethash uri (cl-lsp:lsp-client-documents client))))
-               (unless (eql version (and document (cl-lsp:lsp-document-version document)))
-                 (lsp-semantic--fail "Document version changed; request a fresh proposal.")))))))
-     (lsp-semantic-entry-snapshots entry)))
-  nil)
+    (with-lock-held ((cl-lsp:lsp-client-lock client))
+      (maphash
+       (lambda (uri record)
+         (let ((document (gethash uri (cl-lsp:lsp-client-documents client))))
+           (unless (eql (third record) (and document (cl-lsp:lsp-document-version document)))
+             (lsp-semantic--fail "Document version changed; request a fresh proposal."))))
+       (edit-proposal-snapshots entry)))))
+
+(-> lsp-semantic--validate (tool-context lsp-semantic-entry) null)
+(defun lsp-semantic--validate (context entry)
+  "Validate owned baselines and server identity before resolving a choice."
+  (edit-proposal-validate context entry))
 
 (-> lsp-semantic--requests (tool-context lsp-semantic-entry) list)
 (defun lsp-semantic--requests (context entry)
@@ -244,9 +237,13 @@
       (lsp-semantic--requests context entry)
       entry)))
 
-(-> lsp-semantic--apply (tool-context lsp-semantic-entry vector) list)
-(defun lsp-semantic--apply (context entry approved)
-  "Apply a retained proposal after exact validation and explicit annotation approval."
+(defmethod edit-proposal-requests ((context tool-context) (entry lsp-semantic-entry))
+  "Materialize semantic changes through the semantic adapter."
+  (lsp-semantic--requests context entry))
+
+(-> lsp-semantic--approve (tool-context lsp-semantic-entry vector) null)
+(defun lsp-semantic--approve (context entry approved)
+  "Require explicit annotation approval and fresh host authority before applying."
   (maphash
    (lambda (identifier annotation)
      (when (eq (json-get annotation "needsConfirmation") t)
@@ -263,17 +260,14 @@
          (error 'lsp-semantic-authority-denied
                 :message (format nil "Permission to apply annotation ~A was denied." identifier)))))
    (json-get (lsp-semantic-entry-value entry) "annotations"))
-  (let ((*workspace-file-proposal-observations* (make-hash-table :test #'equal)))
-    (maphash
-     (lambda (uri record)
-       (declare (ignore uri))
-       (destructuring-bind (resource state version) record
-         (declare (ignore version))
-         (setf (gethash (list (tool-context-conversation context)
-                             (resource-uri resource) (resource-observation-state-alias state))
-                       *workspace-file-proposal-observations*)
-               state)))
-     (lsp-semantic-entry-snapshots entry))
-    (with-recursive-lock-held (*workspace-file-mutation-lock*)
-      (lsp-semantic--validate context entry)
-      (workspace-change-set-apply context (lsp-semantic--requests context entry)))))
+  nil)
+
+(-> lsp-semantic--apply (tool-context lsp-semantic-entry vector) list)
+(defun lsp-semantic--apply (context entry approved)
+  "Publish a semantic proposal through shared one-time consumption."
+  ;; Directly constructed entries use the same lifecycle as tool-retained entries.
+  (let ((store (or (edit-proposal-store entry) (make-instance 'lsp-semantic-state))))
+    (unless (edit-proposal-store entry)
+      (edit-proposal-retain store context entry))
+    (edit-proposal-apply store context entry
+                         :before (lambda () (lsp-semantic--approve context entry approved)))))

@@ -425,7 +425,7 @@ Directories and missing files keep their ordinary observation."
   state)
 
 (defparameter *workspace-file-proposal-observations* nil
-  "Conversation, URI and alias keyed snapshots owned by one guarded semantic apply.")
+  "Conversation, URI and alias keyed baselines owned by one guarded proposal operation.")
 
 (-> workspace-file--find-observation-state
     (conversation non-empty-string non-empty-string)

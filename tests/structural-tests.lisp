@@ -274,7 +274,7 @@
                                   ':deny ':full-access)))))
        (ensure-directories-exist workspace)
        (let* ((revision   (structural-tests--revision context uri))
-              (arguments  (structural-tests--arguments revision :replacement "bar($A)"))
+              (arguments  (structural-tests--arguments revision))
               (query      (tool-registry-find registry "structural" "query"))
               (rewrite    (tool-registry-find registry "structural" "rewrite"))
               (apply-tool (tool-registry-find registry "structural" "apply")))
@@ -290,7 +290,8 @@
          (setf phase ':allow)
          (test-assert (= 1 (length (json-get (structural-tests--call context "query" arguments) "matches")))
                       "approved external source and program queried")
-         (setf phase ':deny-edit)
+         (setf (gethash "replacement" arguments) "bar($A)"
+               phase ':deny-edit)
          (test-assert (structural-tests--rejected (lambda () (tool-execute rewrite context arguments)))
                       "preview staging needs ordinary edit approval")
          (setf phase ':allow)
@@ -312,31 +313,56 @@
 
 (-> test-structural-expired-resource-revision () null)
 (defun test-structural-expired-resource-revision ()
-  "Retained structural previews cannot extend an expired ordinary resource revision's lifetime."
+  "Own proposal baselines independently of ordinary read aliases and consume successful publication once."
   (structural-tests--fixture
    (lambda (configuration registry context commands)
      (declare (ignore commands))
-     (let* ((*workspace-file-resource-maximum-observations* 1)
+     (let* ((*workspace-file-resource-maximum-observations* 2)
             (root                                           (config :working-directory configuration))
             (source                                         (structural-tests--write (merge-pathnames "source.js" root) "foo(1);"))
             (revision                                       (structural-tests--revision context "workspace:source.js"))
             (proposal                                       (structural-tests--call context "rewrite"
-                                                                                     (structural-tests--arguments revision :replacement "bar($A)"))))
-       (structural-tests--write (merge-pathnames "other.js" root) "other(1);")
-       (structural-tests--revision context "workspace:other.js")
-       (test-assert (structural-tests--rejected
-                     (lambda () (tool-execute (tool-registry-find registry "structural" "apply") context
-                                              (json-object "proposal" (json-get proposal "proposal")))))
-                    "expired alias cannot be refreshed from a retained structural snapshot")
+                                                                                     (structural-tests--arguments revision :replacement "bar($A)")))
+            (identifier                                     (json-get proposal "proposal"))
+            (apply-tool                                     (tool-registry-find registry "structural" "apply"))
+            (semantic-state                                 (make-instance 'lsp-semantic-state))
+            (semantic-client                                (lsp-client-tests--client root))
+            (semantic-edit                                  (json-object "changes"
+                                                                         (json-object (cl-lsp:lsp-path-uri source)
+                                                                                      (vector (lsp-semantic-tests--text-edit 0 3 "semantic")))))
+            (semantic-identifier                            nil))
+       (let ((*lsp-semantic-maximum-entries* 1))
+         (let* ((old            (lsp-semantic-tests--proposal context semantic-client semantic-edit))
+                (old-identifier (lsp-semantic--store semantic-state context old)))
+           (setf semantic-identifier
+                 (lsp-semantic--store semantic-state context
+                                      (lsp-semantic-tests--proposal context semantic-client semantic-edit)))
+           (test-assert (lsp-semantic-tests--rejected
+                         (lambda () (lsp-semantic--find semantic-state context
+                                                       :identifier old-identifier :kind ':proposal)))
+                        "semantic choices enforce their independent entry budget")))
+       (dotimes (index 3)
+         (let ((name (format nil "unrelated-~D.js" index)))
+           (structural-tests--write (merge-pathnames name root) "other();")
+           (structural-tests--revision context (concatenate 'string "workspace:" name))))
        (test-assert (structural-tests--rejected
                      (lambda () (tool-execute (tool-registry-find registry "structural" "query") context
-                                              (structural-tests--arguments revision)))) "expired query revision rejected")
-       (test-assert (equal "foo(1);" (uiop:read-file-string source)) "expired proposal publishes nothing")
-       (let* ((new-revision (structural-tests--revision context "workspace:source.js"))
-              (query        (structural-tests--call context "query" (structural-tests--arguments new-revision))))
-         (test-assert (not (equal (json-get proposal "snapshot") (json-get query "snapshot")))
-                      "new revision produces a distinct snapshot identity despite equal source")
-         (test-assert (= 1 (length (json-get query "matches"))) "reread revision supports a fresh query")))))
+                                              (structural-tests--arguments revision))))
+                    "original read alias was actually evicted")
+       (test-assert (equal (json-get proposal "preview")
+                           (json-get (structural-tests--call context "inspect" (json-object "proposal" identifier)) "preview"))
+                    "owned proposal stays inspectable after unrelated read eviction")
+       (structural-tests--call context "apply" (json-object "proposal" identifier))
+       (test-assert (equal "bar(1);" (uiop:read-file-string source))
+                    "unchanged baseline publishes after read alias eviction")
+       (test-assert (structural-tests--rejected
+                     (lambda () (tool-execute apply-tool context (json-object "proposal" identifier))))
+                    "publication consumes exactly once")
+       (test-assert (equal semantic-identifier
+                           (edit-proposal-identifier
+                            (lsp-semantic--find semantic-state context
+                                                :identifier semantic-identifier :kind ':proposal)))
+                    "structural consumption does not consume retained semantic choices"))))
   nil)
 
 (-> test-structural-concurrent-proposal-application () null)
@@ -357,18 +383,18 @@
                                           :conversation (tool-context-conversation context)))
             (entered       (sb-thread:make-semaphore :count 0))
             (release       (sb-thread:make-semaphore :count 0))
-            (original      (symbol-function 'cl-resources:resource-check-revision))
+            (original      (symbol-function 'resource-observe))
             (thread        nil)
             (first-result  nil))
        (test-call-with-function-replacements
         (list
-         (list 'cl-resources:resource-check-revision
-               (lambda (resource request-context expected)
+         (list 'resource-observe
+               (lambda (resource request-context)
                  (when (eq request-context first-context)
                    (sb-thread:signal-semaphore entered)
                    (unless (sb-thread:wait-on-semaphore release :timeout 10)
                      (structural--fail ':test-timeout "Concurrent fixture release timed out.")))
-                 (funcall original resource request-context expected))))
+                 (funcall original resource request-context))))
         (lambda ()
           (unwind-protect
                (progn
@@ -400,9 +426,9 @@
               (retry-call (json-object "namespace" "structural" "name" "apply"
                                        "arguments" (json-encode (json-object "proposal" retry-id)))))
          (test-call-with-function-replacements
-          (list (list 'cl-resources:resource-check-revision
-                      (lambda (resource request-context expected)
-                        (declare (ignore resource request-context expected))
+          (list (list 'resource-observe
+                      (lambda (resource request-context)
+                        (declare (ignore resource request-context))
                         (structural--fail ':test-validation "Temporary resource validation failure."))))
           (lambda ()
             (test-assert (eq ':test-validation

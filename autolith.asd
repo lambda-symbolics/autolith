@@ -224,6 +224,7 @@
                                           (:file "tools/lisp-paren-check")
                                           (:file "resource/workspace-file")
                                           (:file "resource/workspace-changes")
+                                          (:file "resource/edit-proposals")
                                           (:file "lsp/configuration")
                                           (:file "lsp/tools")
                                           (:file "lsp/semantic-proposals")

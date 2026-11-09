@@ -307,6 +307,7 @@
   test-lsp-semantic-preconditions
   test-lsp-semantic-stale-and-approval
   test-lsp-semantic-conversation-bounds
+  test-lsp-semantic-proposal-ownership
   test-lsp-semantic-tool-workflow
   test-lsp-semantic-authority-and-validation
   test-lsp-semantic-owned-snapshots
