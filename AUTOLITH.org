@@ -18,6 +18,21 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Reversible type declarations during live reload
+
+- Problem: journaled definition installation rejected the project's =->= forms,
+  leaving old SBCL function types in place when a function gained a keyword.
+- Behavior: accept =->= and capture function type, kind, and declaration
+  provenance, including presence flags, for exact undo and cache invalidation.
+- Scope and location: private live-image =definition-operator-p= and
+  =definition-undo-capture= methods specialized on =->=; papercut
+  =4ad138f6-8f0f-40fa-b795-99e9e4e9c5af=.
+- Verification: disposable SBCL 2.6.6 checks covered absent names, existing
+  functions, changed signatures and inverse undo order. The active metadata
+  restoration probe passed before the accounting definitions were loaded.
+- Removal condition: discard these hooks after installing equivalent tracked
+  declaration support in the definition owner.
+
 ** Inspectable test-worker stalls
 
 - Problem: worker timeouts omitted the active case and blocked thread stacks.
