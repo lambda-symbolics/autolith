@@ -978,6 +978,9 @@ During an active provider turn, Escape cancels the turn and continues queued
 steering in submission order, oldest first. Ctrl-C cancels and pauses queued
 work until you submit input; a second interrupt within the force-exit window
 exits the application.
+During an attached terminal session, Ctrl-Z runs the same detach flow as
+=(detach)=. It releases the foreground terminal while preserving the session and
+any active work, including when a provider turn is running.
 
 ** Parking and editing queued input
 
