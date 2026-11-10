@@ -511,7 +511,7 @@ quiescence, metadata, and probe hooks."
                    #'make-checkpoint-backend)
        :store               (generation-store-for configuration)
        :toplevel-function   #'checkpoint-resume-main
-       :identifier-function #'make-identifier
+       :identifier-function (lambda () (generation--allocate-identifier configuration))
        :probe-runner        (generation-core-probe-runner-create)
        :around-function
        (lambda (thunk)
