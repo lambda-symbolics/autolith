@@ -377,6 +377,7 @@
   test-terminal-style-tables-cover-every-name
   test-terminal-style-sequence-unthemed
   test-terminal-surface-row-background
+   test-terminal-control-z-decodes-as-detach
   test-terminal-pad-spans
   test-fullscreen-boot-geometry
   test-fullscreen-boot-sequence
@@ -1503,6 +1504,7 @@
   test-forced-exit-without-durable-conversation
   test-graceful-shutdown-retains-interrupt-escape
   test-active-turn-interrupt-events
+   test-detach-control-event-dispatch
   test-active-turn-cancellation-side-effects
   test-idle-interrupt-exits-without-force-hint
   test-recalled-follow-up-interrupt

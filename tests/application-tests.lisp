@@ -1231,6 +1231,33 @@
         (ignore-errors (terminal-ui-stop ui)))))
   nil)
 
+(-> test-detach-control-event-dispatch () null)
+(defun test-detach-control-event-dispatch ()
+  "Dispatch Ctrl-Z's semantic detach event through the normal command path."
+  (dolist (active-p '(nil t))
+    (let* ((terminal    (make-instance 'recording-terminal :columns 80))
+           (ui          (terminal-ui-create :terminal terminal))
+           (application (make-instance 'application :ui ui))
+           (controller  (make-instance 'application-input-controller
+                                       :application application
+                                       :main-thread (current-thread)))
+           (called      nil))
+      (setf (application-input-controller application) controller
+            (application-input-controller-active-p controller) active-p)
+      (test-call-with-function-replacements
+       (list
+        (list 'application-command
+              (lambda (received input &key interactive-p)
+                (declare (ignore interactive-p))
+                (setf called (list received input))
+                ':continue)))
+       (lambda ()
+         (application-input-controller--process-event controller ':detach)))
+      (test-assert (equal called (list application "/detach"))
+                   "Ctrl-Z dispatches the existing detach command while idle and active")
+      (terminal-ui-stop ui)))
+  nil)
+
 (-> test-active-turn-interrupt-events () null)
 (defun test-active-turn-interrupt-events ()
   "Test cancellation preserves FIFO steering, with Ctrl-C pausing follow-ups."

@@ -2425,6 +2425,9 @@ may execute immediately; other Lisp waits for the idle boundary."
                  (application-input-controller--active-turn-interrupt-action
                   controller))))
       (cond
+        ((eq event ':detach)
+         (application-command
+          (application-input-controller-application controller) "/detach"))
         ((eq event ':stream-end)
          (application-input-controller--request-exit
           controller ':end-of-input))

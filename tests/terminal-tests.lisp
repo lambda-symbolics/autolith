@@ -114,6 +114,16 @@
   (setf (recording-terminal-chunks terminal) nil)
   terminal)
 
+(-> test-terminal-control-z-decodes-as-detach () null)
+(defun test-terminal-control-z-decodes-as-detach ()
+  "Decode the terminal's Ctrl-Z byte as the semantic detach event."
+  (test-assert
+   (eq ':detach
+       (terminal--decode-editing-event
+        (make-string-input-stream (string (code-char 26)))))
+   "Ctrl-Z is decoded without invoking terminal suspend")
+  nil)
+
 (-> terminal-tests--substring-count (string string) (integer 0))
 (defun terminal-tests--substring-count (needle haystack)
   "Return the number of non-overlapping NEEDLE occurrences in HAYSTACK."

@@ -17,11 +17,13 @@
     t)
 (defun terminal--decode-editing-event
     (stream &key (escape-delay *terminal-escape-delay-seconds*))
-  "Decode one Clinedi event while retaining Autolith's literal Ctrl-V policy."
+  "Decode one Clinedi event, including the detach control key."
   (let ((character (read-char stream nil nil)))
     (cond
       ((null character)
        ':stream-end)
+      ((char= character (code-char 26))
+       ':detach)
       ((char= character (code-char 22))
        (terminal--read-control-v-paste stream))
       (t
