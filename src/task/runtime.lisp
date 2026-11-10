@@ -628,7 +628,7 @@ for JOB's next verbal response."
                (return (values nil ':full))))
            (let ((entry
                    (agent-steering-input-create
-                    :identifier (make-identifier)
+                    :identifier (make-user-identifier)
                     :content    copy)))
              (deque-push-back (task-job-steering-items job) entry)
              (when promote-response-p

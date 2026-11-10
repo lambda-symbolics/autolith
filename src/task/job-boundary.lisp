@@ -658,7 +658,7 @@ Observation failure never changes execution or result publication."
   (if (null events)
       (run-job--run-artifact input-path output-path permission-mode
                              :executor executor :configuration configuration)
-      (let* ((run-id                    (make-identifier))
+      (let* ((run-id                    (make-user-identifier))
              (diagnostics               *error-output*)
              (*standard-input*          (make-string-input-stream ""))
              (*standard-output*         diagnostics)

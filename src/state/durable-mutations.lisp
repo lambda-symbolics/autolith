@@ -74,7 +74,7 @@ so it is opt-in rather than the default commit gate."))
     (configuration mutation-checker string &key (:mutations list)) string)
 (defun self-repair-check-mutations (configuration checker source &key mutations)
   "Run the configured active-state checker and journal its result for MUTATIONS."
-  (let ((identifier (make-identifier))
+  (let ((identifier (make-user-identifier))
         (scope      (mutation-checker-verification-scope checker)))
     (handler-case
         (multiple-value-prog1
@@ -222,7 +222,7 @@ so it is opt-in rather than the default commit gate."))
   (let* ((target (definition-key definition))
          (mutation
            (make-instance 'durable-mutation
-                          :identifier      (make-identifier)
+                          :identifier      (make-user-identifier)
                           :target          target
                           :pathname        relative-pathname
                           :previous-source previous-source
@@ -445,7 +445,7 @@ records resolves once."
                :pathname  (configuration-image-commit-root configuration)))
       (let* ((target            (definition-key definition))
              (home-package      (definition-home-package-name definition))
-             (commit-identifier (make-identifier))
+             (commit-identifier (make-user-identifier))
              (commit-directory
                (image-commit--directory configuration commit-identifier))
              (commit-script     (merge-pathnames "reconstruct.lisp"

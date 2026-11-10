@@ -566,7 +566,7 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
                  :initargs
                  (list :orchestrator         orchestrator
                         :mission-context     (mission--agent-context parent-agent)
-                       :execution-identifier (make-identifier)
+                       :execution-identifier (make-user-identifier)
                        :session-order        session-order
                        :public-identifier    identifier
                        :completion-owner-conversation
