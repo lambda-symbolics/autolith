@@ -21,9 +21,9 @@
 (defun test-agenda-identifier-references ()
   "Exercise fresh-state short writes, exact priority, and full identity preservation."
   (with-test-configuration (configuration)
-    (let* ((state (agenda-load configuration))
-           (legacy "aaaaaaaa-1111-4111-8111-111111111111")
-           (other "aaaaaaaa-2222-4222-8222-222222222222")
+    (let* ((state       (agenda-load configuration))
+           (legacy      "aaaaaaaa-1111-4111-8111-111111111111")
+           (other       "aaaaaaaa-2222-4222-8222-222222222222")
            (identifiers (list "K8vQ2mp" legacy other "abc" "abc-more")))
       (agenda--call-with-transaction
        configuration state
@@ -34,19 +34,19 @@
                       :directory (agenda-directory-name
                                   configuration (config :working-directory configuration)
                                   :require-existing-p t)
-                      :items (loop for identifier in identifiers
-                                   collect (make-instance 'agenda-item
-                                                          :identifier identifier :text identifier
-                                                          :status ':todo :created-at 1 :updated-at 1)))))
+                      :items     (loop for identifier in identifiers
+                                       collect (make-instance 'agenda-item
+                                                              :identifier identifier :text identifier
+                                                              :status ':todo :created-at 1 :updated-at 1)))))
          t))
       (let ((updated (agenda-update configuration state "aaaaaaaa-1" :text "updated legacy")))
         (test-assert (string= legacy (agenda-item-identifier updated))
                      "short updates preserve the selected full legacy UUID"))
       (test-assert (string= "abc" (agenda-item-identifier
-                                  (agenda-update configuration state "abc" :status ':done)))
+                                   (agenda-update configuration state "abc" :status ':done)))
                    "an exact identity takes priority over longer identities")
       (test-assert (string= "K8vQ2mp" (agenda-item-identifier
-                                      (agenda-update configuration state "K8v" :status ':doing)))
+                                       (agenda-update configuration state "K8v" :status ':doing)))
                    "native short IDs also accept unique prefixes")
       (dolist (operation (list (lambda () (agenda-update configuration state "aaaa" :text "bad"))
                                (lambda () (agenda-remove configuration state "aaaa"))))
@@ -57,7 +57,7 @@
                     (sort (list legacy other) #'string<))))
          "ambiguous writes report the full matching identities"))
       (let* ((loaded (agenda-load configuration))
-             (items (workspace-agenda-items (agenda-current configuration loaded))))
+             (items  (workspace-agenda-items (agenda-current configuration loaded))))
         (test-assert (= 5 (length items)) "updates do not append or lose agenda entries")
         (test-assert (string= "updated legacy"
                               (agenda-item-text (find legacy items :key #'agenda-item-identifier :test #'string=)))
@@ -65,7 +65,7 @@
         (test-assert (agenda-remove configuration loaded "aaaaaaaa-1")
                      "a unique legacy reference removes its selected entry")
         (test-assert (find other (workspace-agenda-items
-                                 (agenda-current configuration (agenda-load configuration)))
+                                  (agenda-current configuration (agenda-load configuration)))
                            :key #'agenda-item-identifier :test #'string=)
                      "removal preserves the other legacy identity"))))
   nil)
@@ -84,7 +84,7 @@
          (values (loop for identifier in identifiers
                        collect (papercut--record
                                 (make-instance 'papercut :identifier identifier
-                                               :workspace (papercut--workspace configuration)
+                                               :workspace            (papercut--workspace configuration)
                                                :title identifier :content identifier
                                                :reported-at 1 :source-conversation nil)))
                  t t)))
@@ -143,6 +143,27 @@
                   (merged (agenda--merge-items configuration (list first second) (list source))))
              (test-assert (= 3 (length (remove-duplicates (mapcar #'agenda-item-identifier merged) :test #'string=)))
                           "transport probes past every occupied target identity"))))
+       (let* ((target (first (workspace-agenda-items
+                              (agenda-current configuration (agenda-load configuration)))))
+              (source (make-instance 'agenda-item
+                                     :identifier (agenda-item-identifier target)
+                                     :text "colliding source" :status ':todo
+                                     :created-at 1 :updated-at 1))
+              (later  (make-instance 'agenda-item
+                                     :identifier "K8vQ2mp"
+                                     :text "later source" :status ':todo
+                                     :created-at 1 :updated-at 1)))
+         (test-call-with-function-replacements
+          (list (list 'make-user-identifier
+                      (lambda (&key namespace occupied-p)
+                        (declare (ignore namespace))
+                        (if (funcall occupied-p "K8vQ2mp") "K8vQ2mq" "K8vQ2mp"))))
+          (lambda ()
+            (let ((merged (agenda--merge-items configuration (list target) (list source later))))
+              (test-assert (string= "K8vQ2mp" (agenda-item-identifier (third merged)))
+                           "transport preserves a later source identity during collision allocation")
+              (test-assert (string= "K8vQ2mq" (agenda-item-identifier (second merged)))
+                           "replacement allocation excludes every source identity")))))
        (identifier-clear-reservations)
        (let ((closed (papercut-report configuration :title "red fox" :content "red fox")))
          (papercut-mark-closed configuration (papercut-identifier closed) :resolution "verified")
@@ -158,12 +179,28 @@
          (test-assert (not (string= first (mutation-identifier-allocate configuration)))
                       "mutation allocation consults durable journal reservations"))
        (identifier-clear-reservations)
-       (let ((first (generation--allocate-identifier configuration)))
-         (identifier-clear-reservations)
-         (test-assert (not (string= first (generation--allocate-identifier configuration)))
-                      "generation allocation excludes pending artifact directories")))))
+       (test-call-with-function-replacements
+        (list (list 'checkpoint--source-snapshot (lambda (configuration)
+                                                  (declare (ignore configuration)) nil))
+              (list 'checkpoint--revalidate-source (lambda (configuration commit)
+                                                    (declare (ignore configuration commit)) nil))
+              (list 'checkpoint-single-threaded-p (lambda () t))
+              (list 'generation--metadata
+                    (lambda (configuration identifier &key git-commit mutation-checker)
+                      (declare (ignore configuration git-commit mutation-checker))
+                      ;; Observe allocation at the real checkpoint boundary before any fork or save.
+                      (throw 'allocated-generation identifier))))
+        (lambda ()
+          (flet ((allocate ()
+                   (catch 'allocated-generation
+                     (checkpoint-create (checkpoint-backend-create configuration nil)))))
+            (let ((first (allocate)))
+              (test-assert (string= first (identifier-normalize first))
+                           "the production checkpoint backend allocates native identities")
+              (identifier-clear-reservations)
+              (test-assert (not (string= first (allocate)))
+                           "checkpoint allocation excludes pending directories after reservation loss"))))))))
   nil)
-
 
 (-> test-generation-identifier-references () null)
 (defun test-generation-identifier-references ()
@@ -174,9 +211,9 @@
                          "aaaaaaaa-2222-4222-8222-222222222222")))
       (dolist (identifier identifiers)
         (let* ((generation (generation-tests--generation configuration identifier "0123456789abcdef"))
-               (runner (make-instance 'test-generation-core-probe-runner
-                                      :output (generation-core-probe-output
-                                               (generation-core-probe-record generation)))))
+               (runner     (make-instance 'test-generation-core-probe-runner
+                                          :output (generation-core-probe-output
+                                                   (generation-core-probe-record generation)))))
           (generation-tests--write-fake-core generation)
           (generation-tests--write-reconstruction generation)
           (generation-publish configuration generation :probe-runner runner)
@@ -204,18 +241,17 @@
                    "rollback persists the full selected legacy identity")))
   nil)
 
-
 (-> test-mutation-identifier-references () null)
 (defun test-mutation-identifier-references ()
   "Resolve mutation references from the persisted effective journal selection."
   (with-test-configuration (configuration)
-    (let ((*image-state-initialized-p* t)
+    (let ((*image-state-initialized-p*       t)
           (*active-image-lineage-identifier* "identifier-reference-test")
-          (*active-image-commit-identifier* nil)
-          (*active-image-history-commit* nil)
-          (identifiers '("K8vQ2mp" "K8vQ2mp-long"
-                         "aaaaaaaa-1111-4111-8111-111111111111"
-                         "aaaaaaaa-2222-4222-8222-222222222222")))
+          (*active-image-commit-identifier*  nil)
+          (*active-image-history-commit*     nil)
+          (identifiers                       '("K8vQ2mp" "K8vQ2mp-long"
+                                               "aaaaaaaa-1111-4111-8111-111111111111"
+                                               "aaaaaaaa-2222-4222-8222-222222222222")))
       (dolist (identifier identifiers)
         (mutation-journal-append
          configuration

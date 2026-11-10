@@ -629,9 +629,10 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
                                  :test #'string=)
                            (make-user-identifier
                             :occupied-p (lambda (candidate)
-                                          (find candidate result
-                                                :key  #'agenda-item-identifier
-                                                :test #'string=)))
+                                          (or (find candidate result
+                                                    :key #'agenda-item-identifier :test #'string=)
+                                              (find candidate source-items
+                                                    :key #'agenda-item-identifier :test #'string=))))
                            (copy-seq identifier))))))))))
     result))
 
