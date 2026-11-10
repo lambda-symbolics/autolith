@@ -8,10 +8,9 @@
   (let* ((effective (image-commit-effective-pending-records configuration))
          (record
            (if identifier
-               (find identifier effective
-                     :key  (lambda (candidate)
-                             (getf (rest candidate) :id))
-                     :test #'string=)
+               (identifier-select identifier effective
+                                  :key (lambda (candidate)
+                                         (getf (rest candidate) :id)))
                (first (last effective)))))
     (unless record
       (error 'source-mutation-error

@@ -1252,3 +1252,39 @@ namespace while opaque protocol identifiers continue using MAKE-IDENTIFIER."
   "Return the site-authored Lisp initialization pathname, when configured."
   (let ((root (config :site-config-root configuration)))
     (and root (merge-pathnames "init.lisp" root))))
+
+(define-condition identifier-ambiguity (error)
+  ((reference :initarg :reference :reader identifier-ambiguity-reference
+              :documentation "The ambiguous short reference.")
+   (identifiers :initarg :identifiers :reader identifier-ambiguity-identifiers
+                :documentation "The matching persistent identities."))
+  (:documentation "A short reference names more than one persistent entity.")
+  (:report (lambda (condition stream)
+             (format stream "Identifier ~S is ambiguous: ~{~A~^, ~}."
+                     (identifier-ambiguity-reference condition)
+                     (identifier-ambiguity-identifiers condition)))))
+
+(-> identifier-select (string list &key (:key function)) t)
+(defun identifier-select (reference entities &key (key #'identity))
+  "Select an exact identity first, otherwise a unique nonempty prefix."
+  (or (find reference entities :key key :test #'string=)
+      (when (plusp (length reference))
+        (let ((matches (remove-if-not
+                        (lambda (entity)
+                          (uiop:string-prefix-p reference (funcall key entity)))
+                        entities)))
+          (when (rest matches)
+            (error 'identifier-ambiguity :reference reference
+                   :identifiers                     (mapcar key matches)))
+          (first matches)))))
+
+(-> identifier-reference (string list &key (:minimum-length (integer 1 *))) string)
+(defun identifier-reference (identifier identifiers &key (minimum-length 7))
+  "Return the shortest distinguishing prefix at least MINIMUM-LENGTH long."
+  (loop for end from (min minimum-length (length identifier)) to (length identifier)
+        for prefix = (subseq identifier 0 end)
+        when (handler-case
+                 (equal identifier (identifier-select prefix identifiers))
+               (identifier-ambiguity () nil))
+          return prefix
+        finally (return identifier)))

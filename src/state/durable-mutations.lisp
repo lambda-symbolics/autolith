@@ -74,7 +74,7 @@ so it is opt-in rather than the default commit gate."))
     (configuration mutation-checker string &key (:mutations list)) string)
 (defun self-repair-check-mutations (configuration checker source &key mutations)
   "Run the configured active-state checker and journal its result for MUTATIONS."
-  (let ((identifier (make-user-identifier))
+  (let ((identifier (mutation-identifier-allocate configuration))
         (scope      (mutation-checker-verification-scope checker)))
     (handler-case
         (multiple-value-prog1
@@ -222,7 +222,7 @@ so it is opt-in rather than the default commit gate."))
   (let* ((target (definition-key definition))
          (mutation
            (make-instance 'durable-mutation
-                          :identifier      (make-user-identifier)
+                         :identifier       (mutation-identifier-allocate configuration)
                           :target          target
                           :pathname        relative-pathname
                           :previous-source previous-source
@@ -303,6 +303,29 @@ SOURCE-MUTATION-ERROR. A nonlocal exit from REDUCER closes the input stream."
     (mutation-journal-query configuration
                             (lambda (record) (push record records)))
     (nreverse records)))
+
+(-> mutation-identifier-allocate (configuration &key (:occupied-p (option function))) string)
+(defun mutation-identifier-allocate (configuration &key occupied-p)
+  "Reserve a fresh identity against all complete records in the mutation journal."
+  (let ((pathname (configuration-journal-path configuration)))
+    (ensure-directories-exist pathname)
+    (call-with-file-lock
+     (readable-state-lock-pathname pathname "mutation-identifiers.lock")
+     (lambda ()
+       (let ((occupied (make-hash-table :test #'equal)))
+         (mutation-journal-query
+          configuration
+          (lambda (record)
+            (let ((identifier (getf (rest record) :id)))
+              (when (stringp identifier)
+                (setf (gethash identifier occupied) t)))))
+         (let ((identifier (make-user-identifier
+                            :occupied-p (lambda (candidate)
+                                          (or (gethash candidate occupied)
+                                              (and occupied-p (funcall occupied-p candidate)))))))
+           (mutation-journal-append configuration
+                                    (list :identifier-reserved :id identifier))
+           identifier))))))
 
 (-> durable-mutation-journal-record-p (t) boolean)
 (defun durable-mutation-journal-record-p (record)
@@ -443,19 +466,22 @@ records resolves once."
                :message   "The durable source is not a supported complete definition."
                :tool-name "self.persist-definition"
                :pathname  (configuration-image-commit-root configuration)))
-      (let* ((target            (definition-key definition))
-             (home-package      (definition-home-package-name definition))
-             (commit-identifier (make-user-identifier))
+      (let* ((target          (definition-key definition))
+             (home-package    (definition-home-package-name definition))
+             (commit-identifier
+               (mutation-identifier-allocate configuration
+                :occupied-p (lambda (candidate)
+                              (probe-file (image-commit--directory configuration candidate)))))
              (commit-directory
                (image-commit--directory configuration commit-identifier))
-             (commit-script     (merge-pathnames "reconstruct.lisp"
-                                                 commit-directory))
-             (previous-source   (or (image-commit-definition-source
-                                     configuration target)
-                                    (durable-mutation--fallback-source
-                                     configuration
-                                     definition)
-                                    ""))
+             (commit-script   (merge-pathnames "reconstruct.lisp"
+                                               commit-directory))
+             (previous-source (or (image-commit-definition-source
+                                   configuration target)
+                                  (durable-mutation--fallback-source
+                                   configuration
+                                   definition)
+                                  ""))
              (undo-action
                (self--definition-state-undo-action
                 definition
@@ -468,8 +494,8 @@ records resolves once."
                                         (namestring commit-script)
                                         :previous-source previous-source
                                         :proposed-source definition-source))
-             (checker           (tool-context-effective-mutation-checker context))
-             (published-p       nil))
+             (checker         (tool-context-effective-mutation-checker context))
+             (published-p     nil))
         (handler-case
             (progn
               (self-call-with-restarts

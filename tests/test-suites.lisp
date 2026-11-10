@@ -916,6 +916,13 @@
 (define-test-suite project-adaptation
   test-project-adaptations)
 
+(define-test-suite persistent-user-identifiers
+  test-agenda-identifier-references
+  test-papercut-identifier-references
+  test-persisted-user-identifier-collisions
+  test-generation-identifier-references
+  test-mutation-identifier-references)
+
 (define-test-suite conversation-identifier
   test-conversation-identifier-format
   test-user-identifier-allocation
