@@ -615,19 +615,12 @@ command and tool approvals use =kind=permission=, and provider authentication
 uses =kind=auth=. These reports contain no prompt text or credentials. Reports
 use the interactive terminal transport in inline and fullscreen mode.
 
-Root reports include the current conversation title. Child agents and background
-tool jobs use independent =jobs/<execution UUID without hyphens>= records for
-the same conversation. Queued and running jobs report =working=; completed,
-failed, and cancelled jobs report =done=, =error=, and =idle=. Titles use job
-names or tool descriptions, with control characters removed and a 192-byte
-UTF-8 limit. Reports contain no assignments or result text and no estimated
-progress percentages.
+Root reports include the current conversation title. Autolith reports no
+records for child agents or background tool jobs; their progress stays in the
+transcript. Reports contain no prompt text, assignments, result text,
+credentials, or estimated progress percentages.
 
-Autolith retains at most 63 job records and reserves capacity for active jobs
-before completed history. It sends changed records and clears removed records.
-After an OSC 133 prompt-start marker, it replays active records only.
-Disconnecting the job observer clears its records. Terminal presentation depends
-on the terminal.
+Terminal presentation depends on the terminal.
 
 Fullscreen startup presents a brief Lisp-machine boot screen with a centered tip
 and a rock mascot that adapts to short viewports, then the session banner and
@@ -3216,3 +3209,4 @@ manifest's ordered =reconstruct.lisp= in package =AUTOLITH=:
 (asdf:load-system :autolith)
 (load #P"/path/from/generation/manifest/reconstruct.lisp")
 #+END_SRC
+                         
