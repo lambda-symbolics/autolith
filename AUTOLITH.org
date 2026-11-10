@@ -33,6 +33,21 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: discard these hooks after installing equivalent tracked
   declaration support in the definition owner.
 
+** Confined child checkout removal
+
+- Problem: managed checkout paths omitted a trailing directory separator. Taking
+  their parent selected the shared checkout root, deleting unrelated active work.
+- Behavior: normalize the recorded directory and delete only that checkout.
+- Scope and location: private =task-worktree-discard= definition, image commit
+  =e8308659-2ec6-495d-8917-107bc594bc7c=, private Git
+  =bb3cc4d00fea0d0ff92f5da0d600025a48ab1845=; papercut
+  =2c165832-c608-4c77-96b8-a0c5e354214b=.
+- Verification: a disposable worker reproduced both deletion targets; active
+  path assertions and clean-process private replay passed. Real removal of an
+  idle child deleted its checkout while both active sibling Git files survived.
+- Removal condition: remove the private override after installing the equivalent
+  tracked worktree fix, before relying on later cancellation lifecycle changes.
+
 ** Inspectable test-worker stalls
 
 - Problem: worker timeouts omitted the active case and blocked thread stacks.
