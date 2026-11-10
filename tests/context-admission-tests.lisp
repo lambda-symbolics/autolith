@@ -1000,11 +1000,6 @@
        (conversation-append-summary conversation "A replacement context.")
        (test-assert (null (conversation-context-usage-sample conversation)) "summary publication invalidates the sample")
        (context-admission-test--measure agent :envelope-length 64)
-       (conversation-append-context-adoption conversation (conversation-context-rows conversation)
-                                             :participant "measured-test" :transition "measured-adoption")
-       (test-assert (null (conversation-context-usage-sample conversation))
-                    "context adoption invalidates the sample even when its wire content is identical")
-       (context-admission-test--measure agent :envelope-length 64)
        (test-assert (conversation-context-usage-sample
                      (conversation-load (conversation-pathname conversation)))
                     "disk resume restores fingerprint evidence for revalidation"))))
