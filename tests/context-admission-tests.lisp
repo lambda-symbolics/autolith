@@ -768,8 +768,6 @@
                    (let* ((loaded   (conversation-load (conversation-pathname conversation)))
                           (restored (progn (application--load-goal application)
                                            (application-goal application))))
-                     (format t "~&MEASURED-COMPAT ~S ~S~%"
-                             (conversation-usage conversation) (conversation-usage loaded))
                      (test-assert (equal '(2 3 5 0 0 nil) (conversation-usage loaded))
                                   "compaction and reload preserve measured-only running totals")
                      (test-assert (and (= (+ allocation 5) (getf restored :tokens-used))
@@ -981,7 +979,7 @@
               (request                    (provider-request-object other conversation #())))
          (multiple-value-bind (tokens matched-p) (provider-context--matched-input other request)
            (declare (ignore tokens))
-           (test-assert (not matched-p) "a replacement provider cannot reuse another instance's anchor")))
+           (test-assert matched-p "an identically configured encoder revalidates portable coverage")))
        (let* ((other                      (conversation-create (agent-configuration agent)))
               (*provider-context-request* (provider-context-request-create provider other #()))
               (request                    (provider-request-object provider other #())))
@@ -1007,9 +1005,9 @@
        (test-assert (null (conversation-context-usage-sample conversation))
                     "context adoption invalidates the sample even when its wire content is identical")
        (context-admission-test--measure agent :envelope-length 64)
-       (test-assert (null (conversation-context-usage-sample
-                           (conversation-load (conversation-pathname conversation))))
-                    "disk resume cannot restore an unverified process-local sample"))))
+       (test-assert (conversation-context-usage-sample
+                     (conversation-load (conversation-pathname conversation)))
+                    "disk resume restores fingerprint evidence for revalidation"))))
   nil)
 
 (-> test-context-admission-measured-high-usage () null)
@@ -1031,4 +1029,55 @@
             (provider-context-budget-error (condition)
               (= 5000 (provider-context-budget-error-estimated-input-tokens condition))))
           "a small envelope cannot erase authoritative measured occupancy")))))
+  nil)
+
+(-> test-context-admission-measured-resume () null)
+(defun test-context-admission-measured-resume ()
+  "Revalidate persisted measurements after restart and charge newly retained evidence."
+  (context-admission-test--with-measured-context
+   (lambda (original)
+     (context-admission-test--measure original)
+     (let* ((configuration (agent-configuration original))
+            (conversation  (conversation-load (conversation-pathname (agent-conversation original))))
+            (provider      (make-instance 'context-admission-test-provider :configuration configuration))
+            (registry      (make-instance 'tool-registry))
+            (agent         (agent-create :configuration configuration :conversation conversation
+                                         :provider provider :tool-registry registry))
+            (application   (make-instance 'application :configuration configuration
+                                                      :conversation conversation :provider provider
+                                                      :agent agent :tool-registry registry)))
+       (test-assert (conversation-context-usage-sample-p (conversation-context-usage-sample conversation))
+                    "restart restores portable coverage evidence")
+       (test-assert (not (agent-should-compact-p agent))
+                    "retained opaque replay does not cause startup compaction")
+       (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+              (request                    (provider-request-object provider conversation #())))
+         (test-assert (= 1200 (provider-request-input-token-estimate provider request))
+                      "the final encoded prefix revalidates the historical measurement")
+         (setf (gethash "instructions" request) "Different wire policy.")
+         (test-assert (not (nth-value 1 (provider-context--matched-input provider request)))
+                      "restart does not bypass final wire validation"))
+       (let ((before (application-context-usage application)))
+         (conversation-append-provider-item
+          conversation (json-object "type" "function_call" "name" "test" "call_id" "resume-output"
+                                    "arguments" "{}"))
+         (conversation-append-tool-result conversation "resume-output" :tool-name "test"
+                                          :output (make-string 20000 :initial-element #\e) :success-p t)
+         (test-assert (> (application-context-usage application) before)
+                      "the meter includes tool output not covered by the last response")
+         (test-assert (= (application-context-usage application)
+                         (context-estimate-known-tokens configuration conversation
+                                                       :provider provider :tool-registry registry))
+                      "the meter uses the same current estimate as soft compaction")
+         (test-assert (agent-should-compact-p agent)
+                      "new retained evidence can cross the soft limit after restart"))
+       (conversation-append-provider-metadata
+        conversation '(:usage (("input_tokens" 1000) ("output_tokens" 200) ("total_tokens" 1200))))
+       (test-assert (null (conversation-context-usage-sample
+                           (conversation-load (conversation-pathname conversation))))
+                    "a response interrupted before publishing coverage invalidates the older anchor")
+       (conversation-append-record conversation '(:context-usage :sample (:format 1)))
+       (test-assert (null (conversation-context-usage-sample
+                           (conversation-load (conversation-pathname conversation))))
+                    "malformed coverage is discarded during durable replay"))))
   nil)

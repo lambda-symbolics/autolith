@@ -36,6 +36,7 @@
   test-context-admission-measured-request-tails
   test-context-admission-measured-invalidation
   test-context-admission-measured-high-usage
+  test-context-admission-measured-resume
   test-context-admission-final-request
   test-context-admission-images
   test-context-admission-checkpoint-transaction)
