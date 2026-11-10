@@ -319,6 +319,14 @@ persisted in the ordinary primary command queue as =(mission-wakeup ticket)=,
 where =ticket= is structured data. The command runs as a mission continuation
 under the existing turn, token, and wall-clock budgets.
 
+While a hosted time wakeup of the current mission version is due later or
+already admitted, automatic goal continuations stop and the mission stays
+active. The model is not prompted again between occurrences. Within an
+occurrence, work continues through the turn's own tool calls and through job
+completions. Event schedules, cancelled schedules, and a finished one-shot
+wakeup leave ordinary continuations in place. A user message or =(goal :resume)=
+still runs its own turn.
+
 Only the primary agent may use the =mission-schedule= tools. Each wakeup keeps
 its exact mission identity and version. Both are checked at admission and
 execution.

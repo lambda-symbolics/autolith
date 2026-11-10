@@ -345,6 +345,39 @@
         (get-universal-time)
         (cl-jobpond:scheduler-next-time scheduler))))
 
+(-> application-mission-schedules-awaited-p (application) boolean)
+(defun application-mission-schedules-awaited-p (application)
+  "Return true while a hosted time wakeup will resume APPLICATION's active mission.
+
+Goal continuations defer to the next due or admitted occurrence of the exact
+mission identity and version instead of re-prompting between occurrences.
+Event schedules have no deadline and an unhosted scheduler never wakes, so
+neither is awaited."
+  (let ((goal    (application-goal application))
+        (service (with-lock-held (*mission-schedule-services-lock*)
+                   (gethash application *mission-schedule-services*))))
+    (flet ((current-p (record)
+             (let ((payload (getf record :payload)))
+               (and (not (getf record :cancelled))
+                    (equal (getf payload :mission) (getf goal :schedule-identity))
+                    (equal (getf payload :version) (getf goal :schedule-version))))))
+      (and (mission-goal-p goal)
+           (eq (getf goal :status) ':active)
+           (stringp (getf goal :schedule-identity))
+           service
+           (mission-schedule-notify service)
+           (not (mission-schedule-retired-p service))
+           (equal (mission-schedule-conversation service)
+                  (conversation-identifier (application-conversation application)))
+           (let ((snapshot (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler service))))
+             (or (some (lambda (schedule)
+                         (and (current-p schedule) (getf schedule :next)))
+                       (getf snapshot :schedules))
+                 (some (lambda (wakeup)
+                         (and (current-p wakeup) (member (getf wakeup :state) '(:pending :claimed))))
+                       (getf snapshot :wakeups))))
+           t))))
+
 (-> application-mission-schedule-execute (application list) t)
 (defun application-mission-schedule-execute (application ticket)
   "Execute an admitted ticket only once and recheck mission authority at consumption."
