@@ -1967,6 +1967,7 @@
   test-acp-session-disconnect-releases-lease
   test-acp-observer-disconnected-updates
   test-acp-session-disconnect-cancels-active-submission
+  test-acp-session-disconnected-updates
   test-acp-session-scheduled-mode-follows-state
   test-acp-session-live-and-replayed-tool-identities
   test-acp-session-replay-metadata-and-tool-statuses
