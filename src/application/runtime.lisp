@@ -1520,18 +1520,23 @@ changes also invalidate the cache. External files are sampled at these boundarie
 
 (-> application-context-usage (application) (values (integer 0) boolean))
 (defun application-context-usage (application)
-  "Return reported context usage, otherwise a cached portable estimate."
+  "Return verified context usage, otherwise a current portable estimate.
+
+Reported totals from a resumed conversation are historical until a new
+process-local usage sample has been established; using them at startup makes
+the modeline and compaction decision disagree with the current prompt."
   (let* ((conversation (application-conversation application))
          (reported     (conversation-last-total-tokens conversation)))
-    (when (plusp reported)
+    (when (and (plusp reported)
+               (not (conversation-resumed-p conversation)))
       (return-from application-context-usage (values reported nil)))
     (let* ((configuration (application-configuration application))
            (provider      (and (slot-boundp application 'provider)
                                (application-provider application)))
            (family        (if provider
-                              (provider-family provider)
-                              (model-family (config :model configuration)
-                                            (config :model-provider configuration))))
+                             (provider-family provider)
+                             (model-family (config :model configuration)
+                                           (config :model-provider configuration))))
            (key           (application--context-estimate-key application family))
            (cached        (application-context-estimate-cache application)))
       (unless (equal key (first cached))

@@ -4138,6 +4138,13 @@
                   (= (terminal-ui-context-window ui) 272000)
                   (= (terminal-ui-context-compaction-limit ui) 217600))
             "application refresh projects current provider usage into the idle meter")
+             (setf (conversation-resumed-p conversation) t)
+             (application-refresh-context-meter application)
+             (test-assert
+              (and (< (terminal-ui-context-used ui) 262500)
+                   (terminal-ui-context-estimated-p ui))
+              "resumed historical usage is not trusted by the current context meter")
+             (setf (conversation-resumed-p conversation) nil)
            (test-assert
             (search (config :model configuration)
                     (terminal-ui--raw-spans-text
