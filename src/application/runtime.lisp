@@ -1505,6 +1505,7 @@ changes also invalidate the cache. External files are sampled at these boundarie
         (conversation  (application-conversation application)))
     (list configuration
           (loop for setting in '(:working-directory :source-root :immutable-p
+                                 :model :model-provider :provider-endpoint :reasoning-effort
                                  :relax-p :web-search-mode :simple-technical-english-p)
                 collect (config setting configuration))
           conversation
@@ -1520,38 +1521,29 @@ changes also invalidate the cache. External files are sampled at these boundarie
 
 (-> application-context-usage (application) (values (integer 0) boolean))
 (defun application-context-usage (application)
-  "Return verified context usage, otherwise a current portable estimate.
-
-Reported totals from a resumed conversation are historical until a new
-process-local usage sample has been established; using them at startup makes
-the modeline and compaction decision disagree with the current prompt."
-  (let* ((conversation (application-conversation application))
-         (reported     (conversation-last-total-tokens conversation)))
-    (when (and (plusp reported)
-               (not (conversation-resumed-p conversation)))
-      (return-from application-context-usage (values reported nil)))
-    (let* ((configuration (application-configuration application))
-           (provider      (and (slot-boundp application 'provider)
-                               (application-provider application)))
-           (family        (if provider
-                             (provider-family provider)
-                             (model-family (config :model configuration)
-                                           (config :model-provider configuration))))
-           (key           (application--context-estimate-key application family))
-           (cached        (application-context-estimate-cache application)))
-      (unless (equal key (first cached))
-        (setf cached
-              (list key
-                    (context-estimate-known-tokens
-                     configuration conversation
-                     :hurry-up-p (application-hurry-up-p application)
-                     :family     family
-                     :provider   provider
-                     :tool-registry
-                     (and (slot-boundp application 'tool-registry)
-                          (application-tool-registry application))))
-              (application-context-estimate-cache application) cached))
-      (values (second cached) t))))
+  "Return current compaction accounting, including evidence added since the last response."
+  (let* ((configuration (application-configuration application))
+         (provider      (and (slot-boundp application 'provider)
+                             (application-provider application)))
+         (family        (if provider
+                            (provider-family provider)
+                            (model-family (config :model configuration)
+                                          (config :model-provider configuration))))
+         (key           (application--context-estimate-key application family))
+         (cached        (application-context-estimate-cache application)))
+    (unless (equal key (first cached))
+      (setf cached
+            (list key
+                  (context-estimate-known-tokens
+                   configuration (application-conversation application)
+                   :hurry-up-p (application-hurry-up-p application)
+                   :family     family
+                   :provider   provider
+                   :tool-registry
+                   (and (slot-boundp application 'tool-registry)
+                        (application-tool-registry application))))
+            (application-context-estimate-cache application) cached))
+    (values (second cached) t)))
 
 (-> application-refresh-context-meter (application) null)
 (defun application-refresh-context-meter (application)

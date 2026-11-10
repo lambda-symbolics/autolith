@@ -321,10 +321,10 @@ not yet been told that work from the previous process is gone.")
     :documentation
     "The user-turn count during which the resume note is being delivered.")
    (context-usage-sample
-    :initform      nil
-    :accessor      conversation-context-usage-sample
-    :type          list
-    :documentation "Process-local ordinary usage matched to retained history and wire fingerprints; never restored from storage.")
+    :initform       nil
+    :accessor       conversation-context-usage-sample
+    :type           list
+     :documentation "Portable ordinary usage evidence, revalidated against retained history and encoded request fingerprints before reuse.")
    (last-total-tokens
     :initform      0
     :accessor      conversation-last-total-tokens
@@ -2922,13 +2922,57 @@ later picker searches read it without scanning the log."
   (:method ((kind t) conversation properties)
     nil))
 
+(-> conversation--invalidate-context-usage (conversation keyword) null)
+(defun conversation--invalidate-context-usage (conversation kind)
+  "Discard measured context evidence when KIND replaces its coverage or reports new usage."
+  (when (member kind '(:summary :native-compaction :context-adoption :configuration :precompaction :provider))
+    (setf (conversation-context-usage-sample conversation) nil))
+  nil)
+
 (defmethod conversation-append-record :after ((conversation conversation) (record list))
-  "Discard process-local token measurements after durable context and model changes."
-  (let ((kind       (first record))
-        (properties (rest record)))
-    (when (or (member kind '(:summary :native-compaction :context-adoption :configuration))
-              (and (eq kind ':provider) (getf (getf properties :metadata) :compaction)))
-      (setf (conversation-context-usage-sample conversation) nil))))
+  "Invalidate measured coverage consistently for live appends and durable replay."
+  (conversation--invalidate-context-usage conversation (first record)))
+
+(defmethod conversation--project-record :before (kind conversation properties)
+  "Invalidate earlier measured coverage before projecting a durable change."
+  (declare (ignore properties))
+  (conversation--invalidate-context-usage conversation kind))
+
+(-> conversation--context-fingerprint-p (t) boolean)
+(defun conversation--context-fingerprint-p (value)
+  "Recognize a portable SHA-256 digest and serialized character count."
+  (and (typep value '(cons string (cons (integer 0) null)))
+       (= 64 (length (first value)))
+       (every (lambda (character) (digit-char-p character 16)) (first value))
+       t))
+
+(-> conversation-context-usage-sample-p (t) boolean)
+(defun conversation-context-usage-sample-p (sample)
+  "Validate bounded fingerprint-only measured context evidence loaded from storage."
+  (and (proper-list-p sample)
+       (= 16 (length sample))
+       (loop for tail on sample by (partial #'nthcdr 2)
+             always (keywordp (first tail)))
+       (eql 1 (getf sample :format))
+       (typep (getf sample :tokens) '(integer 1))
+       (typep (getf sample :history-count) '(integer 0))
+       (typep (getf sample :wire-count) '(integer 0))
+       (every #'conversation--context-fingerprint-p
+              (list (getf sample :soft-header) (getf sample :history-digest)
+                    (getf sample :wire-digest)))
+       (proper-list-p (getf sample :wire-fields))
+       (every (lambda (field)
+                (and (consp field) (stringp (first field))
+                     (conversation--context-fingerprint-p (rest field))))
+              (getf sample :wire-fields))
+       t))
+
+(defmethod conversation--project-record
+    ((kind (eql :context-usage)) conversation properties)
+  "Restore portable evidence without treating its historical token count as verified."
+  (let ((sample (getf properties :sample)))
+    (setf (conversation-context-usage-sample conversation)
+          (when (conversation-context-usage-sample-p sample) sample))))
 
 (defmethod conversation--project-record
     ((kind (eql :message)) conversation properties)

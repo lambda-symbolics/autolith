@@ -576,13 +576,12 @@ Request-local contributors are resolved only at the final admission boundary."
                                             (config :model-provider configuration)))))
          (session (request-context-session-state configuration :hurry-up-p hurry-up-p))
          (sample  (conversation-context-usage-sample conversation)))
-    (when (and provider sample
-               (eq provider (getf sample :provider))
+    (when (and provider
                (null (conversation-ephemeral-input-entries conversation))
-               (equal (getf sample :soft-header) (provider-context--soft-header provider tools))
-               (provider-context--extends-p
-                (getf sample :history) (mapcar #'provider-cache-prefix--entry items)))
-      (let ((new (nthcdr (length (getf sample :history)) items)))
+               (provider-context--sample-matches-p
+                sample (provider-context--soft-header provider tools)
+                (mapcar #'provider-cache-prefix--entry items)))
+      (let ((new (nthcdr (getf sample :history-count) items)))
         (return-from context-estimate-known-tokens
           (+ (getf sample :tokens)
              (ceiling (+ (if new

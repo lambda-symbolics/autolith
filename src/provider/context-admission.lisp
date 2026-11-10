@@ -68,7 +68,7 @@ may use provider token counts when available; the default is not a tokenizer."))
       (provider-cache-prefix--entry
        (vector (symbol-name (class-name (class-of provider)))
                (config :model configuration) (config :model-provider configuration)
-               (config :reasoning-effort configuration)
+                (config :reasoning-effort configuration) (config :provider-endpoint configuration)
                (system-prompt configuration) tools)))))
 
 (-> provider-context--history (model-provider conversation) list)
@@ -126,30 +126,46 @@ may use provider token counts when available; the default is not a tokenizer."))
         (remhash field body))
       (provider-cache-wire-plan body))))
 
+(-> provider-context--prefix-matches-p (list (integer 0) list) boolean)
+(defun provider-context--prefix-matches-p (fingerprint count entries)
+  "Verify COUNT retained ENTRIES against a portable prefix FINGERPRINT."
+  (and (<= count (length entries))
+       (equal fingerprint
+              (provider-cache-prefix--entry (coerce (subseq entries 0 count) 'vector)))
+       t))
+
+(-> provider-context--sample-matches-p (list (option list) list) boolean)
+(defun provider-context--sample-matches-p (sample header history)
+  "Verify a portable measured SAMPLE against current policy and retained HISTORY."
+  (and (conversation-context-usage-sample-p sample)
+       header
+       (equal (getf sample :soft-header) header)
+       (provider-context--prefix-matches-p
+        (getf sample :history-digest) (getf sample :history-count) history)
+       t))
+
 (-> provider-context--matched-input (model-provider hash-table)
     (values (integer 0) boolean boolean))
 (defun provider-context--matched-input (provider request)
-  "Return measured input plus new encoded items when the complete covered prefix matches."
+  "Return measured input plus new encoded items after revalidating the covered prefix."
   (declare (ignore provider))
   (let* ((context      *provider-context-request*)
          (conversation (getf context :conversation))
-         (sample       (and conversation (conversation-context-usage-sample conversation)))
-         (covered      (getf sample :wire)))
-    (when (and sample covered
-               (getf context :eligible-p)
-               (eq (getf sample :provider) (getf context :provider))
-               (equal (getf sample :soft-header) (getf context :soft-header))
-               (provider-context--extends-p (getf sample :history) (getf context :history)))
-      (let* ((current (provider-context--wire-plan request))
-             (change  (provider-cache-wire-change covered current)))
-        (when (and change (null (getf change :fields))
-                   (null (getf change :first-changed-item)))
+         (sample       (and conversation (conversation-context-usage-sample conversation))))
+    (when (and (getf context :eligible-p)
+               (provider-context--sample-matches-p
+                sample (getf context :soft-header) (getf context :history)))
+      (let ((current (provider-context--wire-plan request)))
+        (when (and (equal (getf sample :wire-fields) (getf current :fields))
+                   (provider-context--prefix-matches-p
+                    (getf sample :wire-digest) (getf sample :wire-count)
+                    (getf current :items)))
           (let* ((body  (provider-context--wire-body request))
                  (field (find-if (lambda (name)
                                    (provider-cache-wire--array-p (json-get body name)))
                                  *provider-cache-wire-sequence-fields*))
                  (items (and field (json-get body field)))
-                 (count (length (getf covered :items))))
+                 (count (getf sample :wire-count)))
             (when items
               (multiple-value-bind (characters uncertain-p)
                   (if (= count (length items))
@@ -214,9 +230,17 @@ messages that later change fail closed."
                    (wire                             (provider-context--wire-plan
                                                       (provider-request-object adapter covered (getf context :tools)))))
               (when (equal (getf wire :fields) (getf (getf context :wire) :fields))
-                (setf (conversation-context-usage-sample conversation)
-                      (list :provider provider :soft-header (getf context :soft-header)
-                            :history entries :wire wire :tokens (max (+ input output) (or total 0)))))))))))
+                (let ((sample
+                        (list :format 1 :soft-header (getf context :soft-header)
+                              :history-count  (length entries)
+                              :history-digest (provider-cache-prefix--entry (coerce entries 'vector))
+                              :wire-fields    (getf wire :fields)
+                              :wire-count     (length (getf wire :items))
+                              :wire-digest    (provider-cache-prefix--entry
+                                               (coerce (getf wire :items) 'vector))
+                              :tokens         (max (+ input output) (or total 0)))))
+                  (conversation-append-record conversation (list :context-usage :sample sample))
+                  (setf (conversation-context-usage-sample conversation) sample)))))))))
   nil)
 
 (-> provider-context--request-characters (t) (values (integer 0) boolean))
