@@ -446,11 +446,11 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
          (items  (and record (workspace-agenda-items record))))
     (let* ((item
              (make-instance 'agenda-item
-                            :identifier (make-identifier)
-                            :text       (agenda--validate-text configuration text)
-                            :status     status
-                            :created-at now
-                            :updated-at now
+                              :identifier (make-user-identifier)
+                            :text         (agenda--validate-text configuration text)
+                            :status       status
+                            :created-at   now
+                            :updated-at   now
                             :memory-identifiers
                             (agenda--validate-memory-identifiers
                              configuration memory-identifiers)))

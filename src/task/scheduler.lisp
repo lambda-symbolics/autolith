@@ -562,7 +562,7 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
                  :initargs
                  (list :orchestrator         orchestrator
                         :mission-context     (mission--agent-context parent-agent)
-                       :execution-identifier (make-identifier)
+                       :execution-identifier (make-user-identifier)
                        :session-order        session-order
                        :public-identifier    identifier
                        :completion-owner-conversation
@@ -742,7 +742,7 @@ guarantee."
                         (list :orchestrator          orchestrator
                               :telemetry-run         (unless (getf entry :detached)
                                                        (or (getf entry :telemetry-run) *telemetry-run*))
-                              :execution-identifier  (make-identifier)
+                              :execution-identifier  (make-user-identifier)
                               :session-order         session-order
                               :definition            (getf entry :definition)
                               :item                  item

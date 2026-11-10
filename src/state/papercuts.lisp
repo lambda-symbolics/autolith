@@ -606,7 +606,7 @@ identity and return that existing papercut with DUPLICATE-P true."
         (let ((papercut
                 (make-instance
                  'papercut
-                 :identifier          (make-identifier)
+                  :identifier         (make-user-identifier)
                  :reported-at         now
                  :workspace           (papercut--workspace configuration)
                  :title               title

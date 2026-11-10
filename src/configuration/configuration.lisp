@@ -1167,6 +1167,16 @@ Its octets come from ironclad's operating-system random source on every host."
             (coerce (subseq octets 8 10) 'list)
             (coerce (subseq octets 10 16) 'list))))
 
+(-> make-user-identifier (&key (:namespace string) (:occupied-p (option function))) string)
+(defun make-user-identifier (&key (namespace "autolith") occupied-p)
+  "Return a short identifier for an entity that users can address.
+
+The idsmall reservation protocol supplies collision avoidance within the
+namespace while opaque protocol identifiers continue using MAKE-IDENTIFIER."
+  (identifier-generate :timestamp  (get-universal-time)
+                       :namespace  namespace
+                       :occupied-p occupied-p))
+
 (-> configuration--resolve-site-config-root ((option pathname)) (option pathname))
 (defun configuration--resolve-site-config-root (site-config-root)
   "Return SITE-CONFIG-ROOT as an existing canonical absolute directory."
