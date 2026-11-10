@@ -462,7 +462,9 @@ fill a row. A background-filled row ends with a reset."
             (when styled-p
               (lambda (role text)
                 (let ((sequence (terminal-style-sequence role))
-                      (linked   (ansi-link-urls text)))
+                      (linked   (if (eq role ':link)
+                                    text
+                                    (ansi-link-urls text))))
                   (if (or sequence fill)
                       (concatenate 'string
                                    (or fill "")

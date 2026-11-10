@@ -13,7 +13,7 @@
       :lambda-logo-4 :lambda-logo-5 :lambda-logo-6
       :user :tool :success :failure :notice :dim :annotation :hint :selected
       :surface :surface-code :surface-diff-add :surface-diff-remove
-      :strong :emphasis :code :code-copy :lisp-prompt :plan-active :timestamp-time
+      :strong :emphasis :code :code-copy :link :lisp-prompt :plan-active :timestamp-time
       :mermaid-box :mermaid-edge :mermaid-arrow :mermaid-label
       :agent-spinner :agent-name :child-name :agent-role :agent-tool
       :command-spinner :command-id :command-tool
@@ -127,6 +127,7 @@ neutral bright black because basic terminals cannot tint a row."
       (:syntax-property (:foreground :cyan))
       (:syntax-heading (:foreground :magenta :bold t))
       (:heading-emphasis (:foreground :magenta :bold t :italic t))
+      (:link (:foreground :cyan :underline t))
       (:syntax-link (:foreground :cyan :underline t))))
    (list
     (cons ':child-name
@@ -244,6 +245,7 @@ secondary, and quiet text the soft blue."
         (:syntax-property (:foreground ,secondary))
         (:syntax-heading (:foreground ,accent :bold t))
         (:heading-emphasis (:foreground ,accent :bold t :italic t))
+        (:link (:foreground ,secondary :underline t))
         (:syntax-link (:foreground ,secondary :underline t))))
      (loop for name in *terminal-brand-gradient-names*
            for hex in *almighty-gradient*
@@ -477,8 +479,7 @@ A theme that does not define STYLE renders it plainly instead of failing the row
 (defun terminal-markdown-render-line (renderer line)
   "Render LINE through RENDERER with theme colors for Markdown headings.
 
-The pinned renderer emits headings as plain spans. Color those spans without
-changing their text, hierarchy markers, wrapping, inline code, or emphasis."
+Color heading spans while retaining widget labels and actions."
   ;; The pinned renderer exposes fence state only through this internal accessor.
   (let* ((heading-p (and (not (termdown::markdown-renderer-code-open-p renderer))
                          (terminal--markdown-heading-p line)))
@@ -486,15 +487,17 @@ changing their text, hierarchy markers, wrapping, inline code, or emphasis."
     (if heading-p
         (loop for row in rows
               collect (loop for span in row
-                            collect (terminal-span
-                                     (case (terminal-span-style span)
-                                       ((:plain :strong)
-                                        ':syntax-heading)
-                                       (:emphasis
-                                        ':heading-emphasis)
-                                       (otherwise
-                                        (terminal-span-style span)))
-                                     (terminal-span-text span))))
+                            collect (if (termdown:widget-p span)
+                                        span
+                                        (terminal-span
+                                         (case (terminal-span-style span)
+                                           ((:plain :strong)
+                                            ':syntax-heading)
+                                           (:emphasis
+                                            ':heading-emphasis)
+                                           (otherwise
+                                            (terminal-span-style span)))
+                                         (terminal-span-text span)))))
         rows)))
 
 
