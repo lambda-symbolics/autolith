@@ -874,6 +874,42 @@
       (terminal-ui-process-event ui '(:click 1 8))
       (test-assert (= 7 (length actions))
                    "clicks without an installed action function are ignored")))
+  (let ((terminal (make-instance 'recording-terminal :columns 100 :rows 20)))
+    (with-terminal-ui (ui (fullscreen-test--ui terminal))
+      (setf (terminal-ui-action-function ui)
+            (lambda (action)
+              (when (eq (first action) ':insert)
+                (terminal-ui-set-input ui (second action)))))
+      (dolist (state '(:queued :running))
+        (terminal-ui-set-input ui "draft")
+        (terminal-ui-set-command-activities
+         ui (list (list :id "exec:7" :type ':tool :index 7
+                        :tool "shell.run" :description "Build 中文 release"
+                        :state state :duration-ms 1000 :detached t)))
+        (terminal-ui--paint-live ui)
+        (let* ((frame (map 'list #'clinedi:ansi-strip (fullscreen-test--frame ui)))
+               (row   (position-if (lambda (text) (search "(job.cancel" text)) frame))
+               (text  (and row (nth row frame)))
+               (start (and text (search "(job.cancel" text))))
+          (test-assert start "active command rows expose cancellation in the pinned frame")
+          (when start
+            (terminal-ui-process-event
+             ui (list ':click
+                      (1+ (terminal--spans-width
+                           (list (terminal-span ':plain (subseq text 0 start)))))
+                      (1+ row)))
+            (test-assert
+             (string= (line-editor-text (terminal-ui-editor ui))
+                      "(job.cancel :id \"exec:7\")")
+             "clicking a pinned action inserts its executable call after wide text"))))
+      (terminal-ui-resize ui 40 :rows 20)
+      (test-assert (null (fullscreen-terminal-ui-pinned-actions ui))
+                   "resizing below the action width clears stale hit regions")
+      (terminal-ui-resize ui 100 :rows 20)
+      (terminal-ui-set-command-activities ui nil)
+      (terminal-ui--paint-live ui)
+      (test-assert (null (fullscreen-terminal-ui-pinned-actions ui))
+                   "completed commands expose no cancellation hit regions")))
   nil)
 
 (-> test-localgroup-click-events () null)

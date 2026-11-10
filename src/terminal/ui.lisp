@@ -1176,6 +1176,35 @@ its parenthesis open, and are dropped once the name closes it itself."
             (list (terminal-span ':dim assignment))))
          row-width)))))
 
+(-> terminal-ui--job-cancel-text (string) string)
+(defun terminal-ui--job-cancel-text (identifier)
+  "Return the displayed job.cancel call for IDENTIFIER."
+  (format nil "(job.cancel :id ~A)" identifier))
+
+(-> terminal-ui--job-cancel-widget (list t) list)
+(defun terminal-ui--job-cancel-widget (spans identifier)
+  "Highlight fully visible cancellation calls and insert the complete quoted call."
+  (let ((text (and (stringp identifier) (terminal-ui--job-cancel-text identifier))))
+    (if (null text)
+        spans
+        (loop for span in spans
+              for content = (and (not (termdown:widget-p span)) (terminal-span-text span))
+              for position = (and content (search text content :from-end t))
+              if (and position (= (+ position (length text)) (length content)))
+                append
+                (cons
+                 (terminal-span (terminal-span-style span) (subseq content 0 position))
+                 (let ((action (list ':insert (format nil "(job.cancel :id ~S)" identifier))))
+                   (mapcar (lambda (token)
+                             (termdown:make-widget (terminal-span-style token)
+                                                  (terminal-span-text token)
+                                                  action))
+                           (or (syntax--highlight-spans
+                                text :language *application-common-lisp-language*)
+                               (list (terminal-span ':code text))))))
+              else
+                collect span))))
+
 (-> terminal-ui--command-activity-row-at
     (list real integer &key (:identity-width integer) (:tool-width integer))
     list)
@@ -1207,20 +1236,35 @@ its parenthesis open, and are dropped once the name closes it itself."
              ':command-tool
              (layout-fit-text (getf activity :tool) tool-width))
             (terminal-span ':dim " · ")))
+         (cancel-text
+           (when (member (getf activity :state) '(:queued :running))
+             (terminal-ui--job-cancel-text (getf activity :id))))
+         (cancel-spans
+           (when (and cancel-text
+                      (<= (+ (terminal--spans-width prefix)
+                             (terminal--spans-width state-spans)
+                             (terminal--spans-width
+                              (list (terminal-span ':dim cancel-text))) 3)
+                          row-width))
+             (list (terminal-span ':dim (format nil " · ~A" cancel-text)))))
          (description-width
            (max 0
                 (- row-width
                    (terminal--spans-width prefix)
-                   (terminal--spans-width state-spans)))))
-    (terminal--clip-spans
-     (append
-      prefix
-      (list
-       (terminal-span
-        ':plain
-        (layout-fit-text (getf activity :description) description-width)))
-      state-spans)
-     row-width)))
+                   (terminal--spans-width state-spans)
+                   (terminal--spans-width cancel-spans)))))
+    (terminal-ui--job-cancel-widget
+     (terminal--clip-spans
+      (append
+       prefix
+       (list
+        (terminal-span
+         ':plain
+         (layout-fit-text (getf activity :description) description-width)))
+       state-spans
+       cancel-spans)
+      row-width)
+     (getf activity :id))))
 
 (-> terminal-ui--command-presentation-activities (terminal-ui) list)
 (defun terminal-ui--command-presentation-activities (ui)

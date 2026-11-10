@@ -2589,7 +2589,7 @@
                                        (equal (termdown:widget-action widget) action))
                                      widgets)
                               (string= (terminal--spans-text widgets)
-                                       (application--job-cancel-text identifier))
+                                       (terminal-ui--job-cancel-text identifier))
                               (terminal-ui--compact-handoff-group entry))
                          "a running handoff highlights every clickable cancellation token"))
                       (test-assert

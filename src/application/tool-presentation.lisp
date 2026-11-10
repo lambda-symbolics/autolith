@@ -2022,7 +2022,7 @@ re-emitting untrusted serialized JSON."
                          "cancelled")
                         (otherwise
                          "background handoff"))))
-    (application--job-cancel-widget
+    (terminal-ui--job-cancel-widget
      (application--tool-entry
       application
       :style  (if (eq state ':failed) ':failure ':notice)
@@ -2031,7 +2031,7 @@ re-emitting untrusted serialized JSON."
                        application (getf (rest record) :tool)))
       :detail (format nil "~A · ~A" status
                       (if (member state '(:queued :running))
-                          (application--job-cancel-text (getf job :id))
+                          (terminal-ui--job-cancel-text (getf job :id))
                           (getf job :id)))
       :rows   (unless (application-compact-view-p application)
                (application--tool-field-rows
@@ -2044,38 +2044,6 @@ re-emitting untrusted serialized JSON."
                    (list (list :label "handoff"
                                :value "blocking wait expired")))))))
      (getf job :id))))
-
-(-> application--job-cancel-text (string) string)
-(defun application--job-cancel-text (identifier)
-  "Return the job.cancel call shown for IDENTIFIER, its id unquoted like other calls."
-  (format nil "(job.cancel :id ~A)" identifier))
-
-(-> application--job-cancel-widget (list t) list)
-(defun application--job-cancel-widget (spans identifier)
-  "Highlight fully visible job.cancel calls; clicking any token inserts the whole call.
-
-Clipped details stay plain. Keep the header as an ordinary span to preserve
-the entry's group."
-  (let ((text (and (stringp identifier) (application--job-cancel-text identifier))))
-    (if (null text)
-        spans
-        (loop for span in spans
-              for content = (and (not (termdown:widget-p span)) (terminal-span-text span))
-              for position = (and content (search text content :from-end t))
-              if (and position (= (+ position (length text)) (length content)))
-                append
-                (cons
-                 (terminal-span (terminal-span-style span) (subseq content 0 position))
-                 (let ((action (list ':insert (format nil "(job.cancel :id ~S)" identifier))))
-                   (mapcar (lambda (token)
-                             (termdown:make-widget (terminal-span-style token)
-                                                  (terminal-span-text token)
-                                                  action))
-                           (or (syntax--highlight-spans
-                                text :language *application-common-lisp-language*)
-                               (list (terminal-span ':code text))))))
-              else
-                collect span))))
 
 (defmethod application-tool-result-entry :around
     (tool (application application) record)
