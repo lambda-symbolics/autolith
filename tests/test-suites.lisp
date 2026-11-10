@@ -782,6 +782,7 @@
 
 (define-test-suite conversation-identifier
   test-conversation-identifier-format
+  test-user-identifier-allocation
   test-conversation-identifier-allocation
   test-conversation-identifier-migration
   test-conversation-identifier-migration-validation
