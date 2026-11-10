@@ -604,14 +604,34 @@
                             (= (memory-context-event-stale-count (first events)) 1)
                             (zerop (memory-context-event-unverified-count (first events))))
                        "the presentation event counts the stale memory"))
-        (test-assert (equal (list (application--related-memories-notice 1)
-                                  (application--related-memories-notice 3 :stale 1)
-                                  (application--related-memories-notice
-                                   2 :stale 1 :unverified 1))
-                            '("@ 1 relevant memory exists"
-                              "@ 3 relevant memories exist · 1 stale"
-                              "@ 2 relevant memories exist · 1 stale · 1 unverified"))
-                     "the notice names stale and unverified memories"))))
+        (multiple-value-bind (advice events)
+            (memory-source-tests--recall configuration conversation)
+          (let* ((event  (first events))
+                 (ids    (memory-context-event-identifiers event))
+                 (details
+                   (let ((received nil))
+                     (funcall
+                      (agent--provider-event-callback
+                       (make-instance 'callback-agent-observer
+                                      :status-callback
+                                      (lambda (status data)
+                                        (when (eq status ':related-memories)
+                                          (setf received data)))))
+                      event)
+                     received))
+                 (notice (application--related-memories-notice
+                          (getf details :count) :ids (getf details :ids))))
+            (test-assert (equal ids (getf details :ids))
+                         "the observer forwards delivered memory references")
+            (test-assert (equal ids (memory-context-contribution-identifiers advice))
+                         "delivery preserves the recalled memory identities")
+            (test-assert (= (length ids) (memory-context-event-count event))
+                         "each delivered memory has a visible reference")
+            (dolist (id ids)
+              (multiple-value-bind (resolved status)
+                  (memory-resolve configuration id)
+                (test-assert (and (search id notice) resolved (eq status ':found))
+                             "each reference in the notice resolves to a recalled memory"))))))))
   nil)
 
 (-> memory-source-tests--text ((or string list)) string)
@@ -645,7 +665,10 @@
                (style       nil)
                (release     nil))
           (test-call-with-function-replacements
-           (list (list 'make-identifier (lambda () (pop identifiers))))
+           (list (list 'memory--generate-identifier
+                       (lambda (configuration active)
+                         (declare (ignore configuration active))
+                         (pop identifiers))))
            (lambda ()
              (setf deploy (memory-remember
                            configuration
@@ -660,6 +683,28 @@
                                             :title    "Release day"
                                             :content  "Tag, then make release-prod."
                                             :premises (list (memory-identifier deploy))))))
+          (test-call-with-function-replacements
+           (list (list 'memory--identifier-hash
+                       (lambda (identifier)
+                         (declare (ignore identifier))
+                         0)))
+           (lambda ()
+             (let ((alias (memory-short-identifier deploy)))
+               (multiple-value-bind (resolved status matches)
+                   (memory-resolve configuration alias)
+                 (test-assert (and (null resolved) (eq status ':ambiguous)
+                                   (= 3 (length matches)))
+                              "colliding legacy aliases never select a memory")
+                 (let ((notice (memory-source-tests--text
+                                (application-memory-entry application alias))))
+                   (dolist (match matches)
+                     (let* ((reference (memory--disambiguation-reference match matches))
+                            (selected  (memory-resolve configuration reference)))
+                       (test-assert (and (search reference notice)
+                                         selected
+                                         (string= (memory-identifier selected)
+                                                  (memory-identifier match)))
+                                    "ambiguity guidance supplies references that select each memory"))))))))
           (memory-source-tests--write notes (format nil "Deploy with make ship.~%"))
           (let ((listing (memory-source-tests--text
                           (application-memories-entry application))))
@@ -669,9 +714,17 @@
                             (search "Indentation" listing))
                          "stale memories are listed before current ones")
             (test-assert (and (search "stale: NOTES.md changed" listing)
-                              (search "(memory \"abcd1111\")" listing)
+                              (search (application-memory--call deploy) listing)
                               (search "from 1 memory" listing))
                          "rows give the reason, the explaining call, and provenance"))
+          (let* ((call     (application-memory--call deploy))
+                 (form     (let ((*read-eval* nil)) (read-from-string call)))
+                 (resolved (memory-resolve configuration (second form))))
+            (test-assert (and (eq (first form) 'memory)
+                              resolved
+                              (string= (memory-identifier resolved)
+                                       (memory-identifier deploy)))
+                         "the explaining call selects the listed memory"))
           (test-assert (let ((filtered (memory-source-tests--text
                                         (application-memories-entry
                                          application :query "tabs?"))))
@@ -715,11 +768,22 @@
                                    '("deploy prod"))
                             (null (application--memories-slash-arguments "  ")))
                        "/memories takes the rest of the line as one query")
-          (test-assert (string= (memory-identifier release)
-                                (memory-identifier
-                                 (memory-resolve configuration "ef003333-0000-4000-8000-000000000000")))
-                       "a full identifier resolves exactly")))))
-  nil)
+         (test-assert (string= (memory-identifier release)
+                               (memory-identifier
+                                (memory-resolve configuration "ef003333-0000-4000-8000-000000000000")))
+                      "a full identifier resolves exactly")
+         (let ((short (memory-short-identifier release)))
+           (test-assert (string= short
+                                (identifier-display (identifier-normalize short)))
+                        "memory hints use resolvable idsmall display identifiers")
+           (multiple-value-bind (resolved status matches)
+               (memory-resolve configuration short)
+             (declare (ignore matches))
+             (test-assert (and (eq status ':found)
+                               (string= (memory-identifier resolved)
+                                        (memory-identifier release)))
+                          "an idsmall memory hint resolves to its stable memory"))))))
+    nil))
 
 (-> test-memory-premise-export () null)
 (defun test-memory-premise-export ()

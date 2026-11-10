@@ -4017,9 +4017,11 @@ does turning the activity line setting off."
             (sanitize-text name :single-line-p t)))))))
 
 (-> application--related-memories-notice
-    ((integer 0) &key (:stale (integer 0)) (:unverified (integer 0)) (:facts (integer 0)))
+    ((integer 0) &key (:stale (integer 0)) (:unverified (integer 0))
+                  (:facts (integer 0)) (:ids list))
     string)
-(defun application--related-memories-notice (count &key (stale 0) (unverified 0) (facts 0))
+(defun application--related-memories-notice
+    (count &key (stale 0) (unverified 0) (facts 0) (ids nil))
   "Return the notice for COUNT offered memories and FACTS offered facts.
 
 STALE and UNVERIFIED count memories whose evidence changed or could not be
@@ -4027,7 +4029,8 @@ checked."
   (format nil "@ ~{~A~^ · ~}"
           (remove nil
                   (list (when (plusp count)
-                          (format nil "~D relevant memor~:@P exist~:[~;s~]" count (= count 1)))
+                          (format nil "~D relevant memor~:@P exist~:[~;s~]~@[ (~{~A~^, ~})~]"
+                                  count (= count 1) ids))
                         (when (plusp stale)
                           (format nil "~D stale" stale))
                         (when (plusp unverified)
@@ -4289,7 +4292,8 @@ clients as :TEXT, :REASONING and :STATUS events."
                        (getf details :count)
                        :stale      (getf details :stale 0)
                        :unverified (getf details :unverified 0)
-                       :facts      (getf details :facts 0)))))
+                       :facts      (getf details :facts 0)
+                       :ids        (getf details :ids)))))
               (setf related-memories-shown-p t)))
            (:knowledge-changes
             (application-present

@@ -631,7 +631,8 @@ retries stay auditable next to the request they belong to."
         (list :count      (memory-context-event-count event)
               :stale      (memory-context-event-stale-count event)
               :unverified (memory-context-event-unverified-count event)
-              :facts      (memory-context-event-fact-count event))))
+              :facts      (memory-context-event-fact-count event)
+              :ids        (copy-list (memory-context-event-identifiers event)))))
       (knowledge-change-event
        (agent-observer-status
         observer :knowledge-changes

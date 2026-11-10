@@ -504,37 +504,101 @@ relative to it; every other file path becomes absolute."
          (copy-tree source)))
    sources))
 
+(-> memory--identifier-hash (string) (unsigned-byte 32))
+(defun memory--identifier-hash (identifier)
+  "Return a portable bounded hash for IDENTIFIER."
+  (reduce (lambda (hash character)
+            (mod (+ (* hash 131) (char-code character)) #x100000000))
+          identifier
+          :initial-value 0))
+
+(-> memory--short-identifier-normalize (string) (option string))
+(defun memory--short-identifier-normalize (identifier)
+  "Return canonical IDSMALL spelling for IDENTIFIER, or NIL when malformed."
+  (handler-case
+      (identifier-normalize identifier)
+    (identifier-error ()
+      nil)))
+
 (-> memory-short-identifier (memory) string)
 (defun memory-short-identifier (memory)
-  "Return the abbreviated identifier people type to select MEMORY."
-  (let ((identifier (memory-identifier memory)))
-    (subseq identifier 0 (min *memory-short-identifier-length* (length identifier)))))
+  "Return MEMORY's native idsmall identifier or a stable legacy UUID alias."
+  (let* ((identifier (memory-identifier memory))
+         (native     (memory--short-identifier-normalize identifier)))
+    (if native
+        (identifier-display native)
+        (let* ((hash      (memory--identifier-hash identifier))
+               (timestamp (mod (logxor hash (ash hash -7)) #x100000000))
+               (seed      (mod hash (identifier-base))))
+          (identifier-display (identifier-from-seed timestamp seed))))))
+
+(-> memory--short-identifier-matches (string list) list)
+(defun memory--short-identifier-matches (identifier memories)
+  "Return every memory with the native identity or legacy alias IDENTIFIER."
+  (let ((normalized (memory--short-identifier-normalize identifier)))
+    (when normalized
+      (remove-if-not
+       (lambda (memory)
+         (string= normalized
+                  (identifier-normalize (memory-short-identifier memory))))
+       memories))))
 
 (-> memory-resolve (configuration string) (values (option memory) keyword list))
 (defun memory-resolve (configuration identifier)
-  "Resolve an exact identifier or unique prefix among the relevant memories.
+  "Resolve an exact identity, legacy UUID prefix, or unambiguous short reference.
 
-The second value is :FOUND, :MISSING, or :AMBIGUOUS; the third lists the
-matching memories when the prefix is ambiguous."
+Exact native identifiers are case-sensitive. Loose references never select
+one of several matching identities or legacy aliases."
   (let* ((text     (string-trim '(#\Space #\Tab) identifier))
          (memories (if (non-empty-string-p text)
                        (memory-list configuration :visibility ':relevant)
                        nil))
-         (exact    (find text memories :key #'memory-identifier :test #'string-equal))
-         (matches  (remove-if-not (lambda (memory)
-                                    (uiop:string-prefix-p
-                                     (string-downcase text)
-                                     (string-downcase (memory-identifier memory))))
-                                  memories)))
+         (exact    (find (or (memory--short-identifier-normalize text) text)
+                         memories :key #'memory-identifier :test #'string=))
+         (legacy-matches
+           (remove-if-not
+            (lambda (memory)
+              (let ((stored (memory-identifier memory)))
+                (and (null (memory--short-identifier-normalize stored))
+                     (non-empty-string-p text)
+                     (uiop:string-prefix-p (string-downcase text)
+                                           (string-downcase stored)))))
+            memories))
+         (matches  (remove-duplicates
+                    (append legacy-matches
+                            (memory--short-identifier-matches text memories))
+                    :key #'memory-identifier :test #'string=)))
     (cond
       (exact
        (values exact ':found nil))
-      ((null matches)
-       (values nil ':missing nil))
-      ((null (rest matches))
+      ((> (length matches) 1)
+       (values nil ':ambiguous matches))
+      (matches
        (values (first matches) ':found nil))
       (t
-       (values nil ':ambiguous matches)))))
+       (values nil ':missing nil)))))
+
+(-> memory--disambiguation-reference (memory list) string)
+(defun memory--disambiguation-reference (memory matches)
+  "Return a short stable reference distinguishing MEMORY from MATCHES."
+  (let ((identifier (memory-identifier memory)))
+    (or (loop for length from (min 8 (length identifier)) to (length identifier)
+              for prefix = (subseq identifier 0 length)
+              when (= 1 (count-if
+                         (lambda (match)
+                           (uiop:string-prefix-p prefix (memory-identifier match)))
+                         matches))
+                return prefix)
+        identifier)))
+
+(-> memory--generate-identifier (configuration list) string)
+(defun memory--generate-identifier (configuration active)
+  "Allocate a native identifier while holding the memory store transaction.
+
+Exclude active identities and their legacy aliases across every workspace."
+  (identifier-generate
+   :namespace            (namestring (configuration-memory-path configuration))
+   :reserved-identifiers (mapcar #'memory-short-identifier active)))
 
 (-> memory-remember
     (configuration
@@ -634,7 +698,8 @@ evidence as it is now."
                   (memory
                     (make-instance
                      'memory
-                     :identifier          (or identifier (make-identifier))
+                     :identifier          (or identifier
+                                              (memory--generate-identifier configuration active))
                      :created-at          (if existing (memory-created-at existing) now)
                      :updated-at          now
                      :scope               selected-scope

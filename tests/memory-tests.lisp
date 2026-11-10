@@ -43,6 +43,18 @@
                      :content             "This belongs elsewhere."
                      :tags                nil
                      :source-conversation "second")))
+             (test-assert (every #'identifier-p
+                                 (mapcar #'memory-identifier
+                                         (list workspace-memory global-memory other-memory)))
+                          "new memories persist native short identities")
+             (test-assert (= 3 (length (remove-duplicates
+                                        (mapcar #'memory-identifier
+                                                (list workspace-memory global-memory other-memory))
+                                        :test #'string=)))
+                          "allocation excludes identities from other memory scopes")
+             (test-assert (string= (memory-short-identifier workspace-memory)
+                                   (identifier-display (memory-identifier workspace-memory)))
+                          "native memory references display their stored identity")
              (test-assert (= (length (memory-list configuration)) 2)
                           "relevant memory selection includes global and current workspace")
              (test-assert (= (length (memory-list other)) 2)

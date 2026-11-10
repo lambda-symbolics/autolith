@@ -145,11 +145,13 @@
 
 (defmethod resource-resolver-resolve
     ((resolver memory-resolver) identifier (context tool-context))
-  "Resolve reserved collections or one canonical or compatible exact identifier."
-  (declare (ignore context))
-  (let ((visibility (memory-resource--collection-visibility identifier))
-        (knowledge  (and (memory-resolver-knowledge-p resolver)
-                         (memory-knowledge-resolve identifier))))
+  "Resolve reserved collections, exact identifiers, and unique idsmall references."
+  (let* ((visibility (memory-resource--collection-visibility identifier))
+         (knowledge  (and (memory-resolver-knowledge-p resolver)
+                          (memory-knowledge-resolve identifier)))
+         (item-id    (and (uiop:string-prefix-p "id/" identifier)
+                          (resource-item-decode-identifier
+                           "memory" "memory" (subseq identifier (length "id/"))))))
     (cond
       (knowledge
        knowledge)
@@ -158,11 +160,21 @@
                       :uri        (format nil "memory:~A" identifier)
                       :identifier identifier
                       :visibility visibility))
-      ((uiop:string-prefix-p "id/" identifier)
-       (memory-resource--make-item
-        (resource-item-decode-identifier
-         "memory" "memory"
-         (subseq identifier (length "id/")))))
+      (item-id
+       (multiple-value-bind (memory status matches)
+           (memory-resolve (tool-context-configuration context) item-id)
+         (case status
+           (:found
+            (memory-resource--make-item (memory-identifier memory)))
+           (:ambiguous
+            (error 'tool-error
+                   :message   (format nil "Memory reference ~A is ambiguous: ~{~A~^, ~}."
+                                     item-id (mapcar (lambda (match)
+                                                       (memory--disambiguation-reference match matches))
+                                                     matches))
+                   :tool-name "resource.read"))
+           (otherwise
+            (memory-resource--make-item item-id)))))
       (t
        (memory-resource--make-item identifier)))))
 
