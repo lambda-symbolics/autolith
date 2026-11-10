@@ -578,12 +578,22 @@ used as manager state. Restore the ordinary fullscreen frame on every exit."
     (when (non-empty-string-p query)
       (clinedi:selection-session-handle-event (memory-manager-session manager) (list ':insert query)))
     (when identifier
-      (let ((matches (remove-if-not
-                      (lambda (item)
-                        (let ((id (memory-manager-item-identifier item)))
-                          (and (<= (length identifier) (length id))
-                               (string-equal identifier id :end2 (length identifier)))))
-                      (memory-manager-items manager))))
+      (let* ((items (memory-manager-items manager))
+             (exact (find identifier items :key #'memory-manager-item-identifier :test #'string=))
+             (notes (multiple-value-bind (memory status matches)
+                        (memory-resolve (application-configuration application) identifier)
+                      (declare (ignore status))
+                      (mapcar #'memory-identifier (if memory (list memory) matches))))
+             (matches
+               (or (and exact (list exact))
+                   (remove-if-not
+                    (lambda (item)
+                      (let ((id (memory-manager-item-identifier item)))
+                        (if (eq (memory-manager-item-kind item) ':note)
+                            (member id notes :test #'string=)
+                            (and (<= (length identifier) (length id))
+                                 (string-equal identifier id :end2 (length identifier))))))
+                    items))))
         (cond
           ((= (length matches) 1)
            (clinedi:selection-session-select-id
