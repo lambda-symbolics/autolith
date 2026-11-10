@@ -828,6 +828,13 @@ values from either side of a terminal transition."
           (task-progress--snapshot job
                                    :result   result
                                    :ended-at (getf snapshot :ended-at))
+          :cleanup-descendants
+          (loop for execution in
+                (job-pool-descendant-jobs
+                 (task-orchestrator-execution-pool (task-job-orchestrator job))
+                 (job-identifier job))
+                when (job-cancellation-requested-p execution)
+                  collect (session-job-identifier execution))
           :result               result
           :cancellation-reason  (getf snapshot :cancellation-reason)
           :condition-report     (getf snapshot :condition-report))))
@@ -856,6 +863,10 @@ values from either side of a terminal transition."
           :summary             (tool-execution-job-summary job)
           :progress
           (list :duration-ms (getf progress :duration-milliseconds))
+          :cleanup
+          (with-lock-held ((cl-jobpond::job--lock job))
+            (when (tool-execution-job-cleanup-condition job)
+              (list :status ':native-cleanup :owner (session-job-identifier job))))
           :result              (copy-tree (getf snapshot :result))
           :cancellation-reason (getf snapshot :cancellation-reason)
           :condition-report    (getf snapshot :condition-report))))
@@ -1033,15 +1044,19 @@ task.run reports both identifiers, and models pass either one."
    "Cancel session JOB and return whether it was accepted plus descendant IDs."))
 
 (defmethod session-job-cancel ((job session-job) reason)
-  "Cancel JOB and every retained descendant in its own pool."
+  "Cancel JOB's linked subtree across pools before terminal publication."
   (multiple-value-bind (accepted-p cascaded)
       (job-cancel job :reason reason :cascade-p t)
     (when accepted-p
       (session-job-note-cancellation job reason))
     (dolist (descendant cascaded)
-      (session-job-note-cancellation descendant reason))
-    (values accepted-p
-            (sort (mapcar #'session-job-identifier cascaded) #'string<))))
+      (when (typep descendant 'session-job)
+        (session-job-note-cancellation descendant reason)))
+    (values (not (null accepted-p))
+            (sort (loop for descendant in cascaded
+                        when (typep descendant 'session-job)
+                          collect (session-job-identifier descendant))
+                  #'string<))))
 
 (-> task-job--subtree-identifiers (task-job) list)
 (defun task-job--subtree-identifiers (job)
@@ -1055,37 +1070,6 @@ task.run reports both identifiers, and models pass either one."
                            (job-owner-identifiers candidate)
                            :test #'string=))
             collect (job-identifier candidate))))
-
-(defmethod session-job-cancel ((job task-job) reason)
-  "Cancel task JOB and accepted tool executions owned by its task subtree."
-  (multiple-value-bind (accepted-p cancelled-descendants)
-      (call-next-method)
-    (when accepted-p
-      (let ((task-identifiers (task-job--subtree-identifiers job)))
-        (dolist (candidate
-                 (job-pool-list-jobs
-                  (task-orchestrator-execution-pool
-                   (task-job-orchestrator job))))
-          (when (some (lambda (identifier)
-                        (member identifier
-                                (job-owner-identifiers candidate)
-                                :test #'string=))
-                      task-identifiers)
-            (multiple-value-bind (cancelled-p cascaded)
-                (job-cancel candidate :reason reason :cascade-p t)
-              (when cancelled-p
-                (session-job-note-cancellation candidate reason))
-              (dolist (descendant cascaded)
-                (session-job-note-cancellation descendant reason))
-              (when cancelled-p
-                (push (session-job-identifier candidate)
-                      cancelled-descendants))
-              (dolist (descendant cascaded)
-                (push (session-job-identifier descendant)
-                      cancelled-descendants)))))))
-    (values accepted-p
-            (sort (remove-duplicates cancelled-descendants :test #'string=)
-                  #'string<))))
 
 (-> task-job-cancel (task-job keyword) (values boolean list))
 (defun task-job-cancel (job reason)

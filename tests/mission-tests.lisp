@@ -991,3 +991,44 @@
       (test-assert (= 1 (getf (application-goal application) :turns-used)) "native compaction charges an inference admission")
       (test-assert (= 5 (getf (application-goal application) :tokens-used)) "reported usage is recorded without clipping it to the limit")
       (test-assert (eq ':exhausted (getf (application-goal application) :status)) "reported token exhaustion is a durable terminal state"))))
+
+(-> test-mission-inline-parent-cancellation () null)
+(defun test-mission-inline-parent-cancellation ()
+  "Interrupt a blocked inline mission through its explicit cross-pool parent link."
+  (with-test-configuration (configuration)
+    (let* ((application (mission-test--application configuration))
+           (pool        (make-job-pool :name "inline mission parent test" :maximum-concurrency 1))
+           (lock        (make-lock "inline mission test"))
+           (entered-p   nil)
+           (unwound-p   nil))
+      (unwind-protect
+           (progn
+             (application-mission-start application (mission-test--specification))
+             (let* ((context (mission-context-find (application-conversation application)))
+                    (outer
+                      (first
+                       (job-pool-submit-batch
+                        pool
+                        (list
+                         (list :function
+                               (lambda (job)
+                                 (declare (ignore job))
+                                 (mission--supervise
+                                  context "blocked inline operation"
+                                  (lambda ()
+                                    (unwind-protect
+                                         (progn
+                                           (with-lock-held (lock) (setf entered-p t))
+                                           (loop (sleep 0.01)))
+                                      (with-lock-held (lock) (setf unwound-p t))))))))))))
+               (test-assert (task-tests--wait-until
+                             (lambda () (with-lock-held (lock) entered-p)) 2)
+                            "the inline mission reaches a blocking operation")
+               (job-cancel outer :reason ':test-cancel :cascade-p t)
+               (multiple-value-bind (snapshot terminal-p) (job-await outer :timeout-seconds 2)
+                 (test-assert (and terminal-p (eq (getf snapshot :state) ':aborted))
+                              "cancellation reaches the current inner run across pools"))
+               (test-assert (with-lock-held (lock) unwound-p)
+                            "the blocked inner body actually unwinds")))
+        (job-pool-close pool))))
+  nil)

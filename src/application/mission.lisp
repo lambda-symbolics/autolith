@@ -279,12 +279,13 @@ preserving the calling thread's provider bindings and authorization callbacks."
                                             :terminal-retention-limit 1 :start-threads-p nil))
          (job                (first (job-pool-submit-batch
                                      pool (list (list :name name :inline-only-p t
-                                                      :function (lambda (job)
-                                                                  (job-check-cancellation job)
-                                                                  (handler-case (funcall function)
-                                                                    (serious-condition (condition)
-                                                                      (setf terminal-condition condition)
-                                                                      (error condition))))))))))
+                                                      :parent-job cl-jobpond::*current-job*
+                                                      :function   (lambda (job)
+                                                                    (job-check-cancellation job)
+                                                                    (handler-case (funcall function)
+                                                                      (serious-condition (condition)
+                                                                        (setf terminal-condition condition)
+                                                                        (error condition))))))))))
     (unwind-protect
          (progn
            (with-recursive-lock-held ((mission-context-lock context))

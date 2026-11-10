@@ -374,6 +374,38 @@ start under a cancelled ancestor, and hands over to the child."
       nil
       (call-next-method)))
 
+(-> tool-execution-job-await-native-cleanup
+    (tool-execution-job cl-exec-sandbox:sandbox-process-cleanup-error) null)
+(defun tool-execution-job-await-native-cleanup (job condition)
+  "Retain JOB as a visible cleanup owner until native process and readers stop.
+The parent waits only its own cleanup budget; this execution remains running."
+  (with-lock-held ((cl-jobpond::job--lock job))
+    (setf (tool-execution-job-cleanup-condition job) condition
+          (tool-execution-job-activity job) "native cleanup"
+          (tool-execution-job-activity-at job) (get-internal-real-time)))
+  (let ((owner    (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-thread condition))
+        (retry    (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-retry condition))
+        (readers  (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-readers condition))
+        (reaped-p nil))
+    (loop
+      ;; A failed thread creation transfers the retry closure to this execution.
+      ;; Keep the condition reachable even while no native worker can be started.
+      (unless (or owner reaped-p)
+        (when retry
+          (handler-case (setf owner (funcall retry))
+            (error () nil))))
+      (when (and owner (not (thread-alive-p owner)))
+        ;; A dead cleanup worker is not proof that native reaping succeeded.
+        (setf reaped-p (handler-case (not (null (join-thread owner)))
+                         (error () nil))
+              owner nil))
+      (when (and reaped-p (notany #'thread-alive-p readers))
+        (return))
+      (sleep 0.01)))
+  (with-lock-held ((cl-jobpond::job--lock job))
+    (setf (tool-execution-job-cleanup-condition job) nil))
+  nil)
+
 (-> tool-execution-job--run (tool-execution-job) tool-result)
 (defun tool-execution-job--run (job)
   "Call JOB's operation exactly once after checking task ancestry."
@@ -516,9 +548,9 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
            (first (task-orchestrator-reserve-session-orders orchestrator 1)))
          (identifier (format nil "exec:~D" session-order))
          (entry
-          (list :function (lambda (job)
-                            (task-continuity-record-job job parent-agent)
-                            (tool-execution-job--run job))
+          (list :function    (lambda (job)
+                               (task-continuity-record-job job parent-agent)
+                               (tool-execution-job--run job))
                  :terminal-result-function
                  (lambda (job state result report)
                    (multiple-value-bind (record final-report final-state)
@@ -554,7 +586,10 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
                      (task-continuity-record-terminal job parent-agent record
                                                       :state final-state)
                      (values record final-report final-state)))
-                 :name    tool-name
+                 :parent-job (if (typep parent-agent 'task-child-agent)
+                                 (task-child-agent-job parent-agent)
+                                 cl-jobpond::*current-job*)
+                 :name       tool-name
                  :owner-identifiers
                  (task-parent-owner-identifiers parent-agent)
                  :root-identifier
@@ -737,6 +772,8 @@ guarantee."
                         ;; synchronous chain cannot starve the pool.
                         :inline-only-p            nested-synchronous-p
                         :owner-identifiers        owner-identifiers
+                        :parent-job               (and (typep parent-agent 'task-child-agent)
+                                                       (task-child-agent-job parent-agent))
                         :root-identifier          root-conversation-identifier
                         :initargs
                         (list :orchestrator          orchestrator

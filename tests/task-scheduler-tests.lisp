@@ -3212,3 +3212,109 @@ exactly that race."
           (platform-setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" previous-runtime)
           (platform-unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS"))))
   nil)
+
+(-> test-task-cancellation-cleanup-ownership () null)
+(defun test-task-cancellation-cleanup-ownership ()
+  "Notify execution descendants before queued publication and retain slow cleanup."
+  (with-test-configuration (configuration)
+    (let* ((orchestrator             (task-tests--orchestrator))
+           (primary                  (task-tests--primary-agent configuration "cleanup-primary"))
+           (definition               (task-agent-definition-create
+                                      :name "cleanup" :description "Cleanup test."
+                                      :instructions "Wait." :source ':test))
+           (parent                   (task-tests--register-job orchestrator primary definition :name "cleanup-parent"))
+           (viewer                   (task-tests--child-viewer configuration parent))
+           (queued                   (task-tests--register-job orchestrator viewer definition :name "cleanup-queued"))
+           (lock                     (make-lock "native cleanup test"))
+           (release-p                nil)
+           (release-readers-p        nil)
+           (native-owner             (make-thread
+                                      (lambda ()
+                                        (loop until (with-lock-held (lock) release-p) do (sleep 0.01))
+                                        t)
+                                      :name "test native cleanup owner"))
+           (reader                   (make-thread
+                                      (lambda ()
+                                        (loop until (with-lock-held (lock) release-readers-p) do (sleep 0.01))
+                                        t)
+                                      :name "test capture cleanup owner"))
+           (execution                nil)
+           (publication-observations nil)
+           (prune-count              0)
+           (retry-count              0)
+           (terminal-function        (symbol-function 'task-job--terminal-record)))
+      (unwind-protect
+           (progn
+             (setf execution
+                   (task-orchestrator-start-execution-job
+                    orchestrator viewer :tool-name "shell.run" :summary "cleanup test"
+                    :operation-function
+                    (lambda ()
+                      (tool-execution-job-await-native-cleanup
+                       *tool-execution-current-job*
+                       (make-condition
+                        'cl-exec-sandbox:sandbox-process-cleanup-error
+                        :message "Controlled cleanup deadline." :command '("test")
+                        :process nil :alive-p t :termination-timeout 0.01
+                        :cleanup-thread nil :cleanup-readers (list reader)
+                        :cleanup-retry (lambda ()
+                                         (incf retry-count)
+                                         (if (= retry-count 1)
+                                             (error "Controlled thread creation failure.")
+                                             native-owner))))
+                      (tool-failure "cleanup completed"))))
+             (test-assert
+              (task-tests--wait-until
+               (lambda () (getf (session-job-snapshot execution) :cleanup)) 2)
+              "native cleanup transfers to the visible execution")
+             (test-call-with-function-replacements
+              (list
+               (list 'task--prune-result-artifacts
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
+                       (incf prune-count)))
+               (list 'task-job--terminal-record
+                     (lambda (job &rest arguments)
+                       (push (job-cancellation-requested-p execution) publication-observations)
+                       (apply terminal-function job arguments))))
+              (lambda () (task-job-cancel parent ':test-cancel)))
+             (test-assert
+              (and (job-terminal-p parent) (job-terminal-p queued)
+                   publication-observations (every #'identity publication-observations))
+              "both pools receive cancellation before any queued task publication")
+             (test-assert (zerop prune-count)
+                          "terminal artifact publication performs no retention sweep")
+             (let* ((*task-descendant-cleanup-timeout-seconds* 0.03)
+                    (started                                   (get-internal-real-time)))
+               (task-job-cancel-execution-descendants parent ':test-cancel)
+               (test-assert (< (/ (- (get-internal-real-time) started)
+                                  internal-time-units-per-second) 1)
+                            "one descendant cleanup budget bounds the parent wait"))
+             (test-assert
+              (and (eq (job-state execution) ':running)
+                   (equal (getf (session-job-native-record
+                                 parent (session-job-snapshot parent) primary)
+                                :cleanup-descendants)
+                          (list (session-job-identifier execution)))
+                   (equal (getf (getf (session-job-native-record
+                                       execution (session-job-snapshot execution) primary)
+                                      :cleanup)
+                                :owner)
+                          (session-job-identifier execution)))
+              "the terminal parent exposes its live execution cleanup owner")
+             (with-lock-held (lock) (setf release-p t))
+             (join-thread native-owner)
+             (test-assert (not (nth-value 1 (job-await execution :timeout-seconds 0.03)))
+                          "finishing process reaping does not abandon unfinished capture readers")
+             (with-lock-held (lock) (setf release-readers-p t))
+             (multiple-value-bind (snapshot terminal-p) (job-await execution :timeout-seconds 2)
+               (test-assert
+                (and terminal-p (eq (getf snapshot :state) ':aborted)
+                     (null (getf (session-job-snapshot execution) :cleanup))
+                     (>= retry-count 2))
+                "cleanup retries keep ownership until process and readers finish")))
+        (with-lock-held (lock) (setf release-p t release-readers-p t))
+        (join-thread native-owner)
+        (join-thread reader)
+        (task-orchestrator-close orchestrator))))
+  nil)

@@ -467,6 +467,10 @@ parent, and borrowed capabilities are released at terminal state."))
     :accessor      tool-execution-job-activity-at
     :type          (option integer)
     :documentation "The monotonic time of the latest real phase update, under the job lock.")
+   (cleanup-condition
+    :initform      nil
+    :accessor      tool-execution-job-cleanup-condition
+    :documentation "Native cleanup ownership retained until process and readers finish, under the job lock.")
    (operation-function
     :initarg       :operation-function
     :accessor      tool-execution-job-operation-function

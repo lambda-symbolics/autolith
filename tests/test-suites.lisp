@@ -1221,6 +1221,7 @@
   test-agent-compaction
   test-agent-native-compaction
   test-agent-parallel-tool-wave
+  test-agent-tool-wave-cancellation
   test-agent-tool-concurrency-key
   test-agent-exclusive-tool-waves
   test-agent-parallel-tool-failure
@@ -1332,6 +1333,7 @@
   test-task-job-list-pagination
   test-task-refresh-after-delayed-close
   test-task-terminal-cancellation-and-publication
+  test-task-cancellation-cleanup-ownership
   test-task-retention-and-admission
   test-task-evicted-identity-retention
   test-task-live-activity-snapshots
@@ -1654,6 +1656,7 @@
   test-mission-wall-budget
   test-mission-command-and-compaction
   test-mission-queued-child-authority
+  test-mission-inline-parent-cancellation
   test-mission-native-compaction-budget)
 
 (define-test-suite lisp-machine

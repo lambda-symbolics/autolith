@@ -2737,6 +2737,64 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-agent-tool-wave-cancellation () null)
+(defun test-agent-tool-wave-cancellation ()
+  "Cancel an active supervised wave without claiming its remaining calls."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (agent         (agent-create
+                         :configuration configuration
+                         :provider      (make-instance 'scripted-provider :results nil)
+                         :conversation  (conversation-create configuration :identifier "cancel-wave")
+                         :tool-registry (agent-test-registry) :worker nil))
+         (pool          (make-job-pool :name "wave cancellation test" :maximum-concurrency 1))
+         (lock          (make-lock "wave test counters"))
+         (started       0)
+         (stopped       0)
+         (job           nil))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list (list 'agent--execute-tool-plan
+                      (lambda (&rest arguments)
+                        (declare (ignore arguments))
+                        (unwind-protect
+                             (progn
+                               (with-lock-held (lock) (incf started))
+                               (loop (sleep 0.01)))
+                          (with-lock-held (lock) (incf stopped))))))
+          (lambda ()
+            (setf job
+                  (first
+                   (job-pool-submit-batch
+                    pool
+                    (list
+                     (list :function
+                           (lambda (job)
+                             (declare (ignore job))
+                             (let ((*agent-maximum-concurrent-tool-workers* 1))
+                               (agent--run-tool-wave
+                                agent
+                                (loop for index below 3
+                                      collect (list :call
+                                                    (agent-test-call
+                                                     :call-id   (format nil "wave-~D" index)
+                                                     :namespace "concurrency" :name "run"
+                                                     :arguments "{}")))
+                                :observer (callback-agent-observer-create)))))))))
+            (test-assert
+             (task-tests--wait-until
+              (lambda () (with-lock-held (lock) (= started 1))) 2)
+             (format nil "the first supervised tool body starts: ~S" (job-snapshot job)))
+            (job-cancel job :reason ':test-cancel :cascade-p t)
+            (multiple-value-bind (snapshot terminal-p) (job-await job :timeout-seconds 3)
+              (test-assert (and terminal-p (eq (getf snapshot :state) ':aborted))
+                           "wave cancellation unwinds the coordinator promptly"))
+            (test-assert (with-lock-held (lock) (and (= started 1) (= stopped 1)))
+                         "active execution stops and queued wave calls never start")))
+      (job-pool-close pool)
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-agent-tool-concurrency-key () null)
 (defun test-agent-tool-concurrency-key ()
   "Test calls sharing one runtime identity execute in separate waves."

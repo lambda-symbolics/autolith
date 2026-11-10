@@ -590,7 +590,7 @@ continuation, allowing callers to hold a source lock through actual removal."
 
 (-> task--write-result-artifact (task-job list) pathname)
 (defun task--write-result-artifact (job result)
-  "Publish portable RESULT once and prune old completed sibling artifacts."
+  "Publish portable RESULT once without running artifact retention."
   (let* ((configuration (agent-configuration (task-job-parent-agent job)))
          (root          (task--artifact-root configuration job))
          (target        (merge-pathnames "result.sexp" root))
@@ -634,22 +634,6 @@ continuation, allowing callers to hold a source lock through actual removal."
                       :tool-name "task.run"
                       :task-id   (job-identifier job)))
              (rename-file temporary target)
-             (task--prune-result-artifacts
-              root
-              :protected-roots (task--protected-artifact-roots job root)
-              :around-delete
-              (lambda (directory delete-function)
-                (let ((owner (first (last (pathname-directory directory))))
-                      (group (task--artifact-group-root configuration
-                               (session-job-root-conversation-identifier job))))
-                  (unless (and (task--owner-component-p owner)
-                               (uiop:pathname-equal group
-                                 (uiop:pathname-parent-directory-pathname directory)))
-                    (error 'task-error :message "Invalid retained child artifact identity."
-                                       :tool-name "task.run" :task-id (job-identifier job)))
-                  (shell-log-persist-owner-delivery configuration
-                    (session-job-root-conversation-identifier job) owner
-                    :delete-function delete-function))))
              target)
         (when (probe-file temporary)
           (delete-file temporary))))))
@@ -779,17 +763,27 @@ continuation, allowing callers to hold a source lock through actual removal."
       (task-progress-note-status job status details))
   nil)
 
+(defparameter *task-descendant-cleanup-timeout-seconds* 2
+  "Overall wait for tool descendants before retaining them as live cleanup owners.")
+
 (-> task-job-cancel-execution-descendants (task-job keyword) list)
 (defun task-job-cancel-execution-descendants (job reason)
-  "Cancel and join every live tool execution owned by JOB's task subtree."
-  (let ((executions
-          (job-pool-descendant-jobs
-           (task-orchestrator-execution-pool (task-job-orchestrator job))
-           (job-identifier job))))
+  "Cancel tool descendants and wait one bounded interval for their cleanup.
+Live executions retain their pool ownership and remain inspectable after return."
+  (let* ((executions
+           (job-pool-descendant-jobs
+            (task-orchestrator-execution-pool (task-job-orchestrator job))
+            (job-identifier job)))
+         (deadline (+ (get-internal-real-time)
+                      (* *task-descendant-cleanup-timeout-seconds*
+                         internal-time-units-per-second))))
     (dolist (execution executions)
       (job-cancel execution :reason reason :cascade-p t))
     (dolist (execution executions)
-      (job-await execution))
+      (job-await execution
+                 :timeout-seconds
+                 (max 0 (/ (- deadline (get-internal-real-time))
+                           internal-time-units-per-second))))
     executions))
 
 (-> task-run-child (task-job) list)
