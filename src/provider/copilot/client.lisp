@@ -317,9 +317,12 @@
   "Partition account catalogs by the configured GitHub host."
   (format nil "https://api.~A/copilot/models" (copilot--domain)))
 
+;; Shared request admission uses this default endpoint as configuration metadata.
+;; Wire requests resolve their account-specific host and protocol from credentials.
 (register-provider
  "copilot" :description             "GitHub Copilot subscription"
  :family ':copilot :protocol ':custom
+ :endpoint                          "https://api.individual.githubcopilot.com/chat/completions"
  :factory #'copilot-provider-create :authenticator #'copilot-provider-authenticate
  :model-discovery                   #'copilot--fetch-models
  :model-discovery-endpoint          "https://api.individual.githubcopilot.com/models"
