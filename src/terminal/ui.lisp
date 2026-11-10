@@ -2543,15 +2543,17 @@ plain text. This formatter does not change UI."
 
 (-> terminal-ui-report-job-statuses (terminal-ui list) null)
 (defun terminal-ui-report-job-statuses (ui records)
-  "Report job RECORDS, plists of :ID, :STATE, :TITLE and :MESSAGE, under UI's lock.
+  "Clear any reported job status and report no per-job records.
 
-Only changed records are sent and removed ones are cleared. A terminal that
-cannot show them keeps none."
+Autolith reports one root program status. Individual subtasks no longer
+reach the terminal, so a finished subtask cannot replace the working
+indicator with a completion marker."
+  (declare (ignore records))
   (with-terminal-ui-locked (ui)
     (let ((terminal (terminal-ui-terminal ui))
           (set      (terminal-ui-job-status-records ui)))
       (if (terminal-interactive-p terminal)
-          (let ((controls (clinedi:program-status-records-update set records)))
+          (let ((controls (clinedi:program-status-records-update set nil)))
             (when (plusp (length controls))
               (terminal--write terminal controls)
               (terminal-flush terminal)))

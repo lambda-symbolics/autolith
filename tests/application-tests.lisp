@@ -9838,7 +9838,7 @@
 
 (-> test-application-job-program-status () null)
 (defun test-application-job-program-status ()
-  "Exercise title updates, owner filtering, lifecycle events, and disconnect."
+  "Exercise root title updates and the absence of job records."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (registry      (task-augment-tool-registry (make-default-tool-registry)))
@@ -9853,58 +9853,35 @@
          (definition    (task-agent-definition-create
                          :name "status-child" :description "Status test"
                          :instructions "Private assignment" :source ':test))
-         (owned         nil)
-         (foreign       nil))
+         (owned         nil))
     (unwind-protect
-         (with-terminal-ui (active ui)
-           (let ((*active-application* application))
-             (dolist (title '("First title" "Changed title"))
-               (setf (conversation-title conversation) title)
-               (recording-terminal-reset terminal)
-               (terminal-ui-report-program-status active ':working)
-               (test-assert
-                (search (format nil ":title=~A" (clinedi:program-status-text title 192))
-                        (recording-terminal-output terminal))
-                "each root report reads the current conversation title")))
-           (setf owned (task-tests--register-job orchestrator primary definition
-                                                 :name                         "Owned child"
-                                                 :root-conversation-identifier "status-owner")
-                 foreign (task-tests--register-job orchestrator primary definition
-                                                   :name                         "Foreign child"
-                                                   :root-conversation-identifier "another-owner"))
-           (recording-terminal-reset terminal)
-           (application-connect-task-presentation application)
-           (let ((output (recording-terminal-output terminal)))
-             (test-assert
-              (and (search (terminal--program-status-record-text
-                            (application--job-program-status-report owned))
-                           output)
-                   (not (search (terminal--program-status-record-text
-                                 (application--job-program-status-report foreign))
-                                output)))
-              "only the application's conversation publishes job records"))
-           (recording-terminal-reset terminal)
-           (task-tests--publish-terminal owned ':completed "Private result")
-           (test-assert
-            (search (terminal--program-status-record-text
-                     (application--job-program-status-report owned))
-                    (recording-terminal-output terminal))
-            "the real pool completion event updates the job record")
-           (let ((listener (application-task-presentation-listener application)))
+         (progn
+           (application-connect-program-status application)
+           (with-terminal-ui (active ui)
+             (let ((*active-application* application))
+               (dolist (title '("First title" "Changed title"))
+                 (setf (conversation-title conversation) title)
+                 (recording-terminal-reset terminal)
+                 (terminal-ui-report-program-status active ':working)
+                 (test-assert
+                  (search (format nil ":title=~A" (clinedi:program-status-text title 192))
+                          (recording-terminal-output terminal))
+                  "each root report reads the current conversation title")))
+             (setf owned (task-tests--register-job orchestrator primary definition
+                                                   :name                         "Owned child"
+                                                   :root-conversation-identifier "status-owner"))
+             (recording-terminal-reset terminal)
+             (application-connect-task-presentation application)
+             (test-assert (not (search "7501" (recording-terminal-output terminal)))
+                          "job presentation publishes no records")
+             (recording-terminal-reset terminal)
+             (task-tests--publish-terminal owned ':completed "Private result")
+             (test-assert (not (search "7501" (recording-terminal-output terminal)))
+                          "a pool completion publishes no record")
              (recording-terminal-reset terminal)
              (application-disconnect-task-presentation application)
-             (test-assert
-              (and (search (terminal--program-status-record-text
-                            (list :id    (getf (application--job-program-status-report owned) :id)
-                                  :state ':clear))
-                           (recording-terminal-output terminal))
-                   (null (clinedi:program-status-records-current
-                          (terminal-ui-job-status-records active))))
-              "disconnect clears owned records and their cache")
-             (recording-terminal-reset terminal)
-             (funcall listener ':task-subagent-progress (list :id (job-identifier owned)))
              (test-assert (not (search "7501" (recording-terminal-output terminal)))
-                          "a disconnected observer cannot publish stale records")))
+                          "disconnect publishes no record")))
       (application-disconnect-task-presentation application)
       (tool-registry-close-runtime-state registry)
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
