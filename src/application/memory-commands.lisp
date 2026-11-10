@@ -100,7 +100,11 @@
           (format nil "Memory ID ~A is ambiguous. Enter more characters.~%"
                   (sanitize-text identifier :single-line-p t))))
    (loop for match in matches
-         append (application-memory--reference match :indent 2))))
+         append (list (terminal-span
+                       ':plain
+                       (format nil "  ~S (memory ~S)~%"
+                               (application-memory--title match)
+                               (memory--disambiguation-reference match matches)))))))
 
 (-> application-memory--missing (string) string)
 (defun application-memory--missing (identifier)
