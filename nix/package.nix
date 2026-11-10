@@ -747,6 +747,17 @@ let
     postFixup = (old.postFixup or "") + lib.optionalString defingerprinterSupported ''
       wrapProgram "$out/bin/sbcl" \
         --set AUTOLITH_DEFINGERPRINTER_LIBRARY "${defingerprinterNative}/lib/libdefingerprinter${sharedLibrary}"
+    '' + ''
+      # Capture before withPackages' binary wrapper prefixes ASDF settings,
+      # including direct worker and development-runtime invocations.
+      mv "$out/bin/sbcl" "$out/bin/.autolith-sbcl"
+      cat > "$out/bin/sbcl" <<EOF
+      #!${pkgs.bash}/bin/bash
+      source "${autolithSystem}/script/launcher-cli.sh"
+      autolith_launcher_capture_asdf_environment
+      exec "$out/bin/.autolith-sbcl" "\$@"
+      EOF
+      chmod +x "$out/bin/sbcl"
     '';
   });
 
@@ -957,6 +968,7 @@ pkgs.writeShellApplication {
     text = ''
       # shellcheck source=/dev/null
       source "${autolithSystem}/script/launcher-cli.sh"
+      autolith_launcher_capture_asdf_environment
       autolith_launcher_parse nix "$@"
       xdg_base_directory()
       {

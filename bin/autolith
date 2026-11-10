@@ -47,6 +47,7 @@ fi
 
 # shellcheck source=../script/launcher-cli.sh
 source "$source_root/script/launcher-cli.sh" || exit 1
+autolith_launcher_capture_asdf_environment
 case $source_root in
   /nix/store/*) autolith_launcher_parse nix "$@" ;;
   *) autolith_launcher_parse source "$@" ;;

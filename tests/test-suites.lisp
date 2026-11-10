@@ -1836,6 +1836,9 @@
   test-acp-mcp-overlay-duplicate-validation)
 
 (define-test-suite acp-launcher
+  test-caller-asdf-environment
+  test-caller-asdf-environment-legacy
+  test-acp-launcher-caller-environment
   test-acp-launcher-forwards-pristine-and-permissions
   test-acp-launcher-terminator-preserves-acp-arguments
   test-acp-launcher-detects-command-not-option-values
