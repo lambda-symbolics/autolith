@@ -126,6 +126,52 @@
                :stderr (subseq diagnostics (max 0 (- (length diagnostics) 8192))))))
     result))
 
+(-> acp-launcher-tests--initialize-with-caller-environment (string) hash-table)
+(defun acp-launcher-tests--initialize-with-caller-environment (program)
+  "Initialize PROGRAM and observe restored ASDF values from executable user init."
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (acp-launcher-tests--call-with-roots
+     root
+     (lambda ()
+       (let* ((configuration (configuration-create :defer-provider-validation-p t))
+              (observation   (merge-pathnames "caller-environment.sexp" root))
+              (registry      (namestring (merge-pathnames "caller//:" root))))
+         (ensure-directories-exist (merge-pathnames "caller/" root))
+         (with-open-file (stream (ensure-directories-exist
+                                  (configuration-user-init-path configuration))
+                                 :direction :output :if-exists :supersede)
+           (write `(with-open-file (output ,(namestring observation)
+                                          :direction :output :if-exists :supersede)
+                     (write (list (uiop:getenv "CL_SOURCE_REGISTRY")
+                                  (uiop:getenv "ASDF_OUTPUT_TRANSLATIONS")
+                                  (uiop:getenv "AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE")
+                                  (uiop:getenv "AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE"))
+                            :stream output))
+                  :stream stream))
+         (with-test-environment (("CL_SOURCE_REGISTRY" registry)
+                                 ("ASDF_OUTPUT_TRANSLATIONS" "")
+                                 ("AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE" nil)
+                                 ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" nil)
+                                 ("AUTOLITH_ACTIVE_CORE" (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")))
+           (let ((result (acp-launcher-tests--initialize program :arguments '("acp")
+                                                       :directory           root)))
+             (with-open-file (stream observation)
+               (let ((*read-eval* nil))
+                 (assert (equal (list registry "" nil nil) (read stream)))))
+             result)))))))
+
+(-> test-acp-launcher-caller-environment () null)
+(defun test-acp-launcher-caller-environment ()
+  "Observe caller values after dependency loading through a real ACP launch."
+  (with-test-fixture (':posix-shell "ACP caller environment")
+    (let ((result (acp-launcher-tests--initialize-with-caller-environment
+                   (namestring (asdf:system-relative-pathname :autolith "bin/autolith")))))
+      (test-assert (equal "autolith" (agentcomms:json-get
+                                      (agentcomms:json-get result "agentInfo") "name"))
+                   "ACP initializes after caller environment restoration")))
+  nil)
+
 (-> test-acp-launcher-source-stdio-roundtrip () null)
 (defun test-acp-launcher-source-stdio-roundtrip ()
   "Initialize through the real source launcher and require a clean protocol response."
@@ -264,4 +310,143 @@ exit 1
                    "the child is reaped before diagnostics are reported")
       (test-assert (search "ACP startup diagnostic" (acp-launcher-test-failure-stderr condition))
                    "stderr is drained before diagnostics are reported")))
+  nil)
+
+
+;;;; -- Caller ASDF Environment --
+
+(-> caller-environment-tests--observation-form () string)
+(defun caller-environment-tests--observation-form ()
+  "Return an evaluation that observes only caller settings and actual child consumers."
+  (prin1-to-string
+   '(list
+     (uiop:getenv "CL_SOURCE_REGISTRY")
+     (uiop:getenv "ASDF_OUTPUT_TRANSLATIONS")
+     (uiop:run-program
+      '("bash" "-c"
+        "printf '%s|%s|%s|%s' \"${CL_SOURCE_REGISTRY+x}\" \"${CL_SOURCE_REGISTRY-}\" \"${ASDF_OUTPUT_TRANSLATIONS+x}\" \"${ASDF_OUTPUT_TRANSLATIONS-}\"")
+      :output ':string)
+     (uiop:getenv "AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE")
+     (uiop:getenv "AUTOLITH_CALLER_CL_SOURCE_REGISTRY")
+     (uiop:getenv "AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE")
+     (uiop:getenv "AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS")
+     (not (null (asdf:find-system :autolith nil)))
+     (when (uiop:getenv "AUTOLITH_TEST_CALLER_SYSTEM")
+       (read-from-string
+        (uiop:run-program
+         (list (namestring sb-ext:*runtime-pathname*)
+               "--noinform" "--no-sysinit" "--no-userinit" "--non-interactive"
+               "--eval" "(require :asdf)"
+               "--eval"
+               "(let ((*standard-output* *error-output*) (*compile-verbose* nil)) (asdf:load-system :caller-environment-fixture))"
+               "--eval"
+               "(prin1 (list (namestring (asdf:system-source-directory :caller-environment-fixture)) (cl-user::caller-environment-probe)))")
+         :output ':string :error-output *error-output*))))))
+
+(-> caller-environment-tests--probe (pathname &key (:source-p boolean)) list)
+(defun caller-environment-tests--probe (root &key source-p)
+  "Observe the actual launcher's worker and its shell child after private startup."
+  (let* ((wrapper  (merge-pathnames "runtime" root))
+         (launcher (asdf:system-relative-pathname :autolith "bin/autolith"))
+         (form     (caller-environment-tests--observation-form)))
+    (recovery-tests--write-executable
+     wrapper
+     (format nil "#!/usr/bin/env bash~%export CL_SOURCE_REGISTRY=\"$AUTOLITH_TEST_PRIVATE_REGISTRY\"~%export ASDF_OUTPUT_TRANSLATIONS=\"$AUTOLITH_TEST_PRIVATE_TRANSLATIONS\"~%if [[ \"${AUTOLITH_TEST_REENTER:-}\" = yes && \"$*\" == *--worker* ]]; then~%  export AUTOLITH_TEST_REENTER=no~%  exec bash ~S --worker~%fi~%exec ~S \"$@\"~%"
+             (namestring launcher) (lisp-worker-sbcl-command)))
+    (with-input-from-string
+        (input (format nil "(:request :id 1 :operation :eval :arguments (:forms (~S)))~%" form))
+      (multiple-value-bind (output diagnostics status)
+          (uiop:run-program
+           (append (list "env" (format nil "AUTOLITH_SBCL=~A" wrapper))
+                   (test-active-core-environment)
+                   (list "bash" (namestring launcher))
+                   (when source-p '("--from-source"))
+                   '("--worker"))
+           :directory root :input input :output ':string :error-output ':string
+           :ignore-error-status t)
+        (test-assert (zerop status) (format nil "worker launch succeeded: ~A" diagnostics))
+        (let ((*read-eval* nil))
+          (with-input-from-string (stream output)
+            (test-assert (eq (first (read stream)) :autolith-worker)
+                         "the real launcher reaches the worker protocol")
+            (let ((response (read stream nil nil)))
+              (test-assert (eq (getf (rest response) :status) :ok)
+                           (format nil "the worker evaluated the environment observation: ~A ~A" output diagnostics))
+              (when response (read-from-string (first (getf (rest response) :values)))))))))))
+
+(-> test-caller-asdf-environment () null)
+(defun test-caller-asdf-environment ()
+  "Keep absent, empty and literal caller settings across runtime injection and reentry."
+  (with-test-fixture (':posix-shell "the caller's launcher environment")
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (acp-launcher-tests--call-with-roots
+       root
+       (lambda ()
+         (let ((registry             (format nil "~Acaller//:" root))
+               (translations         (format nil "~Acaller//:~Acompiled//" root root))
+               (private-registry     (uiop:getenv "CL_SOURCE_REGISTRY"))
+               (private-translations (uiop:getenv "ASDF_OUTPUT_TRANSLATIONS")))
+           (test--write-lisp-worker-text
+            (merge-pathnames "caller/caller-environment-fixture.asd" root)
+            "(asdf:defsystem :caller-environment-fixture :components ((:file \"probe\")))")
+           (test--write-lisp-worker-text
+            (merge-pathnames "caller/probe.lisp" root)
+            "(defun cl-user::caller-environment-probe () :caller)")
+           (dolist (case (list (list nil nil nil nil)
+                              (list "" "" nil nil)
+                              (list registry translations nil nil)
+                              (list nil translations nil nil)
+                              (list registry "" nil nil)
+                              (list "" nil nil nil)
+                              (list registry translations t nil)
+                              (list registry translations nil t)))
+             (destructuring-bind (source output reenter source-p) case
+               (with-test-environment
+                   (("AUTOLITH_TEST_CALLER_SYSTEM" (when (equal source registry) "yes"))
+                    ("CL_SOURCE_REGISTRY" source)
+                    ("ASDF_OUTPUT_TRANSLATIONS" output)
+                    ("AUTOLITH_TEST_PRIVATE_REGISTRY" private-registry)
+                    ("AUTOLITH_TEST_PRIVATE_TRANSLATIONS" private-translations)
+                    ("AUTOLITH_TEST_REENTER" (when reenter "yes"))
+                    ("AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE" nil)
+                    ("AUTOLITH_CALLER_CL_SOURCE_REGISTRY" nil)
+                    ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" nil)
+                    ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS" nil))
+                 (let ((observed (caller-environment-tests--probe root :source-p source-p)))
+                   (test-assert (equal observed
+                                       (list source output
+                                             (format nil "~A|~A|~A|~A"
+                                                     (if source "x" "") (or source "")
+                                                     (if output "x" "") (or output ""))
+                                             nil nil nil nil t
+                                             (when (equal source registry)
+                                               (list (namestring (merge-pathnames "caller/" root))
+                                                     :caller))))
+                                "the worker and its shell receive exact caller values without markers"))))))))))
+  nil)
+
+(-> test-caller-asdf-environment-legacy () null)
+(defun test-caller-asdf-environment-legacy ()
+  "Leave legacy startup untouched and make restoration one-shot."
+  (with-test-environment (("CL_SOURCE_REGISTRY" "literal::source//")
+                          ("ASDF_OUTPUT_TRANSLATIONS" "literal::output//")
+                          ("AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE" nil)
+                          ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" nil))
+    (test-assert (fboundp 'main--restore-caller-asdf-environment)
+                 "startup has a caller restoration boundary")
+    (when (fboundp 'main--restore-caller-asdf-environment)
+      (funcall 'main--restore-caller-asdf-environment)
+      (test-assert (equal (uiop:getenv "CL_SOURCE_REGISTRY") "literal::source//")
+                   "no capture is different from captured absence")
+      (with-test-environment (("AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE" "absent")
+                              ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" "set")
+                              ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS" ""))
+        (funcall 'main--restore-caller-asdf-environment)
+        (test-assert (null (uiop:getenv "CL_SOURCE_REGISTRY")) "captured absence unsets")
+        (test-assert (equal (uiop:getenv "ASDF_OUTPUT_TRANSLATIONS") "") "captured empty is set")
+        (platform-setenv "CL_SOURCE_REGISTRY" "later//")
+        (funcall 'main--restore-caller-asdf-environment)
+        (test-assert (equal (uiop:getenv "CL_SOURCE_REGISTRY") "later//")
+                     "a repeated restore does not overwrite later consumers"))))
   nil)

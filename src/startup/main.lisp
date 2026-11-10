@@ -1599,9 +1599,28 @@ autolith uninstall removes the installation and keeps user data."
       ((or sb-sys:deadline-timeout error) ()
         original))))
 
+(-> main--restore-caller-asdf-environment () null)
+(defun main--restore-caller-asdf-environment ()
+  "Restore one captured caller environment after loading our system and dependencies.
+
+The initialized ASDF configuration belongs to this image. Only the process
+variables for later user and child consumers are restored here."
+  (dolist (name '("CL_SOURCE_REGISTRY" "ASDF_OUTPUT_TRANSLATIONS"))
+    (let* ((value-name (concatenate 'string "AUTOLITH_CALLER_" name))
+           (state-name (concatenate 'string value-name "_STATE"))
+           (state      (uiop:getenv state-name)))
+      (when (member state '("set" "absent") :test #'equal)
+        (if (equal state "set")
+            (platform-setenv name (or (uiop:getenv value-name) ""))
+            (platform-unsetenv name))
+        (platform-unsetenv value-name)
+        (platform-unsetenv state-name))))
+  nil)
+
 (-> main (list) null)
 (defun main (arguments)
   "Run the Autolith command described by ARGUMENTS with stable exit classification."
+  (main--restore-caller-asdf-environment)
   (handler-case
       (main-dispatch arguments)
     ((or autolith-error cl-llm-provider-api:provider-api-error) (condition)

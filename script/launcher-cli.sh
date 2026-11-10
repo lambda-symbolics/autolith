@@ -1,5 +1,25 @@
 #!/usr/bin/env bash
 
+# Capture before a runtime wrapper prefixes its private ASDF configuration.
+# Nested launchers retain the outer caller's snapshot, including empty values.
+autolith_launcher_capture_asdf_environment()
+{
+  local name state value
+  for name in CL_SOURCE_REGISTRY ASDF_OUTPUT_TRANSLATIONS; do
+    state=AUTOLITH_CALLER_${name}_STATE
+    value=AUTOLITH_CALLER_${name}
+    if [[ ! ${!state+x} ]]; then
+      if [[ ${!name+x} ]]; then
+        printf -v "$state" '%s' set
+      else
+        printf -v "$state" '%s' absent
+      fi
+      printf -v "$value" '%s' "${!name-}"
+      export "$state" "$value"
+    fi
+  done
+}
+
 autolith_update_usage()
 {
   printf 'Usage: autolith update [--help]\n       autolith --update [--help]\n'

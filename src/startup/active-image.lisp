@@ -18,6 +18,7 @@
                     "bin/autolith-active"
                     "bin/autolith-search-worker"
                     "bin/autolith-runtime"
+                    "script/launcher-cli.sh"
                     "script/build-active"
                     "script/build-active.lisp"
                     "script/runtime-requirement.lisp"
