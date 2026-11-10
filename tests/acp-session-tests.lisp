@@ -666,6 +666,33 @@
            :provider provider)))))
   nil)
 
+(-> test-acp-session-disconnected-updates () null)
+(defun test-acp-session-disconnected-updates ()
+  "Handle editor closure between the service-state check and an update or flush."
+  (with-test-configuration (configuration root)
+    (acp-session-test--call-with-client
+     configuration
+     (lambda (service client)
+       (let* ((identifier (agentcomms:client-new-session client (namestring root)))
+              (session    (acp-service--session service identifier)))
+         (test-assert (not (acp-service-closed-p service))
+                      "the transport can close before service shutdown is observed")
+         (test-call-with-function-replacements
+          (list (list 'agentcomms:update-buffer-send
+                      (lambda (buffer update)
+                        (declare (ignore buffer update))
+                        (error 'agentcomms:acp-connection-closed)))
+                (list 'agentcomms:update-buffer-flush
+                      (lambda (buffer)
+                        (declare (ignore buffer))
+                        (error 'agentcomms:acp-connection-closed))))
+          (lambda ()
+            (test-assert (null (acp-session--text session "late delta"))
+                         "late stream delivery tolerates editor disconnection")
+            (test-assert (null (acp-session-flush session))
+                         "pending thought flush tolerates editor disconnection")))))))
+  nil)
+
 (-> test-acp-session-disconnect-cancels-active-submission () null)
 (defun test-acp-session-disconnect-cancels-active-submission ()
   "Cancel an active submission over its installed transport after editor admission closes."

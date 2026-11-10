@@ -1949,6 +1949,7 @@
   test-acp-session-cwd-mode-and-unsupported-content
   test-acp-session-disconnect-releases-lease
   test-acp-session-disconnect-cancels-active-submission
+  test-acp-session-disconnected-updates
   test-acp-session-scheduled-mode-follows-state
   test-acp-session-live-and-replayed-tool-identities
   test-acp-session-replay-metadata-and-tool-statuses

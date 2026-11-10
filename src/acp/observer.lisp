@@ -90,9 +90,13 @@
 (defun acp-session--send (session update)
   "Send one session UPDATE to the editor, coalescing thoughts."
   (unless (acp-service-closed-p (acp-session-service session))
-    (agentcomms:update-buffer-send (acp-session-update-buffer session) update)
-    (setf (acp-session-thought-state session)
-          (when (eq ':agent-thought-chunk (agentcomms:acp-update-kind update)) ':streaming)))
+    (handler-case
+        (progn
+          (agentcomms:update-buffer-send (acp-session-update-buffer session) update)
+          (setf (acp-session-thought-state session)
+                (when (eq ':agent-thought-chunk (agentcomms:acp-update-kind update)) ':streaming)))
+      (agentcomms:acp-connection-closed ()
+        nil)))
   nil)
 
 (-> acp-session-flush (acp-session) null)
@@ -100,7 +104,10 @@
   "Deliver pending thoughts before a permission request or a prompt's answer."
   (unless (acp-service-closed-p (acp-session-service session))
     (with-lock-held ((channel-subscription-lock session))
-      (agentcomms:update-buffer-flush (acp-session-update-buffer session))))
+      (handler-case
+          (agentcomms:update-buffer-flush (acp-session-update-buffer session))
+        (agentcomms:acp-connection-closed ()
+          nil))))
   nil)
 
 (-> acp-extension-notify (acp-session string &optional t) null)
