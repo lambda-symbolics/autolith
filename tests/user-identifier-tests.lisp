@@ -180,14 +180,16 @@
                       "mutation allocation consults durable journal reservations"))
        (identifier-clear-reservations)
        (test-call-with-function-replacements
-        (list (list 'checkpoint--source-snapshot (lambda (configuration)
-                                                  (declare (ignore configuration)) nil))
-              (list 'checkpoint--revalidate-source (lambda (configuration commit)
-                                                    (declare (ignore configuration commit)) nil))
+        (list (list 'checkpoint--source-snapshot
+                    (lambda (configuration &key allow-dirty-p)
+                      (declare (ignore configuration allow-dirty-p)) nil))
+              (list 'checkpoint--revalidate-source
+                    (lambda (configuration commit &key allow-dirty-p)
+                      (declare (ignore configuration commit allow-dirty-p)) nil))
               (list 'checkpoint-single-threaded-p (lambda () t))
               (list 'generation--metadata
-                    (lambda (configuration identifier &key git-commit mutation-checker)
-                      (declare (ignore configuration git-commit mutation-checker))
+                    (lambda (configuration identifier &key git-commit dirty-p)
+                      (declare (ignore configuration git-commit dirty-p))
                       ;; Observe allocation at the real checkpoint boundary before any fork or save.
                       (throw 'allocated-generation identifier))))
         (lambda ()
