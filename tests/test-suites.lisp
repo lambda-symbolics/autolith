@@ -1838,6 +1838,7 @@
   test-acp-mcp-overlay-duplicate-validation)
 
 (define-test-suite acp-launcher
+  test-source-worker-bootstrap-output
   test-caller-asdf-environment
   test-caller-asdf-environment-legacy
   test-acp-launcher-caller-environment

@@ -9,35 +9,37 @@
        (acp-p (member "acp" arguments :test #'string=))
        (main nil))
   (labels ((load-autolith ()
-             (require :asdf)
-             (let* ((launcher-path (truename *load-truename*))
-                    (bin-directory (uiop:pathname-directory-pathname launcher-path))
-                    (source-root (uiop:pathname-parent-directory-pathname bin-directory))
-                    (project-setup
-                     (or (let ((override (uiop:getenv "AUTOLITH_PROJECT_SETUP")))
-                           (and override (plusp (length override)) (pathname override)))
-                         (merge-pathnames ".qlot/setup.lisp" source-root)))
-                    (user-setup (merge-pathnames "quicklisp/setup.lisp"
-                                                 (user-homedir-pathname)))
-                    (quicklisp-setup (if (probe-file project-setup)
-                                         project-setup
-                                         user-setup)))
-               (unless (probe-file quicklisp-setup)
-                 (error "Autolith needs Quicklisp at ~A" quicklisp-setup))
-               (load quicklisp-setup)
-               (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
-               (let ((profile-library-directory
-                      (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
-                     (library-directories
-                      (find-symbol "*FOREIGN-LIBRARY-DIRECTORIES*" "CFFI")))
-                 (when (probe-file profile-library-directory)
-                   (pushnew profile-library-directory
-                            (symbol-value library-directories)
-                            :test #'equal)))
-               (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
-               (asdf:load-system :autolith)
-               (setf main (list (symbol-function (find-symbol "MAIN" "AUTOLITH"))
-                                (uiop:command-line-arguments))))))
+             (let ((*standard-output* *error-output*)
+                   (*trace-output* *error-output*))
+               (require :asdf)
+               (let* ((launcher-path (truename *load-truename*))
+                      (bin-directory (uiop:pathname-directory-pathname launcher-path))
+                      (source-root (uiop:pathname-parent-directory-pathname bin-directory))
+                      (project-setup
+                       (or (let ((override (uiop:getenv "AUTOLITH_PROJECT_SETUP")))
+                             (and override (plusp (length override)) (pathname override)))
+                           (merge-pathnames ".qlot/setup.lisp" source-root)))
+                      (user-setup (merge-pathnames "quicklisp/setup.lisp"
+                                                   (user-homedir-pathname)))
+                      (quicklisp-setup (if (probe-file project-setup)
+                                           project-setup
+                                           user-setup)))
+                 (unless (probe-file quicklisp-setup)
+                   (error "Autolith needs Quicklisp at ~A" quicklisp-setup))
+                 (load quicklisp-setup)
+                 (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
+                 (let ((profile-library-directory
+                        (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
+                       (library-directories
+                        (find-symbol "*FOREIGN-LIBRARY-DIRECTORIES*" "CFFI")))
+                   (when (probe-file profile-library-directory)
+                     (pushnew profile-library-directory
+                              (symbol-value library-directories)
+                              :test #'equal)))
+                 (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
+                 (asdf:load-system :autolith)
+                 (setf main (list (symbol-function (find-symbol "MAIN" "AUTOLITH"))
+                                  (uiop:command-line-arguments)))))))
     ;; Ctrl-C while the system loads ends the launch like an interrupted command.
     (handler-case
         (if acp-p
