@@ -292,6 +292,102 @@
         (terminal-ui-stop (application-ui application)))))
   nil)
 
+(-> test-mission-schedule-hosted-interval-awaits-next-occurrence () null)
+(defun test-mission-schedule-hosted-interval-awaits-next-occurrence ()
+  "Leave a recurring mission active after its occurrence without re-prompting the provider."
+  (with-test-configuration (configuration root)
+    (let* ((idle        "Idle until the next native hourly occurrence.")
+           (application (mission-test--application configuration
+                                                   :results (loop repeat 5 collect (mission-test--result idle))))
+           (controller  (application-input-controller-create application :load-pending-p nil
+                                                                          :pending-persistence-enabled-p t :start-reader-p nil))
+           (runtime     (image-daemon:daemon-runtime-create
+                         :directory root :identifier (conversation-identifier (application-conversation application))
+                         :publish-p nil :request-function
+                         (lambda (host request &key socket stream)
+                           (declare (ignore host request socket stream)) (list :ok)))))
+      (unwind-protect
+           (progn
+             (application-mission-start application (mission-test--specification :turns 5))
+             (image-daemon:daemon-runtime-start runtime)
+             (application-mission-schedules-host application runtime)
+             (application-mission-schedule-add application :id "hourly" :content "Port the next package."
+                                              :at (1+ (get-universal-time)) :interval 3600)
+             (let ((deadline (+ (get-internal-real-time) (* 4 internal-time-units-per-second))))
+               (loop until (with-lock-held ((application-input-controller-lock controller))
+                             (not (deque-empty-p (application-input-controller-work-items controller))))
+                     do (when (> (get-internal-real-time) deadline)
+                          (error "The hosted scheduler did not enqueue its deadline."))
+                        (sleep 0.01)))
+             (mission-schedule-test--run-finished-work controller (application-input-controller--next-work controller))
+             (let ((goal     (application-goal application))
+                   (schedule (first (getf (cl-jobpond:scheduler-snapshot
+                                           (mission-schedule-scheduler (application-mission-schedules application)))
+                                          :schedules))))
+               (test-assert (= 1 (length (scripted-provider-input-snapshots (application-provider application))))
+                            "only the occurrence itself reaches the provider")
+               (test-assert (= 1 (getf goal :turns-used))
+                            "goal continuations do not spend mission turns between occurrences")
+               (test-assert (eq ':active (getf goal :status))
+                            "the mission stays active for its next occurrence")
+               (test-assert (and (not (getf schedule :cancelled)) (getf schedule :next))
+                            "the recurring schedule keeps its next deadline")))
+        (image-daemon:daemon-runtime-stop runtime)
+        (remhash application *mission-schedule-services*)
+        (terminal-ui-stop (application-ui application)))))
+  nil)
+
+(-> test-mission-schedule-continuation-wakeup-boundaries () null)
+(defun test-mission-schedule-continuation-wakeup-boundaries ()
+  "Defer goal continuations only to a hosted time wakeup of the current mission version."
+  (dolist (row '((:hosted-interval    :hosted-p t   :continues-p nil)
+                 (:unhosted-interval  :hosted-p nil :continues-p t)
+                 (:hosted-at          :hosted-p t   :continues-p nil)
+                 (:admitted-at        :hosted-p t   :continues-p nil)
+                 (:executed-at        :hosted-p t   :continues-p t)
+                 (:event              :hosted-p t   :continues-p t)
+                 (:cancelled-interval :hosted-p t   :continues-p t)
+                 (:stale-version      :hosted-p t   :continues-p t)))
+    (destructuring-bind (name &key hosted-p continues-p) row
+      (mission-schedule-tests--fixture
+       (lambda (application service path clock commands executions)
+         (declare (ignore path clock commands executions))
+         (let ((calls 0))
+           (when hosted-p
+             (setf (mission-schedule-notify service) (lambda () nil)))
+           (ecase name
+             ((:hosted-interval :unhosted-interval)
+              (application-mission-schedule-add application :id "hourly" :content "Port" :at 200 :interval 3600))
+             (:hosted-at
+              (application-mission-schedule-add application :id "later" :content "Port" :at 200))
+             (:admitted-at
+              (application-mission-schedule-add application :id "now" :content "Port" :at 100)
+              (application-mission-schedules-wake application))
+             (:executed-at
+              (application-mission-schedule-add application :id "now" :content "Port" :at 100)
+              (application-mission-schedule-execute
+               application (mission-schedule-tests--ticket (first (application-mission-schedules-wake application)))))
+             (:event
+              (application-mission-schedule-add application :id "ci" :content "Inspect CI" :event "ci"))
+             (:cancelled-interval
+              (application-mission-schedule-add application :id "hourly" :content "Port" :at 200 :interval 3600)
+              (application-mission-schedule-cancel application "hourly"))
+             (:stale-version
+              (application-mission-schedule-add application :id "hourly" :content "Port" :at 200 :interval 3600)
+              (setf (getf (application-goal application) :schedule-version) (make-identifier))))
+           (test-call-with-function-replacements
+            (list (list 'application--run-turn
+                        (lambda (candidate &rest arguments)
+                          (declare (ignore arguments))
+                          (incf calls)
+                          (setf (getf (application-goal candidate) :status) ':paused)
+                          nil)))
+            (lambda () (application--run-goal-continuations application)))
+           (test-assert (= (if continues-p 1 0) calls)
+                        (format nil "~(~A~) ~:[defers to the scheduled wakeup~;keeps ordinary continuations~]"
+                                name continues-p)))))))
+  nil)
+
 
 ;;;; -- Noninteractive Scheduled Wakeups --
 

@@ -4395,7 +4395,8 @@ refusal, as a secondary value."
   "Run bounded automatic continuation turns while the session goal is active.
 
 The goal stays active, but continuation turns stop while a job that will wake
-the model is queued or running, or its completion notice awaits delivery."
+the model is queued or running, or its completion notice awaits delivery, or
+while a hosted time wakeup will resume the current mission."
   (setf (application-deferred-goal-continuation application) nil)
   (loop
     (let ((goal (application-goal application)))
@@ -4432,6 +4433,9 @@ the model is queued or running, or its completion notice awaits delivery."
         (return))
       ;; A running job's completion wakes the model and resumes the goal.
       (when (application-job-completions-awaited-p application)
+        (return))
+      ;; A scheduled occurrence resumes the mission; prompting between occurrences only idles.
+      (when (application-mission-schedules-awaited-p application)
         (return))
       (incf (getf (application-goal application) :continuations))
       (application--record-goal application)

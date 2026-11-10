@@ -279,6 +279,8 @@
   test-mission-schedule-events-and-authority
   test-mission-schedule-live-retry-exclusion
   test-mission-schedule-hosted-admission
+  test-mission-schedule-hosted-interval-awaits-next-occurrence
+  test-mission-schedule-continuation-wakeup-boundaries
   test-mission-schedule-provider-failure-notice
   test-mission-schedule-typed-outcomes
   test-mission-schedule-terminal-classification
