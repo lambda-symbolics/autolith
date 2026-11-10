@@ -15,6 +15,8 @@
   test-usage-display-visible-sections
   test-usage-display-unavailable-is-not-zero
   test-usage-display-sanitizes-controls-and-fits-width
+  test-usage-display-compact-columns
+  test-usage-display-root-comparisons
   test-usage-display-styling-gate
   test-usage-display-command)
 
