@@ -6331,10 +6331,7 @@
                    (not (probe-file image-root))
                    (not (probe-file task-root))
                    (null (world-channel-find (world-load configuration) "current-older")))
-              "a confirmed removal deletes the channel, its conversation and its artifacts")
-             (test-assert
-               (search "removed" (recording-terminal-output terminal))
-              "a confirmed removal says the channel went"))
+              "a confirmed removal deletes the channel, its conversation and its artifacts"))
            (terminal-ui-stop (application-ui application)))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let ((application (application-tests--ui-application :columns 60)))

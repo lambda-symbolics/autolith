@@ -1725,8 +1725,9 @@ searches every task directory."
                          (application-present
                           application
                           (application-notice-line
-                           (format nil "channel ~A removed~[~;~:;, with the ~:*~D channels nested in it~]"
-                                   (string-trim " " (getf pending :name)) (1- removed)))))
+                           (format nil "deleted channel ~A and ~D nested channel~:P"
+                                   (conversation-identifier-display (getf pending :value))
+                                   (1- removed)))))
                      (autolith-error (condition)
                        (application-present application
                                             (application-failure-line (autolith-error-message condition))))))
