@@ -52,21 +52,33 @@ loaded by Autolith."
                    "-Path" (uiop:native-namestring directory))
              :output *standard-output* :error-output *error-output*)))))
 
-(defun qlot-install--remove-incomplete-dists (project-root)
-  "Delete each dist under PROJECT-ROOT's .qlot that lacks an index file.
+(defun qlot-install--dist-broken-p (dist qlot-home)
+  "Return true when DIST lacks an index file or an installed release's directory.
 
 Before it installs anything, Qlot looks up systems in every installed dist,
-and it can fetch a missing index only while its own server runs. A dist that
-an interrupted install left without releases.txt or systems.txt therefore
-stops every later install. Qlot installs a deleted dist again. Qlot's cleanup
-function, replaced on Windows above, deletes directory links without
-following them."
-  (dolist (dist (uiop:subdirectories (merge-pathnames ".qlot/dists/" project-root)))
-    (unless (and (probe-file (merge-pathnames "releases.txt" dist))
-                 (probe-file (merge-pathnames "systems.txt" dist)))
-      (format *error-output* "~&Reinstalling incomplete dist ~A.~%"
-              (first (last (pathname-directory dist))))
-      (uiop:symbol-call '#:qlot/utils/tmp '#:delete-tmp-directory dist))))
+and it can fetch a missing index only while its own server runs. A release
+directory can be a link into a Qlot cache that is gone, which Quicklisp then
+can neither use nor replace. Each installed/releases marker holds that
+directory's path relative to QLOT-HOME."
+  (or (not (probe-file (merge-pathnames "releases.txt" dist)))
+      (not (probe-file (merge-pathnames "systems.txt" dist)))
+      (loop for marker in (uiop:directory-files (merge-pathnames "installed/releases/" dist))
+            for directory = (uiop:ensure-directory-pathname
+                             (uiop:parse-native-namestring (uiop:read-file-line marker)))
+            thereis (not (uiop:directory-exists-p
+                          (uiop:merge-pathnames* directory qlot-home))))))
+
+(defun qlot-install--remove-broken-dists (project-root)
+  "Delete each broken dist under PROJECT-ROOT's .qlot so Qlot installs it again.
+
+Qlot's cleanup function, replaced on Windows above, deletes directory links
+without following them."
+  (let ((qlot-home (merge-pathnames ".qlot/" project-root)))
+    (dolist (dist (uiop:subdirectories (merge-pathnames "dists/" qlot-home)))
+      (when (qlot-install--dist-broken-p dist qlot-home)
+        (format *error-output* "~&Reinstalling broken dist ~A.~%"
+                (first (last (pathname-directory dist))))
+        (uiop:symbol-call '#:qlot/utils/tmp '#:delete-tmp-directory dist)))))
 
 (let* ((script-path      (truename *load-truename*))
        (script-directory (uiop:pathname-directory-pathname script-path))
@@ -105,7 +117,7 @@ following them."
       (unless (and exclusions (boundp exclusions))
         (error "The loaded Qlot does not expose its metadata directory exclusions."))
       (pushnew "test-fixtures" (symbol-value exclusions) :test #'equal)))
-  (qlot-install--remove-incomplete-dists project-root)
+  (qlot-install--remove-broken-dists project-root)
   (let ((qlot-project-root (find-symbol "*PROJECT-ROOT*" "QLOT")))
     (unless qlot-project-root
       (error "The loaded Qlot does not expose its project root."))
