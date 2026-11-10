@@ -480,15 +480,31 @@ is unavailable. Without a URI, the result's tail is discarded.")
                    :success-p         t
                    :category          ':success)))
 
+(defgeneric agent-record-overflow-context (agent digest)
+  (:documentation "Record an emitted context DIGEST on AGENT's durable producer record."))
+
+(defmethod agent-record-overflow-context (agent digest)
+  "Primary or unknown agents need no child overflow grant."
+  (declare (ignore agent digest))
+  nil)
+
+(defgeneric agent-overflow-context-owned-p (agent digest)
+  (:documentation "Return true only for DIGEST emitted by this exact child AGENT."))
+
+(defmethod agent-overflow-context-owned-p (agent digest)
+  "Unknown owners have no producer grants."
+  (declare (ignore agent digest))
+  nil)
+
 (-> tool--spill-result-text (tool-context string string) (option string))
 (defun tool--spill-result-text (context tool-name text)
   "Intern oversized result TEXT durably and return its context URI, or NIL."
   (handler-case
-      (format nil "context:~A"
-              (rlm-context-object-digest
-               (rlm-context-intern (tool-context-configuration context)
-                                   text
-                                   :label (format nil "~A result" tool-name))))
+      (let ((digest (rlm-context-object-digest
+                     (rlm-context-intern (tool-context-configuration context)
+                                         text :label (format nil "~A result" tool-name)))))
+       (agent-record-overflow-context (tool-context-agent context) digest)
+       (format nil "context:~A" digest))
     (error ()
       nil)))
 

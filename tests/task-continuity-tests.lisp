@@ -255,3 +255,178 @@
              (lambda () (apply #'task-continuity-page parent orchestrator arguments)))
             "Invalid page bounds fail before enumeration"))))))
   nil)
+
+
+;;;; -- Producer-Owned Overflow Contexts --
+
+(defclass child-overflow-test-tool (tool) ()
+  (:documentation "Return caller-selected text through the real result spill path."))
+
+(defmethod tool-child-safe-p ((tool child-overflow-test-tool))
+  "Admit the deterministic producer through the actual child tool policy."
+  (declare (ignore tool))
+  t)
+
+(defmethod tool-execute ((tool child-overflow-test-tool)
+                         (context tool-context) (arguments hash-table))
+  "Emit the complete test payload using ordinary tool result bounding."
+  (declare (ignore tool context))
+  (tool-success (gethash "text" arguments)))
+
+(-> child-overflow-tests--call (tool-context string string &key (:arguments hash-table)) tool-result)
+(defun child-overflow-tests--call (context namespace name &key (arguments (json-object)))
+  "Dispatch a real tool call with CONTEXT's authority."
+  (tool-registry-execute-call
+   (tool-context-registry context)
+   (json-object "namespace" namespace "name" name "arguments" (json-encode arguments)) context))
+
+(-> child-overflow-tests--emit (tool-context string) string)
+(defun child-overflow-tests--emit (context text)
+  "Run an oversized producer and extract its emitted resource URI."
+  (let* ((result  (child-overflow-tests--call context "test" "overflow-owned"
+                                               :arguments (json-object "text" text)))
+         (content (tool-result-content result))
+         (start   (search "context:" content)))
+    (test-assert (and (tool-result-success-p result) start (< (length content) (length text)))
+                 "An actual oversized child tool result emits a bounded context reference")
+    (assert start)
+    (subseq content start (+ start 72))))
+
+(-> child-overflow-tests--read (tool-context string) tool-result)
+(defun child-overflow-tests--read (context uri)
+  "Read the payload tail through the public resource tool boundary."
+  (child-overflow-tests--call context "resource" "read"
+                              :arguments (json-object "uri" uri "start-line" 695 "line-count" 10)))
+
+(-> test-child-overflow-context-ownership () null)
+(defun test-child-overflow-context-ownership ()
+  "Authorize actual producer spills, reject other owners, and reconstruct durable grants."
+  (task-continuity-tests--fixture
+   (lambda (parent orchestrator primary job path)
+     (let* ((configuration (agent-configuration parent))
+            (registry      (tool-context-registry primary))
+            (sibling       (task-tests--make-job orchestrator :identifier "sibling"
+                                                 :parent-agent parent :definition (task-job-definition job)
+                                                 :item                    (list :agent "task" :task "Sibling")))
+            (sibling-path  (task-continuity-record-job sibling parent))
+            (text          (tool-tests--overflow-text)))
+       (tool-registry-register
+        registry (make-instance 'child-overflow-test-tool :namespace "test" :name "overflow-owned"
+                                 :description "Emit a large test payload."
+                                 :parameters  (json-object "type" "object" "required" '("text")
+                                                           "properties" (json-object "text" (json-object "type" "string"))
+                                                           "additionalProperties" (json-false))))
+       (labels ((child-context (owner)
+                  (let* ((child-tools (task-child-tool-registry registry (task-job-definition owner)
+                                                               :orchestrator (session-job-orchestrator owner)
+                                                               :depth        1))
+                         (child       (task-tests--child-viewer configuration owner :registry child-tools)))
+                    (make-instance 'tool-context :configuration configuration :agent child
+                                   :registry child-tools :worker nil :conversation (agent-conversation child))))
+
+                (readable-p (context uri)
+                  (let ((result (child-overflow-tests--read context uri)))
+                    (unless (tool-result-success-p result)
+                      (format t "Overflow read denied: ~S ~A~%" (tool-result-error-code result)
+                              (tool-result-content result)))
+                    (and (tool-result-success-p result)
+                         (search "overflow line 700" (tool-result-content result)) t)))
+
+                (denied-p (context uri)
+                  (let ((result (child-overflow-tests--read context uri)))
+                    (and (not (tool-result-success-p result))
+                         (eq ':access-denied (tool-result-error-code result))))))
+         (let* ((producer (child-context job))
+                (other    (child-context sibling))
+                (uri      (child-overflow-tests--emit producer text)))
+           (test-assert (readable-p producer uri) "The producing child can read its actual emitted tail")
+           (test-assert (denied-p other uri) "A sibling knowing the emitted URI has no grant")
+           (let* ((nested-parent (tool-context-agent producer))
+                  (nested-job    (task-tests--make-job orchestrator :identifier "nested"
+                                                       :parent-agent            nested-parent
+                                                       :definition              (task-job-definition job)
+                                                       :root-identifier         (session-job-root-conversation-identifier job)
+                                                       :owner-identifiers       (list (job-identifier job))
+                                                       :item                    (list :agent "task" :task "Nested"))))
+             (task-continuity-record-job nested-job nested-parent)
+             (test-assert (denied-p (child-context nested-job) uri)
+                          "A nested child does not inherit its producing parent's grants"))
+           (dolist (forbidden (list "context:index" (format nil "context:~64,'0X" 0)
+                                   (format nil "context:~A" (rlm-context-object-digest
+                                                              (rlm-context-intern configuration "foreign payload")))))
+             (test-assert (denied-p producer forbidden) "Children cannot read an index, fabricated or foreign digest"))
+           (let ((parent-uri (child-overflow-tests--emit primary (concatenate 'string text "parent"))))
+             (test-assert (denied-p producer parent-uri) "Parent emission conveys no child grant")
+             (test-assert (readable-p primary parent-uri) "The primary can read its own spill"))
+           (let ((other-uri (child-overflow-tests--emit other (concatenate 'string text "sibling"))))
+             (test-assert (denied-p producer other-uri) "Another child's emitted digest is denied"))
+           (test-assert (string= uri (child-overflow-tests--emit other text)) "Identical payloads deduplicate")
+           (test-assert (readable-p other uri) "Deduplicated content becomes readable only after own emission")
+           (test-assert (readable-p primary uri) "Primary reads retain ordinary context access")
+           (let ((*resource-readable-schemes* '("workspace")))
+             (test-assert (denied-p producer uri) "An explicit view scheme restriction still denies own contexts"))
+           (let ((gate    (make-lock "Concurrent overflow emission"))
+                 (threads nil))
+             (with-lock-held (gate)
+               (dolist (suffix '("concurrent-a" "concurrent-b"))
+                 (let ((payload (concatenate 'string text suffix)))
+                   (push (make-thread
+                          (lambda ()
+                            (with-lock-held (gate) nil)
+                            (child-overflow-tests--call producer "test" "overflow-owned"
+                                                        :arguments (json-object "text" payload)))) threads))))
+             (dolist (thread threads)
+               (let* ((result  (join-thread thread))
+                      (content (tool-result-content result))
+                      (start   (search "context:" content)))
+                 (test-assert (and (tool-result-success-p result) start)
+                              "Concurrent real tool emissions each produce a context reference")
+                 (when start
+                   (test-assert (readable-p producer (subseq content start (+ start 72)))
+                                "Concurrent emissions retain both durable grants")))))
+           (test-assert (tool-result-success-p
+                         (child-overflow-tests--call primary "resource" "read"
+                                                     :arguments (json-object "uri" "context:index")))
+                        "The primary retains index access")
+           (task-continuity-declare parent orchestrator (session-job-execution-identifier job)
+                                    :safety "Deterministic overflow fixture.")
+           (test-assert (readable-p producer uri) "Recovery declarations retain producer grants")
+           (let* ((target      (format nil "workspace:~A" (namestring path)))
+                  (observation (child-overflow-tests--call producer "resource" "read"
+                                                          :arguments (json-object "uri" target)))
+                  (content     (tool-result-content observation))
+                  (marker      "Revision: ")
+                  (start       (+ (or (search marker content) (error "Missing edit observation")) (length marker)))
+                  (revision    (subseq content start (position #\Newline content :start start)))
+                  (edit        (child-overflow-tests--call producer "resource" "edit"
+                                                          :arguments
+                                                          (json-object "uri" target "base-revision" revision
+                                                                       "operations" (vector (json-object "op" "replace-lines"
+                                                                                                            "start-line" 1 "end-line" 1
+                                                                                                            "content" "(:overflow-context-digests (fabricated))"))))))
+             (test-assert (and (not (tool-result-success-p edit))
+                               (eq ':access-denied (tool-result-error-code edit)))
+                          "Even an observed in-workspace owner record cannot be edited to grant access"))
+           (let ((record         (task-continuity--read path))
+                 (sibling-record (task-continuity--read sibling-path))
+                 (fresh          (task-orchestrator-create)))
+             (unwind-protect
+                  (let ((reconstructed
+                          (make-instance 'task-job :pool  (task-orchestrator-pool fresh)
+                                         :identifier (job-identifier job) :index 1 :name "restored"
+                                         :payload nil :owner-identifiers (job-owner-identifiers job)
+                                         :root-identifier (session-job-root-conversation-identifier job)
+                                         :body-function #'task-job--run :maximum-runtime-milliseconds 0
+                                         :orchestrator fresh :execution-identifier (session-job-execution-identifier job)
+                                         :definition (task-job-definition job) :item (task-job-item job) :parent-agent parent)))
+                    (test-assert (readable-p (child-context reconstructed) uri)
+                                 "A reconstructed same-owner job rereads its durable emitted grant")
+                    (task-continuity--write sibling-path record)
+                    (test-assert (denied-p other uri) "Replaying another owner's durable record grants nothing")
+                    (task-continuity--write sibling-path sibling-record)
+                    (remf record :overflow-context-digests)
+                    (task-continuity--write path record)
+                    (test-assert (denied-p (child-context reconstructed) uri)
+                                 "Legacy records without grants default closed"))
+               (task-orchestrator-close fresh))))))))
+  nil)
