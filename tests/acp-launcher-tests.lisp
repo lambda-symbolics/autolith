@@ -450,3 +450,55 @@ exit 1
         (test-assert (equal (uiop:getenv "CL_SOURCE_REGISTRY") "later//")
                      "a repeated restore does not overwrite later consumers"))))
   nil)
+
+(-> test-source-worker-bootstrap-output () null)
+(defun test-source-worker-bootstrap-output ()
+  "Keep bootstrap streams off the real worker protocol without hiding evaluated output."
+  (with-test-fixture (':posix-shell "the source worker bootstrap boundary")
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let ((setup      (merge-pathnames "setup.lisp" root))
+            (real-setup (or (uiop:getenv "AUTOLITH_PROJECT_SETUP")
+                            (namestring (asdf:system-relative-pathname
+                                         :autolith ".qlot/setup.lisp")))))
+        (test--write-lisp-worker-text
+         setup
+         (format nil "(write-line ~S)~%(write-line ~S *trace-output*)~%(finish-output)~%(finish-output *trace-output*)~%(load ~S)~%"
+                 "bootstrap-stdout" "bootstrap-trace" real-setup))
+        (acp-launcher-tests--call-with-roots
+         root
+         (lambda ()
+           (with-test-environment (("AUTOLITH_PROJECT_SETUP" (namestring setup)))
+             (with-input-from-string
+                 (input (format nil "(:request :id 1 :operation :eval :arguments (:forms (~S)))~%"
+                                "(write-string \"worker-evaluation\")"))
+               (multiple-value-bind (output diagnostics status)
+                   (uiop:run-program
+                    (list "bash" (namestring (asdf:system-relative-pathname
+                                              :autolith "bin/autolith"))
+                          "--from-source" "--worker")
+                    :directory root :input input :output ':string :error-output ':string
+                    :ignore-error-status t)
+                 (test-assert (zerop status) "the source worker exits successfully")
+                 (test-assert (search "bootstrap-stdout" diagnostics)
+                              "bootstrap standard output reaches stderr")
+                 (test-assert (search "bootstrap-trace" diagnostics)
+                              "bootstrap trace output reaches stderr")
+                 (let ((*read-eval* nil))
+                   (with-input-from-string (stream output)
+                     (let ((banner   (read stream nil nil))
+                           (response (read stream nil nil)))
+                       (test-assert (and (listp banner)
+                                         (eq (first banner) :autolith-worker))
+                                    "the first output is the worker banner")
+                       (test-assert (and (listp response)
+                                         (eq (first response) :response)
+                                         (eq (getf (rest response) :status) :ok))
+                                    "the next output is the successful evaluation response")
+                       (test-assert (and (listp response)
+                                         (equal (getf (rest response) :output)
+                                                "worker-evaluation"))
+                                    "evaluated standard output belongs to the response")
+                       (test-assert (eq (read stream nil :eof) :eof)
+                                    "no raw evaluated output follows the response"))))))))))))
+  nil)
