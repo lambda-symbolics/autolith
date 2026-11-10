@@ -1354,6 +1354,7 @@
   test-executable-skill-verification-contracts)
 
 (define-test-suite task-continuity
+  test-child-overflow-context-ownership
   test-task-continuity-classification
   test-task-continuity-revive
   test-task-continuity-ownership)

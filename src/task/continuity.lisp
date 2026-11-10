@@ -353,7 +353,14 @@ repeating the task's external effects is safe; it is an assertion, not a test."
       (when (probe-file (merge-pathnames "revive.sexp"
                                        (uiop:pathname-directory-pathname path)))
         (task-continuity--fail "A consumed recovery declaration cannot be changed."))
-      (task-continuity--write path record))
+      ;; Re-read under the writer lock so concurrent spills cannot lose grants.
+      (let ((fresh (task-continuity--read path)))
+        (when safety
+          (setf (getf fresh :restart-safety) (getf record :restart-safety)))
+        (when image
+          (setf (getf fresh :checkpoint) (getf record :checkpoint)))
+        (setf record fresh)
+        (task-continuity--write path record)))
     (task-continuity-classify (list :record record :path (namestring path))
                               viewer orchestrator)))
 
@@ -517,3 +524,63 @@ require a new human decision rather than an automatic second attempt."
     (task-continuity--write target (list :state state :result result
                                     :ended-at (get-universal-time)) :require-absent t))
   nil)
+
+
+;;;; -- Durable Overflow Producer Grants --
+
+(-> task-continuity--overflow-path (task-child-agent) pathname)
+(defun task-continuity--overflow-path (agent)
+  "Select only AGENT's trusted execution record in private task storage."
+  (let* ((job           (task-child-agent-job agent))
+         (configuration (agent-configuration agent))
+         (execution     (session-job-execution-identifier job)))
+    (unless (task--owner-component-p execution)
+      (task-continuity--fail "Invalid overflow producer identity." :code ':authority))
+    (task--safe-owner-path
+     configuration
+     (merge-pathnames (format nil "~A/continuity.sexp" execution)
+                      (task--artifact-group-root configuration (session-job-root-conversation-identifier job))))))
+
+(-> task-continuity--overflow-record (task-child-agent pathname) list)
+(defun task-continuity--overflow-record (agent path)
+  "Read a producer record only if every durable owner identity matches AGENT."
+  (let ((record (task-continuity--read path))
+        (job    (task-child-agent-job agent)))
+    (unless (and (eq (getf record :kind) :task)
+                 (equal (getf record :job-id) (job-identifier job))
+                 (equal (getf record :execution-id) (session-job-execution-identifier job))
+                 (equal (getf record :root-conversation) (session-job-root-conversation-identifier job)))
+      (task-continuity--fail "Overflow producer record belongs to another execution." :code ':authority))
+    record))
+
+(defmethod agent-record-overflow-context ((agent task-child-agent) digest)
+  "Atomically add an actual spill to this exact producer's durable set."
+  (with-lock-held ((task-orchestrator-artifact-lock (task-child-agent-orchestrator agent)))
+    (let* ((path   (task-continuity--overflow-path agent))
+           (record (task-continuity--overflow-record agent path)))
+      (pushnew digest (getf record :overflow-context-digests) :test #'equal)
+      (task-continuity--write path record))))
+
+(defmethod agent-overflow-context-owned-p ((agent task-child-agent) digest)
+  "Reread only this authenticated owner's grants, including after reconstruction."
+  (and (stringp digest) (= (length digest) 64)
+       (every (lambda (character) (digit-char-p character 16)) digest)
+       (handler-case
+           (with-lock-held ((task-orchestrator-artifact-lock (task-child-agent-orchestrator agent)))
+             (let* ((path   (task-continuity--overflow-path agent))
+                    (record (task-continuity--overflow-record agent path)))
+               (and (member (string-downcase digest) (getf record :overflow-context-digests) :test #'equal) t)))
+         (error () nil))))
+
+(defmethod resource-tool-edit :before
+    ((resource workspace-file-resource) (tool resource-edit-tool)
+     (context tool-context) (arguments hash-table))
+  "Prevent child model edits from manufacturing durable producer grants."
+  (declare (ignore tool arguments))
+  (let ((path (workspace-file-resource-pathname resource)))
+    (when (and (resource-context-child-agent-p context)
+               (equal (pathname-name path) "continuity")
+               (equal (pathname-type path) "sexp")
+               (pathname-within-p path (merge-pathnames "tasks/"
+                                                       (config :data-root (tool-context-configuration context)))))
+      (error 'resource-access-denied :uri (resource-uri resource) :operation ':edit))))
