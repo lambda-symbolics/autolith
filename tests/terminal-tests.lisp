@@ -1536,6 +1536,28 @@
                       (terminal-ui-command-activities active-ui))
               '("exec:1" "exec:2"))
        "command rows retain scheduler creation order")
+      (dolist (state '(:queued :running :completed))
+        (dolist (width '(16 45 90 120))
+          (let* ((activity (copy-list
+                            (find "exec:1" commands :test #'string=
+                                  :key                    (lambda (command) (getf command :id)))))
+                 (row      (progn
+                             (setf (getf activity :state) state)
+                             (terminal-ui--command-activity-row-at
+                              activity clock width :identity-width 6 :tool-width 9)))
+                 (widgets  (remove-if-not #'termdown:widget-p row)))
+            (test-assert (<= (terminal--spans-width row) width)
+                         "cancellation actions fit the command row budget")
+            (if (and (member state '(:queued :running)) (>= width 90))
+                (test-assert
+                 (and widgets
+                      (every (lambda (widget)
+                               (equal (termdown:widget-action widget)
+                                      '(:insert "(job.cancel :id \"exec:1\")")))
+                             widgets))
+                 "every cancellation token inserts a complete executable call")
+                (test-assert (null widgets)
+                             "completed and narrow rows omit cancellation actions")))))
       (test-assert (terminal-ui-refresh-status active-ui)
                    "the reader paints changed command state immediately")
       (multiple-value-bind (text display cursor)
