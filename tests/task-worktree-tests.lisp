@@ -335,7 +335,15 @@
        (task-worktree-tests--write (merge-pathnames "file" path) "interrupted edits")
        (let ((result (task-worktree-tests--publish job ':aborted)))
          (test-assert (eq ':aborted (getf result :status)) "Cancellation is not reclassified as success.")
-         (test-assert (getf result :worktree-artifact-path) "Interrupted tracked edits have a durable patch.")
+         (test-assert (eq ':pending (getf result :worktree-artifact-state))
+                      "Cancelled publication retains a pending artifact.")
+         (test-assert (null (getf result :worktree-artifact-path))
+                      "Cancelled publication does not extract synchronously.")
+         (task-worktree-tests--call tool context
+                                   (json-object "action" "extract" "id" (task-job-execution-identifier job)))
+         (test-assert (equal '("file") (cl-worktree:artifact-paths
+                                        (task-worktree--read-artifact (getf result :worktree))))
+                      "The parent explicitly recovers cancelled edits.")
          (test-assert (probe-file path) "Cancellation never cleans the checkout automatically.")
          (task-worktree-tests--call tool context
                                    (json-object "action" "cleanup" "id" (task-job-execution-identifier job)
@@ -359,57 +367,119 @@
          (task-worktree-tests--call tool context
                                    (json-object "action" "cleanup" "id" (task-job-execution-identifier job)
                                                 "discardDirty" t))))))
+  (dolist (pause-after-add-p '(nil t))
+    (task-worktree-tests--fixture
+     (lambda (configuration source parent job tool context)
+       (declare (ignore source parent))
+       (let ((entered (sb-thread:make-semaphore))
+             (release (sb-thread:make-semaphore))
+             (outcome nil)
+             (thread  nil)
+             (runner  (fdefinition 'run-sandboxed)))
+         (flet ((pause ()
+                  (sb-thread:signal-semaphore entered)
+                  (sb-thread:wait-on-semaphore release)))
+           (unwind-protect
+                (progn
+                  (if pause-after-add-p
+                      (setf (fdefinition 'run-sandboxed)
+                            (lambda (program arguments &rest options)
+                              (multiple-value-prog1 (apply runner program arguments options)
+                                (when (and (member "worktree" arguments :test #'equal)
+                                           (member "add" arguments :test #'equal))
+                                  (pause)))))
+                      (setf (task-job-command-authorization-function job)
+                            (lambda (command directory)
+                              (declare (ignore directory))
+                              (when (search "\"worktree\" \"add\"" command) (pause))
+                              ':full-access)))
+                  (setf thread
+                        (sb-thread:make-thread
+                         (lambda ()
+                           (setf outcome
+                                 (handler-case
+                                     (progn (task-worktree-configuration job configuration) ':completed)
+                                   (job-aborted () ':aborted)
+                                   (error (condition) (princ-to-string condition)))))
+                         :name "worktree setup cancellation"))
+                  (test-assert (sb-thread:wait-on-semaphore entered :timeout 30)
+                               "Setup reached the selected side of Git creation.")
+                  (sb-thread:interrupt-thread
+                   thread (lambda ()
+                            (error 'job-aborted :identifier (job-identifier job)
+                                               :reason ':test-cancel :message "Interrupted creation.")))
+                  (sb-thread:join-thread thread :timeout 2 :default nil)
+                  (test-assert (eq ':aborted outcome)
+                               "Setup unwinds before the slow operation is released.")
+                  (setf (fdefinition 'run-sandboxed) runner
+                        (task-job-command-authorization-function job) #'task-worktree-tests--authorize)
+                  (let* ((metadata (getf (task-job-item job) :worktree))
+                         (result   (with-lock-held (*task-worktree-lock*)
+                                     (task-worktree-tests--publish job ':aborted))))
+                    (test-assert metadata "Setup reserves task ownership before Git mutation.")
+                    (test-assert (probe-file (getf metadata :metadata-path))
+                                 "Interrupted setup has durable provenance.")
+                    (test-assert (eq ':pending (getf result :worktree-artifact-state))
+                                 "Cancelled publication needs no lifecycle lock or Git extraction.")
+                    (when pause-after-add-p
+                      (task-worktree-tests--call
+                       tool context (json-object "action" "extract" "id" (task-job-execution-identifier job)))
+                      (test-assert (task-worktree--read-artifact metadata)
+                                   "The reserved checkout can be recovered after Git creation."))
+                    (task-worktree-tests--call
+                     tool context (json-object "action" "cleanup" "id" (task-job-execution-identifier job)))))
+             (setf (fdefinition 'run-sandboxed) runner)
+             (sb-thread:signal-semaphore release)
+             (when (and thread (sb-thread:thread-alive-p thread))
+               (sb-thread:terminate-thread thread)
+               (sb-thread:join-thread thread :timeout 30 :default nil))))))))
   (task-worktree-tests--fixture
    (lambda (configuration source parent job tool context)
-     (declare (ignore source parent))
-     (let ((entered  (sb-thread:make-semaphore))
-           (release  (sb-thread:make-semaphore))
-           (paused-p nil)
-           (outcome  nil)
-           (thread   nil))
-       (setf (task-job-command-authorization-function job)
-             (lambda (command directory)
-               (declare (ignore directory))
-               (when (and (not paused-p) (search "\"worktree\" \"add\"" command))
-                 (setf paused-p t)
-                 (sb-thread:signal-semaphore entered)
-                 (sb-thread:wait-on-semaphore release))
-               ':full-access))
-       (unwind-protect
-            (progn
-              (setf thread
-                    (sb-thread:make-thread
-                     (lambda ()
-                       (setf outcome
-                             (handler-case
-                                 (progn (task-worktree-configuration job configuration) ':completed)
-                               (job-aborted () ':aborted)
-                               (error (condition) (princ-to-string condition)))))
-                     :name "isolated creation cancellation fixture"))
-              (test-assert (sb-thread:wait-on-semaphore entered :timeout 30)
-                           "Creation reached the ownership-sensitive Git operation.")
-              (sb-thread:interrupt-thread
-               thread (lambda ()
-                        (error 'job-aborted :identifier (job-identifier job)
-                                           :reason ':test-cancel :message "Interrupted creation.")))
-              (sb-thread:signal-semaphore release)
-              (sb-thread:join-thread thread :timeout 30 :default nil)
-              (test-assert (eq ':aborted outcome) "Asynchronous cancellation unwinds the child.")
-              (let ((metadata (getf (task-job-item job) :worktree)))
-                (test-assert metadata "Cancellation cannot interrupt the ownership publication window.")
-                (when metadata
-                  (test-assert (probe-file (getf metadata :metadata-path))
-                               "Interrupted creation has durable task provenance.")))
-              (setf (task-job-command-authorization-function job) #'task-worktree-tests--authorize)
-              (let ((result (task-worktree-tests--publish job ':aborted)))
-                (test-assert (getf result :worktree-artifact-path)
-                             "Interrupted creation remains extractable by terminal publication.")
-                (task-worktree-tests--call tool context
-                                          (json-object "action" "cleanup" "id" (task-job-execution-identifier job)))))
-         (sb-thread:signal-semaphore release)
-         (when (and thread (sb-thread:thread-alive-p thread))
-           (sb-thread:terminate-thread thread)
-           (sb-thread:join-thread thread :timeout 30 :default nil))))))
+     (declare (ignore parent tool context))
+     (let* ((child       (task-worktree-configuration job configuration))
+            (sibling     (config :working-directory child))
+            (legacy-path (merge-pathnames "task-worktrees/checkouts/legacy-task/"
+                                          (config :data-root configuration)))
+            (manager     (task-worktree--manager configuration #'task-worktree-tests--authorize))
+            (legacy      (cl-worktree:create-worktree manager :source source :path legacy-path
+                                                             :owner "legacy-owner" :baseline "HEAD"))
+            (record-root (merge-pathnames "legacy-result/" (config :data-root configuration)))
+            (record      (merge-pathnames "worktree.sexp" record-root)))
+       (ensure-directories-exist record)
+       (snapshot-write record (task-worktree--metadata legacy "patch" (namestring record)))
+       (task-worktree-discard configuration "legacy-task"
+                              :pathname (merge-pathnames "conversation.sexp" record-root))
+       (test-assert (not (probe-file legacy-path)) "Discard removes the verified legacy checkout.")
+       (test-assert (probe-file sibling) "Legacy discard preserves a real sibling checkout.")
+       (test-assert (equal "baseline" (uiop:read-file-string (merge-pathnames "file" sibling)))
+                    "Sibling working files survive legacy cleanup.")
+       (test-assert (handler-case
+                        (progn (task-worktree--cleanup-root configuration
+                                (merge-pathnames "task-worktrees/checkouts/" (config :data-root configuration))) nil)
+                      (task-worktree-error () t))
+                    "The shared checkouts root cannot become a deletion scope.")
+       (task-worktree-discard configuration (task-job-execution-identifier job)
+                              :pathname (merge-pathnames "conversation.sexp"
+                                                        (task--artifact-root configuration job)))
+       (test-assert (not (probe-file sibling)) "Modern discard removes its dedicated container."))))
+  (with-test-fixture (':posix-shell "Cancel a running Git subprocess")
+    (with-test-configuration (configuration root)
+      (dolist (authorize (list #'task-worktree-tests--authorize #'task-worktree-tests--sandboxed))
+        (let* ((start  (get-internal-real-time))
+               (runner (task-worktree--runner
+                        configuration authorize
+                        :cancel-function (lambda ()
+                                           (> (/ (- (get-internal-real-time) start)
+                                                 internal-time-units-per-second)
+                                              0.2)))))
+          (test-assert
+           (handler-case
+               (progn (funcall runner '("git" "-c" "alias.wait=!sleep 30" "wait")
+                               :directory root) nil)
+             (task-worktree-error () t))
+           "The Git runner observes cancellation while the subprocess is running.")
+          (test-assert (< (/ (- (get-internal-real-time) start) internal-time-units-per-second) 3)
+                       "Cancellation does not wait for the command deadline.")))))
   nil)
 
 (-> test-task-worktree-conflicts () null)
