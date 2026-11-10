@@ -43,16 +43,23 @@
   "Send one update, including terminal tool outcomes during cancellation."
   (let ((session (acp-observer-session observer)))
     (unless (acp-service-closed-p (acp-session-service session))
-      (agentcomms:update-buffer-send (acp-observer-update-buffer observer) update)
-      (setf (acp-observer-thought-state observer)
-            (when (eq ':agent-thought-chunk (agentcomms:acp-update-kind update)) ':streaming))))
+      (handler-case
+          (progn
+            (agentcomms:update-buffer-send (acp-observer-update-buffer observer) update)
+            (setf (acp-observer-thought-state observer)
+                  (when (eq ':agent-thought-chunk (agentcomms:acp-update-kind update)) ':streaming)))
+        (agentcomms:acp-connection-closed ()
+          nil))))
   nil)
 
 (-> acp-observer-flush (acp-observer) null)
 (defun acp-observer-flush (observer)
   "Deliver pending thoughts before a permission request or terminal prompt response."
   (unless (acp-service-closed-p (acp-session-service (acp-observer-session observer)))
-    (agentcomms:update-buffer-flush (acp-observer-update-buffer observer)))
+    (handler-case
+        (agentcomms:update-buffer-flush (acp-observer-update-buffer observer))
+      (agentcomms:acp-connection-closed ()
+        nil)))
   nil)
 
 (-> acp-tool-identifier (integer string) string)

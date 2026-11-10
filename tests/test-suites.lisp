@@ -1790,6 +1790,7 @@
   test-acp-session-cancel-blocked-provider-and-reuse
   test-acp-session-cwd-mode-and-unsupported-content
   test-acp-session-disconnect-releases-lease
+  test-acp-observer-disconnected-updates
   test-acp-session-live-and-replayed-tool-identities
   test-acp-session-replay-metadata-and-tool-statuses
   test-acp-session-close-timeout-retains-ownership
