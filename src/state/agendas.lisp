@@ -446,11 +446,15 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
          (items  (and record (workspace-agenda-items record))))
     (let* ((item
              (make-instance 'agenda-item
-                              :identifier (make-user-identifier)
-                            :text         (agenda--validate-text configuration text)
-                            :status       status
-                            :created-at   now
-                            :updated-at   now
+                             :identifier (make-user-identifier
+                                          :occupied-p (lambda (identifier)
+                                                        (find identifier items
+                                                              :key  #'agenda-item-identifier
+                                                              :test #'string=)))
+                            :text        (agenda--validate-text configuration text)
+                            :status      status
+                            :created-at  now
+                            :updated-at  now
                             :memory-identifiers
                             (agenda--validate-memory-identifiers
                              configuration memory-identifiers)))
@@ -487,10 +491,9 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
            :cause     nil))
   (let* ((record (agenda-current configuration state))
          (item   (and record
-                      (find identifier
-                            (workspace-agenda-items record)
-                            :key  #'agenda-item-identifier
-                            :test #'string=))))
+                      (identifier-select identifier
+                                         (workspace-agenda-items record)
+                                         :key #'agenda-item-identifier))))
     (unless item
       (error 'agenda-error
              :message   (format nil "Agenda item ~A does not exist here."
@@ -500,13 +503,13 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
              :cause     nil))
     (let* ((replacement-item
              (make-instance 'agenda-item
-                            :identifier (copy-seq identifier)
-                            :text       (if text
-                                            (agenda--validate-text configuration text)
-                                            (copy-seq (agenda-item-text item)))
-                            :status     (or status (agenda-item-status item))
-                            :created-at (agenda-item-created-at item)
-                            :updated-at now
+                             :identifier (copy-seq (agenda-item-identifier item))
+                            :text        (if text
+                                             (agenda--validate-text configuration text)
+                                             (copy-seq (agenda-item-text item)))
+                            :status      (or status (agenda-item-status item))
+                            :created-at  (agenda-item-created-at item)
+                            :updated-at  now
                             :memory-identifiers
                             (if memory-identifiers-supplied-p
                                 (agenda--validate-memory-identifiers
@@ -518,7 +521,7 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
               'workspace-agenda
               :directory (workspace-agenda-directory record)
               :items     (substitute replacement-item
-                                     identifier
+                                     (agenda-item-identifier item)
                                      (workspace-agenda-items record)
                                      :key  #'agenda-item-identifier
                                      :test #'string=)))
@@ -532,9 +535,8 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
   "Remove current-workspace agenda IDENTIFIER and report whether it existed."
   (let* ((record    (agenda-current configuration state))
          (items     (and record (workspace-agenda-items record)))
-         (remaining (remove identifier items
-                            :key  #'agenda-item-identifier
-                            :test #'string=)))
+         (selected  (identifier-select identifier items :key #'agenda-item-identifier))
+         (remaining (remove selected items)))
     (if (= (length remaining) (length items))
         nil
         (let* ((directory (workspace-agenda-directory record))
@@ -625,7 +627,11 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
                        (if (find identifier result
                                  :key  #'agenda-item-identifier
                                  :test #'string=)
-                           (make-identifier)
+                           (make-user-identifier
+                            :occupied-p (lambda (candidate)
+                                          (find candidate result
+                                                :key  #'agenda-item-identifier
+                                                :test #'string=)))
                            (copy-seq identifier))))))))))
     result))
 

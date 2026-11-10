@@ -41,12 +41,18 @@ so its repeats share fewer words than reports from different sessions do.")
 (defvar *papercut-lock* (make-lock "Autolith persistent papercuts")
   "The process-local lock serializing papercut reads and appends.")
 
+(defvar *papercut-seen-identifiers* nil
+  "Historical identities available during a store transaction.")
+
 (defclass papercut ()
   ((identifier
     :initarg       :identifier
     :reader        papercut-identifier
     :type          non-empty-string
     :documentation "The stable identifier of this papercut report.")
+   (reference
+    :initform nil :accessor papercut-reference :type (option string)
+    :documentation "A distinguishing presentation prefix computed with active peers.")
    (reported-at
     :initarg       :reported-at
     :reader        papercut-reported-at
@@ -322,7 +328,7 @@ so its repeats share fewer words than reports from different sessions do.")
                                      (make-hash-table :test #'equal)))
      :reducer       (lambda (state record)
                       (papercut--reduce-record pathname state record))
-     :finalizer     #'papercut--sort-active)))
+     :finalizer     #'identity)))
 
 (-> papercut--reduce-record (pathname cons list) cons)
 (defun papercut--reduce-record (pathname state record)
@@ -401,18 +407,28 @@ so its repeats share fewer words than reports from different sessions do.")
 (-> papercut--sort-active (cons) list)
 (defun papercut--sort-active (state)
   "Return active reports in deterministic newest-first presentation order."
-  (sort (loop for papercut being the hash-values of (rest state) collect papercut)
-        (lambda (left right)
-          (or (> (papercut-reported-at left) (papercut-reported-at right))
-              (and (= (papercut-reported-at left) (papercut-reported-at right))
-                   (string< (papercut-identifier left)
-                            (papercut-identifier right)))))))
+  (let* ((reports     (loop for report being the hash-values of (rest state) collect report))
+         (identifiers (mapcar #'papercut-identifier reports)))
+    (dolist (report reports)
+      (setf (papercut-reference report)
+            (identifier-reference (papercut-identifier report) identifiers
+                                  :minimum-length *papercut-short-identifier-length*)))
+    (sort reports
+          (lambda (left right)
+            (or (> (papercut-reported-at left) (papercut-reported-at right))
+                (and (= (papercut-reported-at left) (papercut-reported-at right))
+                     (string< (papercut-identifier left)
+                              (papercut-identifier right))))))))
 
 (-> papercut--transact (configuration function) t)
 (defun papercut--transact (configuration update)
   "Apply UPDATE through the store, translating storage failures for callers."
   (handler-case
-      (sexp-store:store-transact (papercut--store configuration) update)
+      (sexp-store:store-transact
+       (papercut--store configuration)
+       (lambda (state)
+         (let ((*papercut-seen-identifiers* (first state)))
+           (funcall update (papercut--sort-active state)))))
     (sexp-store:store-error (cause)
       (error 'papercut-error
              :message    (sexp-store:store-error-message cause)
@@ -447,11 +463,9 @@ so its repeats share fewer words than reports from different sessions do.")
 
 (-> papercut-find (configuration string) (option papercut))
 (defun papercut-find (configuration identifier)
-  "Return the exact active papercut IDENTIFIER in CONFIGURATION's workspace."
-  (find identifier
-        (papercut-list configuration)
-        :test #'string=
-        :key  #'papercut-identifier))
+  "Return the exact or uniquely prefixed active workspace papercut."
+  (identifier-select identifier (papercut-list configuration)
+                     :key #'papercut-identifier))
 
 (-> papercut-repair-context (configuration string) list)
 (defun papercut-repair-context (configuration identifier)
@@ -479,22 +493,15 @@ so its repeats share fewer words than reports from different sessions do.")
 
 The second value is :FOUND, :MISSING, or :AMBIGUOUS. The third value contains
 matching reports for :AMBIGUOUS."
-  (if (non-empty-string-p identifier)
-      (let* ((papercuts (papercut-list configuration))
-             (matches   (remove-if-not
-                         (lambda (papercut)
-                           (uiop:string-prefix-p
-                            identifier
-                            (papercut-identifier papercut)))
-                         papercuts)))
-        (cond
-          ((null matches)
-           (values nil ':missing nil))
-          ((null (rest matches))
-           (values (first matches) ':found nil))
-          (t
-           (values nil ':ambiguous matches))))
-      (values nil ':missing nil)))
+  (handler-case
+      (let ((papercut (papercut-find configuration identifier)))
+        (values papercut (if papercut ':found ':missing) nil))
+    (identifier-ambiguity ()
+      (values nil ':ambiguous
+              (remove-if-not
+               (lambda (papercut)
+                 (uiop:string-prefix-p identifier (papercut-identifier papercut)))
+               (papercut-list configuration))))))
 
 (-> papercut--tokens (string) list)
 (defun papercut--tokens (text)
@@ -606,7 +613,10 @@ identity and return that existing papercut with DUPLICATE-P true."
         (let ((papercut
                 (make-instance
                  'papercut
-                  :identifier         (make-user-identifier)
+                 :identifier          (make-user-identifier
+                                       :occupied-p (lambda (identifier)
+                                                     (and *papercut-seen-identifiers*
+                                                          (gethash identifier *papercut-seen-identifiers*))))
                  :reported-at         now
                  :workspace           (papercut--workspace configuration)
                  :title               title
@@ -663,10 +673,9 @@ its first consented telemetry identity without recording another report."
 (defun papercut--assess-unlocked (configuration identifier &key active verdict note diagnostic)
   "Return the assessment event and its updated report from private state."
   (let ((papercut
-          (find identifier
-                (papercut--workspace-reports configuration active)
-                :test #'string=
-                :key  #'papercut-identifier))
+          (identifier-select identifier
+                             (papercut--workspace-reports configuration active)
+                             :key #'papercut-identifier))
         (assessed-at (get-universal-time)))
     (unless papercut
       (error 'papercut-error
@@ -680,11 +689,11 @@ its first consented telemetry identity without recording another report."
           (papercut-assessed-at papercut) assessed-at)
     (values
      (append (papercut--telemetry-record papercut)
-             (list (papercut--assessed-record identifier
-                                              :verdict     verdict
-                                              :note        note
-                                              :assessed-at assessed-at
-                                              :diagnostic  diagnostic)))
+            (list (papercut--assessed-record (papercut-identifier papercut)
+                                             :verdict     verdict
+                                             :note        note
+                                             :assessed-at assessed-at
+                                             :diagnostic  diagnostic)))
      papercut t)))
 
 (-> papercut-assess
@@ -723,13 +732,10 @@ its first consented telemetry identity without recording another report."
 (defun papercut--mark-closed-unlocked
     (configuration identifier resolution &key active diagnostic)
   "Return a closure event after checking the workspace and assessment policy."
-  (let* ((workspace (papercut--workspace configuration))
-         (papercut
-           (find-if
-            (lambda (candidate)
-              (and (string= identifier (papercut-identifier candidate))
-                   (string= workspace (papercut-workspace candidate))))
-            active)))
+  (let ((papercut
+          (identifier-select identifier
+                             (papercut--workspace-reports configuration active)
+                             :key #'papercut-identifier)))
     (unless papercut
       (error 'papercut-error
              :message    (format nil
@@ -748,7 +754,7 @@ its first consented telemetry identity without recording another report."
              :identifier identifier))
     (values
      (append (papercut--telemetry-record papercut)
-             (list (papercut--closed-record identifier resolution (get-universal-time) :diagnostic diagnostic)))
+            (list (papercut--closed-record (papercut-identifier papercut) resolution (get-universal-time) :diagnostic diagnostic)))
      papercut t)))
 
 (-> papercut-mark-closed (configuration string &key (:resolution string) (:diagnostic (option string))) papercut)
@@ -786,11 +792,8 @@ its first consented telemetry identity without recording another report."
 
 (-> papercut-short-identifier (papercut) string)
 (defun papercut-short-identifier (papercut)
-  "Return the stable abbreviated identifier shown in the terminal."
-  (subseq (papercut-identifier papercut)
-          0
-          (min *papercut-short-identifier-length*
-               (length (papercut-identifier papercut)))))
+  "Return a distinguishing presentation prefix, or the full identity."
+  (or (papercut-reference papercut) (papercut-identifier papercut)))
 
 (-> papercut-call-source (papercut) string)
 (defun papercut-call-source (papercut)

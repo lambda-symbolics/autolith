@@ -161,12 +161,12 @@ quiescing, because both touch the private history repository."
     generation)
 (defun generation-create-record (configuration &key git-commit mutation-checker)
   "Create a pending generation record with immutable artifact paths."
-    (let* ((identifier (make-user-identifier))
-           (metadata   (generation--metadata configuration identifier
-                                             :git-commit       git-commit
-                                             :mutation-checker mutation-checker))
-           (directory  (merge-pathnames (format nil "~A/" identifier)
-                                        (generation-root configuration))))
+  (let* ((identifier (generation--allocate-identifier configuration))
+         (metadata   (generation--metadata configuration identifier
+                                           :git-commit       git-commit
+                                           :mutation-checker mutation-checker))
+         (directory  (merge-pathnames (format nil "~A/" identifier)
+                                      (generation-root configuration))))
      (make-instance 'generation
                     :identifier        identifier
                     :directory         directory
@@ -177,6 +177,22 @@ quiescing, because both touch the private history repository."
                     :metadata          metadata
                     :created-at        (get-universal-time)
                     :status            ':pending)))
+
+(-> generation--allocate-identifier (configuration) string)
+(defun generation--allocate-identifier (configuration)
+  "Reserve an artifact directory against retained and pending generation identities."
+  (let ((root (generation-root configuration)))
+    (ensure-directories-exist (merge-pathnames "identifiers.lock" root))
+    (call-with-file-lock
+     (merge-pathnames "identifiers.lock" root)
+     (lambda ()
+       (let* ((identifier
+                (make-user-identifier
+                 :occupied-p (lambda (candidate)
+                               (probe-file (merge-pathnames (format nil "~A/" candidate) root)))))
+              (directory (merge-pathnames (format nil "~A/" identifier) root)))
+         (ensure-directories-exist (merge-pathnames "manifest.sexp" directory))
+         identifier)))))
 
 (-> generation--translate (t) t)
 (defun generation--translate (condition)
@@ -269,9 +285,9 @@ structured type and message survive the round trip."
 
 (-> generation-find (configuration string) (option generation))
 (defun generation-find (configuration identifier)
-  "Return retained generation IDENTIFIER, or NIL when it is unknown."
-  (sbcl-generations:generation-find (generation-store-for configuration)
-                                    identifier))
+  "Return an exact or uniquely prefixed retained generation."
+  (identifier-select identifier (generation-list configuration)
+                     :key #'generation-identifier))
 
 (-> generation-select (configuration generation) generation)
 (defun generation-select (configuration generation)
@@ -304,7 +320,8 @@ structured type and message survive the round trip."
   (handler-case
       (sbcl-generations:generation-request-rollback
        (generation-store-for configuration)
-       identifier)
+       (let ((generation (generation-find configuration identifier)))
+         (if generation (generation-identifier generation) identifier)))
     (sbcl-generations:rollback-requested (condition)
       (error 'rollback-requested
              :message

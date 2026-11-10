@@ -459,6 +459,7 @@
                                           (:file "application-command-tests")
                                           (:file "project-adaptation-tests")
                                           (:file "conversation-identifier-tests")
+                                          (:file "user-identifier-tests")
                                           (:file "conversation-tests")
                                           (:file "precompaction-tests")
                                           (:file "compaction-tail-tests")
