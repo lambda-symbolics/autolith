@@ -24,9 +24,12 @@
 
 (-> task-continuity--write (pathname list &key (:require-absent boolean)) pathname)
 (defun task-continuity--write (path record &key require-absent)
-  "Publish portable metadata without shared-object reader labels."
-  (snapshot-write-text path (format nil "~A~%" (task--write-readable-sexp record))
-                       :require-absent require-absent))
+  "Publish portable metadata only when it fits the bounded continuity reader."
+  (let ((text (format nil "~A~%" (task--write-readable-sexp record))))
+    (when (> (length (utf8-string-to-octets text)) *task-continuity-maximum-octets*)
+      (task-continuity--fail "Continuity metadata exceeds its readable UTF-8 size limit."
+                             :code ':storage-limit))
+    (snapshot-write-text path text :require-absent require-absent)))
 
 (-> task-continuity--owner-executions (session-job agent) list)
 (defun task-continuity--owner-executions (job parent)
