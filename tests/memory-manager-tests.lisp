@@ -196,7 +196,7 @@
        (terminal-ui-set-input ui "A saved conversation draft")
        (line-editor-handle-event editor ':left)
        (let ((snapshot (clinedi:line-editor-snapshot editor)))
-         (application-memory-manager application :identifier (subseq (memory-identifier note) 0 8))
+         (application-memory-manager application :identifier (memory-short-identifier note))
          (test-assert (and (equalp snapshot (clinedi:line-editor-snapshot editor))
                            (eq viewport (fullscreen-terminal-ui-viewport ui))
                            (not (terminal-ui-live-output-suspended-p ui)))
