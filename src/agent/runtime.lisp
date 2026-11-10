@@ -1244,70 +1244,46 @@ worker results become explicit unknown outcomes so provider history stays valid.
                                         :observer           observer
                                         :tool-restriction-p tool-restriction-p
                                         :record-timings-p   t))
-        (let ((next-index                0)
-              (claim-lock                (make-lock "Autolith tool wave claims"))
-              (threads                   nil)
-              (thread-creation-condition nil)
-              (thread-join-condition     nil))
-          (flet ((work ()
-                   (loop
-                     (let ((index
-                             (with-lock-held (claim-lock)
-                               (when (< next-index count)
-                                 (prog1 next-index
-                                   (incf next-index))))))
-                       (unless index
-                         (return))
-                       (setf (aref executions index)
-                             (agent--execute-tool-plan
-                              agent
-                              (nth index plans)
-                              :observer           observer
-                              :tool-restriction-p tool-restriction-p
-                              :record-timings-p   record-timings-p))))))
-            (unwind-protect
-                 (progn
-                   (loop repeat
-                           (min count *agent-maximum-concurrent-tool-workers*)
-                         while (null thread-creation-condition)
-                         do
-                           (handler-case
-                               (push
-                                 (make-thread
-                                  (agent--tool-thread-function #'work)
-                                  :name "autolith-tool-call")
-                                threads)
-                             (serious-condition (condition)
-                               (setf thread-creation-condition condition))))
-                   (when thread-creation-condition
-                     (work))
-                   (handler-case
-                       (mapc #'join-thread threads)
-                     (serious-condition (condition)
-                       (setf thread-join-condition condition))))
-              (mapc (lambda (thread)
-                      (when (thread-alive-p thread)
-                        (handler-case
-                            (join-thread thread)
-                          (serious-condition ()
-                            nil))))
-                    threads))
-            (when thread-join-condition
-              (loop for execution across executions
-                    when (and (null (getf execution :result))
-                              (null (getf execution :condition)))
-                      do (setf (getf execution :condition)
-                               thread-join-condition)))
-            (when thread-creation-condition
-              (agent--complete-tool-executions agent (coerce executions 'list)
-                                               :observer   observer
-                                               :tool-round tool-round)
-              (error thread-creation-condition))
-            (when thread-join-condition
-              (agent--complete-tool-executions agent (coerce executions 'list)
-                                               :observer   observer
-                                               :tool-round tool-round)
-              (error thread-join-condition)))))
+        (let* ((pool        (make-job-pool
+                             :name                     "Autolith tool wave"
+                             :maximum-concurrency
+                             (min count *agent-maximum-concurrent-tool-workers*)
+                             :maximum-batch-size count :maximum-live-jobs count
+                             :terminal-retention-limit count))
+               (jobs        nil)
+               (completed-p nil))
+          (unwind-protect
+               (progn
+                 (setf jobs
+                       (job-pool-submit-batch
+                        pool
+                        (loop for plan in plans
+                              for index from 0
+                              collect
+                              (let* ((plan  plan)
+                                     (index index)
+                                     (function
+                                       (agent--tool-thread-function
+                                        (lambda ()
+                                          (setf (aref executions index)
+                                                (agent--execute-tool-plan
+                                                 agent plan
+                                                 :observer           observer
+                                                 :tool-restriction-p tool-restriction-p
+                                                 :record-timings-p   record-timings-p))))))
+                                (list :parent-job cl-jobpond::*current-job*
+                                      :function   (lambda (job)
+                                                    (job-check-cancellation job)
+                                                    (funcall function)))))))
+                 (dolist (job jobs)
+                   (job-await job)
+                   (unless (eq (job-state job) ':completed)
+                     (job-check-cancellation job)))
+                 (setf completed-p t))
+            (unless completed-p
+              (dolist (job jobs)
+                (job-cancel job :reason ':wave-cancelled :cascade-p t)))
+            (job-pool-close pool))))
     (agent--complete-tool-executions agent (coerce executions 'list)
                                      :observer   observer
                                      :tool-round tool-round))

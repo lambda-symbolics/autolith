@@ -126,6 +126,14 @@ so cleanup can release every published capture."
                                (error (condition)
                                  (setf diagnostic
                                        (bounded-string (princ-to-string condition) :limit 500)))))))
+                      (cl-exec-sandbox:sandbox-process-cleanup-error (condition)
+                        (unless job
+                          (error condition))
+                        (tool-execution-job-await-native-cleanup job condition)
+                        (setf diagnostic (bounded-string (princ-to-string condition) :limit 500))
+                        (or (cl-exec-sandbox:sandbox-execution-error-result condition)
+                            (return-from workspace-tool-run-shell-command
+                              (tool-failure diagnostic))))
                       (cl-exec-sandbox:sandbox-execution-error (condition)
                         (setf diagnostic (bounded-string (princ-to-string condition) :limit 500))
                         (or (cl-exec-sandbox:sandbox-execution-error-result condition)
