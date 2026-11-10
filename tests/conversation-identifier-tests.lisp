@@ -38,6 +38,36 @@ match a new library version is never the correct repair."
      "malformed identifiers signal the Autolith condition"))
   nil)
 
+(-> test-user-identifier-allocation () null)
+(defun test-user-identifier-allocation ()
+  "Test short user identifiers, reservation probing, and opaque UUID allocation."
+  (let ((*random-index-function* (lambda (limit)
+                                   (declare (ignore limit))
+                                   10))
+        (occupied                nil))
+    (unwind-protect
+         (progn
+           (identifier-clear-reservations)
+           (let* ((first  (make-user-identifier
+                           :namespace  "test-user"
+                           :occupied-p (lambda (identifier)
+                                         (member identifier occupied :test #'string=))))
+                  (second (progn
+                            (push first occupied)
+                            (make-user-identifier
+                             :namespace  "test-user"
+                             :occupied-p (lambda (identifier)
+                                           (member identifier occupied :test #'string=))))))
+             (test-assert (and (identifier-p first)
+                               (= (length first) 7)
+                               (not (string= first second)))
+                          "user-addressable allocation returns short collision-free IDs")
+             (test-assert (and (stringp (make-identifier))
+                               (= (length (make-identifier)) 36))
+                          "opaque protocol allocation retains UUID format")))
+      (identifier-clear-reservations)))
+  nil)
+
 (-> test-conversation-identifier-allocation () null)
 (defun test-conversation-identifier-allocation ()
   "Test seeded allocation, storage collision probing, and structured exhaustion."
