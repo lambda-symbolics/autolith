@@ -755,6 +755,8 @@ let
       #!${pkgs.bash}/bin/bash
       source "${autolithSystem}/script/launcher-cli.sh"
       autolith_launcher_capture_asdf_environment
+      # Keep private startup independent of the captured caller configuration.
+      unset CL_SOURCE_REGISTRY ASDF_OUTPUT_TRANSLATIONS
       exec "$out/bin/.autolith-sbcl" "\$@"
       EOF
       chmod +x "$out/bin/sbcl"
