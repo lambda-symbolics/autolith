@@ -690,6 +690,76 @@
                    "runtime restart restores dependencies before dependents")))
   nil)
 
+(-> test-tool-argument-name-correction () null)
+(defun test-tool-argument-name-correction ()
+  "Test that underscore-spelled argument names are corrected to declared names."
+  (let* ((configuration (test-configuration))
+         (conversation  (conversation-create configuration
+                                              :identifier "tool-argument-name-correction"))
+         (context       (make-instance 'tool-context
+                                       :configuration configuration
+                                       :worker        nil
+                                       :conversation  conversation))
+         (registry      (make-instance 'tool-registry))
+         (executed-p    nil)
+         (received      nil)
+         (schema        (tool-object-schema
+                         (json-object
+                          "path"    (tool-string-property "Path")
+                          "options" (tool-object-schema
+                                      (json-object "deep-name" (tool-string-property "Deep name"))
+                                      '("deep-name"))
+                          "rows"    (json-object "type" "array"
+                                                 "items" (tool-object-schema
+                                                           (json-object "row-id" (tool-string-property "Row id"))
+                                                           '("row-id"))))
+                         '("path"))))
+    (tool-registry-register
+     registry
+     (make-instance 'tool :namespace "probe" :name "contract"
+                    :description "Exercise underscore argument name correction."
+                    :parameters  schema))
+    (test-call-with-function-replacements
+     (list (list 'tool-execute-with-contracts
+                 (lambda (tool context arguments)
+                   (declare (ignore tool context))
+                   (setf executed-p t received arguments)
+                   (tool-success "executed"))))
+     (lambda ()
+       (let ((result (tool-registry-execute-call
+                      registry
+                      (json-object "namespace" "probe" "name" "contract"
+                                   "arguments" "{\"path\":\"workspace:probe\",\"options\":{\"deep_name\":\"x\"},\"rows\":[{\"row_id\":\"1\"}]}")
+                      context)))
+         (test-assert (tool-result-success-p result)
+                      "underscore-spelled names are corrected and the call executes")
+         (test-assert executed-p
+                      "the corrected call reaches dispatch")
+         (test-assert (equal (json-get received "path") "workspace:probe")
+                      "declared names survive the correction")
+         (test-assert (equal (json-get (json-get received "options") "deep-name") "x")
+                      "nested object names are corrected")
+         (test-assert (equal (json-get (aref (json-get received "rows") 0) "row-id") "1")
+                      "array item names are corrected"))
+       (let ((result (tool-registry-execute-call
+                      registry
+                      (json-object "namespace" "probe" "name" "contract"
+                                   "arguments" "{\"path\":\"workspace:probe\",\"options\":{\"deep_name\":\"under\",\"deep-name\":\"declared\"}}")
+                      context)))
+         (test-assert (tool-result-success-p result)
+                      "a call carrying both spellings still executes")
+         (test-assert (equal (json-get (json-get received "options") "deep-name") "declared")
+                      "the declared spelling wins when both arrive")
+         (test-assert (null (gethash "deep_name" received))
+                      "the underscore duplicate is dropped"))
+       (let ((result (tool-registry-execute-call
+                      registry
+                      (json-object "namespace" "probe" "name" "contract"
+                                   "arguments" "{\"path\":\"workspace:probe\",\"pah_pah\":\"x\"}")
+                      context)))
+         (test-assert (eq (tool-result-error-code result) ':unknown-arguments)
+                      "an undeclared underscore name is still rejected"))))))
+
 (-> test-workspace-tools () null)
 (defun test-workspace-tools ()
   "Test workspace image inspection and bounded shell commands."

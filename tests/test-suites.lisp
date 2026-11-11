@@ -1075,6 +1075,7 @@
 
 (define-test-suite tool
   test-tool-registry
+  test-tool-argument-name-correction
   test-tool-result-overflow
   test-workspace-tools
   test-workspace-tool-outside-paths)
