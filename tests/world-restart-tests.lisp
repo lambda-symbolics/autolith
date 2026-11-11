@@ -164,11 +164,16 @@
       (form
        '((defun world-restart-probe--note (phase name &optional condition)
            "Append a stage without arguments, capabilities or other application data."
-           (let ((pathname
-                   (merge-pathnames
-                    (format nil "checkpoint-probe-~D-~D.log"
-                            (current-process-id) (sxhash (current-thread)))
-                    *world-restart-probe-root*)))
+           (let* ((threads
+                    (remove-if (lambda (thread)
+                                 (or (eq thread (current-thread))
+                                     (not (thread-alive-p thread))))
+                               (sb-thread:list-all-threads)))
+                  (pathname
+                    (merge-pathnames
+                     (format nil "checkpoint-probe-~D-~D.log"
+                             (current-process-id) (sxhash (current-thread)))
+                     *world-restart-probe-root*)))
              (with-open-file (output pathname :direction         ':output
                                               :if-exists         ':append
                                               :if-does-not-exist ':create
@@ -178,7 +183,20 @@
                               :pid (current-process-id) :time (get-universal-time)
                               :ticks (get-internal-real-time) :phase phase :function name
                               :first-attach-timeout *localgroup-first-attach-timeout-seconds*
-                              :condition-type       (when condition (type-of condition)))
+                              :other-live-threads   (length threads)
+                              :ephemeral-threads
+                              (count-if #'sb-thread::thread-ephemeral-p threads)
+                              :system-timer-watchdogs
+                              (count "System timer watchdog thread" threads
+                                     :key #'sb-thread:thread-name :test #'equal)
+                              :condition-type       (when condition (type-of condition))
+                              :failure-stage
+                              (when (typep condition 'sbcl-generations:checkpoint-error)
+                                (sbcl-generations:checkpoint-error-stage condition))
+                              :surviving-thread-failure-p
+                              (and (typep condition 'sbcl-generations:checkpoint-error)
+                                   (string= (sbcl-generations:checkpoint-error-message condition)
+                                            "Other Lisp threads survived checkpoint preparation.")))
                         :stream output :pretty nil)
                  (terpri output))
                (finish-output output))))
@@ -188,6 +206,9 @@
              (setf (fdefinition name)
                    (lambda (&rest arguments)
                      (world-restart-probe--note ':enter name)
+                     (when (eq name 'sbcl-generations:generation-record-failure)
+                       (world-restart-probe--note
+                        ':record-failure name (getf (nthcdr 2 arguments) :detail)))
                      (handler-bind
                          ((serious-condition
                             (lambda (condition)
@@ -198,6 +219,8 @@
                          world-server--quiesce-host-tools lisp-worker-manager-stop
                          world-server--restart-save world-server--restart-release-leases
                          sbcl-generations:checkpoint-restart-save-and-exit
+                         sbcl-generations:checkpoint-single-threaded-p
+                         sbcl-generations:generation-record-failure checkpoint--prepare-saver
                          world-server--restart-mark world-server-restart-claim
                          world-server-restart-resume world-server--runtime-start
                          world-server--resume-channels))
