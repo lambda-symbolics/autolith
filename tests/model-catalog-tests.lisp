@@ -208,23 +208,49 @@ Call ON-REQUEST, when supplied, after reading the request headers."
                   (model-catalog-invalid () t)) "Raw input has a hard byte limit."))
   nil)
 
+(-> test-model-catalog--wait-for-input (t) t)
+(defun test-model-catalog--wait-for-input (listener)
+  "Wait up to five seconds, resuming interruptions with their remaining budget."
+  (loop with timeout = 5
+        do (multiple-value-bind (ready remaining)
+               (usocket:wait-for-input listener :timeout timeout :ready-only t)
+             (when (or ready (not (plusp remaining)))
+               (return ready))
+             (setf timeout remaining))))
+
 (-> test-model-catalog-http-stream () null)
 (defun test-model-catalog-http-stream ()
   "Read an actual application/json HTTP response as bounded UTF-8 bytes."
+  (dolist (ready-p '(nil t))
+    (let ((outcomes (list (list nil 3) (list ready-p 0)))
+          (timeouts nil))
+      (test-call-with-function-replacements
+       (list
+        (list 'usocket:wait-for-input
+              (lambda (listener &key timeout ready-only)
+                (declare (ignore listener ready-only))
+                (push timeout timeouts)
+                (values-list (pop outcomes)))))
+       (lambda ()
+         (test-assert (eq (test-model-catalog--wait-for-input nil) ready-p)
+                      "The listener wait handles interruption followed by readiness or expiry.")
+         (test-assert (equal (reverse timeouts) '(5 3))
+                      "Interrupted waits use the remaining timeout without renewing it.")))))
   (with-test-configuration (configuration)
     (dolist (oversized '(nil t))
-      (let* ((body     "{\"p\":{\"models\":{\"public-model\":{\"id\":\"public-model\"}},\"metadata\":\"é\"}}")
-             (bytes    (babel:string-to-octets body :encoding :utf-8))
-             (listener (usocket:socket-listen "127.0.0.1" 0 :reuse-address t
-                                             :element-type                 '(unsigned-byte 8)))
-             (server nil) (server-error nil))
+      (let* ((body         "{\"p\":{\"models\":{\"public-model\":{\"id\":\"public-model\"}},\"metadata\":\"é\"}}")
+             (bytes        (babel:string-to-octets body :encoding :utf-8))
+             (listener     (usocket:socket-listen "127.0.0.1" 0 :reuse-address t
+                                                 :element-type                 '(unsigned-byte 8)))
+             (server       nil)
+             (server-error nil))
         (unwind-protect
              (progn
                (setf server
                      (bt:make-thread
                       (lambda ()
                         (handler-case
-                            (when (usocket:wait-for-input listener :timeout 5 :ready-only t)
+                            (when (test-model-catalog--wait-for-input listener)
                               (let* ((connection (usocket:socket-accept listener))
                                      (stream     (usocket:socket-stream connection))
                                      (text       (flexi-streams:make-flexi-stream stream :external-format :utf-8))
