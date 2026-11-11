@@ -3644,11 +3644,13 @@ transcript widgets and URLs do nothing."
 
 Modal pickers and other direct event readers take ownership here when they
 open, so the work that reached them, whether a slash command, a Lisp form, or
-an agent turn, never has to give up responsive input in advance. Without an
-installed owner the thunk simply runs."
-  (funcall (terminal-ui-exclusive-input-function ui)
-           (lambda ()
-             (terminal-ui-call-with-blocked-status ui status-kind function))))
+an agent turn, never has to give up responsive input in advance. Publish the
+blocked status before ownership changes, so a paused reader still shows why it
+waits. Without an installed owner the thunk simply runs."
+  (terminal-ui-call-with-blocked-status
+   ui status-kind
+   (lambda ()
+     (funcall (terminal-ui-exclusive-input-function ui) function))))
 
 (-> terminal-ui--safe-editor-event (t) t)
 (defun terminal-ui--safe-editor-event (event)
