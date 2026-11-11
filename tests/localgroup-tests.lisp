@@ -1849,3 +1849,71 @@
                             "a refused connection prunes the record")))
         (sb-bsd-sockets:socket-close listener))))
   nil)
+
+(-> localgroup-tests--probe-daemon-deadlines () null)
+(defun localgroup-tests--probe-daemon-deadlines ()
+  "Compare deadline, stream timeout and timer behavior on an unanswered socket."
+  (dolist (mode '(:deadline :stream-timeout :timer))
+    (let ((listener  (make-instance 'sb-bsd-sockets:inet-socket
+                                    :type ':stream :protocol ':tcp))
+          (socket    nil)
+          (stream    nil)
+          (thread    nil)
+          (condition nil)
+          (elapsed   nil)
+          (done      (sb-thread:make-semaphore)))
+      (unwind-protect
+           (progn
+             (sb-bsd-sockets:socket-bind
+              listener (sb-bsd-sockets:make-inet-address "127.0.0.1") 0)
+             (sb-bsd-sockets:socket-listen listener 4)
+             (format t "~&Daemon deadline probe ~S connecting.~%" mode)
+             (setf (values socket stream)
+                   (image-daemon::daemon-connect
+                    (nth-value 1 (sb-bsd-sockets:socket-name listener))))
+             (format t "~&Daemon deadline probe ~S connected.~%" mode)
+             (when (eq mode ':stream-timeout)
+               (setf (sb-impl::fd-stream-timeout stream) 0.2))
+             (setf thread
+                   (make-thread
+                    (lambda ()
+                      (let ((start                                         (get-internal-real-time))
+                            (image-daemon:*daemon-connect-timeout-seconds* 0.2))
+                        (unwind-protect
+                             (handler-case
+                                 (if (eq mode ':timer)
+                                     (sb-ext:with-timeout 0.2
+                                       (image-daemon:daemon-read-response stream ':status))
+                                     (image-daemon:daemon-read-response stream ':status))
+                               (serious-condition (failure)
+                                 (setf condition failure)))
+                          (setf elapsed (/ (- (get-internal-real-time) start)
+                                           internal-time-units-per-second))
+                          (sb-thread:signal-semaphore done))))
+                    :name "Daemon deadline probe"))
+             (let ((completed (sb-thread:wait-on-semaphore done :timeout 5)))
+               (unless completed
+                 (sb-bsd-sockets:socket-shutdown socket :direction ':io))
+               (join-thread thread)
+               (format t "~&Daemon deadline probe ~S result: ~S~%"
+                       mode (list :bounded-p (not (null completed))
+                                  :elapsed   elapsed
+                                  :condition (and condition (type-of condition))
+                                  :message   (and condition (princ-to-string condition))))
+               (test-assert completed
+                            (format nil "~S bounds an unanswered socket read" mode))))
+        (when socket (ignore-errors (sb-bsd-sockets:socket-shutdown socket :direction ':io)))
+        (when thread (join-thread thread))
+        (when stream (ignore-errors (close stream :abort t)))
+        (sb-bsd-sockets:socket-close listener))))
+  nil)
+
+(-> test-localgroup-windows32-native-probes () null)
+(defun test-localgroup-windows32-native-probes ()
+  "Compare native socket timeout mechanisms and stress exact XDG migration reads."
+  (localgroup-tests--probe-daemon-deadlines)
+  (dotimes (trial 300)
+    (when (zerop (mod trial 50))
+      (format t "~&Concurrent XDG native probe trial ~D.~%" (1+ trial)))
+    (test-xdg-file-migration-concurrent))
+  nil)
