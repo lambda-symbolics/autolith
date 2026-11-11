@@ -310,7 +310,8 @@ Source precedence, source recording, and value rejection belong to setinka."
                                              (config :state-root configuration)))
              (reader        (if preferences-p #'preferences-load-values #'provider--read-model-cache))
              (expected      (if preferences-p '(:future-key 7) '(:models :version 1)))
-             (threads       nil))
+             (threads       nil)
+             (warnings      (make-array 8 :initial-element nil)))
         (snapshot-write legacy (if preferences-p
                                    (preferences--plist->form expected)
                                    expected))
@@ -318,15 +319,28 @@ Source precedence, source recording, and value rejection belong to setinka."
          (make-pathname :type "lock" :defaults legacy)
          (lambda ()
            (setf threads
-                 (loop repeat 8
-                       collect (bt:make-thread
-                                (lambda ()
-                                  (handler-case (funcall reader configuration)
-                                    (error (condition) condition)))
-                                :name "XDG file migration reader")))))
-        (test-assert (every (lambda (result) (equal result expected))
-                            (mapcar #'bt:join-thread threads))
-                     "all competing readers get the same complete data")
+                 (loop for index below 8
+                       collect (let ((index index))
+                                 (bt:make-thread
+                                  (lambda ()
+                                    (handler-bind
+                                        ((warning
+                                           (lambda (condition)
+                                             (push (format nil "~S: ~A" (type-of condition) condition)
+                                                   (aref warnings index)))))
+                                      (handler-case (funcall reader configuration)
+                                        (error (condition) condition))))
+                                  :name "XDG file migration reader"))))))
+        (let ((results (mapcar #'bt:join-thread threads)))
+          (test-assert (every (lambda (result) (equal result expected)) results)
+                       (format nil "All eight ~S readers must return ~S; got ~S; warnings ~S"
+                               kind expected
+                               (mapcar (lambda (result)
+                                         (if (typep result 'condition)
+                                             (list (type-of result) (princ-to-string result))
+                                             result))
+                                       results)
+                               warnings)))
         (test-assert (not (probe-file legacy)) "only the new location exists after the move"))))
   nil)
 
