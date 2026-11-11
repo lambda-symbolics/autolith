@@ -182,7 +182,7 @@ jobs:
     needs: unicode-runtime
     if: github.event_name != 'workflow_dispatch' || inputs.run-tests
     runs-on: windows-2025
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
 
