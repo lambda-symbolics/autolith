@@ -20,7 +20,7 @@ git cl-colorist https://github.com/lambda-symbolics/cl-colorist.git :ref 90f17af
 git cl+ssl https://github.com/cl-plus-ssl/cl-plus-ssl.git :ref d7a92f9ed0cbae10f07b1b9a9c3c5cc179798748
 git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 32cabe46c00c4152b3b096f5f566fa9868e21cf0
 git clermaid https://github.com/lambda-symbolics/clermaid.git :ref 7a4497aff7514134dd69ab28b7d07c06335b7852
-git cl-jobpond https://github.com/lambda-symbolics/cl-jobpond.git :ref c82c2589cb2cd0ec571cf48c1b2f22ad15e8c283
+git cl-jobpond https://github.com/lambda-symbolics/cl-jobpond.git :ref 005b52f41a9127c77311ae5a7adcab827654e3b3
 git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 3b4af05627c024383cbd08c2c9adc27b300b8956
 git cl-rfc8252 https://github.com/lambda-symbolics/cl-rfc8252.git :ref e2bbd2374ec159f86123c046c020fce27fce2d99
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref 38d5b6ae81a24031ad6c95b4f42ba99f2cf0a6c3
@@ -31,8 +31,8 @@ git clasted https://github.com/lambda-symbolics/clasted.git :ref 669dbf5ef7c9d8b
 git daphne https://github.com/lambda-symbolics/daphne.git :ref 0727975d4c74a11be13b39ffe4a33aae74387848
 git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref 21a09a7b7195f6c0e1b36d843c518c5c7bee6ac0
 git cl-termdown https://github.com/lambda-symbolics/cl-termdown.git :ref bd528daa48d829db14d2964dc624a0defe41bfa0
-git cl-worktree https://github.com/lambda-symbolics/cl-worktree.git :ref 203c6eaab4cf74ccfaee110c692b62c2359979f9
-git cl-exec-sandbox https://github.com/lambda-symbolics/cl-exec-sandbox.git :ref 2eee22e33a4d4c6df6019e44ee7fe353454ce175
+git cl-worktree https://github.com/lambda-symbolics/cl-worktree.git :ref 473fa51cbfccbc4c37f16a1f4ef27ac51d8c3233
+git cl-exec-sandbox https://github.com/lambda-symbolics/cl-exec-sandbox.git :ref 95d15f2a97e4ff965fbd57e7ec30130b25421101
 git cl-hashline https://github.com/lambda-symbolics/cl-hashline.git :ref 582986f8ccbd0bd206dde022f9f65837ae82357c
 git clifff https://github.com/lambda-symbolics/clifff.git :ref 3abd4bbdf341023357b8ae94c9bb8651fa52d90d
 git colorlisp https://github.com/lambda-symbolics/colorlisp.git :ref b6fdb68ae22ab997bb818c486983129ec7ac6177
