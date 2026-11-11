@@ -1229,6 +1229,90 @@ nested workers and accepts only compact, content-free phase descriptions."))
   "Return the dotted or bare canonical name carried by function CALL."
   (cl-llm-provider-api:provider-call-canonical-name call))
 
+
+;;;; -- Argument Name Correction --
+
+;; Some tool-call training data spells parameter names with underscores even
+;; when the tool schema declares the hyphenated spelling, so a model can only
+;; emit "start_line" for a declared "start-line".  These helpers rewrite such
+;; names to the declared spelling before the argument diagnostic runs, so the
+;; call executes instead of being rejected.
+
+(-> tool--schema-branches (json-object) list)
+(defun tool--schema-branches (node)
+  "Return the oneOf and anyOf alternative schemas declared by NODE."
+  (let ((branches nil))
+    (dolist (key '("oneOf" "anyOf"))
+      (let ((alternatives (json-get node key)))
+        (when (vectorp alternatives)
+          (loop for branch across alternatives
+                do (push branch branches)))))
+    (nreverse branches)))
+
+(-> tool--schema-properties (json-object) list)
+(defun tool--schema-properties (schema)
+  "Return the properties declared at the object level of SCHEMA.
+
+Each element is a cons of the declared name and its subschema."
+  (let ((properties nil))
+    (labels ((collect (node)
+               (let ((declared (json-get node "properties")))
+                 (when (json-object-p declared)
+                   (maphash (lambda (name subschema)
+                              (push (cons name subschema) properties))
+                            declared)))
+               (dolist (branch (tool--schema-branches node))
+                 (collect branch))))
+      (when (json-object-p schema)
+        (collect schema)))
+    (nreverse properties)))
+
+(-> tool--corrected-value (json-object t) t)
+(defun tool--corrected-value (schema value)
+  "Return VALUE with underscore-spelled names corrected against SCHEMA."
+  (cond
+    ((and (json-object-p schema) (json-object-p value))
+     (tool--corrected-object (tool--schema-properties schema) value))
+    ((and (json-object-p schema) (vectorp value))
+     (let ((items (json-get schema "items")))
+       (if (json-object-p items)
+           (map 'simple-vector (lambda (element) (tool--corrected-value items element)) value)
+           value)))
+    (t
+     value)))
+
+(-> tool--corrected-object (list json-object) json-object)
+(defun tool--corrected-object (properties object)
+  "Return OBJECT with underscore-spelled names corrected against PROPERTIES.
+
+Each element of PROPERTIES is a cons of a declared name and its subschema.
+An underscore spelling is renamed only when the hyphenated spelling is
+declared and absent from OBJECT; when both spellings arrive, the declared
+one wins and the duplicate is dropped."
+  (let* ((result (json-object-copy object))
+         (keys   (loop for key being the hash-keys of object collect key)))
+    (dolist (key keys)
+      (unless (assoc key properties :test #'string=)
+        (let ((candidate (substitute #\- #\_ key)))
+          (when (and (not (string= candidate key))
+                     (assoc candidate properties :test #'string=))
+            (remhash key result)
+            (unless (nth-value 1 (gethash candidate object))
+              (setf (gethash candidate result) (gethash key object)))))))
+    (dolist (key (loop for key being the hash-keys of result collect key))
+      (let ((entry (assoc key properties :test #'string=)))
+        (when entry
+          (setf (gethash key result)
+                (tool--corrected-value (rest entry) (gethash key result))))))
+    result))
+
+(-> tool--corrected-arguments (json-object json-object) json-object)
+(defun tool--corrected-arguments (schema arguments)
+  "Return ARGUMENTS with underscore-spelled names corrected against SCHEMA."
+  (if (json-object-p arguments)
+      (tool--corrected-object (tool--schema-properties schema) arguments)
+      arguments))
+
 (-> tool--argument-problem (tool json-object) (option tool-result))
 (defun tool--argument-problem (tool arguments)
   "Project a provider argument diagnostic into a tool mechanics result."
@@ -1317,6 +1401,7 @@ signals with the candidate canonical names."
                        :message   (format nil "Arguments for ~A are not a JSON object."
                                           canonical-name)
                        :tool-name canonical-name))
+              (setf arguments (tool--corrected-arguments (tool-parameters tool) arguments))
               (let ((problem (tool--argument-problem tool arguments)))
                 (if problem
                     problem
