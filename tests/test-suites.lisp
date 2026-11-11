@@ -1444,6 +1444,7 @@
   test-localgroup-kill-exit-observation
   test-localgroup-kill-cli-outcomes
   test-localgroup-session-prefixes
+  test-localgroup-query-keeps-slow-endpoint
   test-localgroup-protocol
   test-localgroup-orphan-reconciliation
   test-localgroup-attachments)

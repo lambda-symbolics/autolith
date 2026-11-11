@@ -1409,6 +1409,8 @@
                     (error "Transport failed.")
                     (list reply :operation operation :session-id "abcdef012345"
                           :message "Rejected."))))
+        (list 'localgroup--record-stale-p
+              (lambda (record condition) (declare (ignore record condition)) nil))
         (list 'localgroup--remove-stale-record
               (lambda (path record) (declare (ignore path record)) nil))
         (list 'ls-compat.posix:process-state
@@ -1450,4 +1452,43 @@
              (setf reply response probes nil)
              (test-assert (invoke) "rejected or failed requests retain their failure path")
              (test-assert (null probes) "failed kill responses do not start exit observation")))))))
+  nil)
+
+(-> test-localgroup-query-keeps-slow-endpoint () null)
+(defun test-localgroup-query-keeps-slow-endpoint ()
+  "Test a late answer keeps an endpoint record while a refused connection prunes it."
+  (with-test-configuration (configuration)
+    (let* ((listener (make-instance 'sb-bsd-sockets:inet-socket
+                                    :type     ':stream
+                                    :protocol ':tcp))
+           (pathname (localgroup-registry-pathname configuration "slowendpoint"))
+           (record   nil))
+      (unwind-protect
+           (progn
+             (sb-bsd-sockets:socket-bind
+              listener (sb-bsd-sockets:make-inet-address "127.0.0.1") 0)
+             (sb-bsd-sockets:socket-listen listener 4)
+             (setf record (list :localgroup-endpoint
+                                :version    1
+                                :session-id "slowendpoint"
+                                :pid        (current-process-id)
+                                :address    "127.0.0.1"
+                                :port       (nth-value 1 (sb-bsd-sockets:socket-name listener))
+                                :token      "token"
+                                :created-at 1))
+             (ensure-directories-exist pathname)
+             (image-daemon:daemon-registry-publish pathname record)
+             (flet ((query-fails-p ()
+                      (let ((image-daemon:*daemon-connect-timeout-seconds* 0.2))
+                        (handler-case
+                            (progn (localgroup-query-record (cons pathname record) ':status) nil)
+                          (localgroup-error () t)))))
+               (test-assert (query-fails-p) "an endpoint that never answers fails the request")
+               (test-assert (probe-file pathname)
+                            "a live process that answers late keeps its record")
+               (sb-bsd-sockets:socket-close listener)
+               (test-assert (query-fails-p) "a refused connection fails the request")
+               (test-assert (null (probe-file pathname))
+                            "a refused connection prunes the record")))
+        (sb-bsd-sockets:socket-close listener))))
   nil)

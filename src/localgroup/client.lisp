@@ -23,6 +23,20 @@
   (image-daemon:daemon-registry-delete-matching pathname expected-record)
   nil)
 
+(-> localgroup--record-stale-p (list condition) boolean)
+(defun localgroup--record-stale-p (record condition)
+  "Return true when CONDITION, a failed request to RECORD's endpoint, shows RECORD is stale.
+
+The record is stale when its process is dead or nothing listens on its port.
+A slow answer means the process is alive, so its record stays."
+  (let ((pid (getf (rest record) :pid)))
+    (or (and (typep pid '(integer 1 *))
+             (eq (image-daemon:daemon-process-state pid) ':dead))
+        (and (typep condition 'image-daemon:daemon-error)
+             (eq (image-daemon:daemon-error-operation condition) ':connect)
+             (not (typep (image-daemon:daemon-error-cause condition)
+                         'sb-sys:deadline-timeout))))))
+
 (-> localgroup-query-record
     (cons keyword &optional list)
     list)
@@ -39,7 +53,8 @@
                 operation
                 :arguments arguments)
              (error (condition)
-               (localgroup--remove-stale-record pathname record)
+               (when (localgroup--record-stale-p record condition)
+                 (localgroup--remove-stale-record pathname record))
                (error 'localgroup-error
                        :message   (format nil "Localgroup session ~A is unavailable."
                                           (session-identifier-display
