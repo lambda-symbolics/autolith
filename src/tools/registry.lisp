@@ -1262,12 +1262,13 @@ nested workers and accepts only compact, content-free phase descriptions."))
       (let ((alternatives (json-get node key)))
         (when (vectorp alternatives)
           (loop for branch across alternatives
-                do (push branch branches)))))
+                when (json-object-p branch)
+                  do (push branch branches)))))
     (nreverse branches)))
 
 (-> tool--schema-properties (json-object) list)
 (defun tool--schema-properties (schema)
-  "Return the properties declared at the object level of SCHEMA.
+  "Return the properties declared by SCHEMA and its oneOf/anyOf branches.
 
 Each element is a cons of the declared name and its subschema."
   (let ((properties nil))
