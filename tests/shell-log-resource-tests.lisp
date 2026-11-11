@@ -1415,9 +1415,9 @@
                                "Pre-index rotated child evidence needs backfill before retention"))
                 (flet ((retain ()
                          (dolist (job (reverse jobs))
-                           (task--write-result-artifact job (list :status ':success :output "done")))
+                            (shell-log-tests--publish-result job (list :status ':success :output "done")))
                          (dotimes (index 3)
-                           (task--write-result-artifact (child (format nil "100Later~D" index))
+                            (shell-log-tests--publish-result (child (format nil "100Later~D" index))
                                                        (list :status ':success :output "later")))))
                   (if around-retention
                       (funcall around-retention configuration root #'retain)
@@ -1436,6 +1436,12 @@
         (task-orchestrator-close runtime))))
   nil)
 
+(-> shell-log-tests--publish-result (task-job list) pathname)
+(defun shell-log-tests--publish-result (job result)
+  "Publish a fixture result, then run the explicit artifact maintenance boundary."
+  (prog1 (task--write-result-artifact job result)
+    (task-maintain-result-artifacts job)))
+
 (-> test-shell-log-owner-retention () null)
 (defun test-shell-log-owner-retention ()
   "Keep synchronous and detached positive delivery authority after owner deletion."
@@ -1447,6 +1453,8 @@
                     "Delivered capture keeps pruning authority after normal owner retention"))
      (test-assert (not (shell-log-tests--disk-prunable configuration (third captures)))
                   "Missing owner alone never grants authority")))
+  (dolist (boundary '(:delivery :close))
+    (shell-log-tests--maintenance-boundary boundary))
   nil)
 
 (-> test-shell-log-owner-retention-pressure () null)
@@ -1503,6 +1511,55 @@
                (task-completion--receipt (getf (shell-log-artifact-metadata artifact) :execution-id)))
              (funcall function configuration runtime parent job owner artifact))
         (task-orchestrator-close runtime))))
+  nil)
+
+(-> shell-log-tests--maintenance-boundary (keyword) null)
+(defun shell-log-tests--maintenance-boundary (boundary)
+  "Reach artifact retention through delivery or disconnected runtime shutdown."
+  (shell-log-tests--owner-fixture
+   (lambda (configuration runtime parent owner-job owner artifact)
+     (declare (ignore owner))
+     (let ((*task-artifact-retention-limit* 1)
+           (registry                        (make-instance 'tool-registry)))
+       (tool-registry-bind-runtime registry 'task-orchestrator runtime)
+       (setf (slot-value parent 'tool-registry) registry)
+       (task--write-result-artifact owner-job (list :status ':success :output "owner"))
+       (labels ((retain-job (execution)
+                  (let ((job (task-tests--attach-job
+                              runtime
+                              (lambda (identifier index)
+                                (task-tests--make-job runtime :identifier identifier :index index
+                                                     :root-identifier "mark-root" :parent-agent parent)))))
+                    (setf (slot-value job 'execution-identifier) execution
+                          (slot-value job 'cl-jobpond::terminal-result-function)
+                          (lambda (job state result report)
+                            (declare (ignore job state report))
+                            result))
+                    (let ((path (task--write-result-artifact job (list :status ':success :output execution))))
+                      (task-tests--publish-terminal job ':completed
+                        (list :status ':success :output-path (namestring path))))
+                    (unless (task-tests--wait-until (lambda () (job-terminal-p job)) 10)
+                      (error "Native retained fixture did not publish."))
+                    job)))
+         (let ((visible (retain-job "050Visible"))
+               (latest  (retain-job "100Later")))
+           (test-assert (probe-file (task--artifact-root configuration owner-job))
+                        "Result publication does not run retention")
+           (test-assert (not (shell-log-tests--marked-p configuration artifact))
+                        "Publication alone does not transfer owner delivery authority")
+           (ecase boundary
+             (:delivery
+              (task-completion-deliver parent))
+             (:close
+              (test-assert (task-orchestrator-close runtime)
+                           "Disconnected runtime completes shutdown maintenance")))
+           (test-assert (not (probe-file (task--artifact-root configuration owner-job)))
+                        "Production maintenance removes an evicted owner")
+           (test-assert (shell-log-tests--marked-p configuration artifact)
+                        "Production maintenance persists delivery authority before deletion")
+           (dolist (job (list visible latest))
+             (test-assert (probe-file (task--artifact-root configuration job))
+                          "Every native-visible owner survives artifact pressure")))))))
   nil)
 
 (-> shell-log-tests--marked-p (configuration shell-log-artifact) boolean)
@@ -1579,7 +1636,7 @@
                                                  (:delete
                                                   'platform-delete-directory-tree))))
          (setf (slot-value later 'execution-identifier) "100Later")
-         (task--write-result-artifact job (list :status :success :output "owner done"))
+         (shell-log-tests--publish-result job (list :status ':success :output "owner done"))
          (test-call-with-function-replacements
           (list (list 'task--artifact-record< #'shell-log-tests--ordered-artifacts)
                 (list target
@@ -1600,7 +1657,7 @@
                       (t
                        (error "Injected pre-delete ~A failure." failure))))))
           (lambda ()
-            (task--write-result-artifact later (list :status :success :output "later done"))))
+             (shell-log-tests--publish-result later (list :status ':success :output "later done"))))
          (test-assert (probe-file owner-root) "Failed handoff must retain the last durable owner receipt")
          (test-assert (shell-log-tests--disk-prunable configuration artifact)
                       "Failure never destroys existing positive delivery authority")
@@ -1611,7 +1668,7 @@
            (setf (slot-value retry 'execution-identifier) "200Retry")
            (test-call-with-function-replacements
             (list (list 'task--artifact-record< #'shell-log-tests--ordered-artifacts))
-            (lambda () (task--write-result-artifact retry (list :status :success :output "retry")))))
+            (lambda () (shell-log-tests--publish-result retry (list :status ':success :output "retry")))))
          (test-assert (not (probe-file owner-root)) "A later publication retries and completes retention")
          (test-assert (shell-log-tests--marked-p configuration artifact)
                       "Successful retry preserves authority outside the deleted owner")))))
@@ -1664,13 +1721,13 @@
                  (shell-log-persist-owner-delivery configuration "boundary-root" owner)
                  (test-assert (shell-log-tests--marked-p configuration capture)
                               "Exact durable child or nested-child receipt grants authority")
-                 (task--write-result-artifact job (list :status :success :output "nested done"))
+                 (shell-log-tests--publish-result job (list :status ':success :output "nested done"))
                  (setf parent (make-instance 'task-child-agent :configuration configuration
                                             :conversation conversation :job job :depth (1+ depth)))))
              ;; A root-parented publication makes both old children eligible, even the ancestor.
              (let ((later (task-tests--make-job runtime :identifier "later" :root-identifier "boundary-root"
                             :parent-agent root-agent)))
-               (task--write-result-artifact later (list :status :success :output "later done")))
+                (shell-log-tests--publish-result later (list :status ':success :output "later done")))
              (test-assert (= 1 (length (task--completed-artifact-records
                                         (task--artifact-group-root configuration "boundary-root"))))
                           "Real retention can evict nested owners after marking"))
@@ -1803,7 +1860,7 @@
             (failures                        nil)
             (failure-lock                    (make-lock "retention fixture failures")))
        (setf (slot-value later 'execution-identifier) "100Later")
-       (task--write-result-artifact job (list :status :success :output "done"))
+       (shell-log-tests--publish-result job (list :status ':success :output "done"))
        (test-call-with-function-replacements
         (list (list 'task--artifact-record< #'shell-log-tests--ordered-artifacts)
               (list 'shell-log--write-manifest
@@ -1828,7 +1885,7 @@
                             :name "owner retention fixture") threads)))
             (unwind-protect
                  (progn
-                   (start (lambda () (task--write-result-artifact later
+                    (start (lambda () (shell-log-tests--publish-result later
                                        (list :status :success :output "later"))))
                    (unless (sb-thread:wait-on-semaphore entered :timeout 10)
                      (error "Retention did not reach mark publication."))
