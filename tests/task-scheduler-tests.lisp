@@ -2181,13 +2181,15 @@ pool must reject the cancelled parent without creating a descendant."
               (and (null parent-accepted-p)
                    (equal descendants (list descendant-id)))
               "cancelling a terminal parent still cancels its live descendants"))
+           (test-assert (nth-value 1 (task-job-await descendant 5))
+                        "the cancelled descendant finishes terminal publication")
            (test-assert
             (and (eq (job-state parent) :completed)
                  (eq (job-state descendant) :aborted)
                  (eq (job-state unrelated) :queued)
                  (null (job-cancellation-reason unrelated)))
             "terminal-parent cancellation preserves parent and unrelated states")
-           (let ((event-count (length events))
+           (let ((event-count (with-lock-held (event-lock) (length events)))
                  (terminal-count
                    (length (cl-jobpond::job-pool--terminal-identifiers
                             (task-orchestrator-pool orchestrator)))))
@@ -2196,7 +2198,7 @@ pool must reject the cancelled parent without creating a descendant."
                (test-assert
                 (and (null parent-accepted-p)
                      (null descendants)
-                     (= (length events) event-count)
+                     (= (with-lock-held (event-lock) (length events)) event-count)
                      (= (length
                          (cl-jobpond::job-pool--terminal-identifiers (task-orchestrator-pool orchestrator)))
                         terminal-count))

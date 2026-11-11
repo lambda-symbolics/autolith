@@ -964,6 +964,8 @@
               (tool-registry-bind-runtime (application-tool-registry application) 'task-orchestrator orchestrator)
               (let ((job (first (task-orchestrator-start-jobs orchestrator (application-agent application) (list entry)))))
                 (application-mission-stop application ':cancelled "Operator cancelled queued work")
+                (test-assert (nth-value 1 (task-job-await job 5))
+                             "queued mission cancellation finishes publication")
                 (test-assert (job-terminal-p job) "explicit mission cancellation publishes queued child termination"))))
         (task-orchestrator-close orchestrator)))))
 
