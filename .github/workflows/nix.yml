@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - master
+    tags:
+      - "v*.*.*"
   pull_request:
   workflow_dispatch:
 
@@ -61,6 +63,16 @@ jobs:
 
       - name: Build package
         run: nix build .#autolith --no-update-lock-file --print-build-logs
+
+      - name: Pin the package in the Cachix cache
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_path=$(nix path-info .#autolith)
+          cachix push symbolics "$package_path"
+          cachix pin symbolics "autolith-${{ runner.os }}-${{ matrix.architecture }}" \
+            "$package_path" --keep-revisions 2
 
       - name: Smoke-test first run
         shell: bash
