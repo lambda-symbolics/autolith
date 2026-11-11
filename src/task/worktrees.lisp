@@ -91,6 +91,8 @@ without changing the host environment."
 (defun task-worktree--runner (configuration authorize &key writable-roots cancel-function)
   "Return a cancellation-aware argv runner using the ordinary command policy."
   (lambda (argv &key directory input)
+    (task-worktree--require-settled (config :working-directory configuration))
+    (task-worktree--require-settled directory)
     (when (and cancel-function (funcall cancel-function))
       (task-worktree--error "Worktree operation cancelled." :code ':cancelled))
     (let* ((directory (uiop:ensure-directory-pathname directory))
@@ -99,25 +101,30 @@ without changing the host environment."
       (unless (member decision '(:sandboxed :full-access))
         (task-worktree--error "Worktree Git command was denied." :code ':authority))
       (labels ((run (policy environment)
-                 (let ((result
-                         (run-sandboxed
-                          (first argv) (rest argv) :policy policy
-                          :working-directory directory :input (and input (make-string-input-stream input))
-                          :environment                     (task-worktree--environment :overrides environment)
-                          :clear-environment-p t :timeout *task-worktree-command-timeout*
-                          :cancel-function                 cancel-function
-                          :output-limit                    (if (member "diff" argv :test #'equal)
-                                                               *task-worktree-artifact-limit* 65536)
-                          :error-output-limit              65536)))
-                   (when (eq (cl-exec-sandbox:sandbox-result-status result) ':cancelled)
-                     (task-worktree--error "Worktree Git command cancelled." :code ':cancelled))
-                   (when (or (sandbox-result-timed-out-p result)
-                             (sandbox-result-output-truncated-p result)
-                             (cl-exec-sandbox:sandbox-result-error-output-truncated-p result))
-                     (task-worktree--error "Git command timed out or exceeded the artifact capture limit."))
-                   (values (sandbox-result-output result)
-                           (cl-exec-sandbox:sandbox-result-error-output result)
-                           (sandbox-result-exit-code result)))))
+                 (handler-bind
+                     ((cl-exec-sandbox:sandbox-process-cleanup-error
+                        (lambda (condition)
+                          (task-worktree--retain-cleanup
+                           condition (config :working-directory configuration)))))
+                  (let ((result
+                          (run-sandboxed
+                           (first argv) (rest argv) :policy policy
+                           :working-directory directory :input (and input (make-string-input-stream input))
+                           :environment                     (task-worktree--environment :overrides environment)
+                           :clear-environment-p t :timeout *task-worktree-command-timeout*
+                           :cancel-function                 cancel-function
+                           :output-limit                    (if (member "diff" argv :test #'equal)
+                                                                *task-worktree-artifact-limit* 65536)
+                           :error-output-limit              65536)))
+                    (when (eq (cl-exec-sandbox:sandbox-result-status result) ':cancelled)
+                      (task-worktree--error "Worktree Git command cancelled." :code ':cancelled))
+                    (when (or (sandbox-result-timed-out-p result)
+                              (sandbox-result-output-truncated-p result)
+                              (cl-exec-sandbox:sandbox-result-error-output-truncated-p result))
+                      (task-worktree--error "Git command timed out or exceeded the artifact capture limit."))
+                    (values (sandbox-result-output result)
+                            (cl-exec-sandbox:sandbox-result-error-output result)
+                           (sandbox-result-exit-code result))))))
         (ecase decision
           (:full-access
            (run (external-sandbox-policy) nil))
@@ -216,45 +223,141 @@ without changing the host environment."
         :artifact-kind kind :metadata-path metadata-path
         :setup-state (cl-worktree:worktree-state handle)))
 
+(defvar *task-worktree-cleanup-job* nil
+  "Task owning the Git command currently being executed.")
+
+(defvar *task-worktree-cleanups* nil
+  "Native Git cleanup ownership retained beyond task terminal publication.")
+
+(defvar *task-worktree-cleanup-lock* (make-lock "Autolith Git cleanup ownership")
+  "Protect retained Git cleanup records independently of the lifecycle lock.")
+
+(-> task-worktree--retain-cleanup
+    (cl-exec-sandbox:sandbox-process-cleanup-error pathname) null)
+(defun task-worktree--retain-cleanup (condition source)
+  "Accept native ownership before the Git caller unwinds."
+  (sb-sys:without-interrupts
+    (with-lock-held (*task-worktree-cleanup-lock*)
+      (push (list :job       *task-worktree-cleanup-job*
+                  :source    (pathname
+                              (or (and *task-worktree-cleanup-job*
+                                       (getf (getf (task-job-item *task-worktree-cleanup-job*) :worktree)
+                                             :source))
+                                  source))
+                  :condition condition
+                  :thread    (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-thread condition)
+                  :reaped-p
+                  (and (null (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-thread condition))
+                       (not (cl-exec-sandbox:sandbox-process-cleanup-error-alive-p condition))))
+            *task-worktree-cleanups*)))
+  nil)
+
+(-> task-worktree--cleanup-pending-p (list) boolean)
+(defun task-worktree--cleanup-pending-p (record)
+  "Retry missing native ownership and retire only proven reaping and stopped readers."
+  (let* ((condition (getf record :condition))
+         (retry     (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-retry condition))
+         (owner     (getf record :thread)))
+    (unless (or owner (getf record :reaped-p))
+      (when retry
+        (handler-case (setf owner (funcall retry) (getf record :thread) owner)
+          (error () nil))))
+    (when (and owner (not (thread-alive-p owner)))
+      (setf (getf record :reaped-p)
+            (handler-case (not (null (join-thread owner))) (error () nil))
+            (getf record :thread) nil))
+    (not (and (getf record :reaped-p)
+              (notany #'thread-alive-p
+                      (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-readers condition))))))
+
+(-> task-worktree-cleanup-snapshot (&key (:job (option task-job)) (:source t)) list)
+(defun task-worktree-cleanup-snapshot (&key job source)
+  "Return portable native cleanup ownership without waiting for any live thread."
+  (with-lock-held (*task-worktree-cleanup-lock*)
+    (setf *task-worktree-cleanups*
+          (delete-if-not #'task-worktree--cleanup-pending-p *task-worktree-cleanups*))
+    (loop for record in *task-worktree-cleanups*
+          for condition = (getf record :condition)
+          when (and (or (null job) (eq job (getf record :job)))
+                    (or (null source)
+                        (equal (handler-case
+                                   (uiop:ensure-directory-pathname (platform-truename *platform* source))
+                                 (error () (uiop:ensure-directory-pathname source)))
+                               (handler-case
+                                   (uiop:ensure-directory-pathname
+                                    (platform-truename *platform* (getf record :source)))
+                                 (error () (uiop:ensure-directory-pathname (getf record :source)))))))
+            collect
+            (list :source    (namestring (getf record :source))
+                  :condition (princ-to-string condition)
+                  :cleanup-thread
+                  (when (getf record :thread)
+                    (bordeaux-threads:thread-name (getf record :thread)))
+                  :cleanup-thread-alive-p
+                  (not (null (and (getf record :thread) (thread-alive-p (getf record :thread)))))
+                  :cleanup-retry-p
+                  (not (null (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-retry condition)))
+                  :cleanup-readers-alive
+                  (count-if #'thread-alive-p
+                            (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-readers condition))
+                  :cleanup-readers
+                  (loop for reader in
+                        (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-readers condition)
+                        collect (list :name    (bordeaux-threads:thread-name reader)
+                                      :alive-p (not (null (thread-alive-p reader)))))
+                  :cleanup-errors
+                  (mapcar #'princ-to-string
+                          (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-errors condition))))))
+
+(-> task-worktree--require-settled (t) null)
+(defun task-worktree--require-settled (source)
+  "Refuse Git recovery or deletion while an earlier native owner can still write."
+  (when (task-worktree-cleanup-snapshot :source source)
+    (task-worktree--error "Git cleanup is pending; inspect the task before retrying."
+                          :code ':cleanup-pending))
+  nil)
+
 (-> task-worktree-configuration (task-job configuration) configuration)
 (defun task-worktree-configuration (job configuration)
   "Create JOB's requested detached workspace before opening its child session.
 Registry records survive cancellation between Git creation and metadata publication.
 The source is never reset or stashed, and child cleanup is always explicit."
   (let ((policy (getf (task-job-item job) :isolation)))
-    (unless policy (return-from task-worktree-configuration configuration))
-    (with-lock-held (*task-worktree-lock*)
-      (let* ((source        (config :working-directory configuration))
-             (owner         (task-worktree--owner job))
-             (path          (merge-pathnames
-                             (format nil "task-worktrees/checkouts/~A/workspace/"
-                                     (task-job-execution-identifier job))
-                             (config :data-root configuration)))
-             (container     (uiop:pathname-parent-directory-pathname path))
-             (metadata-path (merge-pathnames "worktree.sexp" (task--artifact-root configuration job)))
-             (manager       (task-worktree--manager
-                             configuration (task-job-command-authorization-function job)
-                             :cancel-function (lambda () (job-cancellation-requested-p job))
-                             :writable-roots  (cons container (task-worktree--git-admin-roots source)))))
-        (ensure-directories-exist (merge-pathnames "probe" container))
-        (labels ((publish (handle)
-                   ;; Only transfer durable ownership with interrupts suppressed.
-                   ;; All Git commands and checkout work run with interrupts enabled.
-                   (sb-sys:without-interrupts
-                     (let ((metadata (task-worktree--metadata handle (getf policy :artifact-kind)
-                                                             (namestring metadata-path))))
-                       (setf (getf (task-job-item job) :worktree) metadata)
-                       (snapshot-write metadata-path metadata)))))
-          (let ((handle (cl-worktree:create-worktree
-                         manager :source source :path path :owner owner
-                         :baseline (getf policy :baseline) :dirty-policy (getf policy :dirty-policy)
-                         :reserved-function #'publish)))
-            (publish handle)
-            (configuration-copy configuration :working-directory (cl-worktree:worktree-path handle))))))))
+    (let ((*task-worktree-cleanup-job* job))
+     (unless policy (return-from task-worktree-configuration configuration))
+     (with-lock-held (*task-worktree-lock*)
+       (let* ((source        (config :working-directory configuration))
+              (owner         (task-worktree--owner job))
+              (path          (merge-pathnames
+                              (format nil "task-worktrees/checkouts/~A/workspace/"
+                                      (task-job-execution-identifier job))
+                              (config :data-root configuration)))
+              (container     (uiop:pathname-parent-directory-pathname path))
+              (metadata-path (merge-pathnames "worktree.sexp" (task--artifact-root configuration job)))
+              (manager       (task-worktree--manager
+                              configuration (task-job-command-authorization-function job)
+                              :cancel-function (lambda () (job-cancellation-requested-p job))
+                              :writable-roots  (cons container (task-worktree--git-admin-roots source)))))
+         (ensure-directories-exist (merge-pathnames "probe" container))
+         (labels ((publish (handle)
+                    ;; Only transfer durable ownership with interrupts suppressed.
+                    ;; All Git commands and checkout work run with interrupts enabled.
+                    (sb-sys:without-interrupts
+                      (let ((metadata (task-worktree--metadata handle (getf policy :artifact-kind)
+                                                              (namestring metadata-path))))
+                        (setf (getf (task-job-item job) :worktree) metadata)
+                        (snapshot-write metadata-path metadata)))))
+           (let ((handle (cl-worktree:create-worktree
+                          manager :source source :path path :owner owner
+                          :baseline (getf policy :baseline) :dirty-policy (getf policy :dirty-policy)
+                          :reserved-function #'publish)))
+             (publish handle)
+             (configuration-copy configuration :working-directory (cl-worktree:worktree-path handle)))))))))
 
 (-> task-worktree--find-handle (cl-worktree:manager list) cl-worktree:worktree)
 (defun task-worktree--find-handle (manager metadata)
   "Recover a matching owned handle and verify all retained identity fields."
+  (task-worktree--require-settled (getf metadata :source))
   (let ((handles (multiple-value-list
                   (cl-worktree:discover-worktrees manager :owner (getf metadata :owner)
                                                  :source         (getf metadata :source)))))
@@ -446,6 +549,10 @@ waiting for Git or the lifecycle lock during terminal publication."
                                           (pathname (getf metadata :path))))
                                    (task-worktree--git-admin-roots (pathname (getf metadata :source)))))))
                    (cond
+                     ((and (equal action "inspect")
+                           (task-worktree-cleanup-snapshot :source (getf metadata :source)))
+                      (list :identity metadata :artifact-state ':pending
+                            :cleanup (task-worktree-cleanup-snapshot :source (getf metadata :source))))
                      ((equal action "cleanup")
                       (list :removed
                             (cl-worktree:cleanup-worktree

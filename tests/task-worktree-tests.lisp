@@ -597,3 +597,104 @@
                                      (json-object "action" "cleanup" "id" identifier))
            (test-assert (not (probe-file path)) "Sandboxed cleanup removes only the owned checkout."))))))
   nil)
+
+(-> test-task-worktree-native-cleanup-ownership () null)
+(defun test-task-worktree-native-cleanup-ownership ()
+  "Keep cancelled Git cleanup inspectable and exclude recovery until all owners stop."
+  (dolist (mode '(:native :retry :readers))
+    (task-worktree-tests--fixture
+     (lambda (configuration source parent job tool context)
+       (let* ((entered (sb-thread:make-semaphore))
+              (release (sb-thread:make-semaphore))
+              (owner   (make-thread
+                        (lambda ()
+                          (sb-sys:without-interrupts
+                            (sb-thread:wait-on-semaphore release))
+                          t)
+                        :name "held Git cleanup owner"))
+              (condition
+                (make-condition
+                 'cl-exec-sandbox:sandbox-process-cleanup-error
+                 :message "Held native cleanup" :command '("git" "worktree" "add")
+                 :process nil :alive-p (not (eq mode ':readers)) :termination-timeout 0.01
+                 :cleanup-thread  (when (eq mode ':native) owner)
+                 :cleanup-retry   (lambda () (unless (eq mode ':readers) owner))
+                 :cleanup-readers (when (eq mode ':readers) (list owner))))
+              (runner  (fdefinition 'run-sandboxed))
+              (setup   nil)
+              (outcome nil))
+         (unwind-protect
+              (progn
+                (setf (fdefinition 'run-sandboxed)
+                      (lambda (program arguments &rest options)
+                        (multiple-value-prog1 (apply runner program arguments options)
+                          (when (and (member "worktree" arguments :test #'equal)
+                                     (member "add" arguments :test #'equal))
+                            (sb-thread:signal-semaphore entered)
+                            (handler-case
+                                (loop (sleep 0.01))
+                              (job-aborted () (error condition)))))))
+                (setf setup
+                      (make-thread
+                       (lambda ()
+                         (setf outcome
+                               (handler-case (task-worktree-configuration job configuration)
+                                (error (caught) caught))))
+                       :name "cancelled Git setup"))
+                (test-assert (sb-thread:wait-on-semaphore entered :timeout 30)
+                             "Git add completed while its native cleanup owner is held.")
+                (sb-thread:interrupt-thread
+                 setup (lambda ()
+                         (error 'job-aborted :identifier (job-identifier job)
+                                            :reason ':test-cancel :message "Cancel Git setup.")))
+                (sb-thread:join-thread setup :timeout 2 :default nil)
+                (test-assert (typep outcome 'cl-worktree:worktree-error)
+                             "The setup caller unwinds promptly through the Git library boundary.")
+                (setf (fdefinition 'run-sandboxed) runner)
+                (let* ((result     (task-worktree-tests--publish job ':aborted))
+                       (metadata   (getf result :worktree))
+                       (identifier (task-job-execution-identifier job))
+                       (record     (pathname (getf metadata :metadata-path))))
+                  (test-assert (eq ':pending (getf result :worktree-artifact-state))
+                               "Cancellation publishes a pending artifact before native cleanup settles.")
+                  (test-assert
+                   (getf (session-job-native-record job (task-job-snapshot job) parent) :cleanup-worktree)
+                   "Task inspection retains native thread, retry and capture ownership.")
+                  (test-assert
+                   (getf (task-worktree-tests--call
+                          tool context (json-object "action" "inspect" "id" identifier)) :cleanup)
+                   "Worktree inspection works before an artifact exists.")
+                  (dolist (action '("extract" "cleanup"))
+                    (test-assert
+                     (handler-case
+                         (progn (task-worktree-tests--call
+                                 tool context (json-object "action" action "id" identifier
+                                                           "discardDirty" t))
+                                nil)
+                       (task-worktree-error () t))
+                     "Recovery and explicit cleanup refuse to race the held Git owner."))
+                  (test-assert
+                   (handler-case
+                       (progn (task-worktree-discard configuration identifier :pathname record) nil)
+                     (task-worktree-error () t))
+                   "Child discard cannot delete a checkout with pending native ownership.")
+                  (test-assert (probe-file (getf metadata :path)) "Refusal preserves the checkout.")
+                  (sb-thread:signal-semaphore release)
+                  (join-thread owner)
+                  (test-assert (null (getf (task-job-snapshot job) :cleanup-worktree))
+                               "Inspection retires cleanup only after native and capture owners settle.")
+                  (task-worktree-tests--call tool context
+                                            (json-object "action" "extract" "id" identifier))
+                  (test-assert (task-worktree--read-artifact metadata)
+                               "Extraction succeeds after the held owner exits.")
+                  (task-worktree-discard configuration identifier :pathname record)
+                  (test-assert (not (probe-file (getf metadata :path)))
+                               "Discard succeeds after cleanup settles.")
+                  (test-assert (probe-file (merge-pathnames "file" source))
+                               "Discard preserves the source repository.")))
+           (setf (fdefinition 'run-sandboxed) runner)
+           (sb-thread:signal-semaphore release)
+           (when setup (sb-thread:join-thread setup :timeout 5 :default nil))
+           (when (thread-alive-p owner) (join-thread owner))
+           (task-worktree-cleanup-snapshot))))))
+  nil)
