@@ -418,7 +418,9 @@
              (not (skill-logical-turn-active-p))
             "logical-turn selection is dynamically scoped")
            (context-runtime-reset)
-           (let* ((delivery
+           (let* ((*system-prompt-session-date*
+                    (cons (current-process-id) "2000-01-01"))
+                  (delivery
                     (context-resolve-request
                      configuration
                      conversation
@@ -428,8 +430,16 @@
                      (context-delivery-contributions delivery)))
                   (status (context-status conversation)))
               (test-assert
-               (equal identifiers '("session-state" "skill-catalog"))
-               "ordinary context includes session state and the native catalog")
+               (every (lambda (identifier)
+                        (member identifier identifiers :test #'string=))
+                      '("session-state" "date-change" "skill-catalog"))
+               (format nil "ordinary context includes session state, date rollover, and the native catalog: ~S~%~A"
+                       identifiers status))
+              (test-assert
+               (notany (lambda (identifier)
+                         (member identifier identifiers :test #'string=))
+                       '("skill-selected-alpha" "skill-selected-beta"))
+               "selected skill instructions expire with the logical turn")
              (test-assert
               (search "skill-catalog" status)
               "/context makes the skill catalog contribution observable"))
