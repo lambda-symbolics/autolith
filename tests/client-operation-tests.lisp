@@ -114,6 +114,7 @@
                                    (eq ':ask (application-permission-mode application))
                                    (eq ':ask (config :permission-mode (application-configuration application))))
                               "safe-boundary execution preserves command ordering and persistence")
+                 (idle)
                  (let ((result (invoke "permissions" "auto")))
                    (test-assert (and (stringp (gethash "text" result))
                                      (not (nth-value 1 (gethash "delivery" result)))
