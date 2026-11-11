@@ -14,6 +14,15 @@
     };
   };
 
+  nixConfig = {
+    extra-substituters = [
+      "https://symbolics.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "symbolics.cachix.org-1:Wdgpxequ4fzP4FAckIf4MqMG9OpNxWz6CttNwiGf4AI="
+    ];
+  };
+
   outputs = inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
