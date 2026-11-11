@@ -748,9 +748,10 @@
 
 (-> test-provider-request () null)
 (defun test-provider-request ()
-  "Test the standard Codex Responses request shape without network access."
-  (let* ((base-configuration (test-configuration))
-         (root               (test-configuration-root base-configuration))
+  "Test the standard Codex Responses request shape after a date rollover."
+  (let* ((*system-prompt-session-date* (cons (current-process-id) "2000-01-01"))
+         (base-configuration           (test-configuration))
+         (root                         (test-configuration-root base-configuration))
          (configuration
            (configuration-copy base-configuration
                                  :working-directory root
@@ -807,12 +808,16 @@
                         "requests omit the output ceiling when none is bound")
            (let ((input (json-get request "input")))
              (test-assert
-              (and (= (length input) 2)
+              (and (> (length input) 1)
                    (string= (json-get (aref input 0) "role") "user")
-                   (string= (json-get (aref input 1) "role") "developer")
-                   (search "Current workspace agenda"
-                           (context--message-text (aref input 1))))
-              "standard Responses input ends with mutable request context"))
+                   (every (lambda (item)
+                            (string= (json-get item "role") "developer"))
+                          (subseq input 1))
+                   (some (lambda (item)
+                           (search "Current workspace agenda"
+                                   (context--message-text item)))
+                         (subseq input 1)))
+              "standard Responses input delivers mutable context after user history"))
            (test-assert
             (non-empty-string-p (json-get request "instructions"))
             "standard Responses uses top-level stable instructions")
@@ -822,11 +827,17 @@
                      provider conversation schemas :goal-context goal-text))
                   (goal-input (json-get goal-request "input")))
              (test-assert
-              (and (= (length goal-input) 3)
+              (and (> (length goal-input) 2)
+                   (string= (json-get (aref goal-input 0) "role") "user")
+                   (every (lambda (item)
+                            (string= (json-get item "role") "developer"))
+                          (subseq goal-input 1))
                    (search goal-text
                            (context--message-text (aref goal-input 1)))
-                   (search "Current workspace agenda"
-                           (context--message-text (aref goal-input 2))))
+                   (some (lambda (item)
+                           (search "Current workspace agenda"
+                                   (context--message-text item)))
+                         (subseq goal-input 2)))
               "goal and mutable context follow durable conversation input")
              (test-assert
               (not (search goal-text (json-get goal-request "instructions")))
@@ -846,9 +857,9 @@
                        (json-get mutated-request "instructions"))
               "an agenda mutation preserves byte-identical stable instructions")
              (test-assert
-              (search "cache-prefix mutation"
-                      (context--message-text
-                       (aref mutated-input (1- (length mutated-input)))))
+              (some (lambda (item)
+                      (search "cache-prefix mutation" (context--message-text item)))
+                    (subseq mutated-input 1))
               "an agenda mutation appears in trailing request context"))
            (test-assert
             (null (provider-web-search-tool configuration))
