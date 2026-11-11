@@ -383,7 +383,9 @@ identifier is what an agent uses to refer to its own children."
           (task-closed-p
             (job-pool-close (task-orchestrator-pool orchestrator))))
       (task-completion-close orchestrator)
-      (and execution-closed-p task-closed-p))))
+      (when (and execution-closed-p task-closed-p)
+        (task-orchestrator-maintain-artifacts orchestrator)
+        t))))
 
 (-> task-orchestrator-detach (task-orchestrator) null)
 (defun task-orchestrator-detach (orchestrator)
