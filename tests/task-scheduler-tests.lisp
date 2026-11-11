@@ -506,12 +506,10 @@
 
 (-> test-task-admission-cancellation-barrier () null)
 (defun test-task-admission-cancellation-barrier ()
-  "Test that a child admitted after a cascade scanned is still stopped.
+  "Refuse admission racing cancellation at the shared ownership boundary.
 
-Admission no longer holds the parent's lifecycle lock, so a child can be admitted
-after a cascading cancellation has already walked the subtree. What closes that
-window is the ancestry check a child makes before it runs, and this exercises
-exactly that race."
+Pause after Autolith's courtesy check, then cancel before pool admission. The
+pool must reject the cancelled parent without creating a descendant."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (definition
@@ -597,38 +595,23 @@ exactly that race."
                      (test-assert
                       (and cancel-accepted-p
                            (null cancelled-descendants)
-                           (eq (job-state parent) :aborted))
-                      "cancellation completes its subtree scan before admission")
+                           (job-cancellation-requested-p parent))
+                      "cancellation marks the parent before admission resumes")
                      (with-lock-held (pause-lock)
                        (setf release-admission-p t)
                        (task--condition-broadcast pause-condition))
                      (join-thread admission-thread)
                      (setf admission-thread nil)
-                     (let ((child (first admitted)))
-                       (test-assert
-                        (and (null admission-failure)
-                             (= (length admitted) 1)
-                             (member
-                              (job-identifier parent)
-                              (job-owner-identifiers child)
-                              :test #'string=))
-                        "a child can be admitted after the cascade has scanned")
-                       (test-assert
-                        (task-tests--wait-until
-                         (lambda () (job-terminal-p child))
-                         5)
-                        "a child admitted after the cascade still terminalizes")
-                       (test-assert
-                        (and (eq (job-state child) :aborted)
-                             (search "with its parent"
-                                     (or (getf (job-result child) :error) "")))
-                        "its cancelled ancestor stops it before it does any work")
-                       (test-assert
-                        (task-tests--wait-until
-                         (lambda ()
+                     (test-assert
+                      (and (typep admission-failure 'cl-jobpond:job-aborted)
+                           (null admitted))
+                      "pool admission refuses a parent cancelled after the courtesy check")
+                     (test-assert
+                      (and (nth-value 1 (job-await parent :timeout-seconds 2))
+                           (eq (job-state parent) ':aborted)
+                           (= (length (task-orchestrator-list-jobs orchestrator)) 1)
                            (zerop (task-orchestrator-live-count orchestrator)))
-                         5)
-                        "the raced admission leaks no live capacity"))))
+                      "the refused admission creates no child or live capacity")))
                (with-lock-held (pause-lock)
                  (setf release-admission-p t)
                  (task--condition-broadcast pause-condition))
@@ -661,7 +644,8 @@ exactly that race."
                   t))
               "admission loses atomically when parent cancellation wins")
              (test-assert
-              (and (= (hash-table-count
+              (and (nth-value 1 (job-await parent :timeout-seconds 2))
+                   (= (hash-table-count
                        (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator)))
                       1)
                    (zerop (task-orchestrator-live-count orchestrator))
@@ -3240,6 +3224,8 @@ exactly that race."
                                       :name "test capture cleanup owner"))
            (execution                nil)
            (publication-observations nil)
+           (publication-condition    (make-condition-variable))
+           (release-publication-p    nil)
            (prune-count              0)
            (retry-count              0)
            (terminal-function        (symbol-function 'task-job--terminal-record)))
@@ -3275,13 +3261,36 @@ exactly that race."
                        (incf prune-count)))
                (list 'task-job--terminal-record
                      (lambda (job &rest arguments)
-                       (push (job-cancellation-requested-p execution) publication-observations)
+                       (with-lock-held (lock)
+                         (push (job-cancellation-requested-p execution) publication-observations)
+                         (task--condition-broadcast publication-condition)
+                         (loop until release-publication-p
+                               do (condition-wait publication-condition lock)))
                        (apply terminal-function job arguments))))
-              (lambda () (task-job-cancel parent ':test-cancel)))
-             (test-assert
-              (and (job-terminal-p parent) (job-terminal-p queued)
-                   publication-observations (every #'identity publication-observations))
-              "both pools receive cancellation before any queued task publication")
+              (lambda ()
+                (unwind-protect
+                     (progn
+                       (task-job-cancel parent ':test-cancel)
+                       (with-lock-held (lock)
+                         (loop until publication-observations
+                               unless (condition-wait publication-condition lock :timeout 2)
+                                 do (error "Timed out waiting for queued publication."))
+                         (test-assert
+                          (and (not (job-terminal-p parent))
+                               (not (job-terminal-p queued))
+                               (job-cancellation-requested-p parent)
+                               (job-cancellation-requested-p queued)
+                               (every #'identity publication-observations))
+                          "cancellation returns with both pools marked while publication is blocked")))
+                  (with-lock-held (lock)
+                    (setf release-publication-p t)
+                    (task--condition-broadcast publication-condition)))
+                (test-assert
+                 (and (nth-value 1 (job-await parent :timeout-seconds 2))
+                      (nth-value 1 (job-await queued :timeout-seconds 2))
+                      (= (length publication-observations) 2)
+                      (every #'identity publication-observations))
+                 "both pools receive cancellation before every queued task publication")))
              (test-assert (zerop prune-count)
                           "terminal artifact publication performs no retention sweep")
              (let* ((*task-descendant-cleanup-timeout-seconds* 0.03)
