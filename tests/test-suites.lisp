@@ -35,6 +35,7 @@
   test-context-admission-boundary
   test-context-admission-fresh-projection
   test-context-admission-measured-reasoning
+  test-context-admission-measured-transport-fields
   test-context-admission-measured-request-tails
   test-context-admission-measured-invalidation
   test-context-admission-measured-high-usage
