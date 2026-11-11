@@ -1475,6 +1475,11 @@ The reporting process appears separately. Unavailable process discovery or
 measurements are marked explicitly. These are best-effort observations while
 sessions and files may change.
 
+The report uses compact metric columns and a disk-root table, with a stacked
+layout on narrow terminals. Bars compare each root with the largest root, not
+filesystem capacity; overlapping roots are not additive. Full root paths appear
+below the table. The layout is capped at 104 columns on wide terminals.
+
 Use a terminal for colored output; redirected output is plain text. Set
 =NO_COLOR= to suppress colors.
 
