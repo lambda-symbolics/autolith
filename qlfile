@@ -44,7 +44,7 @@ git ls-compat https://github.com/lambda-symbolics/ls-compat.git :ref f3eaf96a8f8
 git ls-flock https://github.com/lambda-symbolics/ls-flock.git :ref ee9fc57a46a396e6386d61f81a6df926ca9f9906
 git idsmall https://github.com/lambda-symbolics/idsmall.git :ref 51032ca6799956bf267857332495c0b6696cc0bb
 git mcparen https://github.com/lambda-symbolics/mcparen.git :ref bef9d739fa6c187dcf1c2cfd8995d51b2c942b0b
-git sbcl-generations https://github.com/lambda-symbolics/sbcl-generations.git :ref 1c7a363843de8319be7a92149b3ed8dac6c3122f
+git sbcl-generations https://github.com/lambda-symbolics/sbcl-generations.git :ref a6d1a97626d0a385b6a167bdab4761f1edfd5e4b
 git sexp-config https://github.com/lambda-symbolics/sexp-config.git :ref 9280b5bf0dc056dee49dcf8c9940f30c049015f9
 git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 2da08f067f50dca8cd1c546e9b7adf45f6386f87
 git sophisticated-clipboard https://github.com/lambda-symbolics/sophisticated-clipboard.git :ref b933a913481bdcdc0ca0895f053d19eca314eac5
