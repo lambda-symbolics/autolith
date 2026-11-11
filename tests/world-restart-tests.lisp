@@ -62,6 +62,53 @@
              (events))
         (localgroup-client-close connection)))))
 
+(-> world-restart-tests--probe-snapshot
+    (configuration &key (:old-pid integer) (:channel string) (:ready-p boolean)) null)
+(defun world-restart-tests--probe-snapshot (configuration &key old-pid channel ready-p)
+  "Print credential-free restart metadata and per-thread stages before cleanup."
+  (format t "~&~S~%"
+          (list :windows32-checkpoint-snapshot
+                :old-pid old-pid :old-state (image-daemon:daemon-process-state old-pid)
+                :channel channel :ready-p ready-p))
+  (dolist (kind '(:state-root :data-root))
+    (let ((root (config kind configuration)))
+      (dolist (pathname (append (directory (merge-pathnames "**/*.sexp" root))
+                               (directory (merge-pathnames "**/*.core" root))))
+        (handler-case
+            (let* ((size (with-open-file (input pathname :element-type '(unsigned-byte 8))
+                           (file-length input)))
+                   (form (when (equal (pathname-type pathname) "sexp")
+                           (let ((*read-eval* nil))
+                             (with-open-file (input pathname :external-format ':utf-8)
+                               (read input nil nil)))))
+                   (properties
+                     (when (and (consp form)
+                                (member (first form) '(:localgroup-endpoint :autolith-restart
+                                                       :autolith-world-restart :autolith-generation))
+                                (proper-list-p (rest form)))
+                       (loop for key in '(:pid :session-id :identifier :generation-id
+                                          :launcher-pid :created-at :status)
+                             for value = (getf (rest form) key)
+                             when value append (list key value))))
+                   (pid  (getf properties :pid)))
+              (format t "~&~S~%"
+                      (list :windows32-checkpoint-file :root kind
+                            :path (enough-namestring pathname root) :bytes size
+                            :identity                  properties
+                            :process-state             (when (typep pid '(integer 1 *))
+                                                         (image-daemon:daemon-process-state pid)))))
+          (error (condition)
+            (format t "~&~S~%" (list :windows32-checkpoint-file-error
+                                     :path (enough-namestring pathname root)
+                                     :condition (type-of condition))))))))
+  (dolist (pathname (directory (merge-pathnames "checkpoint-probe-*.log"
+                                               (config :state-root configuration))))
+    (let ((text (uiop:read-file-string pathname)))
+      (format t "~&Stage file ~A~%~A~%" (file-namestring pathname)
+              (subseq text (max 0 (- (length text) 6000))))))
+  (finish-output)
+  nil)
+
 (-> world-restart-tests--checkpoint (configuration cons) list)
 (defun world-restart-tests--checkpoint (configuration entry)
   "Ask ENTRY's channel for a checkpoint, and return the world and channel entries of the server that restarts from it, or two NILs, then the events the channel sent."
@@ -71,15 +118,19 @@
                    entry "(checkpoint)"
                    :until (lambda (events) (find ':closed events :key #'first))))
          (world   nil)
-         (resumed nil))
-    (if (task-tests--wait-until
-         (lambda ()
-           (setf world   (world-client-entry configuration)
-                 resumed (localgroup--find-record-or-nil configuration channel))
-           (and world resumed
-                (/= (getf (rest (rest world)) :pid) old-pid)
-                (eql (getf (rest (rest resumed)) :pid) (getf (rest (rest world)) :pid))))
-         180)
+         (resumed nil)
+         (ready-p
+           (task-tests--wait-until
+            (lambda ()
+              (setf world   (world-client-entry configuration)
+                    resumed (localgroup--find-record-or-nil configuration channel))
+              (and world resumed
+                   (/= (getf (rest (rest world)) :pid) old-pid)
+                   (eql (getf (rest (rest resumed)) :pid) (getf (rest (rest world)) :pid))))
+            180)))
+    (world-restart-tests--probe-snapshot configuration
+                                         :old-pid old-pid :channel channel :ready-p ready-p)
+    (if ready-p
         (list world resumed events)
         (list nil nil events))))
 
@@ -103,6 +154,58 @@
     (conversation-in-use ()
       t)))
 
+(-> world-restart-tests--probe-init (stream configuration) null)
+(defun world-restart-tests--probe-init (stream configuration)
+  "Append flushed per-thread diagnostic wrappers to this fixture's server init."
+  (format stream "~%~S~%"
+          `(defparameter *world-restart-probe-root*
+             ,(config :state-root configuration)))
+  (dolist
+      (form
+       '((defun world-restart-probe--note (phase name &optional condition)
+           "Append a stage without arguments, capabilities or other application data."
+           (let ((pathname
+                   (merge-pathnames
+                    (format nil "checkpoint-probe-~D-~D.log"
+                            (current-process-id) (sxhash (current-thread)))
+                    *world-restart-probe-root*)))
+             (with-open-file (output pathname :direction         ':output
+                                              :if-exists         ':append
+                                              :if-does-not-exist ':create
+                                              :external-format   ':utf-8)
+               (with-standard-io-syntax
+                 (write (list :windows32-checkpoint-stage
+                              :pid (current-process-id) :time (get-universal-time)
+                              :ticks (get-internal-real-time) :phase phase :function name
+                              :first-attach-timeout *localgroup-first-attach-timeout-seconds*
+                              :condition-type       (when condition (type-of condition)))
+                        :stream output :pretty nil)
+                 (terpri output))
+               (finish-output output))))
+         (defun world-restart-probe--wrap (name)
+           "Record entry, return and conditions at one existing function boundary."
+           (let ((original (fdefinition name)))
+             (setf (fdefinition name)
+                   (lambda (&rest arguments)
+                     (world-restart-probe--note ':enter name)
+                     (handler-bind
+                         ((serious-condition
+                            (lambda (condition)
+                              (world-restart-probe--note ':condition name condition))))
+                       (multiple-value-prog1 (apply original arguments)
+                         (world-restart-probe--note ':return name)))))))
+         (dolist (name '(world-server--pause-channels image-daemon:daemon-runtime-stop
+                         world-server--quiesce-host-tools lisp-worker-manager-stop
+                         world-server--restart-save world-server--restart-release-leases
+                         sbcl-generations:checkpoint-restart-save-and-exit
+                         world-server--restart-mark world-server-restart-claim
+                         world-server-restart-resume world-server--runtime-start
+                         world-server--resume-channels))
+           (world-restart-probe--wrap name))
+         (world-restart-probe--note ':initialized 'world-restart-tests--start)))
+    (format stream "~%~S~%" form))
+  nil)
+
 (-> world-restart-tests--start (configuration pathname) null)
 (defun world-restart-tests--start (configuration root)
   "Start CONFIGURATION's world server under the Lisp launcher, which supervises restarts as on Windows, with a channel for ROOT.
@@ -124,7 +227,8 @@ skips the repository check."
   (source-revision (make-source-provenance (config :source-root configuration))))
 (defun checkpoint--revalidate-source (configuration commit &key allow-dirty-p)
   (declare (ignore configuration commit allow-dirty-p))
-  nil)" stream))
+  nil)" stream)
+    (world-restart-tests--probe-init stream configuration))
   (test-call-with-function-replacements
    (list (list 'platform-session-launch-command
                (lambda (platform source-root)
