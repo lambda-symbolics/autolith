@@ -645,6 +645,8 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
            :completion-policy   (getf snapshot :completion-policy)
            :result              result-record
            :cleanup-descendants (getf snapshot :cleanup-descendants)
+           :cleanup-worktree    (getf snapshot :cleanup-worktree)
+           :cleanup-tool-waves  (getf snapshot :cleanup-tool-waves)
            :cancellation-reason (getf snapshot :cancellation-reason))
      (when include-progress-p
        (list

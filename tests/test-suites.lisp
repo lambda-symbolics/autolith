@@ -335,6 +335,7 @@
   test-task-worktree-artifacts
   test-task-worktree-authority
   test-task-worktree-interruption
+  test-task-worktree-native-cleanup-ownership
   test-task-worktree-conflicts)
 
 (define-test-suite vault-edit
@@ -1222,6 +1223,7 @@
   test-agent-native-compaction
   test-agent-parallel-tool-wave
   test-agent-tool-wave-cancellation
+  test-agent-tool-wave-retained-cleanup
   test-agent-tool-concurrency-key
   test-agent-exclusive-tool-waves
   test-agent-parallel-tool-failure

@@ -3207,3 +3207,89 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
             "the expansion is journaled once as a durable provider item"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+(-> test-agent-tool-wave-retained-cleanup () null)
+(defun test-agent-tool-wave-retained-cleanup ()
+  "Inspect a terminal task's interrupt-resistant wave until its worker exits."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let* ((agent        (task-tests--primary-agent configuration "retained-wave"))
+           (orchestrator (task-orchestrator-create))
+           (definition   (task-agent-definition-create
+                          :name "held-wave" :description "Held wave test."
+                          :instructions "Run held tools." :source ':test))
+           (entered      (sb-thread:make-semaphore))
+           (release      (sb-thread:make-semaphore))
+           (started      0)
+           (job          nil))
+      (unwind-protect
+           (test-call-with-function-replacements
+            (list
+             (list 'agent--execute-tool-plan
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     (incf started)
+                     (sb-sys:without-interrupts
+                       (sb-thread:signal-semaphore entered)
+                       (sb-thread:wait-on-semaphore release)))))
+            (lambda ()
+              (setf job
+                    (first
+                     (job-pool-submit-batch
+                      (task-orchestrator-pool orchestrator)
+                      (list
+                       (list :root-identifier (conversation-identifier (agent-conversation agent))
+                             :initargs
+                             (list :orchestrator orchestrator :parent-agent agent
+                                   :definition definition :item (list :task "Run held tools.")
+                                   :completion-owner-conversation
+                                   (conversation-identifier (agent-conversation agent))
+                                   :execution-identifier (make-identifier))
+                             :function
+                             (lambda (job)
+                               (declare (ignore job))
+                               (let ((*agent-maximum-concurrent-tool-workers* 1)
+                                     (cl-jobpond:*shutdown-timeout-seconds*   0.05))
+                                 (agent--run-tool-wave
+                                  agent
+                                  (loop for index below 3
+                                        collect (list :call
+                                                      (agent-test-call
+                                                       :call-id   (format nil "held-~D" index)
+                                                       :namespace "concurrency" :name "run"
+                                                       :arguments "{}")))
+                                  :observer (callback-agent-observer-create)))))))))
+              (test-assert (sb-thread:wait-on-semaphore entered :timeout 5)
+                           "A wave worker enters interrupt-resistant tool work.")
+              (job-cancel job :reason ':test-cancel :cascade-p t)
+              (multiple-value-bind (snapshot terminal-p) (job-await job :timeout-seconds 2)
+                (test-assert (and terminal-p (eq ':aborted (getf snapshot :state)))
+                             "The parent becomes terminal before the held worker is released."))
+              (let* ((snapshot    (session-job-native-record job (task-job-snapshot job) agent))
+                     (waves       (getf snapshot :cleanup-tool-waves))
+                     (descendants (getf snapshot :cleanup-descendants)))
+                (test-assert (and waves (every (lambda (wave) (getf wave :closing-p)) waves))
+                             "Task inspection retains the closing wave pool after its bounded close expires.")
+                (test-assert (and descendants
+                                  (some (lambda (wave)
+                                          (some (lambda (execution)
+                                                  (member (getf execution :id) descendants :test #'equal))
+                                                (getf wave :jobs)))
+                                        waves))
+                             "The terminal task exposes its cancelled wave cleanup descendants.")
+                (test-assert (task--write-readable-sexp snapshot)
+                             "Cleanup inspection is portable task/job data."))
+              (sb-thread:signal-semaphore release)
+              (test-assert
+               (task-tests--wait-until
+                (lambda () (null (getf (task-job-snapshot job) :cleanup-tool-waves))) 5)
+               "After release, inspection completes pool shutdown and retires retained ownership.")
+              (test-assert (= started 1) "Cancelled queued wave tools are never claimed.")))
+        (sb-thread:signal-semaphore release)
+        (when job
+          (job-cancel job :reason ':test-cleanup :cascade-p t)
+          (job-await job :timeout-seconds 5)
+          (task-tests--wait-until
+           (lambda () (null (agent-tool-wave-cleanup-snapshot job))) 5))
+        (task-orchestrator-close orchestrator))))
+  nil)

@@ -809,6 +809,7 @@ The lifecycle fields are read once through the pool snapshot so they cannot mix
 values from either side of a terminal transition."
   (let* ((snapshot (job-snapshot job))
          (result   (task-job--copy-result (getf snapshot :result)))
+         (waves    (agent-tool-wave-cleanup-snapshot job))
          (agent-name
            (with-lock-held ((cl-jobpond::job--lock job))
              (task-job-agent-name job))))
@@ -828,13 +829,22 @@ values from either side of a terminal transition."
           (task-progress--snapshot job
                                    :result   result
                                    :ended-at (getf snapshot :ended-at))
+          :cleanup-worktree     (task-worktree-cleanup-snapshot :job job)
+          :cleanup-tool-waves   waves
           :cleanup-descendants
-          (loop for execution in
-                (job-pool-descendant-jobs
-                 (task-orchestrator-execution-pool (task-job-orchestrator job))
-                 (job-identifier job))
-                when (job-cancellation-requested-p execution)
-                  collect (session-job-identifier execution))
+          (append
+           (loop for execution in
+                 (job-pool-descendant-jobs
+                  (task-orchestrator-execution-pool (task-job-orchestrator job))
+                  (job-identifier job))
+                 when (job-cancellation-requested-p execution)
+                   collect (session-job-identifier execution))
+           (loop for wave in waves
+                 append (loop for execution in (getf wave :jobs)
+                             when (and (getf execution :cancellation-reason)
+                                       (not (member (getf execution :state)
+                                                    '(:completed :failed :aborted))))
+                                collect (getf execution :id))))
           :result               result
           :cancellation-reason  (getf snapshot :cancellation-reason)
           :condition-report     (getf snapshot :condition-report))))

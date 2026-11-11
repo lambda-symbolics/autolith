@@ -1219,6 +1219,72 @@ worker results become explicit unknown outcomes so provider history stays valid.
             (*mission-admitted-operation* mission-admitted-operation))
         (funcall function)))))
 
+(defvar *agent-tool-wave-pools* (make-hash-table :test #'eq)
+  "Tool wave pools retained until their workers have actually stopped.")
+
+(defvar *agent-tool-wave-pool-lock* (make-lock "Autolith tool wave ownership")
+  "Protect the retained wave registry, never held during pool shutdown.")
+
+(-> agent--make-tool-wave-pool (integer) job-pool)
+(defun agent--make-tool-wave-pool (count)
+  "Create and register a wave before cancellation can unwind its owner."
+  (sb-sys:without-interrupts
+    (let ((pool (make-job-pool
+                 :name                     "Autolith tool wave"
+                 :maximum-concurrency      (min count *agent-maximum-concurrent-tool-workers*)
+                 :maximum-batch-size count :maximum-live-jobs count
+                 :terminal-retention-limit count)))
+      (with-lock-held (*agent-tool-wave-pool-lock*)
+        (setf (gethash pool *agent-tool-wave-pools*)
+              (list :parent cl-jobpond::*current-job* :closing-p nil)))
+      pool)))
+
+(-> agent--close-tool-wave-pool (job-pool) null)
+(defun agent--close-tool-wave-pool (pool)
+  "Bound shutdown while retaining every unfinished wave in the ownership registry."
+  (sb-sys:without-interrupts
+    (with-lock-held (*agent-tool-wave-pool-lock*)
+      (setf (getf (gethash pool *agent-tool-wave-pools*) :closing-p) t)))
+  (when (job-pool-close pool)
+    (with-lock-held (*agent-tool-wave-pool-lock*)
+      (remhash pool *agent-tool-wave-pools*)))
+  nil)
+
+(-> agent-tool-wave-cleanup-snapshot (job) list)
+(defun agent-tool-wave-cleanup-snapshot (ancestor)
+  "Inspect ANCESTOR's wave descendants and retire settled pools without waiting."
+  (let ((entries
+          (with-lock-held (*agent-tool-wave-pool-lock*)
+            (loop for pool being the hash-keys of *agent-tool-wave-pools*
+                    using (hash-value record)
+                  for parent = (getf record :parent)
+                  when (and parent
+                            (equal (cl-jobpond:job-root-identifier parent)
+                                   (cl-jobpond:job-root-identifier ancestor))
+                            (or (eq parent ancestor)
+                                (member (job-identifier ancestor)
+                                        (job-owner-identifiers parent) :test #'equal)))
+                    collect (cons pool (copy-list record))))))
+    (loop for (pool . record) in entries
+          for closed-p =
+          (and (getf record :closing-p)
+               (let ((cl-jobpond:*shutdown-timeout-seconds* 0))
+                 (job-pool-close pool)))
+          if closed-p
+          do (with-lock-held (*agent-tool-wave-pool-lock*)
+               (remhash pool *agent-tool-wave-pools*))
+          else
+            collect
+            (list :state     (cl-jobpond:job-pool-lifecycle-state pool)
+                  :closing-p (getf record :closing-p)
+                  :jobs
+                  (loop for job in (cl-jobpond:job-pool-list-jobs pool)
+                        for snapshot = (job-snapshot job)
+                        collect (list :id                  (job-identifier job)
+                                      :state               (getf snapshot :state)
+                                      :cancellation-reason (getf snapshot :cancellation-reason)
+                                      :condition-report    (getf snapshot :condition-report)))))))
+
 (-> agent--run-tool-wave
     (agent list &key (:observer agent-observer) (:tool-round integer)
                      (:tool-restriction-p boolean))
@@ -1244,16 +1310,13 @@ worker results become explicit unknown outcomes so provider history stays valid.
                                         :observer           observer
                                         :tool-restriction-p tool-restriction-p
                                         :record-timings-p   t))
-        (let* ((pool        (make-job-pool
-                             :name                     "Autolith tool wave"
-                             :maximum-concurrency
-                             (min count *agent-maximum-concurrent-tool-workers*)
-                             :maximum-batch-size count :maximum-live-jobs count
-                             :terminal-retention-limit count))
+        (let* ((pool        nil)
                (jobs        nil)
                (completed-p nil))
           (unwind-protect
                (progn
+                 (sb-sys:without-interrupts
+                   (setf pool (agent--make-tool-wave-pool count)))
                  (setf jobs
                        (job-pool-submit-batch
                         pool
@@ -1280,10 +1343,12 @@ worker results become explicit unknown outcomes so provider history stays valid.
                    (unless (eq (job-state job) ':completed)
                      (job-check-cancellation job)))
                  (setf completed-p t))
-            (unless completed-p
-              (dolist (job jobs)
-                (job-cancel job :reason ':wave-cancelled :cascade-p t)))
-            (job-pool-close pool))))
+            (when pool
+              (unwind-protect
+                   (unless completed-p
+                     (dolist (job jobs)
+                       (job-cancel job :reason ':wave-cancelled :cascade-p t)))
+                (agent--close-tool-wave-pool pool))))))
     (agent--complete-tool-executions agent (coerce executions 'list)
                                      :observer   observer
                                      :tool-round tool-round))
