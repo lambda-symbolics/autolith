@@ -706,10 +706,9 @@ zero outside hurry-up mode."
        tool-authorization-function)
   "Atomically admit ENTRIES and return jobs plus nested synchronous inline jobs.
 
-A cancelled parent is refused here so the asking agent gets a prompt error instead
-of a child that aborts a moment later. This refusal races the parent's own
-cancellation and is only a courtesy; TASK-JOB--RUN's ancestry check is the
-guarantee."
+A cancelled parent is refused here so the asking agent gets a prompt error.
+Pool admission checks the parent again under the shared ownership lock, making
+that check atomic with cascading cancellation."
   (when (typep parent-agent 'task-child-agent)
     (let ((parent-job (task-child-agent-job parent-agent)))
       (when (or (job-cancellation-requested-p parent-job)
