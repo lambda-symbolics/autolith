@@ -707,9 +707,13 @@
        :name     "startup-init"
        :endpoint "https://startup.invalid/v1/chat/completions"
        :models   '("startup-init/model")))
-    (defun world-client-run-script (configuration &rest options)
+    (defun main--interactive-input-p ()
+      "Use the script continuation even when the test child's input is a console."
+      nil)
+    (defun world-client-run-script
+        (configuration &key input output conversation-id permission-mode immutable-p launch)
       "Check authentication's continuation into the world server without starting one."
-      (declare (ignore configuration options))
+      (declare (ignore configuration input output conversation-id permission-mode immutable-p launch))
       (assert (= *user-init-tests--replay-count* 1))
       (assert (equal *user-init-tests--replay-lineage*
                      *active-image-lineage-identifier*))
