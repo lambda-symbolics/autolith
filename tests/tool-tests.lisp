@@ -758,7 +758,30 @@
                                    "arguments" "{\"path\":\"workspace:probe\",\"pah_pah\":\"x\"}")
                       context)))
          (test-assert (eq (tool-result-error-code result) ':unknown-arguments)
-                      "an undeclared underscore name is still rejected"))))))
+                      "an undeclared underscore name is still rejected"))
+       (tool-registry-register
+        registry
+        (make-instance 'tool :namespace "probe" :name "boolean-branch"
+                       :description "Exercise a boolean schema branch."
+                       :parameters
+                       (json-object
+                        "type" "object"
+                        "properties" (json-object
+                                      "path" (tool-string-property "Path")
+                                      "deep-name" (tool-string-property "Deep name"))
+                        "required" (vector "path")
+                        "additionalProperties" (json-false)
+                        "oneOf" (vector (json-false)
+                                        (json-object "type" "object")))))
+       (let ((result (tool-registry-execute-call
+                      registry
+                      (json-object "namespace" "probe" "name" "boolean-branch"
+                                   "arguments" "{\"path\":\"workspace:probe\",\"deep_name\":\"x\"}")
+                      context)))
+         (test-assert (tool-result-success-p result)
+                      "a boolean schema branch does not abort name correction")
+         (test-assert (equal (json-get received "deep-name") "x")
+                      "names are still corrected alongside a boolean branch"))))))
 
 (-> test-workspace-tools () null)
 (defun test-workspace-tools ()
