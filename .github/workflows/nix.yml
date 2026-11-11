@@ -76,8 +76,9 @@ jobs:
           mkdir -p "$XDG_STATE_HOME/autolith"
           printf '%s\n' preserved > "$XDG_STATE_HOME/autolith/private-state"
 
+          printf '%s\n' '(status)' > "$temporary_home/input"
           status=0
-          ./result/bin/autolith </dev/null \
+          ./result/bin/autolith <"$temporary_home/input" \
             >"$temporary_home/stdout" \
             2>"$temporary_home/stderr" &
           autolith_process=$!
@@ -157,7 +158,7 @@ jobs:
             fail_smoke "Autolith rebuilt Nix images on its second launch" \
               "$(cat "$temporary_home/second-output")"
           fi
-          if ! grep -F 'AUTOLITH v' "$temporary_home/stdout" >/dev/null; then
-            fail_smoke "Autolith first run omitted its startup marker" \
-              "AUTOLITH v"
+          if ! grep -F 'conversation' "$temporary_home/stdout" >/dev/null; then
+            fail_smoke "Autolith first run omitted its status response" \
+              "The scripted (status) submission returned no conversation state."
           fi
