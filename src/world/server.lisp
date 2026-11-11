@@ -138,6 +138,11 @@ the process could fork, and a new thread serves the application again."))
     :reader        world-server-open-lock
     :type          t
     :documentation "Serializes channel selection and host registration.")
+   (open-response-lock
+    :initform      (make-lock "Autolith world server open responses")
+    :reader        world-server-open-response-lock
+    :type          t
+    :documentation "Keeps admitted opens alive through response publication before a checkpoint pauses them.")
    (condition-variable
     :initform      (make-condition-variable :name "Autolith world server")
     :reader        world-server-condition-variable
@@ -517,16 +522,22 @@ REASON, when given, is what each attached terminal is told before it lets go."
   (declare (ignore socket))
   (let* ((server    (world-endpoint-server runtime))
          (operation (getf (rest request) :operation))
-         (arguments (getf (rest request) :arguments))
-         (response
-           (handler-case
-               (world-server--dispatch server operation arguments)
-             (error (condition)
-               (append (list :error :message (bounded-string (princ-to-string condition) :limit 1000))
-                       (when (and (typep condition 'world-error)
-                                  (eq (world-error-operation condition) ':checkpointing))
-                         (list :retry-p t)))))))
-    (daemon-write-packet stream response))
+         (arguments (getf (rest request) :arguments)))
+    (flet ((answer ()
+             "Dispatch the request and flush its response before releasing admission."
+             (let ((response
+                     (handler-case
+                         (world-server--dispatch server operation arguments)
+                       (error (condition)
+                         (append (list :error :message (bounded-string (princ-to-string condition) :limit 1000))
+                                 (when (and (typep condition 'world-error)
+                                            (eq (world-error-operation condition) ':checkpointing))
+                                   (list :retry-p t)))))))
+               (daemon-write-packet stream response))))
+      (if (eq operation ':open)
+          (with-lock-held ((world-server-open-response-lock server))
+            (answer))
+          (answer))))
   nil)
 
 (-> world-server--dispatch (world-server keyword t) list)
@@ -1507,13 +1518,12 @@ CANCEL-FUNCTION instead of FUNCTION."
            (when cancel-function
              (funcall cancel-function))
            (progn
-         ;; An open admitted before this point holds the open lock until its
-         ;; host is registered and served, so the checkpoint declares itself
-         ;; only once every host it will pause is listed, and later opens are
-         ;; refused.
-            (with-lock-held ((world-server-open-lock server))
-              (with-lock-held ((world-server-lock server))
-                (setf (world-server-checkpointing-p server) t)))
+             ;; Admit no checkpoint until each preceding open has flushed its
+             ;; response. Host readiness alone does not finish the request.
+             (with-lock-held ((world-server-open-response-lock server))
+               (with-lock-held ((world-server-open-lock server))
+                 (with-lock-held ((world-server-lock server))
+                   (setf (world-server-checkpointing-p server) t))))
             (setf *active-application* application)
             (let ((*checkpoint-thread-quiescer*
                     (lambda (thunk)
@@ -1648,7 +1658,9 @@ the host to restart: their job pools own threads the fork must not see."
   "Call THUNK with the world endpoint, the management REPL and Slynk stopped, then publish them again."
   (let ((runtime (shiftf (world-server-runtime server) nil)))
     (when runtime
-      (image-daemon:daemon-runtime-stop runtime))
+      ;; Opens refused after checkpoint admission also finish their responses.
+      (with-lock-held ((world-server-open-response-lock server))
+        (image-daemon:daemon-runtime-stop runtime)))
     (unwind-protect
          (management-repl-call-quiesced server (lambda () (slynk-call-quiesced thunk)))
       (world-server--runtime-start server))))

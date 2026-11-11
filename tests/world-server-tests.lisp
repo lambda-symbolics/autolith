@@ -1024,10 +1024,16 @@ run once the wake has."
                       "an open during a checkpoint is told to come back")
          (setf (world-server-checkpointing-p server) nil)
          (test-call-with-function-replacements
-          (list (list 'checkpoint-backend-create
-                      (lambda (&rest arguments)
-                        (declare (ignore arguments))
-                        ':test-backend))
+           (list (list 'platform-supports-p
+                       (let ((supports (symbol-function 'platform-supports-p)))
+                         (lambda (platform capability)
+                           ;; This synthetic fork backend never saves an image.
+                           (and (not (eq capability ':restartable-image-saver))
+                                (funcall supports platform capability)))))
+                 (list 'checkpoint-backend-create
+                       (lambda (&rest arguments)
+                         (declare (ignore arguments))
+                         ':test-backend))
                 (list 'checkpoint-create
                       (lambda (backend)
                         (declare (ignore backend))
@@ -1052,7 +1058,14 @@ run once the wake has."
             (test-assert (task-tests--wait-until
                           (lambda () (and (world-host-live-p host-a) (world-host-live-p host-b)))
                           30)
-                         "both channels serve again after a failed checkpoint")))))))
+                        "both channels serve again after a failed checkpoint")
+           (dolist (terminal (list terminal-a terminal-b))
+             (let ((text (image-daemon:relay-history-text terminal)))
+               (test-assert
+                (= 1 (loop for start = 0 then (+ position (length "failed: synthetic fork failure"))
+                           for position = (search "failed: synthetic fork failure" text :start2 start)
+                           while position count position))
+                "each resumed channel presents the checkpoint failure exactly once")))))))))
   nil)
 
 (-> world-server-tests--run-job (application) t)
@@ -1221,53 +1234,104 @@ run once the wake has."
 
 (-> test-world-server-open-before-checkpoint () null)
 (defun test-world-server-open-before-checkpoint ()
-  "Test an open admitted before a checkpoint finishes starting its host before the checkpoint pauses the channels."
+  "Test a checkpoint preserves an admitted open through host readiness and its flushed response."
   (world-server-tests--call
    (lambda (server configuration root)
-     (let* ((entry    (world-client-entry configuration))
-            (id-a     (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
-                            :session-id))
-            (host-a   (world-server--find-host server id-a))
-            (started  (sb-thread:make-semaphore))
-            (release  (sb-thread:make-semaphore))
-            (start    (symbol-function 'world-server--start-host))
-            (opened   nil)
-            (observed nil))
+     (let* ((entry               (world-client-entry configuration))
+            (id-a                (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
+                                       :session-id))
+            (host-a              (world-server--find-host server id-a))
+            (started             (sb-thread:make-semaphore))
+            (release             (sb-thread:make-semaphore))
+            (response-ready      (sb-thread:make-semaphore))
+            (send-response       (sb-thread:make-semaphore))
+            (start               (symbol-function 'world-server--start-host))
+            (dispatch            (symbol-function 'world-server--dispatch))
+            (write-packet        (symbol-function 'daemon-write-packet))
+            (pause               (symbol-function 'world-server--pause-channels))
+            (pending             nil)
+            (sent-p              nil)
+            (sent-before-pause-p nil)
+            (opened              nil)
+            (observed            nil))
        (test-call-with-function-replacements
         (list (list 'world-server--start-host
                     (lambda (candidate &rest arguments)
                       (sb-thread:signal-semaphore started)
                       (sb-thread:wait-on-semaphore release :timeout 30)
-                      (apply start candidate arguments))))
+                      (apply start candidate arguments)))
+              (list 'world-server--dispatch
+                    (lambda (candidate operation arguments)
+                      (let ((response (funcall dispatch candidate operation arguments)))
+                        (when (eq operation ':open)
+                          (setf pending response))
+                        response)))
+              (list 'daemon-write-packet
+                    (lambda (stream packet)
+                      (if (eq packet pending)
+                          (progn
+                            (sb-thread:signal-semaphore response-ready)
+                            (sb-thread:wait-on-semaphore send-response :timeout 30)
+                            (prog1 (funcall write-packet stream packet)
+                              (setf sent-p t)))
+                          (funcall write-packet stream packet))))
+              (list 'world-server--pause-channels
+                    (lambda (candidate application reconnect-id)
+                      (setf sent-before-pause-p sent-p)
+                      (funcall pause candidate application reconnect-id))))
         (lambda ()
-          (let ((opener (make-thread
-                         (lambda ()
-                           (setf opened (world-server-tests--open entry (world-tests--workspace root "b"))))
-                         :name "Autolith test opener")))
-            (test-assert (sb-thread:wait-on-semaphore started :timeout 30)
-                         "the open is admitted and starts its host")
-            (let ((checkpoint (make-thread
-                               (lambda ()
-                                 (setf observed
-                                       (world-server-call-quiesced
-                                        server (world-host-application host-a)
-                                        (lambda ()
-                                          (funcall *checkpoint-thread-quiescer*
-                                                   (lambda ()
-                                                     (mapcar #'world-host-paused-p
-                                                             (world-server--hosts server))))))))
-                               :name "Autolith test checkpoint")))
-              (sleep 0.5)
-              (test-assert (and (thread-alive-p checkpoint)
-                                (not (world-server-checkpointing-p server)))
-                           "a checkpoint waits for the admitted open instead of declaring itself")
+          (let ((opener     nil)
+                (checkpoint nil))
+            (unwind-protect
+                 (progn
+                   (setf opener
+                         (make-thread
+                          (lambda ()
+                            (setf opened
+                                  (handler-case
+                                      (world-server-tests--open entry (world-tests--workspace root "b"))
+                                    (serious-condition (condition) condition))))
+                          :name "Autolith test opener"))
+                   (test-assert (sb-thread:wait-on-semaphore started :timeout 30)
+                                "the open is admitted and starts its host")
+                   (setf checkpoint
+                         (make-thread
+                          (lambda ()
+                            (setf observed
+                                  (handler-case
+                                      (world-server-call-quiesced
+                                       server (world-host-application host-a)
+                                       (lambda ()
+                                         (funcall *checkpoint-thread-quiescer*
+                                                  (lambda ()
+                                                    (mapcar #'world-host-paused-p
+                                                            (world-server--hosts server))))))
+                                    (serious-condition (condition) condition))))
+                          :name "Autolith test checkpoint"))
+                   (test-assert (task-tests--wait-until
+                                 (lambda () (world-server-holding-p server)) 30)
+                                "the checkpoint starts draining while the admitted host starts")
+                   (test-assert (and (thread-alive-p checkpoint)
+                                     (not (world-server-checkpointing-p server)))
+                                "a checkpoint waits for the admitted open instead of declaring itself")
+                   (sb-thread:signal-semaphore release)
+                   (test-assert (sb-thread:wait-on-semaphore response-ready :timeout 30)
+                                "the ready host's open response reaches publication")
+                   (test-assert (not (world-server-checkpointing-p server))
+                                "the checkpoint also waits for the admitted open's response")
+                   (sb-thread:signal-semaphore send-response)
+                   (join-thread opener)
+                   (join-thread checkpoint)
+                   (test-assert (and (listp opened) (eq (first opened) ':ok)
+                                     (listp observed) (= (length observed) 2)
+                                     (every #'identity observed)
+                                     sent-before-pause-p)
+                                (format nil "the open answers before both hosts pause: open ~S, checkpoint ~S"
+                                        opened observed)))
               (sb-thread:signal-semaphore release)
-              (join-thread opener)
-              (join-thread checkpoint)
-              (test-assert (and (eq (first opened) ':ok)
-                                (= (length observed) 2)
-                                (every #'identity observed))
-                           "the open completes, and the checkpoint then pauses both hosts")))))
+              (sb-thread:signal-semaphore send-response)
+              (when opener (join-thread opener))
+              (when checkpoint (join-thread checkpoint))))))
        (test-assert (task-tests--wait-until
                      (lambda ()
                        (every #'world-host-live-p (world-server--hosts server)))
