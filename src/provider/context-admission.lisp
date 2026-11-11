@@ -185,6 +185,17 @@ may use provider token counts when available; the default is not a tokenizer."))
                    (setf remaining (rest tail))
                    t))))
 
+(-> provider-context--wire-fields-compatible-p (list list) boolean)
+(defun provider-context--wire-fields-compatible-p (encoded observed)
+  "Check that ENCODED introduces no field the transport did not observe.
+
+Providers may add transport-only fields after encoding.  The usage sample
+must describe the transported request, so those fields come from OBSERVED;
+the encoder's own fields must still be present there."
+  (and observed
+       (loop for field in encoded
+             always (assoc (first field) observed :test #'equal))))
+
 (-> provider-context-note-response (list provider-result) null)
 (defun provider-context-note-response (context result)
   "Anchor ordinary usage after persistence, before locally generated tool evidence.
@@ -229,12 +240,12 @@ messages that later change fail closed."
                                     :options options))
                    (wire                             (provider-context--wire-plan
                                                       (provider-request-object adapter covered (getf context :tools)))))
-              (when (equal (getf wire :fields) (getf (getf context :wire) :fields))
+              (when (provider-context--wire-fields-compatible-p (getf wire :fields) (getf (getf context :wire) :fields))
                 (let ((sample
                         (list :format 1 :soft-header (getf context :soft-header)
                               :history-count  (length entries)
                               :history-digest (provider-cache-prefix--entry (coerce entries 'vector))
-                              :wire-fields    (getf wire :fields)
+                              :wire-fields    (getf (getf context :wire) :fields)
                               :wire-count     (length (getf wire :items))
                               :wire-digest    (provider-cache-prefix--entry
                                                (coerce (getf wire :items) 'vector))

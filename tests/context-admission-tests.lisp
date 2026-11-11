@@ -27,6 +27,21 @@
   (incf (context-admission-test-provider-network-calls provider))
   (values nil 200 nil))
 
+(defclass context-admission-transport-fields-test-provider (context-admission-test-provider)
+  ()
+  (:documentation "A provider that adds transport-only fields after encoding, as routing providers do."))
+
+(defmethod provider-request-object :around
+    ((provider context-admission-transport-fields-test-provider)
+     (conversation conversation) (tool-namespaces vector)
+     &key goal-context compaction-p)
+  "Add fields after encoding that the wire encoder does not reproduce."
+  (declare (ignore goal-context compaction-p))
+  (let ((request (call-next-method)))
+    (setf (gethash "model" request) "transport/model"
+          (gethash "session_id" request) "transport-session")
+    request))
+
 (-> test-context-admission-boundary () null)
 (defun test-context-admission-boundary ()
   "Reserve explicit output allowances and stop rejected requests before transport."
@@ -825,14 +840,14 @@
 
 ;;;; -- Measured Ordinary Context --
 
-(-> context-admission-test--with-measured-context (function) t)
-(defun context-admission-test--with-measured-context (function)
+(-> context-admission-test--with-measured-context (function &key (:provider-class symbol)) t)
+(defun context-admission-test--with-measured-context (function &key (provider-class 'context-admission-test-provider))
   "Run FUNCTION with real request encoding, small policy and an inert transport."
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
                           ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
     (with-test-configuration (configuration)
       (let* ((conversation (conversation-create configuration))
-             (provider     (make-instance 'context-admission-test-provider :configuration configuration))
+             (provider     (make-instance provider-class :configuration configuration))
              (agent        (agent-create :configuration configuration :conversation conversation
                                          :provider provider :tool-registry (make-instance 'tool-registry))))
         (test-call-with-function-replacements
@@ -911,6 +926,24 @@
           (handler-case (progn (provider-open-response-stream provider request :conversation conversation) nil)
             (provider-context-budget-error () t))
           "new tool evidence also crosses hard admission")))))
+  nil)
+
+(-> test-context-admission-measured-transport-fields () null)
+(defun test-context-admission-measured-transport-fields ()
+  "Anchor usage when the transport adds fields the wire encoder does not reproduce."
+  (context-admission-test--with-measured-context
+   (lambda (agent)
+     (let* ((conversation (agent-conversation agent))
+            (provider     (agent-provider agent)))
+       (conversation-append-user-message conversation "Before the measured request.")
+       (context-admission-test--measure agent)
+       (test-assert (conversation-context-usage-sample conversation)
+                    "transport-only fields do not prevent the usage anchor")
+       (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+              (request                    (provider-request-object provider conversation #())))
+         (test-assert (= 1200 (provider-request-input-token-estimate provider request))
+                      "the next request reuses the measured input"))))
+   :provider-class 'context-admission-transport-fields-test-provider)
   nil)
 
 (-> test-context-admission-measured-request-tails () null)
