@@ -592,6 +592,10 @@ model about that exact call. Arrays are spelled as =(vector ...)= and objects
 as =(dict ...)=, and argument names with uppercase letters keep their case as
 =:|filePath|= or a string key.
 
+Tool argument names emitted with underscores are matched to declared hyphenated
+names, including nested objects and array items. If both spellings are present,
+the declared spelling takes precedence.
+
 In fullscreen mode, a pending tool call starts with =▸=. When it finishes, the
 same header shows a green =✓= for success or a red =!= for failure. Errors
 appear beneath the original invocation and arguments. Background handoffs keep
