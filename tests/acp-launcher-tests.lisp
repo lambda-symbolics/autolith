@@ -442,9 +442,18 @@ exit 1
       (with-test-environment (("AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE" "absent")
                               ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" "set")
                               ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS" ""))
-        (funcall 'main--restore-caller-asdf-environment)
-        (test-assert (null (uiop:getenv "CL_SOURCE_REGISTRY")) "captured absence unsets")
-        (test-assert (equal (uiop:getenv "ASDF_OUTPUT_TRANSLATIONS") "") "captured empty is set")
+        (let ((set-environment (symbol-function 'platform-setenv))
+              (restored        nil))
+          (test-call-with-function-replacements
+           (list (list 'platform-setenv
+                       (lambda (name value)
+                         (push (list name value) restored)
+                         (funcall set-environment name value))))
+           (lambda () (funcall 'main--restore-caller-asdf-environment)))
+          (test-assert (null (uiop:getenv "CL_SOURCE_REGISTRY")) "captured absence unsets")
+          ;; SBCL's Windows getenv returns NIL for an empty variable too.
+          (test-assert (equal restored '(("ASDF_OUTPUT_TRANSLATIONS" "")))
+                       "captured empty reaches the platform setter"))
         (platform-setenv "CL_SOURCE_REGISTRY" "later//")
         (funcall 'main--restore-caller-asdf-environment)
         (test-assert (equal (uiop:getenv "CL_SOURCE_REGISTRY") "later//")
