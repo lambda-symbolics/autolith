@@ -1491,55 +1491,6 @@
         (task-orchestrator-close runtime))))
   nil)
 
-(-> shell-log-tests--maintenance-boundary (keyword) null)
-(defun shell-log-tests--maintenance-boundary (boundary)
-  "Reach artifact retention through delivery or disconnected runtime shutdown."
-  (shell-log-tests--owner-fixture
-   (lambda (configuration runtime parent owner-job owner artifact)
-     (declare (ignore owner))
-     (let ((*task-artifact-retention-limit* 1)
-           (registry                        (make-instance 'tool-registry)))
-       (tool-registry-bind-runtime registry 'task-orchestrator runtime)
-       (setf (slot-value parent 'tool-registry) registry)
-       (task--write-result-artifact owner-job (list :status ':success :output "owner"))
-       (labels ((retain-job (execution)
-                  (let ((job (task-tests--attach-job
-                              runtime
-                              (lambda (identifier index)
-                                (task-tests--make-job runtime :identifier identifier :index index
-                                                     :root-identifier "mark-root" :parent-agent parent)))))
-                    (setf (slot-value job 'execution-identifier) execution
-                          (slot-value job 'cl-jobpond::terminal-result-function)
-                          (lambda (job state result report)
-                            (declare (ignore job state report))
-                            result))
-                    (let ((path (task--write-result-artifact job (list :status ':success :output execution))))
-                      (task-tests--publish-terminal job ':completed
-                        (list :status ':success :output-path (namestring path))))
-                    (unless (task-tests--wait-until (lambda () (job-terminal-p job)) 10)
-                      (error "Native retained fixture did not publish."))
-                    job)))
-         (let ((visible (retain-job "050Visible"))
-               (latest  (retain-job "100Later")))
-           (test-assert (probe-file (task--artifact-root configuration owner-job))
-                        "Result publication does not run retention")
-           (test-assert (not (shell-log-tests--marked-p configuration artifact))
-                        "Publication alone does not transfer owner delivery authority")
-           (ecase boundary
-             (:delivery
-              (task-completion-deliver parent))
-             (:close
-              (test-assert (task-orchestrator-close runtime)
-                           "Disconnected runtime completes shutdown maintenance")))
-           (test-assert (not (probe-file (task--artifact-root configuration owner-job)))
-                        "Production maintenance removes an evicted owner")
-           (test-assert (shell-log-tests--marked-p configuration artifact)
-                        "Production maintenance persists delivery authority before deletion")
-           (dolist (job (list visible latest))
-             (test-assert (probe-file (task--artifact-root configuration job))
-                          "Every native-visible owner survives artifact pressure")))))))
-  nil)
-
 (-> shell-log-tests--marked-p (configuration shell-log-artifact) boolean)
 (defun shell-log-tests--marked-p (configuration artifact)
   "Read the capture's durable delivery mark without measuring or rewriting it."
