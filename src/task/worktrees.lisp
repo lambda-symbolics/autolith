@@ -626,12 +626,8 @@ Legacy checkouts directly beneath checkouts/ never authorize deleting their pare
                               :writable-roots (cons cleanup-root
                                                     (task-worktree--git-admin-roots
                                                      (pathname (getf metadata :source)))))))
-          (handler-case
-              (cl-worktree:cleanup-worktree manager (task-worktree--find-handle manager metadata)
-                                            :owner (getf metadata :owner) :discard-dirty t)
-            (task-worktree-error ()
-              ;; Git may no longer know the removed child's checkout.
-              nil))
+          (cl-worktree:cleanup-worktree manager (task-worktree--find-handle manager metadata)
+                                        :owner (getf metadata :owner) :discard-dirty t)
           (platform-delete-directory-tree *platform* cleanup-root
                                           :validate t :if-does-not-exist ':ignore)))))
   nil)
