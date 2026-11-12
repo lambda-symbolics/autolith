@@ -339,6 +339,35 @@ Nothing is written while no server runs."
                                        (conversation-identifier-display (getf answer :channel)))))
           (localgroup--status-output-styled-p *standard-output*)))))))
 
+(defparameter *world-client-stop-timeout* 60
+  "Seconds to wait for the recorded world server process to exit after accepting stop.")
+
+(-> world-client--stop-server (cons stream) null)
+(defun world-client--stop-server (entry stream)
+  "Ask ENTRY to stop, report progress on STREAM, and confirm its process has exited."
+  (let ((pid (getf (rest (rest entry)) :pid)))
+    (localgroup--print-response (localgroup-query-record entry ':stop) stream)
+    (force-output stream)
+    (let ((*localgroup-kill-exit-timeout* *world-client-stop-timeout*))
+      (case (localgroup--observe-kill-exit pid)
+        (:dead
+         (localgroup--write-styled-line
+          stream
+          (list (terminal-span ':success "· world server stopped"))
+          (localgroup--status-output-styled-p stream))
+         (force-output stream))
+        (:alive
+         (error 'localgroup-error
+                :operation ':stop
+                :message   (format nil "Could not confirm world server exit: recorded PID ~D is still present (possibly reused)."
+                                   pid)))
+        (otherwise
+         (error 'localgroup-error
+                :operation ':stop
+                :message   (format nil "Could not confirm world server exit for recorded PID ~S."
+                                   pid))))))
+  nil)
+
 (-> world-client--stop-command () clingon:command)
 (defun world-client--stop-command ()
   "Return the localgroup stop sub-command, stopping the world server and its channels."
@@ -354,6 +383,5 @@ Nothing is written while no server runs."
      (let* ((configuration (localgroup--client-configuration))
             (entry         (world-client-entry configuration)))
        (if entry
-           (localgroup--print-response (localgroup-query-record entry ':stop)
-                                       *standard-output*)
+            (world-client--stop-server entry *standard-output*)
            (world-client--print-absent *standard-output*))))))

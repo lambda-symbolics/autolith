@@ -703,6 +703,7 @@
   test-world-server-wake-channel
   test-world-server-stop-reason
   test-world-server-status-line
+  test-world-client-stop-outcomes
   test-world-server-new-channel
   test-world-server-tell
   test-world-server-kill-channel
