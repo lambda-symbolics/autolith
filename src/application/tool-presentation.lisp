@@ -9,10 +9,6 @@
 (defparameter *application-tool-inspection-lines* 24
   "The maximum introspection lines shown in the terminal transcript.")
 
-(defparameter *application-common-lisp-language*
-  (language-find "common-lisp" :errorp nil)
-  "The ColorLisp language used for pathless Common Lisp source previews.")
-
 (defparameter *application-shell-language*
   (language-find "bash" :errorp nil)
   "The ColorLisp language used for shell command previews.")

@@ -2,6 +2,10 @@
 
 ;;;; -- Semantic Syntax Highlighting --
 
+(defparameter *application-common-lisp-language*
+  (language-find "common-lisp" :errorp nil)
+  "The ColorLisp language used for pathless Common Lisp source previews.")
+
 (-> syntax--terminal-span (keyword string) cons)
 (defun syntax--terminal-span (role text)
   "Return one Autolith terminal span for Colordiff ROLE and TEXT."
