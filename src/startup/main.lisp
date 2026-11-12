@@ -1878,6 +1878,7 @@ variables for later user and child consumers are restored here."
         (platform-unsetenv value-name)
         (platform-unsetenv state-name))))
   nil)
+
 (-> main--startup-failure-line (string stream) string)
 (defun main--startup-failure-line (message stream)
   "Return the line saying Autolith could not start because of MESSAGE.

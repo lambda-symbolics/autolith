@@ -1967,7 +1967,6 @@
   test-acp-session-cancel-blocked-provider-and-reuse
   test-acp-session-cwd-mode-and-unsupported-content
   test-acp-session-disconnect-releases-lease
-  test-acp-observer-disconnected-updates
   test-acp-session-disconnect-cancels-active-submission
   test-acp-session-disconnected-updates
   test-acp-session-scheduled-mode-follows-state

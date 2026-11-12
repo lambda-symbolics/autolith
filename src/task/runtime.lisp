@@ -384,9 +384,7 @@ named after it; it shares the conversations' reservations in this process."
           (task-closed-p
             (job-pool-close (task-orchestrator-pool orchestrator))))
       (task-completion-close orchestrator)
-      (when (and execution-closed-p task-closed-p)
-        (task-orchestrator-maintain-artifacts orchestrator)
-        t))))
+      (and execution-closed-p task-closed-p))))
 
 (-> task-orchestrator-detach (task-orchestrator) null)
 (defun task-orchestrator-detach (orchestrator)

@@ -2584,14 +2584,14 @@
                              (action  (list ':insert
                                             (format nil "(job.cancel :id ~S)" identifier))))
                         (test-assert
-                         (and (search (format nil "(job.cancel :id ~A)" identifier) text)
+                         (and (search (format nil "(job.cancel :id ~S)" identifier) text)
                               (> (length widgets) 1)
                               (find ':syntax-function widgets :key #'termdown:widget-role)
                               (every (lambda (widget)
                                        (equal (termdown:widget-action widget) action))
                                      widgets)
                               (string= (terminal--spans-text widgets)
-                                       (application--job-cancel-text identifier))
+                                       (terminal-ui--job-cancel-text identifier))
                               (equal "handoff shell.run"
                                       (getf (third (application--record-presentation compact record))
                                             :group)))

@@ -3194,7 +3194,6 @@ pool must reject the cancelled parent without creating a descendant."
            (publication-observations nil)
            (publication-condition    (make-condition-variable))
            (release-publication-p    nil)
-           (prune-count              0)
            (retry-count              0)
            (terminal-function        (symbol-function 'task-job--terminal-record)))
       (unwind-protect
@@ -3223,10 +3222,6 @@ pool must reject the cancelled parent without creating a descendant."
               "native cleanup transfers to the visible execution")
              (test-call-with-function-replacements
               (list
-               (list 'task--prune-result-artifacts
-                     (lambda (&rest arguments)
-                       (declare (ignore arguments))
-                       (incf prune-count)))
                (list 'task-job--terminal-record
                      (lambda (job &rest arguments)
                        (with-lock-held (lock)
@@ -3259,8 +3254,6 @@ pool must reject the cancelled parent without creating a descendant."
                       (= (length publication-observations) 2)
                       (every #'identity publication-observations))
                  "both pools receive cancellation before every queued task publication")))
-             (test-assert (zerop prune-count)
-                          "terminal artifact publication performs no retention sweep")
              (let* ((*task-descendant-cleanup-timeout-seconds* 0.03)
                     (started                                   (get-internal-real-time)))
                (task-job-cancel-execution-descendants parent ':test-cancel)

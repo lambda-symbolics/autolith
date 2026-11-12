@@ -558,8 +558,6 @@ appended notices after it returns. Publication and wake callbacks run outside it
          (cl-jobpond:completion-subscription-refresh
           (task-completion-service-subscription service))))
       (task-completion-restore agent))
-    (let ((runtime (task-completion--runtime agent)))
-      (when runtime (task-orchestrator-maintain-artifacts runtime)))
     (nreverse delivered)))
 
 (-> task-completion-connect (agent function) null)

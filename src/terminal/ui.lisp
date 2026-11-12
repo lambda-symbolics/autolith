@@ -1222,7 +1222,7 @@ its parenthesis open, and are dropped once the name closes it itself."
 (-> terminal-ui--job-cancel-text (string) string)
 (defun terminal-ui--job-cancel-text (identifier)
   "Return the displayed job.cancel call for IDENTIFIER."
-  (format nil "(job.cancel :id ~A)" identifier))
+  (format nil "(job.cancel :id ~S)" identifier))
 
 (-> terminal-ui--job-cancel-widget (list t) list)
 (defun terminal-ui--job-cancel-widget (spans identifier)
@@ -1237,7 +1237,7 @@ its parenthesis open, and are dropped once the name closes it itself."
                 append
                 (cons
                  (terminal-span (terminal-span-style span) (subseq content 0 position))
-                 (let ((action (list ':insert (format nil "(job.cancel :id ~S)" identifier))))
+                 (let ((action (list ':insert text)))
                    (mapcar (lambda (token)
                              (termdown:make-widget (terminal-span-style token)
                                                   (terminal-span-text token)
