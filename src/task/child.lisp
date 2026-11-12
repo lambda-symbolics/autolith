@@ -67,11 +67,11 @@ Every role talks through channels, so any child can answer its parent."
 This is the registry of a child's own channel, which serves it outside any
 spawned run: it lacks yield, and the role decides whether it spawns.
 Runtimes in RETAIN belong to another registry."
-  (let ((definition (task-role-definition configuration (config :child-role configuration))))
+  (let* ((definition (task-role-definition configuration (config :child-role configuration)))
+         (spawn-p    (not (null (task-agent-definition-spawns definition)))))
     (tool-registry-restrict registry
                             (lambda (tool)
-                              (task--role-tool-p definition tool
-                                                 :spawn-p (task-agent-definition-spawns definition)))
+                              (task--role-tool-p definition tool :spawn-p spawn-p))
                             :retain retain)))
 
 (-> task-agent-definition-validate-tools-available

@@ -96,7 +96,7 @@
                                                  :worker nil :agent nil :registry (make-instance 'tool-registry)))
             (entry   (world-client-entry configuration)))
        (world-tests--child-conversation configuration "bmaintkid" :root "bmaint11" :parent "bmaint11"
-                                                                :name "helper" :created-at 1500)
+                                                                :name "helper" :role "general" :created-at 1500)
        (world-reconcile-sessions configuration)
        (flet ((visit ()
                 "Open the child and wait until its host is idle."
