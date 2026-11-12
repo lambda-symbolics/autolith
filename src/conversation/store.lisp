@@ -928,6 +928,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
     (when (typep time 'timestamp)
       (when (and last-activity-at
                  (not user-message-p)
+                 (not (eq (first record) ':fork))
                  (> time last-activity-at))
         (incf working-seconds (- time last-activity-at)))
       (setf last-activity-at (max (or last-activity-at 0) time)))
@@ -2610,10 +2611,11 @@ translating a condition signaled by the record visitor."
             :expected-start-sequence expected-start-sequence
             (conversation--segment-options identity)))))
 
-(-> conversation--map-storage-records (pathname function)
+(-> conversation--map-storage-records
+    (pathname function &key (:on-header (option function)))
     (values boolean integer))
-(defun conversation--map-storage-records (pathname function)
-  "Map all durable records after validating segment sequences and boundaries."
+(defun conversation--map-storage-records (pathname function &key on-header)
+  "Map validated durable records, calling ON-HEADER with each segment's metadata."
   (let ((identity (conversation-storage-identity-pathname pathname)))
     (conversation--call-with-record-mapper
      function
@@ -2621,7 +2623,7 @@ translating a condition signaled by the record visitor."
        (multiple-value-bind (incomplete-p count next)
            (apply #'sexp-store:segments-map visit
                   (conversation-storage-pathnames identity)
-                  (conversation--segment-options identity))
+                  (conversation--segment-options identity :on-header on-header))
          (declare (ignore next))
          (values incomplete-p count))))))
 

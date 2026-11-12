@@ -190,6 +190,13 @@
      "the replay command starts an immutable selected inspection"))
   nil)
 
+(-> conversation-replay-tests--raw-records (conversation) list)
+(defun conversation-replay-tests--raw-records (conversation)
+  "Collect a small fixture's exact records for durable-prefix assertions."
+  (let ((records nil))
+    (conversation-map-records conversation (lambda (record) (push record records)))
+    (nreverse records)))
+
 (-> test-conversation-fork-storage () null)
 (defun test-conversation-fork-storage ()
   "Test historical forks preserve state, provenance, artifacts, and source files."
@@ -204,6 +211,11 @@
                                              :prompt-cache-key "source-cache")))
     (unwind-protect
          (progn
+           (setf (conversation-title source) "Historical title"
+                 (conversation-title-source source) ':initial
+                 (conversation-model source) "historical-model"
+                 (conversation-model-provider source) "historical-provider"
+                 (conversation-reasoning-effort source) "high")
            (conversation-append-user-message
             source (user-message-input-create :text "first" :image-pathnames (list first-image)))
            (conversation-append-provider-item
@@ -211,7 +223,8 @@
             (json-object "type" "message" "role" "assistant"
                          "content" (vector (json-object "type" "output_text"
                                                         "text" "answer"))))
-           (conversation-append-record source (list :summary :content "compact"))
+           (conversation-append-record
+            source (list :summary :content "compact" :through-seq 2))
            (conversation-append-provider-item
             source
             (json-object "type" "function_call"
@@ -222,7 +235,7 @@
             source "call-1" :tool-name "demo" :output "done" :success-p t)
            (conversation-append-user-message
             source (user-message-input-create :text "second" :image-pathnames (list second-image)))
-           (let* ((source-records (conversation-fork--raw-records source))
+           (let* ((source-records (conversation-replay-tests--raw-records source))
                   (source-pathnames
                     (conversation-storage-pathnames
                      (conversation-pathname source)))
@@ -232,7 +245,7 @@
                     (conversation-fork configuration "fork-source"
                                        :selection  '("sequence" "5")
                                        :identifier "fork-target"))
-                  (records        (conversation-fork--raw-records fork))
+                  (records        (conversation-replay-tests--raw-records fork))
                   (provenance     (first (last records)))
                   (artifacts
                     (uiop:directory-files
@@ -248,6 +261,11 @@
                    (string= (getf (rest provenance) :source-id) "fork-source")
                    (= (getf (rest provenance) :source-sequence) 5)
                    (= (length (conversation-input-items fork)) 3)
+                   (= (conversation-user-turn-count fork) 1)
+                   (string= (conversation-title fork) "Historical title")
+                   (string= (conversation-model fork) "historical-model")
+                   (string= (conversation-model-provider fork) "historical-provider")
+                   (string= (conversation-reasoning-effort fork) "high")
                    (= (length artifacts) 1)
                    (equal source-bytes
                           (mapcar #'uiop:read-file-string source-pathnames)))
@@ -306,6 +324,192 @@
                                                       "gapped-target")))))
               "a gapped source head is rejected without a partial target")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-conversation-fork-chunks-and-selectors () null)
+(defun test-conversation-fork-chunks-and-selectors ()
+  "Test selector parity and resumable state at historical chunk boundaries."
+  (with-test-configuration (configuration)
+    (let* ((source      (conversation-create configuration :identifier "chunk-source"))
+           (first-time  (encode-universal-time 0 0 9 27 8 2026))
+           (second-time (encode-universal-time 0 30 10 28 8 2026)))
+      (setf (conversation-title source) "Initial title"
+            (conversation-title-source source) ':initial)
+      (conversation-append-user-message source "one")
+      (conversation-append-provider-item
+       source (json-object "type" "message" "role" "assistant"
+                           "content" (vector (json-object "type" "output_text"
+                                                          "text" "answer"))))
+      (setf (conversation-title source) "Middle title")
+      (conversation-append-summary source "first checkpoint")
+      (conversation-append-user-message source "two")
+      (setf (conversation-title source) "Latest title")
+      (conversation-append-summary source "second checkpoint")
+      (conversation-append-user-message source "three")
+      (dolist (pathname (conversation-storage-pathnames (conversation-pathname source)))
+        (let* ((forms  (conversation--read-records pathname))
+               (header (rest (first forms)))
+               (start  (getf header :chunk-start-sequence)))
+          (when (> start 1)
+            (setf (getf header :working-seconds) 37
+                  (getf header :last-activity-at)
+                  (if (= start 3) first-time second-time)))
+          (dolist (record (rest forms))
+            (setf (getf (rest record) :time)
+                  (if (<= (getf (rest record) :seq) 3) first-time second-time)))
+          (log-write pathname forms)))
+      (loop for head in '(2 4 6)
+            for chunks from 1
+            for title in '("Initial title" "Middle title" "Latest title")
+            for fork = (conversation-fork configuration "chunk-source"
+                                          :selection (list "sequence" (write-to-string head)))
+            do (test-assert
+                (and (= (length (conversation-storage-pathnames
+                                 (conversation-pathname fork))) chunks)
+                     (= (conversation-user-turn-count fork) chunks)
+                     (= (conversation-working-seconds fork) (if (= chunks 1) 0 37))
+                     (string= (conversation-title fork) title)
+                     (= (conversation-next-sequence fork) (+ head 2)))
+                (format nil "fork head ~D: chunks ~D, turns ~D, working ~D, title ~S, next ~D"
+                        head (length (conversation-storage-pathnames (conversation-pathname fork)))
+                        (conversation-user-turn-count fork) (conversation-working-seconds fork)
+                        (conversation-title fork) (conversation-next-sequence fork))))
+      (dolist (selection '(("sequence" "0") ("sequence" "3")
+                           ("turn" "1") ("turn" "2") ("turn" "3")
+                           ("date" "2026-08-27") ("date" "2026-08-28")
+                           ("time" "09:00") ("time" "2026-08-28T10:30:00")
+                           ("time" "2026-08-28T00:00:00Z")))
+        (let* ((session    (conversation-replay-create source))
+               (entry      (conversation-replay-apply-selection session selection))
+               (head       (conversation-replay--record-sequence entry))
+               (fork       (conversation-fork configuration "chunk-source" :selection selection))
+               (provenance (first (last (conversation-replay-tests--raw-records fork)))))
+          (test-assert
+           (= (getf (rest provenance) :source-sequence) head)
+           "streaming forks and replay select the same inclusive head")))))
+  nil)
+
+(-> test-conversation-fork-source-tails () null)
+(defun test-conversation-fork-source-tails ()
+  "Test historical heads ignore later corruption and newest forks tolerate torn tails."
+  (with-test-configuration (configuration)
+    (dolist (mode '(:torn :body :header))
+      (let* ((identifier (format nil "tail-~(~A~)" mode))
+             (source     (conversation-create configuration :identifier identifier)))
+        (conversation-append-user-message source "one")
+        (conversation-append-summary source "checkpoint")
+        (conversation-append-user-message source "two")
+        (let ((active (conversation-log-pathname source)))
+          (with-open-file (stream active :direction       ':output
+                                         :if-exists       (if (eq mode ':header) ':supersede ':append)
+                                         :external-format ':utf-8)
+            (write-string (if (eq mode ':torn) "(:message" ")") stream))
+          (let* ((before (uiop:read-file-string active))
+                 (early  (conversation-fork configuration identifier
+                                            :selection '("sequence" "1"))))
+            (test-assert
+             (= (length (conversation-replay-tests--raw-records early)) 2)
+             "an earlier fork never reads later malformed bodies or headers")
+            (if (eq mode ':torn)
+                (let ((latest (conversation-fork configuration identifier)))
+                  (test-assert
+                   (= (length (conversation-replay-tests--raw-records latest)) 4)
+                   "the newest fork excludes an incomplete final form"))
+                (test-assert
+                 (handler-case
+                     (progn (conversation-fork configuration identifier) nil)
+                   (conversation-invariant-error () t))
+                 "a newest fork rejects malformed complete source data"))
+            (test-assert (string= before (uiop:read-file-string active))
+                         "forking never repairs source bytes"))))))
+  nil)
+
+(-> test-conversation-fork-copy-failures () null)
+(defun test-conversation-fork-copy-failures ()
+  "Test owned-prefix cleanup after write or attachment failures and target collisions."
+  (with-test-configuration (configuration root)
+    (let* ((image  (test-conversation--write-tiny-png (merge-pathnames "image.png" root)))
+           (source (conversation-create configuration :identifier "failure-source")))
+      (conversation-append-user-message
+       source (user-message-input-create :text "one" :image-pathnames (list image)))
+      (conversation-append-summary source "checkpoint")
+      (conversation-append-user-message source "two")
+      (dolist (failure '(:initial :append :attachment))
+        (let* ((identifier (format nil "failed-~(~A~)" failure))
+               (identity   (conversation-pathname-for-id configuration identifier))
+               (target     (conversation-create configuration :identifier identifier)))
+          (test-call-with-function-replacements
+           (ecase failure
+             (:initial
+              (list (list 'sexp-store:log-write
+                          (lambda (pathname forms &rest arguments)
+                            (declare (ignore forms arguments))
+                            (ensure-directories-exist pathname)
+                            (error 'conversation-error :message "Injected publication failure."
+                                                       :pathname identity :sequence nil)))))
+             (:append
+              (list (list 'log-append
+                          (lambda (pathname record &rest arguments)
+                            (declare (ignore pathname record arguments))
+                            (error 'conversation-error :message "Injected append failure."
+                                                       :pathname identity :sequence nil)))))
+             (:attachment
+              (list (list 'uiop:copy-file
+                          (lambda (from to &rest arguments)
+                            (declare (ignore from to arguments))
+                            (error 'conversation-error :message "Injected copy failure."
+                                                       :pathname identity :sequence nil))))))
+           (lambda ()
+             (test-assert
+              (handler-case
+                  (progn (conversation-fork configuration "failure-source"
+                                            :identifier identifier)
+                         nil)
+                (conversation-error () t))
+              "copy failures propagate as failures")))
+          (test-assert
+           (and (not (conversation-storage-occupied-p identity))
+                (not (probe-file (conversation-image-artifact-root target))))
+           "a failed fork removes its published chunks and partial artifacts")))
+      (let* ((identifier "occupied-target")
+             (identity   (conversation-pathname-for-id configuration identifier))
+             (create     (symbol-function 'conversation-create))
+             (occupied   nil))
+        (test-call-with-function-replacements
+         (list (list 'conversation-create
+                     (lambda (configuration &rest arguments &key identifier &allow-other-keys)
+                       (let ((target (apply create configuration arguments)))
+                         (when (string= identifier "occupied-target")
+                           (setf occupied (apply create configuration arguments))
+                           (conversation-append-user-message occupied "occupied"))
+                         target))))
+         (lambda ()
+           (test-assert
+            (handler-case
+                (progn (conversation-fork configuration "failure-source"
+                                          :identifier identifier)
+                       nil)
+              (sexp-store:publication-conflict () t))
+            "a target published by another writer wins initial publication")))
+        (test-assert
+         (and (conversation-storage-occupied-p identity)
+              (string= (getf (rest (first (conversation-replay-tests--raw-records occupied)))
+                            :content)
+                       "occupied"))
+         "failure cleanup never deletes another writer's target"))
+      (let* ((target   (conversation-create configuration :identifier "occupied-artifacts"))
+             (artifact (merge-pathnames "existing.png" (conversation-image-artifact-root target))))
+        (ensure-directories-exist artifact)
+        (uiop:copy-file image artifact)
+        (test-assert
+         (and (handler-case
+                  (progn (conversation-fork configuration "failure-source"
+                                            :identifier "occupied-artifacts")
+                         nil)
+                (sexp-store:publication-conflict () t))
+              (probe-file artifact)
+              (not (conversation-storage-occupied-p (conversation-pathname target))))
+         "preexisting artifacts prevent publication and survive failure cleanup"))))
   nil)
 
 (-> test-conversation-fork-command-line () null)

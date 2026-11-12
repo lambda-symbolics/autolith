@@ -875,6 +875,9 @@
   test-conversation-replay-command-line
   test-conversation-fork-storage
   test-conversation-fork-rejections
+  test-conversation-fork-chunks-and-selectors
+  test-conversation-fork-source-tails
+  test-conversation-fork-copy-failures
   test-conversation-fork-command-line)
 
 (define-test-suite conversation-resource

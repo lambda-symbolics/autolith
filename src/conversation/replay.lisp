@@ -347,29 +347,14 @@ whole history when a crash or retention boundary interrupted sequencing."
 (-> conversation-replay-select-turn (conversation-replay-session integer)
     conversation-replay-record)
 (defun conversation-replay-select-turn (session turn)
-  "Select the first record in user TURN."
-  (unless (typep turn '(integer 0))
-    (error 'configuration-error
-           :message "A replay turn must be a nonnegative integer."))
-  (conversation-replay--select-index
-   session
-   (lambda (entry)
-     (= (conversation-replay-record-turn entry) turn))
-   (format nil "turn ~D" turn)))
+  "Select the first record in nonnegative user TURN."
+  (conversation-replay--select-by session ':turn turn))
 
 (-> conversation-replay-select-sequence (conversation-replay-session integer)
     conversation-replay-record)
 (defun conversation-replay-select-sequence (session sequence)
-  "Select the first record at or after durable SEQUENCE."
-  (unless (typep sequence '(integer 0))
-    (error 'configuration-error
-           :message "A replay sequence must be a nonnegative integer."))
-  (conversation-replay--select-index
-   session
-   (lambda (entry)
-     (let ((candidate (conversation-replay--record-sequence entry)))
-       (and candidate (>= candidate sequence))))
-   (format nil "sequence ~D" sequence)))
+  "Select the first record at or after nonnegative durable SEQUENCE."
+  (conversation-replay--select-by session ':sequence sequence))
 
 (-> conversation-replay--parse-date (string) (values integer integer integer))
 (defun conversation-replay--parse-date (text)
@@ -401,21 +386,7 @@ whole history when a crash or retention boundary interrupted sequencing."
     conversation-replay-record)
 (defun conversation-replay-select-date (session text)
   "Select SESSION's first record on local calendar date TEXT."
-  (multiple-value-bind (year month day)
-      (conversation-replay--parse-date text)
-    (conversation-replay--select-index
-     session
-     (lambda (entry)
-       (let ((time (conversation-replay--record-time entry)))
-         (when time
-           (multiple-value-bind (second minute hour candidate-day candidate-month
-                                 candidate-year)
-               (decode-universal-time time)
-             (declare (ignore second minute hour))
-             (and (= year candidate-year)
-                  (= month candidate-month)
-                  (= day candidate-day))))))
-     (format nil "date ~A" text))))
+  (conversation-replay--select-by session ':date text))
 
 (-> conversation-replay--parse-clock (string) (values integer integer integer))
 (defun conversation-replay--parse-clock (text)
@@ -452,60 +423,113 @@ whole history when a crash or retention boundary interrupted sequencing."
 (-> conversation-replay-select-time (conversation-replay-session string)
     conversation-replay-record)
 (defun conversation-replay-select-time (session text)
-  "Select the first replay record at or after local or RFC 3339 time TEXT.
+  "Select the first record at or after TEXT, using the selected date for a clock."
+  (conversation-replay--select-by session ':time text))
 
-A bare HH:MM[:SS] value uses the selected record's local date."
-  (let* ((current-time
-           (conversation-replay--record-time
-            (conversation-replay--current-record session)))
-         (explicit-time
-           (or (rfc3339->universal-time text)
-               (conversation-replay--local-date-time text)))
-         (target-time
-           (or explicit-time
-               (multiple-value-bind (hour minute second)
-                   (conversation-replay--parse-clock text)
-                 (unless current-time
-                   (error 'configuration-error
-                          :message "The selected replay record has no timestamp."))
-                 (multiple-value-bind
-                     (ignored-second ignored-minute ignored-hour day month year)
-                     (decode-universal-time current-time)
-                   (declare (ignore ignored-second ignored-minute ignored-hour))
-                   (encode-universal-time second minute hour day month year))))))
-    (conversation-replay--select-index
-     session
-     (lambda (entry)
-       (let ((candidate (conversation-replay--record-time entry)))
-         (and candidate (>= candidate target-time))))
-     (format nil "time ~A" text))))
+(-> conversation-replay--target-time (string (option timestamp)) timestamp)
+(defun conversation-replay--target-time (text current-time)
+  "Resolve absolute or bare local clock TEXT relative to CURRENT-TIME's date."
+  (or (rfc3339->universal-time text)
+      (conversation-replay--local-date-time text)
+      (multiple-value-bind (hour minute second)
+          (conversation-replay--parse-clock text)
+        (unless current-time
+          (error 'configuration-error
+                 :message "The selected replay record has no timestamp."))
+        (multiple-value-bind
+            (ignored-second ignored-minute ignored-hour day month year)
+            (decode-universal-time current-time)
+          (declare (ignore ignored-second ignored-minute ignored-hour))
+          (encode-universal-time second minute hour day month year)))))
+
+(-> conversation-replay--selector
+    (keyword (or integer string) &key (:current-time (option timestamp)))
+    (values function string))
+(defun conversation-replay--selector (kind value &key current-time)
+  "Compile KIND and VALUE into an entry predicate and its selection description."
+  (ecase kind
+    (:turn
+     (unless (typep value '(integer 0))
+       (error 'configuration-error
+              :message "A replay turn must be a nonnegative integer."))
+     (values (lambda (entry) (= (conversation-replay-record-turn entry) value))
+             (format nil "turn ~D" value)))
+    (:sequence
+     (unless (typep value '(integer 0))
+       (error 'configuration-error
+              :message "A replay sequence must be a nonnegative integer."))
+     (values (lambda (entry)
+               (let ((candidate (conversation-replay--record-sequence entry)))
+                 (and candidate (>= candidate value))))
+             (format nil "sequence ~D" value)))
+    (:date
+     (multiple-value-bind (year month day)
+         (conversation-replay--parse-date value)
+       (values (lambda (entry)
+                 (let ((time (conversation-replay--record-time entry)))
+                   (when time
+                     (multiple-value-bind
+                         (second minute hour candidate-day candidate-month candidate-year)
+                         (decode-universal-time time)
+                       (declare (ignore second minute hour))
+                       (and (= year candidate-year)
+                            (= month candidate-month)
+                            (= day candidate-day))))))
+               (format nil "date ~A" value))))
+    (:time
+     (let ((target-time (conversation-replay--target-time value current-time)))
+       (values (lambda (entry)
+                 (let ((candidate (conversation-replay--record-time entry)))
+                   (and candidate (>= candidate target-time))))
+               (format nil "time ~A" value))))))
+
+(-> conversation-replay-selection-predicate
+    (list &key (:current-time (option timestamp)))
+    (values function string))
+(defun conversation-replay-selection-predicate (arguments &key current-time)
+  "Compile CLI ARGUMENTS into an entry predicate and description, without history."
+  (unless (= (length arguments) 2)
+    (error 'configuration-error
+           :message
+           "Replay selection must be turn N, date YYYY-MM-DD, time TIME, or sequence N."))
+  (let* ((kind  (string-downcase (first arguments)))
+         (value (second arguments)))
+    (cond
+      ((string= kind "turn")
+       (conversation-replay--selector ':turn (parse-integer value :junk-allowed nil)))
+      ((member kind '("sequence" "record") :test #'string=)
+       (conversation-replay--selector ':sequence (parse-integer value :junk-allowed nil)))
+      ((string= kind "date")
+       (conversation-replay--selector ':date value))
+      ((string= kind "time")
+       (conversation-replay--selector ':time value :current-time current-time))
+      (t
+       (error 'configuration-error :message (format nil "Unknown replay selector ~S." kind))))))
+
+(-> conversation-replay--select-by
+    (conversation-replay-session keyword (or integer string))
+    conversation-replay-record)
+(defun conversation-replay--select-by (session kind value)
+  "Select SESSION's first entry matching a typed KIND and VALUE."
+  (multiple-value-bind (predicate description)
+      (conversation-replay--selector
+       kind value
+       :current-time (conversation-replay--record-time
+                      (conversation-replay--current-record session)))
+    (conversation-replay--select-index session predicate description)))
 
 (-> conversation-replay-apply-selection
     (conversation-replay-session list)
     conversation-replay-record)
 (defun conversation-replay-apply-selection (session arguments)
-  "Apply optional CLI selector ARGUMENTS to SESSION and return its current record."
+  "Apply optional CLI selector ARGUMENTS and return SESSION's current record."
   (when arguments
-    (unless (= (length arguments) 2)
-      (error 'configuration-error
-             :message
-             "Replay selection must be turn N, date YYYY-MM-DD, time TIME, or sequence N."))
-    (let ((kind  (string-downcase (first arguments)))
-          (value (second arguments)))
-      (cond
-        ((string= kind "turn")
-         (conversation-replay-select-turn
-          session (parse-integer value :junk-allowed nil)))
-        ((string= kind "date")
-         (conversation-replay-select-date session value))
-        ((string= kind "time")
-         (conversation-replay-select-time session value))
-        ((member kind '("sequence" "record") :test #'string=)
-         (conversation-replay-select-sequence
-          session (parse-integer value :junk-allowed nil)))
-        (t
-         (error 'configuration-error
-                :message (format nil "Unknown replay selector ~S." kind))))))
+    (multiple-value-bind (predicate description)
+        (conversation-replay-selection-predicate
+         arguments
+         :current-time (conversation-replay--record-time
+                        (conversation-replay--current-record session)))
+      (conversation-replay--select-index session predicate description)))
   (conversation-replay--current-record session))
 
 (-> conversation-replay-write-location
@@ -672,96 +696,79 @@ A bare HH:MM[:SS] value uses the selected record's local date."
 
 ;;;; -- Durable Conversation Forks --
 
-(-> conversation-fork--raw-records (conversation) list)
-(defun conversation-fork--raw-records (conversation)
-  "Return every complete durable record in CONVERSATION across all chunks."
-  (let ((records  nil)
-        (identity (conversation-pathname conversation)))
-    (dolist (pathname (conversation-storage-pathnames identity))
-      (conversation--from-header
-       identity pathname (conversation--peek-segment-header pathname))
-      (conversation--map-records
-       pathname
-       (lambda (record)
-         (unless (eq (first record) ':conversation)
-           (push record records)))))
-    (nreverse records)))
+(-> conversation-fork--source (configuration string) conversation)
+(defun conversation-fork--source (configuration identifier)
+  "Read the initial header without inspecting chunks beyond a requested fork head."
+  (let* ((identity (conversation-pathname-for-id configuration identifier))
+         (initial  (first (conversation-storage-pathnames identity))))
+    (unless initial
+      (error 'conversation-error
+             :message  (format nil "Conversation ~A does not exist." identifier)
+             :pathname identity
+             :sequence nil))
+    (conversation--from-header identity initial (conversation-peek-header initial))))
 
-(-> conversation-fork--selection-session (conversation list)
-    conversation-replay-session)
-(defun conversation-fork--selection-session (conversation records)
-  "Return replay-selector state over exact durable RECORDS."
-  (let ((turn    0)
-        (entries nil))
-    (dolist (record records)
-      (when (and (conversation--record-form-p record)
-                 (conversation-replay--user-turn-record-p record))
-        (incf turn))
-      (push (make-instance 'conversation-replay-record
-                           :record record
-                           :turn   turn)
-            entries))
-    (unless entries
+(-> conversation-fork--map-records
+    (conversation function &key (:head-sequence (option (integer 1)))
+                                (:on-header (option function)))
+    null)
+(defun conversation-fork--map-records
+    (conversation function &key head-sequence on-header)
+  "Visit the contiguous source prefix through HEAD-SEQUENCE without retaining it."
+  (let ((expected 1))
+    (conversation--map-storage-records
+     (conversation-pathname conversation)
+     (lambda (record)
+       (let ((sequence (getf (rest record) :seq)))
+         (unless (eql sequence expected)
+           (error 'conversation-invariant-error
+                  :message  (format nil "The fork source has a durable sequence gap at ~D."
+                                    expected)
+                  :pathname (conversation-pathname conversation)
+                  :sequence sequence))
+         (funcall function record)
+         (when (eql sequence head-sequence)
+           (return-from conversation-fork--map-records nil))
+         (incf expected)))
+     :on-header on-header)
+    (when head-sequence
+      (error 'conversation-error
+             :message  (format nil "Fork head sequence ~D does not exist." head-sequence)
+             :pathname (conversation-pathname conversation)
+             :sequence head-sequence)))
+  nil)
+
+(-> conversation-fork--select-head (conversation list) (integer 1))
+(defun conversation-fork--select-head (conversation selection)
+  "Find SELECTION's inclusive durable head with constant selector state."
+  (let ((turn        0)
+        (head        nil)
+        (predicate   nil)
+        (description nil))
+    (conversation-fork--map-records
+     conversation
+     (lambda (record)
+       (when (conversation-replay--user-turn-record-p record)
+         (incf turn))
+       (let ((entry (make-instance 'conversation-replay-record
+                                   :record record
+                                   :turn   turn)))
+         (when (and selection (null predicate))
+           (multiple-value-setq (predicate description)
+             (conversation-replay-selection-predicate
+              selection :current-time (conversation-replay--record-time entry))))
+         (setf head (getf (rest record) :seq))
+         (when (and predicate (funcall predicate entry))
+           (return-from conversation-fork--select-head head)))))
+    (unless head
       (error 'conversation-error
              :message  "The conversation contains no durable records to fork."
              :pathname (conversation-pathname conversation)
              :sequence nil))
-    (make-instance 'conversation-replay-session
-                   :conversation conversation
-                   :records      (coerce (nreverse entries) 'vector))))
-
-(-> conversation-fork--select-head (conversation list list) integer)
-(defun conversation-fork--select-head (conversation records selection)
-  "Return the inclusive durable head selected from RECORDS by SELECTION."
-  (let ((session (conversation-fork--selection-session conversation records)))
-    (if selection
-        (conversation-replay-apply-selection session selection)
-        (setf (conversation-replay-session-position session)
-              (1- (length (conversation-replay-session-records session)))))
-    (let ((sequence
-            (conversation-replay--record-sequence
-             (conversation-replay--current-record session))))
-      (unless (typep sequence '(integer 1))
-        (error 'conversation-invariant-error
-               :message  "The selected fork head has no valid durable sequence."
-               :pathname (conversation-pathname conversation)
-               :sequence sequence))
-      sequence)))
-
-(-> conversation-fork--prefix (conversation list integer) list)
-(defun conversation-fork--prefix (conversation records head-sequence)
-  "Return RECORDS through inclusive HEAD-SEQUENCE after contiguous validation."
-  (let ((expected 1)
-        (prefix   nil)
-        (found-p  nil))
-    (dolist (record records)
-      (when (> expected head-sequence)
-        (return))
-      (unless (conversation--record-form-p record)
-        (error 'conversation-invariant-error
-               :message  "A fork source record is not a keyword property list."
-               :pathname (conversation-pathname conversation)
-               :sequence expected))
-      (let ((sequence (getf (rest record) :seq)))
-        (unless (eql sequence expected)
-          (error 'conversation-invariant-error
-                 :message
-                 (format nil "The fork source has a durable sequence gap at ~D."
-                         expected)
-                 :pathname (conversation-pathname conversation)
-                 :sequence sequence))
-        (push (copy-tree record) prefix)
-        (when (= sequence head-sequence)
-          (setf found-p t)
-          (return))
-        (incf expected)))
-    (unless found-p
-      (error 'conversation-error
-             :message  (format nil "Fork head sequence ~D does not exist."
-                               head-sequence)
-             :pathname (conversation-pathname conversation)
-             :sequence head-sequence))
-    (nreverse prefix)))
+    (when selection
+      (error 'configuration-error
+             :message (format nil "No replay record matches ~A." description)))
+    head))
 
 (-> conversation-fork--image-descriptors (list) list)
 (defun conversation-fork--image-descriptors (records)
@@ -796,7 +803,8 @@ A bare HH:MM[:SS] value uses the selected record's local date."
              (destination
                (merge-pathnames (getf descriptor :artifact) target-root)))
         (ensure-directories-exist destination)
-        (uiop:copy-file (image-attachment-pathname attachment) destination))))
+        (unless (probe-file destination)
+          (uiop:copy-file (image-attachment-pathname attachment) destination)))))
   nil)
 
 (-> conversation-fork--prompt-cache-key (conversation string) non-empty-string)
@@ -809,6 +817,86 @@ A bare HH:MM[:SS] value uses the selected record's local date."
                                  (conversation-prompt-cache-key source))))
           return candidate))
 
+(-> conversation-fork--discard-target (conversation) null)
+(defun conversation-fork--discard-target (target)
+  "Remove the unpublished fork's owned chunk and artifact directories."
+  (dolist (directory (list (conversation-storage-directory-pathname
+                            (conversation-pathname target))
+                          (conversation-image-artifact-root target)))
+    (when (probe-file directory)
+      ; mallet:suppress no-ignore-errors -- cleanup must not mask the copy failure
+      (ignore-errors
+        (platform-delete-directory-tree *platform* directory
+                                        :validate t :if-does-not-exist ':ignore))))
+  nil)
+
+(-> conversation-fork--publish-initial (conversation list list) null)
+(defun conversation-fork--publish-initial (target header record)
+  "Publish TARGET's first record, cleaning failed staging before releasing the lock."
+  (let ((lock (conversation--initial-publication-lock-pathname target)))
+    (ensure-directories-exist lock)
+    (ls-flock:call-with-file-lock
+     lock
+     (lambda ()
+       (let ((owned-p     nil)
+             (published-p nil))
+         (unwind-protect
+              (progn
+                (sexp-store:segment-publish
+                 (conversation-log-pathname target) header record
+                 :occupied-p
+                 (lambda ()
+                   (if (or (conversation-storage-occupied-p (conversation-pathname target))
+                           (probe-file (conversation-image-artifact-root target)))
+                       t
+                       (progn (setf owned-p t) nil))))
+                (setf published-p t
+                      (conversation-persisted-p target) t))
+           (when (and owned-p (not published-p))
+             (conversation-fork--discard-target target)))))))
+  nil)
+
+(-> conversation-fork--copy-prefix (conversation conversation (integer 1)) null)
+(defun conversation-fork--copy-prefix (source target head-sequence)
+  "Stream SOURCE's selected chunks and artifacts into fresh TARGET storage."
+  (let ((next-sequence  1)
+        (pending-header nil)
+        (pathname       nil))
+    (conversation-fork--map-records
+     source
+     (lambda (record)
+       (cond
+         (pending-header
+          (sb-sys:without-interrupts
+            (if (conversation-persisted-p target)
+                (sexp-store:segment-publish pathname pending-header record)
+                (conversation-fork--publish-initial target pending-header record))
+            (setf pending-header nil
+                  (conversation-persisted-p target) t
+                  (conversation-log-pathname target) pathname)))
+         (t
+          ;; Every preceding append completed in this fresh, privately owned log.
+          (log-append pathname record :repair-tail-p nil)))
+       (conversation-fork--copy-images
+        source target (conversation-fork--image-descriptors (list record)))
+       (incf next-sequence))
+     :head-sequence head-sequence
+     :on-header
+     (lambda (metadata)
+       (setf pathname (conversation-chunk-pathname
+                       (conversation-pathname target) next-sequence)
+             pending-header (conversation--header-record
+                             metadata :chunk-start-sequence next-sequence)
+             (getf (rest pending-header) :id)
+             (conversation-identifier target)
+             (getf (rest pending-header) :prompt-cache-key)
+             (conversation-prompt-cache-key target)
+             (getf (rest pending-header) :created-at)
+             (conversation-created-at target)
+             (getf (rest pending-header) :directory)
+             (conversation-origin-directory target)))))
+  nil)
+
 (-> conversation-fork
     (configuration string
      &key (:selection list) (:identifier (option string)))
@@ -819,12 +907,8 @@ A bare HH:MM[:SS] value uses the selected record's local date."
 
 SELECTION uses the replay selector syntax.  A null selection chooses the newest
 complete durable record.  The source is read only and never repaired."
-  (let* ((source           (conversation-replay-load configuration source-identifier))
-         (records          (conversation-fork--raw-records source))
-         (head-sequence
-           (conversation-fork--select-head source records selection))
-         (prefix
-           (conversation-fork--prefix source records head-sequence))
+  (let* ((source          (conversation-fork--source configuration source-identifier))
+         (head-sequence   (conversation-fork--select-head source selection))
          (target
            (conversation-create
             configuration
@@ -832,42 +916,22 @@ complete durable record.  The source is read only and never repaired."
             :prompt-cache-key
             (conversation-fork--prompt-cache-key
              source (or identifier "generated-fork"))))
-         (target-identity  (conversation-pathname target))
-         (target-log       (conversation-log-pathname target))
-         (target-artifacts (conversation-image-artifact-root target))
-         (published-p      nil))
+         (target-identity (conversation-pathname target))
+         (published-p     nil))
     (unwind-protect
          (progn
-           (conversation-fork--copy-images
-            source target (conversation-fork--image-descriptors prefix))
-           (dolist (record prefix)
-             (conversation--apply-record target record))
-           (let ((provenance
-                   (list :fork
-                         :seq (1+ head-sequence)
-                         :time            (get-universal-time)
-                         :source-id       (conversation-identifier source)
-                         :source-sequence head-sequence
-                         :selection       (and selection (copy-list selection)))))
-             (conversation--apply-record target provenance)
-             (log-append target-log
-                         (first prefix)
-                         :initial-forms
-                         (list (conversation--header-record target
-                                  :chunk-start-sequence 1)))
-             (dolist (record (rest prefix))
-               (log-append target-log record))
-             (log-append target-log provenance))
+           (conversation-fork--copy-prefix source target head-sequence)
+           (log-append
+            (conversation-log-pathname target)
+            (list :fork
+                  :seq             (1+ head-sequence)
+                  :time            (get-universal-time)
+                  :source-id       (conversation-identifier source)
+                  :source-sequence head-sequence
+                  :selection       (and selection (copy-list selection)))
+            :repair-tail-p nil)
            (let ((loaded (conversation-load target-identity)))
              (setf published-p t)
              loaded))
-      (unless published-p
-        (dolist (pathname (conversation-storage-pathnames target-identity))
-          ; mallet:suppress no-ignore-errors -- best-effort cleanup must not mask the failure
-          (ignore-errors (delete-file pathname)))
-        (when (probe-file target-artifacts)
-          ; mallet:suppress no-ignore-errors -- best-effort cleanup must not mask the failure
-          (ignore-errors
-            (platform-delete-directory-tree *platform* target-artifacts
-                                            :validate          t
-                                            :if-does-not-exist ':ignore)))))))
+      (when (and (not published-p) (conversation-persisted-p target))
+        (conversation-fork--discard-target target)))))
