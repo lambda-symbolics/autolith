@@ -586,6 +586,28 @@
 (defvar *task-tests--orchestrators* nil
   "Orchestrators created by tests, closed when the task suite finishes.")
 
+(defvar *task-tests--cleanup-failures* nil
+  "Process-global (orchestrator . outcome) records after incomplete test shutdown.
+Access the global value so dynamic fixture bindings cannot conceal unsafe cleanup.
+A later successful close does not prove that earlier timed-out threads stopped.")
+
+(define-condition test-cleanup-error (error)
+  ((failures
+    :initarg       :failures
+    :reader        test-cleanup-error-failures
+    :documentation "Orchestrators paired with NIL close results or original errors."))
+  (:report (lambda (condition stream)
+             (format stream "Incomplete test shutdown; restart the test process. Failures: ~S"
+                     (test-cleanup-error-failures condition))))
+  (:documentation "Incomplete asynchronous cleanup quarantines this test process."))
+
+(-> task-tests--require-cleanup () null)
+(defun task-tests--require-cleanup ()
+  "Refuse another case after any incomplete shutdown in this process."
+  (let ((failures (sb-ext:symbol-global-value '*task-tests--cleanup-failures*)))
+    (when failures
+      (error 'test-cleanup-error :failures failures))))
+
 (-> task-tests--orchestrator () task-orchestrator)
 (defun task-tests--orchestrator ()
   "Return a fresh orchestrator the task suite will close afterwards.
@@ -597,12 +619,26 @@ the tests that require a single-threaded image do."
     (push orchestrator *task-tests--orchestrators*)
     orchestrator))
 
-(-> task-tests--close-orchestrators () null)
+(-> task-tests--close-orchestrators () boolean)
 (defun task-tests--close-orchestrators ()
-  "Close every orchestrator the task tests created and forget them."
-  (dolist (orchestrator *task-tests--orchestrators*)
-    (ignore-errors (task-orchestrator-close orchestrator)))
-  (setf *task-tests--orchestrators* nil))
+  "Close new handles without signaling; return true only for safe process cleanup.
+Retain failed handles and their NIL result or original error globally. Never retry
+failed handles: later close success cannot establish that old threads stopped."
+  (let ((retained nil))
+    (dolist (orchestrator (remove-duplicates *task-tests--orchestrators* :test #'eq))
+      (cond
+        ((assoc orchestrator
+                (sb-ext:symbol-global-value '*task-tests--cleanup-failures*))
+         (push orchestrator retained))
+        (t
+         (let ((outcome (handler-case (task-orchestrator-close orchestrator)
+                          (error (condition) condition))))
+           (when (or (null outcome) (typep outcome 'error))
+             (push orchestrator retained)
+             (push (cons orchestrator outcome)
+                   (sb-ext:symbol-global-value '*task-tests--cleanup-failures*)))))))
+    (setf *task-tests--orchestrators* (nreverse retained))
+    (null (sb-ext:symbol-global-value '*task-tests--cleanup-failures*))))
 
 (-> task-tests--queued-jobs (task-orchestrator) list)
 (defun task-tests--queued-jobs (orchestrator)

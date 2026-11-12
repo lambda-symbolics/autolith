@@ -1779,6 +1779,8 @@
   test-xdg-legacy-root-scan)
 
 (define-test-suite test-runner
+  test-runner-identifier-isolation
+  test-runner-identifier-cleanup
   test-runner-selection
   test-runner-failure-reporting
   test-runner-temporary-cleanup
