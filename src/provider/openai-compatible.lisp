@@ -449,7 +449,8 @@ The first SHARED-COUNT durable items also end at their own breakpoint."
                                (openai-compatible-provider-reasoning-parameter
                                 provider)
                                :reasoning-effort
-                               (config :reasoning-effort configuration)
+                               (or *provider-reasoning-effort*
+                                    (config :reasoning-effort configuration))
                                :maximum-output-tokens
                                (and (provider-output-ceiling-p provider)
                                     *provider-maximum-output-tokens*)

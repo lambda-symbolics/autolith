@@ -4559,6 +4559,7 @@ model's calls in a turn."
              (*provider-maximum-output-tokens*
                *conversation-title-generation-output-tokens*)
              (*telemetry-request-role*          ':title-generation)
+             (*provider-reasoning-effort*       "none")
              (*provider-hosted-tools-enabled-p* nil))
         (setf (conversation-input-items conversation)
               (list (user-message-item request)))
@@ -4575,6 +4576,15 @@ model's calls in a turn."
               nil)))
           ""))))))
 
+(-> application--conversation-title-mark-failed (conversation) null)
+(defun application--conversation-title-mark-failed (conversation)
+  "Record one failed title generation so later turns do not retry it."
+  (ignore-errors
+    (let ((title (conversation-title conversation)))
+      (when title
+        (conversation-set-title conversation title :source ':generation-failed))))
+  nil)
+
 (-> application--maybe-refresh-conversation-title (application) null)
 (defun application--maybe-refresh-conversation-title (application)
   "Best-effort replace APPLICATION's initial title after a few durable turns."
@@ -4585,11 +4595,13 @@ model's calls in a turn."
       (unwind-protect
            (handler-case
                (let ((title (application--conversation-title-generate application)))
-                 (when title
-                   (conversation-set-title conversation title :source ':generated)
-                   (application-world-sync application)))
+                 (if title
+                     (progn
+                       (conversation-set-title conversation title :source ':generated)
+                       (application-world-sync application))
+                     (application--conversation-title-mark-failed conversation)))
              (error ()
-               nil))
+               (application--conversation-title-mark-failed conversation)))
         (conversation-title-refresh-release conversation))))
   nil)
 

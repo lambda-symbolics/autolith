@@ -1784,7 +1784,8 @@ this append's original EOF, including when publication failed after the write."
     (and (conversation-persisted-p conversation)
          (>= (conversation-user-turn-count conversation)
              *conversation-title-refresh-turn-count*)
-         (not (eq (conversation-title-source conversation) ':generated))
+         (not (member (conversation-title-source conversation)
+                       '(:generated :generation-failed)))
          t)))
 
 (-> conversation-title-refresh-reserve-p (conversation) boolean)
@@ -1831,7 +1832,7 @@ this append's original EOF, including when publication failed after the write."
            (member next-source '(:initial :generated))
            t)
       (and (eq current-source ':initial)
-           (eq next-source ':generated)
+           (member next-source '(:generated :generation-failed))
            t)))
 
 (-> conversation-set-title
@@ -1845,7 +1846,7 @@ this append's original EOF, including when publication failed after the write."
              :message  "A conversation title must contain displayable text."
              :pathname (conversation-pathname conversation)
              :sequence (conversation-next-sequence conversation)))
-    (unless (member source '(:initial :generated))
+    (unless (member source '(:initial :generated :generation-failed))
       (error 'conversation-invariant-error
              :message  "A conversation title has an unsupported source."
              :pathname (conversation-pathname conversation)
@@ -3147,7 +3148,7 @@ usage metadata does not replace coverage; pending responses and compaction do."
                 (conversation-title-normalize title)))
          (source (getf properties :source)))
     (unless (and normalized-title
-                 (member source '(:initial :generated))
+                 (member source '(:initial :generated :generation-failed))
                  (conversation--title-transition-valid-p
                   (conversation-title-source conversation) source))
       (conversation--record-error
@@ -3490,7 +3491,7 @@ usage metadata does not replace coverage; pending responses and compaction do."
              (and (= version 2) (getf properties :usage-totals))))
       (unless (or (and (null title) (null title-source))
                   (and normalized-title
-                       (member title-source '(:initial :generated))))
+                       (member title-source '(:initial :generated :generation-failed))))
         (invalid "The conversation header has an invalid title."))
       (unless (and (stringp identity-identifier)
                    (string= identifier identity-identifier))

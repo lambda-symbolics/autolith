@@ -1744,6 +1744,7 @@
   test-command-turn-steering
   test-late-steering-promotion
   test-application-conversation-title-refresh
+  test-application-conversation-title-reasoning
   test-conversation-picker
   test-application-window-title
   test-working-directory-switch

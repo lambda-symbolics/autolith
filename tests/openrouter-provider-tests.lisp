@@ -117,6 +117,15 @@
                 (string= (json-get (json-get request "reasoning") "effort")
                          "medium")
                 "OpenRouter uses its normalized reasoning schema")
+               (let ((*provider-reasoning-effort* "none"))
+                 (multiple-value-bind (overridden ignored-delivery)
+                     (provider-request-object provider conversation (json-array)
+                                              :goal-context nil
+                                              :compaction-p nil)
+                   (declare (ignore ignored-delivery))
+                   (test-assert
+                    (null (json-get overridden "reasoning"))
+                    "a request-local effort disables OpenRouter reasoning")))
                (test-assert
                 (= (json-get request "max_tokens") 321)
                 "OpenRouter requests include max_tokens")
