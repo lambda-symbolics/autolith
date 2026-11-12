@@ -1606,6 +1606,7 @@
   test-localgroup-relay-frames
   test-localgroup-frame-snapshots
   test-localgroup-screen-paints-frames
+  test-localgroup-screen-loading
   test-localgroup-screen-panel
   test-localgroup-screen-geometry
   test-localgroup-cli-targets

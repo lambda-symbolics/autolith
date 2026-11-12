@@ -1303,19 +1303,24 @@ gives the terminal back in between."
                   ;; A switch navigates: it states none of this start's launch
                   ;; options, and a channel that refuses it leaves the terminal
                   ;; where it was.
-                 (let ((left session-id))
+                 (let ((left   session-id)
+                       (target (getf (rest exit) :session-id)))
                    (handler-case
                        (progn
+                         (setf (world-sidebar-current panel) target)
+                         (localgroup-screen-show-loading
+                          screen
+                          (format nil "Loading channel ~A..."
+                                  (conversation-identifier-display target)))
                          (multiple-value-setq (session-id started-p)
                            (world-client-open configuration
-                                              :channel         (getf (rest exit) :session-id)
+                                              :channel         target
                                               :permission-mode permission-mode
                                               :immutable-p     immutable-p
                                               :switch-p        t))
                          (setf origin left))
                      (localgroup-error (condition)
-                       (setf notice     (main--switch-failure (getf (rest exit) :session-id)
-                                                              condition)
+                       (setf notice     (main--switch-failure target condition)
                              session-id left
                              origin     nil
                              started-p  nil)))))

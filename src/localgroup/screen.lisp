@@ -376,6 +376,34 @@ client it has not synchronized."
     (t
      nil)))
 
+(-> localgroup-screen-show-loading (localgroup-screen string) null)
+(defun localgroup-screen-show-loading (screen text)
+  "Replace SCREEN's displayed channel with TEXT while keeping its side panel.
+
+The next channel supplies a complete frame before any incremental rows apply."
+  (with-lock-held ((localgroup-screen-lock screen))
+    (when (localgroup-screen-active-p screen)
+      (setf (localgroup-screen-drawer-open-p screen) nil
+            (localgroup-screen-frame screen) nil)
+      (localgroup-screen--take-whole-screen screen nil)
+      (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
+        (unwind-protect
+             (progn
+               (localgroup-screen--apply-frame
+                screen
+                (list :height           height
+                      :width            width
+                      :complete-p       t
+                      :rows             (list (list 0 (terminal--render-spans
+                                                      (localgroup-screen-terminal screen)
+                                                      (list (terminal-span ':notice text)))))
+                      :cursor-row       0
+                      :cursor-column    0
+                      :cursor-visible-p nil))
+               (localgroup-screen--paint screen))
+          (setf (localgroup-screen-frame screen) nil)))))
+  nil)
+
 (-> localgroup-screen-resized (localgroup-screen) null)
 (defun localgroup-screen-resized (screen)
   "Invalidate SCREEN after a resize; paint only a frame matching the new geometry."

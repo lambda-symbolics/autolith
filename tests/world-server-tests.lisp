@@ -1494,10 +1494,11 @@ run once the wake has."
           (attaches  nil)
           (refuse-p  nil)
           (rejects-p nil)
-          (notices   nil))
+          (notices   nil)
+          (loading-p nil))
       (flet ((run ()
                "Run the client loop for a terminal started with launch options, switching once."
-               (setf opens nil attaches nil)
+               (setf opens nil attaches nil loading-p nil)
                (let ((calls 0))
                  (test-call-with-function-replacements
                   (list (list 'main--open-world-channel
@@ -1527,9 +1528,15 @@ run once the wake has."
                               (lambda (&rest arguments)
                                 (declare (ignore arguments))
                                 nil))
+                        (list 'localgroup-screen-show-loading
+                              (lambda (screen text)
+                                (declare (ignore screen text))
+                                (setf loading-p t)))
                         (list 'world-client-open
                               (lambda (candidate &rest arguments)
                                 (declare (ignore candidate))
+                                (test-assert loading-p
+                                             "loading is displayed before the blocking channel open")
                                 (push arguments opens)
                                 (if refuse-p
                                     (error 'localgroup-error

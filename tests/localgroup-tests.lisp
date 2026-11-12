@@ -357,6 +357,53 @@
   (loop for index below height
         collect (format nil "~vA" width (or (nth index (localgroup-tests-panel-rows panel)) ""))))
 
+(-> test-localgroup-screen-loading () null)
+(defun test-localgroup-screen-loading ()
+  "Paint pending navigation in the channel pane and require the next channel's full frame."
+  (dolist (columns '(90 40))
+    (let* ((terminal (make-instance 'recording-terminal :columns columns :rows 8))
+           (panel    (make-instance 'localgroup-tests-panel :rows '("sidebar")))
+           (screen   (localgroup-screen-create :terminal terminal :panel panel))
+           (text     "pending navigation"))
+      (unwind-protect
+           (progn
+             (localgroup-screen-handle-packet
+              screen (list :frame :height 8 :width columns :complete-p t
+                                  :whole-screen-p t :rows '((0 "previous") (3 "old row"))
+                                  :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+             (setf (recording-terminal-chunks terminal) nil)
+             (localgroup-screen-show-loading screen text)
+             (test-assert (and (localgroup-screen-active-p screen)
+                               (null (localgroup-screen-frame screen))
+                               (not (third (localgroup-screen-cursor screen))))
+                          "loading keeps terminal ownership but drops the old frame and cursor")
+             (test-assert (eq (localgroup-screen-painted-layout screen)
+                              (if (> columns 70) ':beside ':session))
+                          "loading reveals the docked sidebar or the narrow channel pane")
+             (test-assert (some (lambda (chunk) (search text chunk))
+                                (recording-terminal-chunks terminal))
+                          "the pending operation is painted before a channel can answer")
+             (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
+               (setf (recording-terminal-chunks terminal) nil)
+               (localgroup-screen-handle-packet
+                screen (list :frame :height height :width width :complete-p nil
+                                    :rows '((0 "unbased")) :cursor-row 0 :cursor-column 0))
+               (test-assert (null (recording-terminal-chunks terminal))
+                            "incremental rows cannot use the temporary loading frame as a baseline")
+               (localgroup-screen-handle-packet
+                screen (list :frame :height height :width width :complete-p t
+                                    :rows '((0 "ready")) :cursor-row 0 :cursor-column 0))
+               (test-assert (equalp (clinedi:frame-snapshot-rows (localgroup-screen-frame screen))
+                                    #("ready" "" "" "" "" "" "" ""))
+                            "the new channel replaces loading without rows from the previous channel")))
+        (localgroup-screen-close screen))))
+  (let* ((terminal (make-instance 'recording-terminal))
+         (screen   (localgroup-screen-create :terminal terminal)))
+    (localgroup-screen-show-loading screen "pending navigation")
+    (test-assert (null (recording-terminal-chunks terminal))
+                 "loading paints only a screen the client already owns"))
+  nil)
+
 (-> test-localgroup-screen-panel () null)
 (defun test-localgroup-screen-panel ()
   "Test a client composing its side panel beside the session's frame and keeping the keys apart."
