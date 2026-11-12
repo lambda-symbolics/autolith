@@ -1321,6 +1321,7 @@ servers. Release acquired resources if construction fails."
                   nil
                   (application-history-floor-sequence application)
                   restored-history-floor-sequence))
+               (application--load-conversation-input-history ui conversation)
                (application-refresh-context-meter application)
                (application-connect-task-presentation application)
                (application--load-goal application)
@@ -1533,6 +1534,7 @@ servers. Release acquired resources if construction fails."
                            (application-history-floor-sequence new-application)
                            restored-history-floor-sequence
                            (application-mutation-replay-failures new-application) nil))
+                        (application--load-conversation-input-history ui conversation)
                         (application-refresh-context-meter new-application)
                         (application--load-goal new-application)
                         (image-state-reconnect)

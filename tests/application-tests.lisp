@@ -3511,6 +3511,19 @@
                (platform-setenv sequence-name "2")
                (platform-setenv floor-name "1"))
 
+             (check-history (expected)
+               "Recall EXPECTED from the installed UI and return to its draft."
+               (let* ((ui     (application-ui application))
+                      (editor (terminal-ui-editor ui)))
+                 (line-editor-set-text editor "draft" :cursor 2)
+                 (terminal-ui-process-event ui ':history-previous)
+                 (test-assert (string= expected (line-editor-text editor))
+                              "the replacement UI recalls its own conversation")
+                 (terminal-ui-process-event ui ':history-next)
+                 (test-assert (and (string= "draft" (line-editor-text editor))
+                                   (= 2 (line-editor-cursor editor)))
+                              "returning from recall restores the draft and cursor")))
+
              (close-application ()
                "Close APPLICATION's owned runtime and conversation lease."
                (when application
@@ -3570,6 +3583,7 @@
                   (= (application-rendered-sequence application) 2)
                   (= (application-history-floor-sequence application) 1))
                  "clean-source recovery restores its conversation and cursors")
+                (check-history "recovery message 2")
                 (let ((ui (application-ui application)))
                   (test-assert
                     (and (plusp (terminal-ui-context-used ui))
@@ -3603,6 +3617,7 @@
                   (zerop (application-rendered-sequence application))
                   (null (application-history-floor-sequence application)))
                  "explicit resume overrides recovery conversation and cursor state")
+                (check-history "explicit message")
                 (publish-recovery-context)
                 (setf application (application-reconnect application))
                 (test-assert
@@ -3616,6 +3631,7 @@
                   (= (application-rendered-sequence application) 2)
                   (= (application-history-floor-sequence application) 1))
                  "retained-generation reconnect restores recovery state")
+                (check-history "recovery message 2")
                 (let ((ui (application-ui application)))
                   (test-assert
                     (and (plusp (terminal-ui-context-used ui))
