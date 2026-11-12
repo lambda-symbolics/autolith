@@ -426,25 +426,56 @@ Or Lisp REPL prompts:
 
 The timestamps you see in this example are configurable in =(settings)=.
 
+* Work in channels
+:PROPERTIES:
+:ID: channels
+:VERSION: 1
+:END:
+Use *channels* for separate conversations and projects in one background Autolith server.
+Each channel has its own history and workspace. Your main agent and its children appear by name.
+
+Use =(switch)= or click a channel in the sidebar to visit it.
+Work in other channels continues while you are elsewhere.
+
+Choose the *inbox* to read messages addressed to you.
+
+* Open a channel or resume its history
+:PROPERTIES:
+:ID: open-channels
+:VERSION: 1
+:END:
+*From a terminal:*
+
+=autolith=          return to the latest available channel in this directory
+=autolith open=     choose a channel
+=autolith open ID=  open a particular channel
+
+If the channel is running, you join its live agent with its jobs intact.
+If it has closed or left memory, you resume its saved conversation.
+
+The old =autolith resume= command is now =autolith open=.
+Inside Autolith, use =(switch)= for either case.
+Add =--detached= with an ID to open it without attaching a terminal.
+
 * Detached sessions
 :PROPERTIES:
 :ID: detached-sessions
-:VERSION: 5
+:VERSION: 6
 :END:
-Use =(detach)= to disconnect your terminal while Autolith keeps working.
+Use =(detach)= to leave your channel working in the background.
+Return with =autolith open ID=.
+Closing the terminal also leaves the channel working.
 
 *From another terminal:*
-=autolith localgroup status=
-=autolith localgroup attach [SESSION-ID]=
-=autolith localgroup tell   [SESSION-ID] "message"=
-=autolith localgroup pause  [SESSION-ID]=
-=autolith localgroup detach [SESSION-ID]=
-=autolith localgroup kill   [SESSION-ID]=
+=autolith lg status=                  list the server and its channels
+=autolith lg tell ID "message"=       send a message
+=autolith lg attach ID --read-only=   watch a channel
+Use =--take-over= instead of =--read-only= to take control.
 
-Use =attach --read-only= to watch a session. To watch and control the session (full re-attachment), use =attach --take-over=.
+Use =(quit)= to close your current channel.
+Use =autolith lg stop= to stop the server and every channel it hosts.
 
-You can use =autolith lg= as a shorthand for =autolith localgroup=.
-With one active session, you can omit =SESSION-ID=. Otherwise, use a uniquely identifying prefix.
+=lg= is shorthand for =localgroup=.
 
 * Give Autolith an objective
 :PROPERTIES:
@@ -573,7 +604,7 @@ You can request it specifically if you like, but generally, Autolith knows when 
 * Delegate independent work
 :PROPERTIES:
 :ID: child-agents
-:VERSION: 3
+:VERSION: 4
 :END:
 Autolith can start *child agents* for implementation, research, design, or review.
 
@@ -585,7 +616,25 @@ Use =(child.roles)= to browse available roles.
 =.autolith/agents/=       project roles
 =<config-root>/agents/=   user roles
 
+Each child has its own channel. Use =(switch)= to visit it.
+
 Steer a running child with =(prompt :to 'child-name "...")=. If it has a response for you, you will see it.
+
+* Name, reuse and remove children
+:PROPERTIES:
+:ID: child-lifecycle
+:VERSION: 1
+:END:
+Ask Autolith to give children *meaningful names*, such as =parser-review= or =release-tests=.
+
+Ask it to *reuse a suitable idle child* for related work. A child keeps its name, role, channel and history between assignments.
+
+*Remove finished children you no longer need.* Ask Autolith to remove them explicitly.
+Removal deletes the child's channel, history and children nested under it.
+Each agent can have up to 32 children.
+
+=Name the reviewer parser-review and reuse it for later parser changes.=
+=Remove parser-review when we finish this review.=
 
 * Define an agent
 :PROPERTIES:
