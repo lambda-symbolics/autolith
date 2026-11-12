@@ -877,9 +877,9 @@ already admits the path to the readable roots, so it is not asked again."
                                       (resource-uri resource)
                                       total-lines
                                       start-line
-                                      (+ start-line line-count -1)
+                                      (min total-lines (+ start-line line-count -1))
                                       *workspace-file-resource-maximum-result-characters*)
-                   :code      :result-too-large
+                   :code      ':result-too-large
                    :tool-name "resource.read"))
           (let ((state
                    (resource-observation-state-ensure
