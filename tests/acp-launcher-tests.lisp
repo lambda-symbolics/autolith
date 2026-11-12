@@ -94,11 +94,12 @@
                      (acp-launcher-test-failure-stderr condition)))))
 
 (-> acp-launcher-tests--initialize
-    (string &key (:arguments list) (:directory pathname) (:timeout real)) hash-table)
+    (string &key (:arguments list) (:directory pathname) (:timeout real)
+                 (:new-session-p boolean)) hash-table)
 (defun acp-launcher-tests--initialize (program &key arguments
-                                                  (directory *default-pathname-defaults*)
-                                                  (timeout 180))
-  "Initialize PROGRAM over its actual standard I/O and return the protocol response."
+                                                   (directory *default-pathname-defaults*)
+                                                   (timeout 180) new-session-p)
+  "Initialize PROGRAM over standard I/O, optionally create a session, and return initialization."
   (let ((channel (agentcomms:acp-launch-agent program
                                              :arguments arguments
                                              :directory directory))
@@ -107,9 +108,11 @@
         (failure nil))
     (unwind-protect
          (handler-case
-             (progn
-               (agentcomms:acp-client-connect client channel)
-               (setf result (agentcomms:client-initialize client :timeout timeout)))
+              (progn
+                (agentcomms:acp-client-connect client channel)
+                (setf result (agentcomms:client-initialize client :timeout timeout))
+                (when new-session-p
+                  (agentcomms:client-new-session client (namestring directory))))
            (serious-condition (condition)
              (setf failure condition)))
       (handler-case
@@ -128,7 +131,7 @@
 
 (-> acp-launcher-tests--initialize-with-caller-environment (string) hash-table)
 (defun acp-launcher-tests--initialize-with-caller-environment (program)
-  "Initialize PROGRAM and observe restored ASDF values from executable user init."
+  "Create an ACP session and observe restored ASDF values from executable user init."
   (with-test-configuration (configuration root)
     (declare (ignore configuration))
     (acp-launcher-tests--call-with-roots
@@ -154,12 +157,16 @@
                                  ("AUTOLITH_CALLER_CL_SOURCE_REGISTRY_STATE" nil)
                                  ("AUTOLITH_CALLER_ASDF_OUTPUT_TRANSLATIONS_STATE" nil)
                                  ("AUTOLITH_ACTIVE_CORE" (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")))
-           (let ((result (acp-launcher-tests--initialize program :arguments '("acp")
-                                                       :directory           root)))
-             (with-open-file (stream observation)
-               (let ((*read-eval* nil))
-                 (assert (equal (list registry "" nil nil) (read stream)))))
-             result)))))))
+            (unwind-protect
+                 (let ((result (acp-launcher-tests--initialize
+                                program :arguments '("acp") :directory root :new-session-p t)))
+                   (with-open-file (stream observation)
+                     (let ((*read-eval* nil))
+                       (assert (equal (list registry "" nil nil) (read stream)))))
+                   result)
+              (let ((entry (world-client-entry configuration)))
+                (when entry
+                  (world-client--stop-server entry (make-broadcast-stream)))))))))))
 
 (-> test-acp-launcher-caller-environment () null)
 (defun test-acp-launcher-caller-environment ()
