@@ -95,6 +95,23 @@
       (list :conversation conversation :child child :memory memory :global global
             :forgotten forgotten :papercut papercut :digest digest :image image))))
 
+(-> test-data-transfer--remember-unrelated
+    (configuration configuration &key (:title string) (:content string)) memory)
+(defun test-data-transfer--remember-unrelated (source target &key title content)
+  "Create a native target memory distinct from every source history, including tombstones."
+  (let ((identifiers (mapcar #'first
+                             (data-transfer--histories
+                              (data-transfer--log-records
+                               (configuration-memory-path source) ':memories)))))
+    (test-call-with-function-replacements
+     (list (list 'memory--generate-identifier
+                 (lambda (configuration active)
+                   (identifier-generate
+                    :namespace            (namestring (configuration-memory-path configuration))
+                    :reserved-identifiers (append identifiers
+                                                  (mapcar #'memory-short-identifier active))))))
+     (lambda () (memory-remember target :title title :content content)))))
+
 (-> test-data-transfer--empty-and-log-boundaries () null)
 (defun test-data-transfer--empty-and-log-boundaries ()
   "Exercise empty archives, native archive names, and append-only log boundaries."
@@ -120,7 +137,8 @@
       (dolist (kind '(:empty :comment))
         (with-test-configuration (target)
           (when (eq kind ':comment)
-            (memory-remember target :title "Existing" :content "local memory"))
+            (test-data-transfer--remember-unrelated source target
+                                                   :title "Existing" :content "local memory"))
           (let ((destination (configuration-memory-path target)))
             (ensure-directories-exist destination)
             (with-open-file (stream destination :direction ':output :if-exists ':append
@@ -725,7 +743,8 @@
   (with-test-configuration (source root)
     (with-test-configuration (target)
       (test-data-transfer--populate source root)
-      (memory-remember target :title "Local memory" :content "preserve local history")
+      (test-data-transfer--remember-unrelated source target
+                                              :title "Local memory" :content "preserve local history")
       (let* ((path          (merge-pathnames "rollback.sexp" root))
              (memory-path   (configuration-memory-path target))
              (memory-before (data-transfer--bytes memory-path))
