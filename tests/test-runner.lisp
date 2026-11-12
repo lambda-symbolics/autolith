@@ -15,6 +15,29 @@
                      (test-selection-error-selector condition))))
   (:documentation "A test selection names no registered suite or case."))
 
+(defvar *test-case-running-p* nil
+  "True inside a registered case, including nested test-runner probes.")
+
+(-> test-call-with-case-identifiers (function) t)
+(defun test-call-with-case-identifiers (function)
+  "Isolate reservations between outermost cases, after their asynchronous work closes."
+  (if *test-case-running-p*
+      (funcall function)
+      (progn
+        (task-tests--require-cleanup)
+        (task-tests--close-orchestrators)
+        (task-tests--require-cleanup)
+        (identifier-clear-reservations)
+        (let ((*test-case-running-p* t)
+              (returned-p            nil))
+          (unwind-protect
+               (multiple-value-prog1 (funcall function)
+                 (setf returned-p t))
+            (if (task-tests--close-orchestrators)
+                (identifier-clear-reservations)
+                (when returned-p
+                  (task-tests--require-cleanup))))))))
+
 (defmacro define-test-suite (name &body cases)
   "Register NAME and CASES in FiveAM and the command-line catalog.
 
@@ -32,9 +55,7 @@ Reloading a suite replaces its registration without duplicating cases."
                                 (*model-catalog-fetch-function*
                                   (lambda (context) (declare (ignore context)) nil)))
                             (with-test-environment (("AUTOLITH_TELEMETRY" "off"))
-                              (unwind-protect
-                                   (,name)
-                                (task-tests--close-orchestrators))))))
+                              (test-call-with-case-identifiers #',name)))))
        (setf *test-suites*
              (append (remove ,label *test-suites* :key #'first :test #'string=)
                      (list (cons ,label ',cases)))))))

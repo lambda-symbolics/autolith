@@ -2,6 +2,210 @@
 
 ;;;; -- Test Runner Behavior --
 
+(-> test-runner--identifier-probe () null)
+(defun test-runner--identifier-probe ()
+  "Allocate a full second's capacity without releasing any within the case."
+  (dotimes (index 58)
+    (make-user-identifier))
+  (test-assert
+   (handler-case (progn (make-user-identifier) nil)
+     (idsmall:identifier-space-exhausted () t))
+   "a single case retains the documented 58 identifiers per second limit")
+  nil)
+
+(-> test-runner-identifier-isolation () null)
+(defun test-runner-identifier-isolation ()
+  "Run two registered cases at one allocation timestamp without cross-case exhaustion."
+  (let ((*test-suites*               *test-suites*)
+        (*test-case-running-p*       nil)
+        (*task-tests--orchestrators* nil)
+        (generate                    (symbol-function 'identifier-generate)))
+    (unwind-protect
+         (progn
+           (define-test-suite runner-identifier-probe test-runner--identifier-probe)
+           (test-call-with-function-replacements
+            (list (list 'identifier-generate
+                        (lambda (&rest arguments)
+                          (let ((arguments (copy-list arguments)))
+                            (setf (getf arguments :timestamp) 3994000000)
+                            (apply generate arguments)))))
+            (lambda ()
+              (let ((result (tests-run-cases '(test-runner--identifier-probe
+                                               test-runner--identifier-probe)
+                                            :stream (make-broadcast-stream))))
+                (test-assert (null (getf result :failures))
+                             "independent registered cases each receive a fresh reservation pool")
+                (test-assert (= 2 (getf result :checks))
+                             "both cases enforce within-case exhaustion")))))
+      (fiveam:rem-test 'test-runner--identifier-probe)
+      (fiveam:rem-test 'test-suite-runner-identifier-probe)))
+  nil)
+
+(-> test-runner--simulate-cleanup (function function) null)
+(defun test-runner--simulate-cleanup (close function)
+  "Run a cleanup simulation, restoring only its fake handles and quarantine.
+Require a clean process first; this is not recovery for a real shutdown failure."
+  (task-tests--require-cleanup)
+  (assert (null *task-tests--orchestrators*))
+  (let ((*test-case-running-p*       nil)
+        (*task-tests--orchestrators* nil)
+        (failures                    (sb-ext:symbol-global-value '*task-tests--cleanup-failures*)))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list (list 'task-orchestrator-close close)) function)
+      (setf (sb-ext:symbol-global-value '*task-tests--cleanup-failures*) failures)
+      (identifier-clear-reservations)))
+  nil)
+
+(-> test-runner-identifier-cleanup () null)
+(defun test-runner-identifier-cleanup ()
+  "Quarantine incomplete shutdown without releasing IDs or replacing primary exits."
+  (let ((generate (symbol-function 'identifier-generate)))
+    (test-call-with-function-replacements
+     (list (list 'identifier-generate
+                 (lambda (&rest arguments)
+                   (let ((arguments (copy-list arguments)))
+                     (setf (getf arguments :timestamp) 3994000000)
+                     (apply generate arguments)))))
+     (lambda ()
+       (labels ((reserve ()
+                  (dotimes (index 58) (make-user-identifier)))
+
+                (exhausted-p ()
+                  (handler-case (progn (make-user-identifier) nil)
+                    (idsmall:identifier-space-exhausted () t)))
+
+                (cleanup-error (function)
+                  (handler-case (progn (funcall function) nil)
+                    (test-cleanup-error (condition) condition)))
+
+                (blocked ()
+                  (let ((calls 0))
+                    (test-assert
+                     (cleanup-error
+                      (lambda ()
+                        (test-call-with-case-identifiers (lambda () (incf calls)))))
+                     "quarantine refuses a later case")
+                    (test-assert (zerop calls) "refused case body never starts")
+                    (test-assert (exhausted-p) "entry refuses before clearing reservations"))))
+         (dolist (outcome (list nil (make-condition 'simple-error
+                                                   :format-control "simulated close error")))
+           (dolist (exit '(:return :error :throw :inner :entry))
+             (let ((handle  (list :failed))
+                   (calls   0)
+                   (primary (make-condition 'simple-error :format-control "primary body error")))
+               (test-runner--simulate-cleanup
+                (lambda (orchestrator)
+                  (test-assert (eq handle orchestrator) "close receives the registered handle")
+                  (incf calls)
+                  (if outcome (error outcome) nil))
+                (lambda ()
+                  (flet ((body ()
+                           (reserve)
+                           (if (eq exit :inner)
+                               (let ((*task-tests--orchestrators*    (list handle))
+                                     (*task-tests--cleanup-failures* nil))
+                                 (test-assert (null (task-tests--close-orchestrators))
+                                              "ignored inner cleanup records failure globally"))
+                               (push handle *task-tests--orchestrators*))
+                           (case exit
+                             (:error
+                              (error primary))
+                             (:throw
+                              (throw 'identifier-exit :escaped)))))
+                    (case exit
+                      (:error
+                       (test-assert
+                        (eq primary
+                            (handler-case (test-call-with-case-identifiers #'body)
+                              (error (condition) condition)))
+                        "cleanup preserves the primary error object"))
+                      (:throw
+                       (test-assert
+                        (eq :escaped
+                            (catch 'identifier-exit (test-call-with-case-identifiers #'body)))
+                        "cleanup preserves the primary throw value"))
+                      (:entry
+                       (reserve)
+                       (push handle *task-tests--orchestrators*)
+                       (blocked))
+                      (otherwise
+                       (test-assert
+                        (typep (cleanup-error
+                                (lambda () (test-call-with-case-identifiers #'body)))
+                               'test-cleanup-error)
+                        "ordinary return reports incomplete cleanup"))))
+                  (let ((record (assoc handle
+                                       (sb-ext:symbol-global-value
+                                        '*task-tests--cleanup-failures*))))
+                    (test-assert record "the failed handle is recorded globally")
+                    (test-assert (eq outcome (rest record))
+                                 "failure retains NIL or the original close condition")
+                    (test-assert
+                     (if (eq exit :inner)
+                         (null *task-tests--orchestrators*)
+                         (member handle *task-tests--orchestrators*))
+                     "failed handles survive in their registry scope"))
+                  (test-assert (exhausted-p) "failed cleanup does not release reservations")
+                  (blocked)
+                  (test-assert (= 1 calls) "failed handles are not retried"))))))
+         (let ((good     (list :good))
+               (bad      (list :bad))
+               (later    (list :later))
+               (attempts nil))
+           (test-runner--simulate-cleanup
+            (lambda (handle)
+              (push handle attempts)
+              (not (eq handle bad)))
+            (lambda ()
+              (setf *task-tests--orchestrators* (list bad good))
+              (test-assert (null (task-tests--close-orchestrators))
+                           "one failed close makes cleanup unsafe")
+              (test-assert (and (= 2 (length attempts)) (member good attempts))
+                           "cleanup visits healthy handles after failure")
+              (test-assert (equal (list bad) *task-tests--orchestrators*)
+                           "successful handles are removed")
+              (push later *task-tests--orchestrators*)
+              (test-assert (null (task-tests--close-orchestrators))
+                           "a later healthy close cannot remove quarantine")
+              (test-assert (= 3 (length attempts)) "only the new healthy handle is closed")
+              (test-assert (equal (list bad) *task-tests--orchestrators*)
+                           "the failed handle is retained without retry"))))
+         (let ((handle (list :healthy))
+               (calls  0))
+           (test-runner--simulate-cleanup
+            (lambda (orchestrator)
+              (incf calls)
+              (test-assert (eq handle orchestrator) "healthy close receives its handle")
+              (test-assert (exhausted-p) "close completes while all reservations are occupied")
+              t)
+            (lambda ()
+              (test-assert
+               (equal '(one two)
+                      (multiple-value-list
+                       (test-call-with-case-identifiers
+                        (lambda ()
+                          (reserve)
+                          (push handle *task-tests--orchestrators*)
+                          (test-call-with-case-identifiers
+                           (lambda ()
+                             (test-assert (zerop calls) "nested cases do not close parent work")
+                             (test-assert (exhausted-p) "nested cases share parent reservations")
+                             (values 'one 'two)))))))
+               "case boundaries preserve all return values")
+              (test-assert (= 1 calls) "healthy work closes exactly once")
+              (test-assert (stringp (make-user-identifier)) "healthy exit releases reservations")
+              (test-assert
+               (eq :escaped
+                   (catch 'identifier-exit
+                     (test-call-with-case-identifiers
+                      (lambda () (throw 'identifier-exit :escaped)))))
+               "healthy cleanup preserves nonlocal exits")
+              (test-assert
+               (stringp (test-call-with-case-identifiers #'make-user-identifier))
+               "a later case runs after healthy cleanup"))))))))
+  nil)
+
 (-> test-runner-selection () null)
 (defun test-runner-selection ()
   "Test exact suite/case selection, deduplication and invalid selectors."
