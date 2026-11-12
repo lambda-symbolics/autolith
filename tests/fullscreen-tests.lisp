@@ -962,11 +962,10 @@
                (start (and text (search "(job.cancel" text))))
           (test-assert start "active command rows expose cancellation in the pinned frame")
           (when start
-            (terminal-ui-process-event
-             ui (list ':click
-                      (1+ (terminal--spans-width
-                           (list (terminal-span ':plain (subseq text 0 start)))))
-                      (1+ row)))
+            (fullscreen-test--click
+             ui (1+ (terminal--spans-width
+                     (list (terminal-span ':plain (subseq text 0 start)))))
+             (1+ row))
             (test-assert
              (string= (line-editor-text (terminal-ui-editor ui))
                       "(job.cancel :id \"exec:7\")")
