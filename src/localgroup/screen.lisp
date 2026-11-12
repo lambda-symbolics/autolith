@@ -395,8 +395,8 @@ The next channel supplies a complete frame before any incremental rows apply."
                       :width            width
                       :complete-p       t
                       :rows             (list (list 0 (terminal--render-spans
-                                                      (localgroup-screen-terminal screen)
-                                                      (list (terminal-span ':notice text)))))
+                                                       (localgroup-screen-terminal screen)
+                                                       (list (terminal-span ':notice text)))))
                       :cursor-row       0
                       :cursor-column    0
                       :cursor-visible-p nil))

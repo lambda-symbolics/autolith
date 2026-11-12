@@ -248,17 +248,17 @@ run once the wake has."
 (defun test-world-client-stop-outcomes ()
   "Exercise stop CLI acknowledgement, exit observation, styling and failure statuses."
   (with-test-configuration (configuration)
-    (let ((pid                          42)
-          (present-p                    t)
-          (reply                        ':ok)
-          (states                       '(:dead))
-          (probes                       nil)
-          (styles                       nil)
-          (styled-p                     t)
+    (let ((pid                         42)
+          (present-p                   t)
+          (reply                       ':ok)
+          (states                      '(:dead))
+          (probes                      nil)
+          (styles                      nil)
+          (styled-p                    t)
           (*world-client-stop-timeout* 0)
-          (write-line                   (symbol-function 'localgroup--write-styled-line))
-          (*standard-output*            (make-string-output-stream))
-          (*error-output*               (make-string-output-stream)))
+          (write-line                  (symbol-function 'localgroup--write-styled-line))
+          (*standard-output*           (make-string-output-stream))
+          (*error-output*              (make-string-output-stream)))
       (test-call-with-function-replacements
        (list
         (list 'uiop:quit
