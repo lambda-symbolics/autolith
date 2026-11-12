@@ -3209,4 +3209,3 @@ manifest's ordered =reconstruct.lisp= in package =AUTOLITH=:
 (asdf:load-system :autolith)
 (load #P"/path/from/generation/manifest/reconstruct.lisp")
 #+END_SRC
-                         
