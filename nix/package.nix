@@ -660,6 +660,10 @@ let
     nativeBuildInputs = [ pkgs.git ];
 
     postInstall = ''
+      # Detached sessions execute the source launcher directly, without the wrapper.
+      substituteInPlace "$out/bin/autolith" \
+        --replace-fail '#!/usr/bin/env bash' '#!${pkgs.bash}/bin/bash'
+
       # Upstream launchers load .qlot/setup.lisp. Map that tiny interface to
       # the Nix-provided ASDF registry so startup and image builds stay offline.
       mkdir -p "$out/.qlot"
