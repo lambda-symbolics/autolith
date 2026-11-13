@@ -23,6 +23,12 @@
     :accessor      localgroup-terminal-screen-whole-p
     :type          boolean
     :documentation "Whether the frame last sent asked clients to hide their side panels.")
+   (boot-presented-p
+    :initarg       :boot-presented-p
+    :initform      nil
+    :reader        localgroup-terminal-boot-presented-p
+    :type          boolean
+    :documentation "Whether the startup client already shows boot progress while opening this channel.")
    (screen-synced
     :initform      nil
     :accessor      localgroup-terminal-screen-synced
@@ -36,9 +42,9 @@ screen around them."))
 
 (-> localgroup-terminal-create
     (&key (:direct-terminal (option terminal)) (:rows (option integer))
-          (:columns (option integer)) (:styled-p t))
+          (:columns (option integer)) (:styled-p t) (:boot-presented-p boolean))
     localgroup-terminal)
-(defun localgroup-terminal-create (&key direct-terminal rows columns styled-p)
+(defun localgroup-terminal-create (&key direct-terminal rows columns styled-p boot-presented-p)
   "Create a relay terminal initially owned by DIRECT-TERMINAL when supplied.
 
 Without one, use ROWS and COLUMNS, falling back to the startup client's
@@ -46,7 +52,8 @@ geometry and then terminal defaults. Enable styling if STYLED-P or the
 startup record's :STYLED-P is non-NIL."
   (let ((startup-values
          (and *localgroup-startup-record* (rest *localgroup-startup-record*))))
-    (make-instance 'localgroup-terminal :direct-terminal direct-terminal :rows
+    (make-instance 'localgroup-terminal :direct-terminal direct-terminal
+                   :boot-presented-p boot-presented-p :rows
                    (if direct-terminal
                        (terminal-rows direct-terminal)
                        (or rows (getf startup-values :rows) *terminal-default-rows*))

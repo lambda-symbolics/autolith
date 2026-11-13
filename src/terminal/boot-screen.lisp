@@ -366,7 +366,7 @@ DIRECT-INPUT-P-FUNCTION permits. Rotate tips on WAIT-FUNCTION intervals."
 
 (-> terminal-ui-boot-sequence
     (terminal-ui &key (:wait-function function) (:screen-p boolean) (:duration real)
-                      (:linger-p boolean) (:tip-seconds real)
+                      (:linger-p boolean) (:tip-seconds real) (:presented-p boolean)
                       (:halted-function function) (:direct-input-p-function function)
                       (:resize-callback (option function)))
     keyword)
@@ -374,7 +374,7 @@ DIRECT-INPUT-P-FUNCTION permits. Rotate tips on WAIT-FUNCTION intervals."
     (ui &key (wait-function #'sleep)
              (screen-p t)
              (duration *terminal-ui-boot-sequence-default-duration*)
-             linger-p
+             linger-p presented-p
              (tip-seconds *terminal-ui-boot-tip-default-seconds*)
              (halted-function (constantly nil))
              (direct-input-p-function (constantly t)) resize-callback)
@@ -384,7 +384,8 @@ Keep ordinary output deferred throughout the presentation. WAIT-FUNCTION accepts
 seconds; DURATION is the total seconds spent across all boot phases, split
 evenly. With LINGER-P the screen then waits for Space, rotating the tip every
 TIP-SECONDS. Without SCREEN-P only the fullscreen terminal is acquired, and the
-listener opens at once. Throughout,
+listener opens at once. PRESENTED-P skips the animation when a client has
+already shown boot progress, while retaining the configured linger. Throughout,
 the boot screen owns keystrokes: the responsive reader diverts them through
 TERMINAL-UI-BOOT-DIVERT-EVENT, and the wait reads the terminal itself only
 while DIRECT-INPUT-P-FUNCTION allows. HALTED-FUNCTION reports an exit request
@@ -411,10 +412,11 @@ or :INTERRUPT when Ctrl-C ended the wait."
                 (terminal-ui-boot-waiting-p ui) t)
           (unwind-protect
                (progn
-                 (dolist (phase *terminal-ui-boot-sequence-phases*)
-                   (terminal-ui-boot-screen ui (first phase) (second phase))
-                   (funcall wait-function phase-duration)
-                   (terminal-ui-refresh-size ui resize-callback))
+                 (unless presented-p
+                   (dolist (phase *terminal-ui-boot-sequence-phases*)
+                     (terminal-ui-boot-screen ui (first phase) (second phase))
+                     (funcall wait-function phase-duration)
+                     (terminal-ui-refresh-size ui resize-callback)))
                  (when linger-p
                    (setf result
                          (terminal-ui--boot-linger

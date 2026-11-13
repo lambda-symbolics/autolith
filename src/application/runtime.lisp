@@ -492,8 +492,8 @@ exchange without scrolling through reasoning and tool activity.")
 
 INBOX-P gives it the inbox's prompt hint instead of the one inviting a question.
 
-RELAY-PRESENTATION, a plist of :ROWS, :COLUMNS and :STYLED-P, creates a relay
-without a direct terminal at that geometry for a client that attaches later.
+RELAY-PRESENTATION supplies :ROWS, :COLUMNS, :STYLED-P and :BOOT-PRESENTED-P
+for a relay without a direct terminal, whose startup client attaches later.
 CONFIGURATION, when given, lets the composer complete @ participant names
 from its world."
   (multiple-value-bind (rows columns)
@@ -501,9 +501,10 @@ from its world."
     (terminal-ui-create
      :terminal
      (if relay-presentation
-         (localgroup-terminal-create :rows     (getf relay-presentation :rows)
-                                     :columns  (getf relay-presentation :columns)
-                                     :styled-p (getf relay-presentation :styled-p))
+         (localgroup-terminal-create :rows             (getf relay-presentation :rows)
+                                     :columns          (getf relay-presentation :columns)
+                                     :styled-p         (getf relay-presentation :styled-p)
+                                     :boot-presented-p (not (null (getf relay-presentation :boot-presented-p))))
          (localgroup-terminal-create
           :direct-terminal
           (unless (localgroup-startup-detached-p)

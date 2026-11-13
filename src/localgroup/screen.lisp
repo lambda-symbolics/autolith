@@ -111,6 +111,11 @@ switches. The default methods leave the choice local to each screen."))
     :type          (option clinedi:frame-snapshot)
     :documentation "The session's frame snapshot, or NIL before a complete frame.")
 
+   (boot-ui
+    :initform      nil
+    :accessor      localgroup-screen-boot-ui
+    :type          (option terminal-ui)
+    :documentation "The initial boot panel renderer, or NIL for ordinary channel switches.")
    (loading
     :initform      nil
     :accessor      localgroup-screen-loading
@@ -386,7 +391,8 @@ client it has not synchronized."
     ((localgroup-screen--frame-packet-p packet)
      (with-lock-held ((localgroup-screen-lock screen))
        (when (localgroup-screen--apply-frame screen (rest packet))
-         (setf (localgroup-screen-loading screen) nil)
+          (setf (localgroup-screen-loading screen) nil
+                (localgroup-screen-boot-ui screen) nil)
          (localgroup-screen--paint screen)))
      t)
     ((equal packet '(:screen :leave))
@@ -397,23 +403,27 @@ client it has not synchronized."
      nil)))
 
 (-> localgroup-screen-show-loading
-    (localgroup-screen string &key (:step (integer 1 6)) (:description string) (:start-p boolean))
+    (localgroup-screen string &key (:step (integer 1 6)) (:description string)
+                                  (:start-p boolean) (:boot-p boolean))
     null)
 (defun localgroup-screen-show-loading
-    (screen text &key (step 1) (description "Connecting to world") start-p)
-  "Show a staged loading bar in SCREEN's channel pane, retaining its side panel.
+    (screen text &key (step 1) (description "Connecting to world") start-p boot-p)
+  "Show actual channel-opening progress, using the whole boot panel for initial startup.
 
-START-P permits taking the terminal at initial fullscreen startup. Loading is
-independent of the next channel's required complete frame and adapts to resizes."
+START-P permits taking the terminal. BOOT-P selects the shared boot panel
+before the first channel frame; channel switches retain their side panel."
   (with-lock-held ((localgroup-screen-lock screen))
     (when (or start-p (localgroup-screen-active-p screen))
+      (when boot-p
+        (setf (localgroup-screen-boot-ui screen)
+              (terminal-ui-create :terminal (localgroup-screen-terminal screen) :fullscreen-p t)))
       (unless (localgroup-screen-active-p screen)
         (localgroup-screen--enter screen))
       (setf (localgroup-screen-drawer-open-p screen) nil
             (localgroup-screen-frame screen) nil
             (localgroup-screen-loading screen) (list text step description)
             (localgroup-screen-cursor screen) (list 0 0 nil))
-      (localgroup-screen--take-whole-screen screen nil)
+      (localgroup-screen--take-whole-screen screen (not (null (localgroup-screen-boot-ui screen))))
       (localgroup-screen--paint screen)))
   nil)
 
@@ -422,6 +432,16 @@ independent of the next channel's required complete frame and adapts to resizes.
   "Render SCREEN's current milestone centered in the current channel pane."
   (destructuring-bind (title step description) (localgroup-screen-loading screen)
     (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
+      (when (localgroup-screen-boot-ui screen)
+        (return-from localgroup-screen--loading-frame
+          (clinedi:frame-snapshot-apply
+           nil
+           (loop for row in (terminal-ui--boot-screen-frame
+                             (localgroup-screen-boot-ui screen)
+                             :phase title :detail (format nil "~D/6  ~A" step description)
+                             :height height)
+                 for index from 0 collect (list index row))
+           :height height :width width :complete-p t)))
       (let* ((content-width (min 54 width))
              (bar-width     (max 1 (- content-width 2)))
              (filled        (floor (* bar-width (1- step)) 6))
@@ -516,7 +536,8 @@ client tells the session, and the next paint rewrites the whole screen."
     (let ((terminal (localgroup-screen-terminal screen)))
       (setf (localgroup-screen-active-p screen) nil
             (localgroup-screen-frame screen) nil
-            (localgroup-screen-loading screen) nil)
+            (localgroup-screen-loading screen) nil
+            (localgroup-screen-boot-ui screen) nil)
       (unwind-protect
            (terminal-screen-leave terminal (shiftf (localgroup-screen-token screen) nil))
         (terminal-screen-invalidate terminal (localgroup-screen-painter screen)))))

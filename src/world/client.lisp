@@ -83,12 +83,13 @@ other."
                         (:permission-mode keyword) (:immutable-p boolean)
                         (:pick-channel-p boolean)
                         (:recovery-diagnosis (option string)) (:launch list) (:new-p boolean)
-                        (:images list) (:mcp-servers list) (:switch-p boolean))
+                        (:images list) (:mcp-servers list) (:switch-p boolean)
+                        (:boot-presented-p boolean))
     (values string boolean))
 (defun world-client-open
     (configuration &key directory channel (permission-mode ':ask) immutable-p
                         pick-channel-p recovery-diagnosis launch new-p images mcp-servers
-                        switch-p)
+                        switch-p boot-presented-p)
   "Open CHANNEL, or a channel for DIRECTORY, in CONFIGURATION's world server.
 
 NEW-P opens a new channel for DIRECTORY instead of its latest one. IMAGES,
@@ -96,7 +97,8 @@ absolute namestrings of local images, become the opened channel's composer
 draft. MCP-SERVERS, an editor's server declarations in portable form, join
 the tools of a channel that starts for this open. SWITCH-P says a terminal
 moves here from another channel, so a channel that starts for it skips the
-boot screen.
+boot screen. BOOT-PRESENTED-P says the startup client is already displaying
+boot progress, so the channel must not replay the boot animation.
 The first client starts the server; later ones find it running. LAUNCH is
 the plist of launch options this start stated explicitly; a new channel
 takes them, and a channel already served refuses the ones it cannot change.
@@ -139,6 +141,8 @@ sharing one it already served."
                                   (list :mcp-servers mcp-servers))
                                 (when switch-p
                                   (list :switch-p t))
+                                (when boot-presented-p
+                                  (list :boot-presented-p t))
                                 (list :progress-p         t
                                       :permission-mode    permission-mode
                                       :fullscreen-p       (not (null (config :fullscreen-p configuration)))

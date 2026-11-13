@@ -195,6 +195,8 @@ Without BOOT-SCREEN-P the session skips both and only takes the screen."
                 (terminal-ui-boot-sequence
                  ui :screen-p     (and boot-screen-p (config :boot-screen-p configuration))
                  :duration        (config :boot-screen-seconds configuration)
+                 :presented-p     (and (typep terminal 'localgroup-terminal)
+                                       (localgroup-terminal-boot-presented-p terminal))
                  :linger-p        (config :boot-screen-linger-p configuration)
                  :tip-seconds     (config :boot-screen-tip-seconds configuration)
                  :resize-callback #'application-pending-terminal-size

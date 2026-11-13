@@ -451,6 +451,8 @@ controller's exit reason."
       (change-class ui 'fullscreen-terminal-ui))
     (when (terminal-ui-fullscreen-p ui)
       (setf (terminal-ui-fullscreen-welcome-p ui) t))
+    (when (and (terminal-ui-fullscreen-p ui) (not resume-p))
+      (setf (terminal-ui-live-output-suspended-p ui) t))
     (labels ((pause-resources ()
                "Stop only the session's own threads, keeping APPLICATION ready to serve again."
                ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
@@ -513,11 +515,7 @@ controller's exit reason."
                       (let ((update-notice
                               (application--update-notice application)))
                         (when update-notice
-                          (application-present application update-notice)))
-                      (when (and (null initial-command)
-                                 (null initial-input)
-                                 (null recovery-diagnosis))
-                        (application--offer-startup-update application)))
+                          (application-present application update-notice))))
                     (let ((provenance
                             (application-installation-provenance application)))
                       (when provenance
@@ -572,6 +570,13 @@ controller's exit reason."
                          application input-controller
                          :onboarding-p  (null recovery-diagnosis)
                          :boot-screen-p boot-screen-p))
+                    (when (and (terminal-ui-fullscreen-p ui) (not resume-p))
+                      (with-terminal-ui-locked (ui)
+                        (setf (terminal-ui-live-output-suspended-p ui) nil)
+                        (terminal-ui--paint-live ui)))
+                    (when (and (not resume-p) (null initial-command)
+                               (null initial-input) (null recovery-diagnosis))
+                      (application--offer-startup-update application))
                     (unless hosted-p
                       (management-repl-start application)
                       (slynk-start (application-configuration application)
@@ -1150,11 +1155,11 @@ detached sessions, and a booted generation's resume, under
                         (:recovery-diagnosis (option string))
                         (:launch list)
                         (:new-p boolean)
-                        (:images list))
+                        (:images list) (:boot-presented-p boolean))
     (values string boolean))
 (defun main--open-world-channel
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        pick-channel-p recovery-diagnosis launch new-p images)
+                        pick-channel-p recovery-diagnosis launch new-p images boot-presented-p)
   "Open this terminal's channel in the world server and return its session identifier.
 
 CONVERSATION-ID opens that channel; otherwise the launch directory selects
@@ -1173,7 +1178,8 @@ the reason; no session runs in this terminal's own process instead."
                          :recovery-diagnosis recovery-diagnosis
                          :launch             launch
                          :new-p              new-p
-                         :images             images)
+                         :images             images
+                         :boot-presented-p   boot-presented-p)
     (error (condition)
       (when (main--world-refusal-p condition)
         (error condition))
@@ -1222,10 +1228,10 @@ request it conflicts with from one that says nothing."
           (autolith-error-message condition)))
 
 (-> main--call-with-channel-loading
-    (localgroup-screen string function &key (:start-p boolean)) t)
-(defun main--call-with-channel-loading (screen title function &key start-p)
+    (localgroup-screen string function &key (:start-p boolean) (:boot-p boolean)) t)
+(defun main--call-with-channel-loading (screen title function &key start-p boot-p)
   "Call FUNCTION while displaying its actual channel-opening milestones on SCREEN."
-  (localgroup-screen-show-loading screen title :start-p start-p)
+  (localgroup-screen-show-loading screen title :start-p start-p :boot-p boot-p)
   (handler-bind
       ((channel-loading-progress
          (lambda (progress)
@@ -1271,10 +1277,13 @@ gives the terminal back in between."
                                             :pick-channel-p     pick-channel-p
                                             :recovery-diagnosis recovery-diagnosis
                                             :launch             launch
-                                            :images             images))
+                                            :images             images
+                                            :boot-presented-p   (not (null (localgroup-screen-boot-ui screen)))))
                 :start-p (and (config :fullscreen-p configuration)
                               (not (null (terminal--terminal-mode-or-nil
-                                          (localgroup-screen-terminal screen))))))
+                                          (localgroup-screen-terminal screen)))))
+                 :boot-p (and (config :fullscreen-p configuration)
+                              (config :boot-screen-p configuration)))
              (loop
               with origin = nil
               with notice = nil

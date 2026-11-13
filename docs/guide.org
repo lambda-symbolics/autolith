@@ -632,10 +632,11 @@ credentials, or estimated progress percentages.
 
 Terminal presentation depends on the terminal.
 
-Fullscreen startup presents a brief Lisp-machine boot screen with a centered tip
-and a rock mascot that adapts to short viewports, then the session banner and
-transcript above the composer. Mouse wheel scrolling also works through a
-controlling local-session attachment.
+Fullscreen startup first presents the Lisp-machine boot screen with a centered
+tip and a rock mascot that adapts to short viewports. Channel-opening milestones
+appear there while the saved channel loads, followed by its restored transcript
+and composer. Mouse wheel scrolling also works through a controlling
+local-session attachment.
 
 The boot screen then waits for =Space= or =Enter= before opening the listener,
 rotating the startup tip every ten seconds while it waits. =Ctrl-C= on the
@@ -643,8 +644,10 @@ waiting boot screen halts the session. Turn the wait off for future launches
 with =(setf (config :boot-screen-linger-p) nil)= or for one launch with
 =AUTOLITH_BOOT_LINGER=off=, and change the rotation with
 =(setf (config :boot-screen-tip-seconds) 30)= or =AUTOLITH_BOOT_TIP_SECONDS=.
-The animation lasts =(config :boot-screen-seconds)= seconds (3.5 by default),
-divided evenly among its phases. =AUTOLITH_BOOT_DURATION= also sets the duration.
+Direct-session boot animation lasts =(config :boot-screen-seconds)= seconds
+(3.5 by default); =AUTOLITH_BOOT_DURATION= also sets the duration. When opening
+a hosted channel, boot progress follows the actual work without replaying the
+animation afterward.
 Skip the boot screen entirely with =(setf (config :boot-screen-p) nil)= or
 =AUTOLITH_BOOT_SCREEN=off=; =(settings)= lists all four.
 

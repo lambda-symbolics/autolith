@@ -138,6 +138,85 @@
       (test-assert (not (terminal-ui-live-output-suspended-p ui)) "interrupted boot restores output ownership")))
   nil)
 
+(-> test-fullscreen-boot-presented () null)
+(defun test-fullscreen-boot-presented ()
+  "Finish client-owned startup without replaying animation, preserving the Space wait."
+  (let ((terminal (make-instance 'queued-recording-terminal :columns 80 :rows 24))
+        (waits    0))
+    (with-terminal-ui (ui (fullscreen-test--ui terminal))
+      (terminal-ui-append-finalized ui ':restored "restored transcript")
+      (test-assert (eq ':start
+                       (terminal-ui-boot-sequence
+                        ui :presented-p   t
+                           :wait-function (lambda (seconds)
+                                            (declare (ignore seconds))
+                                            (incf waits))))
+                   "client-owned boot opens the restored listener")
+      (test-assert (zerop waits) "client-owned boot adds no simulated loading delay")
+      (test-assert (some (lambda (row) (search "restored transcript" row))
+                         (fullscreen-test--frame ui))
+                   "the restored transcript is visible after boot")
+      (terminal-ui-boot-sequence
+       ui :presented-p t :linger-p t
+          :wait-function (lambda (seconds)
+                           (declare (ignore seconds))
+                           (incf waits)
+                           (test-assert (terminal-ui-boot-waiting-p ui)
+                                        "the configured Space wait owns input")
+                           (queued-recording-terminal-enqueue terminal '(:insert " "))))
+      (test-assert (= waits 1) "client-owned boot retains only the configured Space wait")
+      (test-assert (not (terminal-ui-live-output-suspended-p ui))
+                   "the listener owns output after the Space wait")))
+  nil)
+
+(-> test-fullscreen-client-startup () null)
+(defun test-fullscreen-client-startup ()
+  "Show themed boot progress before opening a channel, then install its restored frame."
+  (let* ((terminal (make-instance 'recording-terminal :columns 100 :rows 30 :styled-p t))
+         (panel    (make-instance 'localgroup-tests-panel :rows '("sidebar")))
+         (screen   (localgroup-screen-create :terminal terminal :panel panel)))
+    (unwind-protect
+         (main--call-with-channel-loading
+          screen "Opening channel"
+          (lambda ()
+            (let ((frame (clinedi:frame-painter-frame (localgroup-screen-painter screen))))
+              (test-assert (and frame (eq (localgroup-screen-painted-layout screen) ':session))
+                           "the first painted frame is full-screen boot, before channel opening")
+              (test-assert (some (lambda (row) (search (nth-value 1 (terminal-ui--boot-art))
+                                                      (clinedi:ansi-strip row))) frame)
+                           "the first frame includes the shared boot panel")
+              (test-assert (some (lambda (row) (find #\Escape row)) frame)
+                           "initial boot uses the terminal theme"))
+            (channel-loading-report 4 "Restoring transcript")
+            (test-assert (some (lambda (row) (search "Restoring transcript" (clinedi:ansi-strip row)))
+                               (clinedi:frame-painter-frame (localgroup-screen-painter screen)))
+                         "real loading milestones update the boot panel")
+            (terminal-set-dimensions terminal 72 :rows 18)
+            (localgroup-screen-resized screen)
+            (test-assert (= 72 (clinedi:frame-snapshot-width (localgroup-screen--loading-frame screen)))
+                         "the boot panel follows terminal resizes")
+            (localgroup-screen-handle-packet
+             screen (list :frame :height 18 :width (- 72 (screen-panel-width panel 72) 1)
+                                 :complete-p t :rows '((0 "restored"))
+                                 :cursor-row 1 :cursor-column 0 :cursor-visible-p t))
+            (test-assert (and (null (localgroup-screen-loading screen))
+                              (null (localgroup-screen-boot-ui screen))
+                              (eq (localgroup-screen-painted-layout screen) ':beside)
+                              (search "restored" (aref (clinedi:frame-painter-frame
+                                                        (localgroup-screen-painter screen)) 0)))
+                         "one complete channel frame replaces boot with restored content and sidebar"))
+          :start-p t :boot-p t)
+      (localgroup-screen-close screen)))
+  (dolist (styled-p '(nil t))
+    (test-call-with-function-replacements
+     (list (list 'terminal-environment-styling-p (constantly styled-p)))
+     (lambda ()
+       (test-assert (eql styled-p
+                         (terminal-styled-p
+                          (localgroup-screen-terminal (localgroup-client-screen-create))))
+                    "client-owned rendering follows terminal color policy"))))
+  nil)
+
 (-> test-fullscreen-boot-disabled () null)
 (defun test-fullscreen-boot-disabled ()
   "Open the listener at once when the boot screen is turned off."

@@ -1135,9 +1135,10 @@ forgotten again when no thread could start."
                                                     server (or (getf launch :permission-mode)
                                                                (getf arguments :permission-mode)))
                          :mutation-replay-failures (world-server-mutation-replay-failures server)
-                         :relay-presentation       (list :rows     (getf arguments :rows)
-                                                         :columns  (getf arguments :columns)
-                                                         :styled-p (getf arguments :styled-p))
+                         :relay-presentation       (list :rows             (getf arguments :rows)
+                                                         :columns          (getf arguments :columns)
+                                                         :styled-p         (getf arguments :styled-p)
+                                                         :boot-presented-p (getf arguments :boot-presented-p))
                          :tool-registry-function   (let ((servers (getf arguments :mcp-servers)))
                                                      (when servers
                                                        (lambda (configuration)

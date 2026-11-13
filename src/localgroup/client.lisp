@@ -685,12 +685,12 @@ connection loss."
   "Return a screen on a new terminal for this process's standard input and output, with PANEL beside the session."
   (multiple-value-bind (rows columns)
       (terminal-current-size)
-    (localgroup-screen-create
-     :terminal (stream-terminal-create
-                :rows                  rows
-                :columns               columns
-                :input-file-descriptor (terminal-standard-input-file-descriptor))
-     :panel    panel)))
+    (let ((terminal (stream-terminal-create
+                     :rows                  rows
+                     :columns               columns
+                     :input-file-descriptor (terminal-standard-input-file-descriptor))))
+      (setf (terminal-styled-p terminal) (terminal-environment-styling-p))
+      (localgroup-screen-create :terminal terminal :panel panel))))
 
 (-> localgroup-client-screen-release (localgroup-screen) null)
 (defun localgroup-client-screen-release (screen)
