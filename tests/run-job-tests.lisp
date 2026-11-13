@@ -143,6 +143,172 @@
            "Only validated child calls emit tool completion, with their canonical identity.")))))
   nil)
 
+(-> test-run-job-inline-prompt-envelope () null)
+(defun test-run-job-inline-prompt-envelope ()
+  "Test inline prompt enveloping, defaults, and bounded stream reading."
+  (let* ((form    (run-job-prompt-form "Do the task." :identifier "prompt-job"))
+         (request (run-job-validate-envelope form)))
+    (test-assert
+     (and (string= (run-job-request-identifier request) "prompt-job")
+          (string= (run-job-request-role request) *run-job-default-role*)
+          (string= (run-job-request-prompt request) "Do the task.")
+          (null (run-job-request-input request))
+          (equal (run-job-request-output-contract request)
+                 (task-output-schema-normalize
+                  *run-job-prompt-output-contract* :source ':programmatic))
+          (= (run-job-request-timeout-seconds request)
+             *run-job-prompt-timeout-seconds*))
+     "an inline prompt builds the ordinary version-one request")
+    (test-assert (string= (run-job-assignment request) "Do the task.")
+                 "an inline prompt without opaque input has no input projection"))
+  (test-assert
+   (string= (run-job-read-prompt-stream
+             (make-string-input-stream (format nil "first~%second~%"))
+             :maximum-characters 100)
+            (format nil "first~%second~%"))
+   "inline prompt reading preserves newlines")
+  (test-assert
+   (handler-case
+       (progn
+         (run-job-read-prompt-stream (make-string-input-stream "abcd")
+                                     :maximum-characters 3)
+         nil)
+     (run-job-error (condition)
+       (eq (run-job-error-category condition) ':invalid-input)))
+   "inline prompt reading enforces its character bound")
+  (test-assert
+   (handler-case
+       (progn
+         (run-job-validate-envelope
+          (run-job-prompt-form "" :identifier "empty-prompt"))
+         nil)
+     (run-job-error (condition)
+       (eq (run-job-error-category condition) ':invalid-envelope)))
+   "an empty inline prompt is rejected")
+  (test-assert
+   (handler-case
+       (progn
+         (run-job-validate-envelope
+          (list :autolith-job :version 1 :id "bad-timeout" :role "task"
+                :prompt          "Do it."
+                :input           nil
+                :output-contract *run-job-prompt-output-contract*
+                :timeout-seconds 0))
+         nil)
+     (run-job-error (condition)
+       (eq (run-job-error-category condition) ':invalid-envelope)))
+   "an out-of-range inline prompt timeout is rejected")
+  nil)
+
+(-> test-run-job-inline-prompt-publication () null)
+(defun test-run-job-inline-prompt-publication ()
+  "Test inline prompt result publication and oversized prompt failure."
+  (with-test-configuration (configuration root)
+    (let ((output (merge-pathnames "prompt-result.sexp" root)))
+      (test-assert
+       (zerop
+        (run-job-run-prompt
+         "Say yes." output ':auto
+         :configuration configuration
+         :executor
+         (lambda (configuration request permission-mode)
+           (declare (ignore configuration permission-mode))
+           (test-assert (string= (run-job-request-prompt request) "Say yes.")
+                        "the inline prompt reaches the executor unchanged")
+           (values ':succeeded '(:object ("answer" "yes")) "prompt-trace"
+                   '(:input-tokens 1 :output-tokens 1 :provider-requests 1)
+                   nil nil))))
+       "the inline prompt path publishes through the ordinary boundary")
+      (let ((result (run-job-tests--read-result output)))
+        (test-assert
+         (and (eq (getf (rest result) :status) ':succeeded)
+              (equal (getf (rest result) :result)
+                     '(:object ("answer" "yes"))))
+         "the inline prompt result artifact is complete"))
+      (let* ((oversized-output (merge-pathnames "prompt-failure.sexp" root))
+             (events           (make-string-output-stream)))
+        (test-assert
+         (= (run-job-run-prompt
+             (make-string-input-stream
+              (make-string (1+ *task-agent-instructions-maximum-characters*)
+                           :initial-element #\a))
+             oversized-output ':auto
+             :configuration configuration
+             :events ':sexp :event-output events
+             :executor      (lambda (&rest arguments)
+                              (declare (ignore arguments))
+                              (error "An oversized prompt reached the executor.")))
+            64)
+         "an oversized inline prompt is a boundary failure")
+        (let ((result (run-job-tests--read-result oversized-output)))
+          (test-assert
+           (and (eq (getf (rest result) :status) ':failed)
+                (eq (getf (getf (rest result) :failure) :category)
+                    ':invalid-input))
+           "an oversized inline prompt publishes a failure artifact"))
+        (let ((records (run-job-event-tests--records
+                        (get-output-stream-string events))))
+          (test-assert
+           (some (lambda (record)
+                   (eq (getf (rest record) :kind) ':run-finished))
+                 records)
+           "an oversized inline prompt still emits terminal events")))))
+  nil)
+
+(-> test-run-job-inline-prompt-cli () null)
+(defun test-run-job-inline-prompt-cli ()
+  "Test command-line prompt validation and option forwarding."
+  (test-assert
+   (handler-case
+       (let ((command
+               (parse-command-line
+                (main--top-level-command)
+                '("run-job" "--input" "job.sexp" "--prompt" "Say yes."
+                  "--output" "result.sexp"))))
+         (funcall (command-handler command) command)
+         nil)
+     (configuration-error ()
+       t))
+   "the command line rejects input and prompt together")
+  (with-test-configuration (configuration)
+    (let ((observed nil))
+      (test-call-with-function-replacements
+       (list
+        (list 'configuration-create
+              (lambda (&rest arguments)
+                (declare (ignore arguments))
+                configuration))
+        (list 'run-job-run-prompt
+              (lambda (prompt-source output permission-mode &rest arguments)
+                (setf observed
+                      (list (if (streamp prompt-source)
+                                (run-job-read-prompt-stream prompt-source)
+                                prompt-source)
+                            output permission-mode arguments))
+                0)))
+       (lambda ()
+         (let ((command
+                 (parse-command-line
+                  (main--top-level-command)
+                  '("run-job" "--prompt" "-" "--role" "task"
+                    "--timeout-seconds" "30" "--id" "cli-prompt"
+                    "--output" "result.sexp"))))
+           (let ((*standard-input* (make-string-input-stream "Do it.")))
+             (funcall (command-handler command) command)))))
+      (destructuring-bind (prompt output permission-mode arguments) observed
+        (test-assert
+         (string= prompt "Do it.")
+         "the command line reads an inline prompt from standard input")
+        (test-assert
+         (and (string= output "result.sexp")
+              (eq permission-mode ':auto)
+              (eq (getf arguments :configuration) configuration)
+              (string= (getf arguments :role) "task")
+              (eql (getf arguments :timeout-seconds) 30)
+              (string= (getf arguments :identifier) "cli-prompt"))
+         "the command line preserves the requested prompt options"))))
+  nil)
+
 (-> run-job-tests--request-form
     (&key (:role string) (:contract list) (:prompt string) (:input t))
     list)

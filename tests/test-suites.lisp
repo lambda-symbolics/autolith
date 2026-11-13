@@ -1462,6 +1462,9 @@
 (define-test-suite run-job
   test-run-job-relative-paths
   test-run-job-runtime-usage
+  test-run-job-inline-prompt-envelope
+  test-run-job-inline-prompt-publication
+  test-run-job-inline-prompt-cli
   run-run-job-tests)
 
 (define-test-suite run-job-events

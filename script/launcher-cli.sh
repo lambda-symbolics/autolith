@@ -86,8 +86,8 @@ autolith_launcher_parse()
         remaining_arguments+=("$argument")
         ;;
       --permissions|--image|-i|--site-config-root|--model|--provider|--id|--input|--output|\
-      --events|--generation|--status|--capsule|--original-argument|--workspace|--token|\
-      --days|--examples)
+      --prompt|--role|--timeout-seconds|--events|--generation|--status|--capsule|\
+      --original-argument|--workspace|--token|--days|--examples)
         take_value=true
         remaining_arguments+=("$argument")
         ;;

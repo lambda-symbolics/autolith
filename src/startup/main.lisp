@@ -1600,6 +1600,14 @@ gives the terminal back in between."
    (list
     (make-option ':string :long-name "input" :key ':input
                  :parameter "FILE" :description "data-only job S-expression")
+    (make-option ':string :long-name "prompt" :key ':prompt
+                 :parameter "TEXT" :description "inline job prompt, or - to read standard input")
+    (make-option ':string :long-name "role" :key ':role
+                 :parameter "NAME" :description "task role for an inline prompt")
+    (make-option ':integer :long-name "timeout-seconds" :key ':timeout-seconds
+                 :parameter "N" :description "inline prompt job deadline in seconds")
+    (make-option ':string :long-name "id" :key ':job-id
+                 :parameter "ID" :description "inline prompt job identifier")
     (make-option ':string :long-name "output" :key ':output
                  :parameter "FILE" :description "atomically installed terminal result")
     (make-option ':string :long-name "events" :key ':events
@@ -1608,14 +1616,24 @@ gives the terminal back in between."
    (lambda (command)
      (when (command-arguments command)
        (error 'configuration-error
-              :message "run-job accepts options only; use --input FILE and --output FILE."))
-     (let ((input  (getopt* command ':input))
-           (output (getopt* command ':output))
-           (events (getopt* command ':events)))
+              :message "run-job accepts options only; use --input FILE or --prompt TEXT, with --output FILE."))
+     (let* ((input          (getopt* command ':input))
+            (prompt-option  (getopt* command ':prompt))
+            (prompt-p       (not (null prompt-option)))
+            (role-option    (getopt* command ':role))
+            (timeout-option (getopt* command ':timeout-seconds))
+            (id-option      (getopt* command ':job-id))
+            (output         (getopt* command ':output))
+            (events         (getopt* command ':events)))
        (unless (or (null events) (equal events "sexp"))
          (error 'configuration-error :message "run-job --events requires sexp."))
-       (unless (non-empty-string-p input)
-         (error 'configuration-error :message "run-job requires --input FILE."))
+       (when (and input prompt-p)
+         (error 'configuration-error :message "run-job accepts --input or --prompt, not both."))
+       (unless (or (non-empty-string-p input) prompt-p)
+         (error 'configuration-error :message "run-job requires --input FILE or --prompt TEXT."))
+       (when (and input (or role-option timeout-option id-option))
+         (error 'configuration-error
+                :message "run-job --role, --timeout-seconds, and --id require --prompt."))
        (unless (non-empty-string-p output)
          (error 'configuration-error :message "run-job requires --output FILE."))
        (let* ((configuration
@@ -1628,10 +1646,28 @@ gives the terminal back in between."
                 (or (getopt* command ':permissions)
                     (config :permission-mode configuration)
                     ':auto))
-              (status (apply #'run-job-run input output permission-mode
-                             :configuration configuration
-                             (when events
-                               (list :events ':sexp :event-output *standard-output*)))))
+              (observation
+                (when events
+                  (list :events ':sexp :event-output *standard-output*)))
+              (status
+                (if prompt-p
+                    (apply #'run-job-run-prompt
+                           (if (equal prompt-option "-")
+                               *standard-input*
+                               prompt-option)
+                           output permission-mode
+                           :configuration configuration
+                           (append
+                            (when role-option
+                              (list :role role-option))
+                            (when timeout-option
+                              (list :timeout-seconds timeout-option))
+                            (when id-option
+                              (list :identifier id-option))
+                            observation))
+                    (apply #'run-job-run input output permission-mode
+                           :configuration configuration
+                           observation))))
          ;; The boundary has cleaned up the application and attempted publication.
          ;; Normal Lisp exit can interrupt or flush a retained blocked writer.
          (if events
