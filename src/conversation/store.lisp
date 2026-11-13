@@ -3054,31 +3054,6 @@ later picker searches read it without scanning the log."
   (:method ((kind t) conversation properties)
     nil))
 
-(-> conversation--invalidate-context-usage (conversation keyword &optional list) null)
-(defun conversation--invalidate-context-usage (conversation kind &optional properties)
-  "Discard measured context evidence when KIND replaces its coverage.
-
-PROPERTIES is the durable record property list when available. Ordinary provider
-usage metadata does not replace coverage; pending responses and compaction do."
-  (let ((metadata (getf properties :metadata)))
-    (when (or (member kind '(:summary :native-compaction :context-adoption
-                             :configuration :precompaction))
-              (and (eq kind :provider)
-                   (or (getf metadata :compaction)
-                       (getf metadata :context-adoption)
-                       (getf metadata :context-usage-pending))))
-      (setf (conversation-context-usage-sample conversation) nil)))
-  nil)
-
-(defmethod conversation-append-record :after ((conversation conversation) (record list))
-  "Invalidate measured coverage consistently for live appends and durable replay."
-  (conversation--invalidate-context-usage conversation (first record) (rest record)))
-
-(defmethod conversation--project-record :before (kind conversation properties)
-  "Invalidate earlier measured coverage before projecting a durable change."
-  (conversation--invalidate-context-usage conversation kind properties)
-  nil)
-
 (-> conversation--context-fingerprint-p (t) boolean)
 (defun conversation--context-fingerprint-p (value)
   "Recognize a portable SHA-256 digest and serialized character count."

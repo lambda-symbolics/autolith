@@ -134,14 +134,45 @@ may use provider token counts when available; the default is not a tokenizer."))
               (provider-cache-prefix--entry (coerce (subseq entries 0 count) 'vector)))
        t))
 
-(-> provider-context--sample-matches-p (list (option list) list) boolean)
-(defun provider-context--sample-matches-p (sample header history)
-  "Verify a portable measured SAMPLE against current policy and retained HISTORY."
+(-> provider-context--wire-fields-compatible-p (list list) boolean)
+(defun provider-context--wire-fields-compatible-p (encoded observed)
+  "Check that ENCODED introduces no field the transport did not observe.
+
+Providers may add transport-only fields after encoding.  The usage sample
+must describe the transported request, so those fields come from OBSERVED;
+the encoder's own fields must still be present there."
+  (and observed
+       (loop for field in encoded
+             always (assoc (first field) observed :test #'equal))))
+
+(-> provider-context--sample-matches-p
+    (list (option list) list &key (:ephemeral-entries (option list))
+                                  (:wire-fields (option list))
+                                  (:wire-items (option list)))
+    boolean)
+(defun provider-context--sample-matches-p
+    (sample header history
+     &key (ephemeral-entries nil ephemeral-entries-p) wire-fields wire-items)
+  "Verify a portable measured SAMPLE against current policy and retained HISTORY.
+
+EPHEMERAL-ENTRIES is required so that no caller silently skips the guard; it
+must be empty because request-local ephemera are not covered by the measurement,
+and HISTORY must still start with the measured prefix. When the caller supplies
+the wire view, its fields may only name fields the transported request
+observed, and its items must still start with the measured prefix."
+  (unless ephemeral-entries-p
+    (error "~S requires :EPHEMERAL-ENTRIES." 'provider-context--sample-matches-p))
   (and (conversation-context-usage-sample-p sample)
        header
+       (null ephemeral-entries)
        (equal (getf sample :soft-header) header)
        (provider-context--prefix-matches-p
         (getf sample :history-digest) (getf sample :history-count) history)
+       (or (null wire-fields)
+           (and (provider-context--wire-fields-compatible-p
+                 wire-fields (getf sample :wire-fields))
+                (provider-context--prefix-matches-p
+                 (getf sample :wire-digest) (getf sample :wire-count) wire-items)))
        t))
 
 (-> provider-context--matched-input (model-provider hash-table)
@@ -151,28 +182,29 @@ may use provider token counts when available; the default is not a tokenizer."))
   (declare (ignore provider))
   (let* ((context      *provider-context-request*)
          (conversation (getf context :conversation))
-         (sample       (and conversation (conversation-context-usage-sample conversation))))
-    (when (and (getf context :eligible-p)
+         (sample       (and conversation (conversation-context-usage-sample conversation)))
+         (current      (and sample (getf context :eligible-p)
+                             (provider-context--wire-plan request))))
+    (when (and current
                (provider-context--sample-matches-p
-                sample (getf context :soft-header) (getf context :history)))
-      (let ((current (provider-context--wire-plan request)))
-        (when (and (equal (getf sample :wire-fields) (getf current :fields))
-                   (provider-context--prefix-matches-p
-                    (getf sample :wire-digest) (getf sample :wire-count)
-                    (getf current :items)))
-          (let* ((body  (provider-context--wire-body request))
-                 (field (find-if (lambda (name)
-                                   (provider-cache-wire--array-p (json-get body name)))
-                                 *provider-cache-wire-sequence-fields*))
-                 (items (and field (json-get body field)))
-                 (count (getf sample :wire-count)))
-            (when items
-              (multiple-value-bind (characters uncertain-p)
-                  (if (= count (length items))
-                      (values 0 nil)
-                      (provider-context--request-characters (subseq items count)))
-                (return-from provider-context--matched-input
-                  (values (+ (getf sample :tokens) (ceiling characters 4)) t uncertain-p))))))))
+                sample (getf context :soft-header) (getf context :history)
+                :ephemeral-entries (and conversation
+                                        (conversation-ephemeral-input-entries conversation))
+                :wire-fields       (getf current :fields)
+                :wire-items        (getf current :items)))
+      (let* ((body  (provider-context--wire-body request))
+             (field (find-if (lambda (name)
+                               (provider-cache-wire--array-p (json-get body name)))
+                             *provider-cache-wire-sequence-fields*))
+             (items (and field (json-get body field)))
+             (count (getf sample :wire-count)))
+        (when items
+          (multiple-value-bind (characters uncertain-p)
+              (if (= count (length items))
+                  (values 0 nil)
+                  (provider-context--request-characters (subseq items count)))
+            (return-from provider-context--matched-input
+              (values (+ (getf sample :tokens) (ceiling characters 4)) t uncertain-p))))))
     (values 0 nil nil)))
 
 (-> provider-context--response-entries-p (list list) boolean)
@@ -184,17 +216,6 @@ may use provider token counts when available; the default is not a tokenizer."))
                  (when tail
                    (setf remaining (rest tail))
                    t))))
-
-(-> provider-context--wire-fields-compatible-p (list list) boolean)
-(defun provider-context--wire-fields-compatible-p (encoded observed)
-  "Check that ENCODED introduces no field the transport did not observe.
-
-Providers may add transport-only fields after encoding.  The usage sample
-must describe the transported request, so those fields come from OBSERVED;
-the encoder's own fields must still be present there."
-  (and observed
-       (loop for field in encoded
-             always (assoc (first field) observed :test #'equal))))
 
 (-> provider-context-note-response (list provider-result) null)
 (defun provider-context-note-response (context result)

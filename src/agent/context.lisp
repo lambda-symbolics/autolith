@@ -578,10 +578,10 @@ Return the token count and whether it uses only an exact matched measurement."
          (session (request-context-session-state configuration :hurry-up-p hurry-up-p))
          (sample  (conversation-context-usage-sample conversation)))
     (when (and provider
-               (null (conversation-ephemeral-input-entries conversation))
                (provider-context--sample-matches-p
                 sample (provider-context--soft-header provider tools)
-                (mapcar #'provider-cache-prefix--entry items)))
+                (mapcar #'provider-cache-prefix--entry items)
+                :ephemeral-entries (conversation-ephemeral-input-entries conversation)))
       (let ((new (nthcdr (getf sample :history-count) items)))
         (multiple-value-bind (new-characters new-uncertain-p)
             (if new

@@ -942,7 +942,28 @@
        (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
               (request                    (provider-request-object provider conversation #())))
          (test-assert (= 1200 (provider-request-input-token-estimate provider request))
-                      "the next request reuses the measured input"))))
+                      "the next request reuses the measured input")
+         (multiple-value-bind (tokens matched-p) (provider-context--matched-input provider request)
+           (declare (ignore tokens))
+           (test-assert matched-p "transport-only fields do not block measured admission"))
+         (let* ((original (conversation-context-usage-sample conversation))
+                (sample   (copy-list original))
+                (digest   (second (first (getf original :wire-fields)))))
+           (setf (getf sample :wire-fields)
+                 (append (getf original :wire-fields)
+                         (list (list "transport_only" digest 8))))
+           (setf (conversation-context-usage-sample conversation) sample)
+           (multiple-value-bind (tokens matched-p) (provider-context--matched-input provider request)
+             (declare (ignore tokens))
+             (test-assert matched-p
+                          "fields only the transport observed still cover the request"))))
+       (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+              (request                    (provider-request-object provider conversation #())))
+         (setf (gethash "unobserved_policy" request) "value")
+         (multiple-value-bind (tokens matched-p) (provider-context--matched-input provider request)
+           (declare (ignore tokens))
+           (test-assert (not matched-p)
+                        "an encoded field the transport never observed fails coverage")))))
    :provider-class 'context-admission-transport-fields-test-provider)
   nil)
 
@@ -976,7 +997,7 @@
 
 (-> test-context-admission-measured-invalidation () null)
 (defun test-context-admission-measured-invalidation ()
-  "Reject malformed samples and invalidate measurements at context ownership boundaries."
+  "Reject malformed samples and judge measured coverage when reading."
   (context-admission-test--with-measured-context
    (lambda (agent)
      (let* ((conversation (agent-conversation agent))
@@ -996,16 +1017,28 @@
               (context      (provider-context-request-create unconfigured conversation #())))
          (test-assert (null (getf context :eligible-p))
                       "providers without a configuration method use unmeasured admission"))
-       (dolist (field '("instructions" "model" "tools" "input"))
+       (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+              (request                    (provider-request-object provider conversation #())))
+         (setf (gethash "input" request)
+               (vector (json-object "type" "message" "role" "user" "content" "A changed covered prefix.")))
+         (multiple-value-bind (tokens matched-p) (provider-context--matched-input provider request)
+           (declare (ignore tokens))
+           (test-assert (not matched-p) "changed covered items reject the baseline")))
+       (dolist (field '("instructions" "model" "tools"))
          (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
                 (request                    (provider-request-object provider conversation #())))
-           (setf (gethash field request)
-                 (if (equal field "input")
-                     (vector (json-object "type" "message" "role" "user" "content" "A changed covered prefix."))
-                     "A changed request field."))
+           (setf (gethash field request) "A rewritten transport field.")
            (multiple-value-bind (tokens matched-p) (provider-context--matched-input provider request)
              (declare (ignore tokens))
-             (test-assert (not matched-p) "changed encoded headers or covered items reject the baseline"))))
+             (test-assert matched-p
+                          "transport-rewritten field values keep measured coverage"))))
+       (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+              (request                    (provider-request-object provider conversation #())))
+         (setf (gethash "unobserved_policy" request) "value")
+         (multiple-value-bind (tokens matched-p) (provider-context--matched-input provider request)
+           (declare (ignore tokens))
+           (test-assert (not matched-p)
+                        "a field the transport never observed fails coverage")))
        (let* ((other                      (make-instance 'context-admission-test-provider
                                                          :configuration (agent-configuration agent)))
               (*provider-context-request* (provider-context-request-create other conversation #()))
@@ -1026,16 +1059,25 @@
        (test-assert (null (conversation-context-usage-sample conversation))
                     "input arriving in flight is not charged to the provider output allowance")
        (context-admission-test--measure agent :envelope-length 64)
-       (conversation-append-provider-metadata conversation '(:usage (("input_tokens" 1200) ("output_tokens" 200))))
-       (test-assert (conversation-context-usage-sample conversation)
-                    "ordinary provider metadata does not discard the latest measured anchor")
-       (conversation-append-provider-metadata
-        conversation '(:compaction :native :usage (("input_tokens" 1200) ("output_tokens" 200))))
-       (test-assert (null (conversation-context-usage-sample conversation))
-                    "native compaction metadata invalidates the ordinary response anchor")
+       (let ((estimate (context-estimate-known-tokens
+                        (agent-configuration agent) conversation
+                        :provider provider :family (provider-family provider))))
+         (conversation-append-provider-metadata conversation '(:compaction :native :usage (("input_tokens" 0) ("output_tokens" 0))))
+         (test-assert (conversation-context-usage-sample conversation)
+                      "bookkeeping records do not void the measured anchor")
+         (test-assert (= estimate (context-estimate-known-tokens
+                                   (agent-configuration agent) conversation
+                                   :provider provider :family (provider-family provider)))
+                      "the meter keeps the measured prediction after bookkeeping"))
        (context-admission-test--measure agent :envelope-length 64)
        (conversation-append-summary conversation "A replacement context.")
-       (test-assert (null (conversation-context-usage-sample conversation)) "summary publication invalidates the sample")
+       (test-assert (conversation-context-usage-sample conversation)
+                    "a summary does not clear the anchor eagerly")
+       (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+              (request                    (provider-request-object provider conversation #())))
+         (multiple-value-bind (tokens matched-p) (provider-context--matched-input provider request)
+           (declare (ignore tokens))
+           (test-assert (not matched-p) "rewritten history fails coverage at read time")))
        (context-admission-test--measure agent :envelope-length 64)
        (test-assert (conversation-context-usage-sample
                      (conversation-load (conversation-pathname conversation)))
@@ -1086,7 +1128,7 @@
               (request                    (provider-request-object provider conversation #())))
          (test-assert (= 1200 (provider-request-input-token-estimate provider request))
                       "the final encoded prefix revalidates the historical measurement")
-         (setf (gethash "instructions" request) "Different wire policy.")
+         (setf (gethash "unobserved_policy" request) "value")
          (test-assert (not (nth-value 1 (provider-context--matched-input provider request)))
                       "restart does not bypass final wire validation"))
        (multiple-value-bind (before estimated-p)
@@ -1098,24 +1140,21 @@
                                     "arguments" "{}"))
          (conversation-append-tool-result conversation "resume-output" :tool-name "test"
                                           :output (make-string 20000 :initial-element #\e) :success-p t)
-        (test-assert (nth-value 1 (application-context-usage application))
-                     "new retained evidence makes the context meter estimated")
-        (test-assert (> (application-context-usage application) before)
-                     "the meter includes tool output not covered by the last response")
-        (test-assert (= (application-context-usage application)
-                        (context-estimate-known-tokens configuration conversation
-                                                      :provider provider :tool-registry registry))
-                     "the meter uses the same current estimate as soft compaction")
-        (test-assert (agent-should-compact-p agent)
-                     "new retained evidence can cross the soft limit after restart"))
-       (agent--persist-provider-result
-        agent (make-instance 'provider-result :output-items nil
-                             :usage                         (json-object "input_tokens" 1000 "output_tokens" 200
-                                                                         "total_tokens" 1200))
-        :request-number 2)
-       (test-assert (null (conversation-context-usage-sample
-                           (conversation-load (conversation-pathname conversation))))
-                    "a response interrupted before publishing coverage invalidates the older anchor")
+         (test-assert (> (application-context-usage application) before)
+                      "the meter includes tool output not covered by the last response")
+         (test-assert (= (application-context-usage application)
+                         (context-estimate-known-tokens configuration conversation
+                                                       :provider provider :tool-registry registry))
+                      "the meter uses the same current estimate as soft compaction")
+         (test-assert (agent-should-compact-p agent)
+                      "new retained evidence can cross the soft limit after restart"))
+       (conversation-append-provider-metadata
+        conversation '(:usage (("input_tokens" 1000) ("output_tokens" 200) ("total_tokens" 1200))))
+       (test-assert
+           (conversation-context-usage-sample-p
+            (conversation-context-usage-sample
+             (conversation-load (conversation-pathname conversation))))
+         "usage bookkeeping survives durable replay without voiding the anchor")
        (conversation-append-record conversation '(:context-usage :sample (:format 1)))
        (test-assert (null (conversation-context-usage-sample
                            (conversation-load (conversation-pathname conversation))))
