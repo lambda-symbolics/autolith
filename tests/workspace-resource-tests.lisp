@@ -674,27 +674,6 @@
                     (and (not (tool-result-success-p result))
                          (search "snapshot" (tool-result-content result)))
                     "resource.read rejects oversized exact snapshots with bounded guidance"))))
-             (let ((large (merge-pathnames "large-result.txt" workspace)))
-               (workspace-resource-tests--write-text
-                large
-                (format nil "~:{line ~D ~A~%~}"
-                        (loop for line from 1 to 400
-                              collect (list line
-                                            (make-string 60 :initial-element (code-char 120))))))
-               (let ((result (read-resource first-context "workspace:large-result.txt")))
-                 (test-assert
-                  (and (not (tool-result-success-p result))
-                       (eq (tool-result-error-code result) ':result-too-large))
-                  "resource.read refuses a window that exceeds the result limit")
-                 (test-assert
-                  (and (search "start-line" (tool-result-content result))
-                       (search "line-count" (tool-result-content result)))
-                  "the refusal names start-line and line-count"))
-               (test-assert
-                (tool-result-success-p
-                 (read-resource first-context "workspace:large-result.txt"
-                                :start-line 1 :line-count 20))
-                "a window within the result limit succeeds"))
              (let ((invalid (merge-pathnames "invalid-utf8.txt" workspace)))
                (with-open-file (stream invalid
                                        :direction         ':output

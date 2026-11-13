@@ -871,16 +871,6 @@ already admits the path to the readable roots, so it is not asked again."
                    :message   (format nil "Line ~D exceeds the resource.read result limit and was not observed. Use search.content or shell.run for bounded inspection."
                                       start-line)
                    :tool-name "resource.read"))
-          (when truncated-p
-            (error 'tool-error
-                   :message   (format nil "~A has ~D lines. Reading lines ~D-~D would exceed the ~D-character result limit, so the read was refused. Request a smaller window with start-line and line-count, or use search.content or shell.run for bounded inspection."
-                                      (resource-uri resource)
-                                      total-lines
-                                      start-line
-                                      (min total-lines (+ start-line line-count -1))
-                                      *workspace-file-resource-maximum-result-characters*)
-                   :code      ':result-too-large
-                   :tool-name "resource.read"))
           (let ((state
                    (resource-observation-state-ensure
                     (tool-context-conversation context) observation
