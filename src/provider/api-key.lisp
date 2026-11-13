@@ -298,18 +298,35 @@ concealed signals AUTHENTICATION-ERROR before anything is read."
 (-> api-key-credential-manager-create
     (&key
      (:provider-name non-empty-string)
-     (:pathname pathname))
+     (:pathname pathname)
+     (:environment-variable (option string)))
     api-key-credential-manager)
-(defun api-key-credential-manager-create (&key provider-name pathname)
-  "Create a manager for PROVIDER-NAME's API key stored in PATHNAME."
-  (let ((source
-          (make-instance
-           'api-key-credential-source
-           :pathname      pathname
-           :provider-name provider-name)))
-    (make-instance 'api-key-credential-manager
+(defun api-key-credential-manager-create
+    (&key provider-name pathname environment-variable)
+  "Create a manager for PROVIDER-NAME's API key stored in PATHNAME.
+
+When ENVIRONMENT-VARIABLE is nonempty, its current value takes precedence over
+the stored key and the store remains the fallback."
+  (let* ((source
+           (make-instance
+            'api-key-credential-source
+            :pathname      pathname
+            :provider-name provider-name))
+         (environment-source-p (non-empty-string-p environment-variable))
+         (bootstrap-source
+           (if environment-source-p
+               (make-instance
+                'environment-api-key-credential-source
+                :environment-variable environment-variable
+                :account-id
+                (format nil "api-key/~A"
+                        (api-key--canonical-provider-name provider-name)))
+               source)))
+    (make-instance (if environment-source-p
+                       'static-api-key-credential-manager
+                       'api-key-credential-manager)
                    :primary-source   source
-                   :bootstrap-source source)))
+                   :bootstrap-source bootstrap-source)))
 
 (-> api-key-credential-manager-save-key
     (api-key-credential-manager non-empty-string)

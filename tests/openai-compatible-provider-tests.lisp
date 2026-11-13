@@ -18,6 +18,87 @@
   "Call FUNCTION with a descriptor-backed input stream containing CONTENT."
   (test-fixture-call-with-descriptor-input *platform* content function))
 
+(-> test-openai-compatible-provider-environment-key () null)
+(defun test-openai-compatible-provider-environment-key ()
+  "Prefer an environment API key while retaining the private-store fallback."
+  (with-test-configuration (configuration)
+    (let ((registry-snapshot (provider--registry-snapshot))
+          (provider-name     "environment-key-test")
+          (model             "environment-key/model")
+          (variable          "AUTOLITH_TEST_CUSTOM_PROVIDER_KEY"))
+      (unwind-protect
+           (progn
+             (openai-compatible-provider-tests--save-key
+              configuration provider-name "stored-secret")
+             (register-openai-compatible-provider
+              :name                         provider-name
+              :endpoint                     "https://provider.invalid/v1/chat/completions"
+              :models-endpoint              "https://provider.invalid/v1/models"
+              :models                       (list model)
+              :api-key-environment-variable variable)
+             (with-test-environment ((variable "environment-secret"))
+               (let ((provider
+                       (openai-compatible-provider-create
+                        configuration
+                        :name                         provider-name
+                        :family                       ':fixture
+                        :api-key-environment-variable variable)))
+                 (test-assert
+                  (string= (getf (provider-reconfiguration-initargs provider)
+                                 :api-key-environment-variable)
+                           variable)
+                  "provider reconfiguration preserves the environment key setting")
+                 (with-credentials (credentials (provider-credential-manager provider))
+                   (test-assert
+                    (string= (oauth-credentials-access-token credentials)
+                             "environment-secret")
+                    "an environment API key takes precedence over a stored key")))
+               (let ((observed-headers nil))
+                 (test-call-with-function-replacements
+                  (list
+                   (list 'dexador:get
+                         (lambda (url &rest arguments)
+                           (declare (ignore url))
+                           (setf observed-headers (getf arguments :headers))
+                           (values "{\"data\":[{\"id\":\"environment-key/discovered\"}]}"
+                                   200 nil nil))))
+                  (lambda ()
+                    (test-assert
+                     (null (provider-refresh-models
+                            configuration :provider-name provider-name))
+                     "environment-key discovery succeeds")
+                    (test-assert
+                     (equal (rest (assoc "Authorization" observed-headers
+                                         :test #'string=))
+                            "Bearer environment-secret")
+                     "model discovery uses the environment API key")))))
+             (with-test-environment ((variable nil))
+               (let ((provider
+                       (openai-compatible-provider-create
+                        configuration
+                        :name                         provider-name
+                        :family                       ':fixture
+                        :api-key-environment-variable variable)))
+                 (with-credentials (credentials (provider-credential-manager provider))
+                   (test-assert
+                    (string= (oauth-credentials-access-token credentials)
+                             "stored-secret")
+                    "the private store remains the fallback when the environment is unset"))))
+             (test-assert
+              (handler-case
+                  (progn
+                    (register-openai-compatible-provider
+                     :name                         "invalid-environment-key-test"
+                     :endpoint                     "https://provider.invalid/v1/chat/completions"
+                     :models                       '("invalid-environment-key/model")
+                     :api-key-environment-variable "")
+                    nil)
+                (configuration-error ()
+                  t))
+              "an empty API-key environment variable is rejected"))
+        (provider--registry-restore registry-snapshot))))
+  nil)
+
 (-> test-openai-compatible-provider-tool-schemas () null)
 (defun test-openai-compatible-provider-tool-schemas ()
   "Project built-in tools at the request boundary without relaxing local validation."

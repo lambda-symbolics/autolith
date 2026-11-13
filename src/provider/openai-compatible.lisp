@@ -31,7 +31,13 @@
     :initform      t
     :reader        openai-compatible-provider-stream-usage-p
     :type          boolean
-    :documentation "Whether streaming requests ask the provider to report usage."))
+    :documentation "Whether streaming requests ask the provider to report usage.")
+   (api-key-environment-variable
+    :initarg       :api-key-environment-variable
+    :initform      nil
+    :reader        openai-compatible-provider-api-key-environment-variable
+    :type          (option string)
+    :documentation "The optional environment variable preferred for this provider's API key."))
   (:documentation
    "A provider for the streaming OpenAI Chat Completions wire protocol."))
 
@@ -90,34 +96,40 @@ service accepts."))
                    (:family keyword)
                    (:headers list)
                    (:reasoning-parameter (option string))
+                   (:api-key-environment-variable (option string))
                    (:stream-usage-p boolean))
     openai-compatible-provider)
 (defun openai-compatible-provider-create
     (configuration &key name family headers reasoning-parameter
+                        api-key-environment-variable
                         (stream-usage-p t))
   "Create one OpenAI-compatible provider from registered endpoint metadata."
   (make-instance
    'openai-compatible-provider
-   :configuration       configuration
+   :configuration                configuration
    :credential-manager
    (api-key-credential-manager-create
-    :provider-name name
-    :pathname      (configuration-api-keys-path configuration))
-   :session-id          (make-identifier)
-   :display-name        name
-   :family              family
-   :headers             (copy-tree headers)
-   :reasoning-parameter reasoning-parameter
-   :stream-usage-p      stream-usage-p))
+    :provider-name        name
+    :pathname             (configuration-api-keys-path configuration)
+    :environment-variable api-key-environment-variable)
+   :session-id                   (make-identifier)
+   :display-name                 name
+   :family                       family
+   :headers                      (copy-tree headers)
+   :reasoning-parameter          reasoning-parameter
+   :api-key-environment-variable api-key-environment-variable
+   :stream-usage-p               stream-usage-p))
 
 (defmethod provider-reconfiguration-initargs append
     ((provider openai-compatible-provider))
-  "Preserve PROVIDER's display, family, headers, reasoning, and usage options."
+  "Preserve PROVIDER's display, family, headers, reasoning, key, and usage options."
   (list :display-name (openai-compatible-provider-display-name provider)
         :family       (openai-compatible-provider-family provider)
         :headers      (copy-tree (openai-compatible-provider-headers provider))
         :reasoning-parameter
         (openai-compatible-provider-reasoning-parameter provider)
+        :api-key-environment-variable
+        (openai-compatible-provider-api-key-environment-variable provider)
         :stream-usage-p
         (openai-compatible-provider-stream-usage-p provider)))
 
@@ -303,20 +315,23 @@ manager from PROVIDER-NAME."
      (:endpoint non-empty-string)
      (:headers list)
      (:reasoning-parameter (option string))
+     (:api-key-environment-variable (option string))
      (:stream-usage-p boolean)
      (:source keyword))
     string)
 (defun register-openai-compatible-provider
     (&key name description family models models-endpoint endpoint
-      headers reasoning-parameter (stream-usage-p t)
+      headers reasoning-parameter api-key-environment-variable
+      (stream-usage-p t)
       (source (provider--current-registration-source)))
   "Register an OpenAI-compatible Chat Completions provider.
 
-The provider resolves its bearer key from Autolith's private API-key store using
-NAME. MODELS contains optional static strings or model property lists accepted by
-REGISTER-PROVIDER. MODELS-ENDPOINT discovers additional model identifiers and
-advertised context windows. STREAM-USAGE-P controls whether streaming requests
-ask for a final usage chunk."
+The provider resolves its bearer key from API-KEY-ENVIRONMENT-VARIABLE when that
+is nonempty, then from Autolith's private API-key store using NAME. MODELS contains
+optional static strings or model property lists accepted by REGISTER-PROVIDER.
+MODELS-ENDPOINT discovers additional model identifiers and advertised context
+windows. STREAM-USAGE-P controls whether streaming requests ask for a final usage
+chunk."
   (unless (or models models-endpoint)
     (error 'configuration-error
            :message
@@ -328,6 +343,12 @@ ask for a final usage chunk."
     (error 'configuration-error
            :message
            (format nil "Provider ~A has an invalid models endpoint."
+                   name)))
+  (when (and api-key-environment-variable
+             (not (non-empty-string-p api-key-environment-variable)))
+    (error 'configuration-error
+           :message
+           (format nil "Provider ~A has an invalid API-key environment variable."
                    name)))
   (dolist (header headers)
     (unless (and (consp header)
@@ -346,7 +367,12 @@ ask for a final usage chunk."
                    configuration
                    :provider-name name
                    :endpoint      models-endpoint
-                   :headers       headers)))))
+                   :headers       headers
+                   :credential-manager
+                   (api-key-credential-manager-create
+                    :provider-name        name
+                    :pathname             (configuration-api-keys-path configuration)
+                    :environment-variable api-key-environment-variable))))))
     (register-provider
      name
      :description              description
@@ -362,11 +388,12 @@ ask for a final usage chunk."
        (declare (ignore reasoning-summaries-p))
        (openai-compatible-provider-create
         configuration
-        :name                name
-        :family              effective-family
-        :headers             headers
-        :reasoning-parameter reasoning-parameter
-        :stream-usage-p      stream-usage-p))
+        :name                         name
+        :family                       effective-family
+        :headers                      headers
+        :reasoning-parameter          reasoning-parameter
+        :api-key-environment-variable api-key-environment-variable
+        :stream-usage-p               stream-usage-p))
      :source                   source)))
 
 (-> openai-compatible--cache-stable-prefix

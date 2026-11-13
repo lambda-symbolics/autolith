@@ -1113,6 +1113,7 @@
   grok-provider-test--transport-headers)
 
 (define-test-suite openai-compatible-provider
+  test-openai-compatible-provider-environment-key
   test-openai-compatible-provider-bootstrap
   test-openai-compatible-provider-deferred-main-validation
   test-openai-compatible-provider-bare-auth-selection
