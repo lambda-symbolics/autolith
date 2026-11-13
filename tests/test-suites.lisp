@@ -397,6 +397,7 @@
   test-fullscreen-authentication-lifecycle
   test-terminal-fullscreen-clicks
   test-terminal-fullscreen-drag-copies
+  test-terminal-fullscreen-drag-autoscroll
   test-terminal-fullscreen-submit-click
   test-localgroup-click-events
   test-terminal-fullscreen-message-jumps

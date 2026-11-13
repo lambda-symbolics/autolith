@@ -2633,6 +2633,8 @@ forced exit."
     (unless (application-input-controller-exit-requested-p controller)
       (terminal-ui-refresh-size ui #'application-pending-terminal-size))
     (terminal-ui-refresh-status ui)
+    (when (typep ui 'fullscreen-terminal-ui)
+      (terminal-ui-fullscreen--autoscroll-tick ui))
     (terminal-input-ready-p (terminal-ui-terminal ui))))
 
 (-> application-input-controller--reader-step

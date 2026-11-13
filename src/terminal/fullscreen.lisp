@@ -52,7 +52,19 @@ When output exceeds the limit, older output is evicted and can be loaded with (h
    (dragged-p :initform      nil
               :accessor      fullscreen-terminal-ui-dragged-p
               :type          boolean
-              :documentation "Whether the pointer moved while the button was held, selecting text."))
+              :documentation "Whether the pointer moved while the button was held, selecting text.")
+   (transcript-space :initform      0
+                     :accessor      fullscreen-terminal-ui-transcript-space
+                     :documentation "The last frame's transcript height in screen rows.")
+   (drag-position :initform      nil
+                  :accessor      fullscreen-terminal-ui-drag-position
+                  :documentation "The latest (COLUMN ROW) held during transcript selection.")
+   (autoscroll-direction :initform      nil
+                         :accessor      fullscreen-terminal-ui-autoscroll-direction
+                         :documentation "The active drag edge direction, or NIL.")
+   (autoscroll-time :initform      nil
+                    :accessor      fullscreen-terminal-ui-autoscroll-time
+                    :documentation "The last transcript autoscroll tick time."))
   (:documentation "An alternate-screen transcript viewport and bottom-pinned composer."))
 
 (defmethod shared-initialize :after ((ui fullscreen-terminal-ui) slot-names &key)
@@ -445,6 +457,7 @@ distinguishing the legend from the placeholder and the modeline."
                                      (aref live (- index committed)))))))
         (dolist (region (fullscreen-terminal-ui-pinned-actions ui))
           (incf (first region) (+ space (if separator-p 1 0) 1)))
+        (setf (fullscreen-terminal-ui-transcript-space ui) space)
         (values
          (append visible (make-list (max 0 (- space (length visible))) :initial-element "")
                  (when separator-p
@@ -555,6 +568,50 @@ lock, because copying and browser launches present notices of their own."
       (setf (terminal-ui-pending-action ui) action))
     (not (null action))))
 
+(-> terminal-ui-fullscreen--autoscroll-direction (fullscreen-terminal-ui integer) (option (member -1 1)))
+(defun terminal-ui-fullscreen--autoscroll-direction (ui row)
+  "Return the transcript edge direction held at screen ROW, if any."
+  (let ((space (fullscreen-terminal-ui-transcript-space ui)))
+    (cond
+      ((<= row 1)
+       -1)
+      ((and (plusp space) (= row space))
+       1)
+      (t
+       nil))))
+
+(-> terminal-ui-fullscreen--autoscroll-tick
+    (fullscreen-terminal-ui &optional (integer 0))
+    boolean)
+(defun terminal-ui-fullscreen--autoscroll-tick (ui &optional (now (get-internal-real-time)))
+  "Scroll once when a held transcript drag has rested at an edge long enough."
+  (multiple-value-bind (scrolled-p acquired-p)
+      (terminal-ui--call-with-lock-if-available
+       ui
+       (lambda ()
+         (let* ((position  (fullscreen-terminal-ui-drag-position ui))
+                (direction (and (fullscreen-terminal-ui-press ui)
+                                (fullscreen-terminal-ui-dragged-p ui)
+                                position
+                                (terminal-ui-fullscreen--autoscroll-direction
+                                 ui (second position)))))
+           (unless (eql direction (fullscreen-terminal-ui-autoscroll-direction ui))
+             (setf (fullscreen-terminal-ui-autoscroll-direction ui) direction
+                   (fullscreen-terminal-ui-autoscroll-time ui) now))
+           (when (and direction
+                      (>= (- now (fullscreen-terminal-ui-autoscroll-time ui))
+                          (/ internal-time-units-per-second 8)))
+             (setf (fullscreen-terminal-ui-autoscroll-time ui) now)
+             (let* ((viewport   (fullscreen-terminal-ui-viewport ui))
+                    (top-before (clinedi:transcript-viewport-top viewport)))
+               (clinedi:transcript-viewport-scroll viewport direction)
+               (unless (equal top-before (clinedi:transcript-viewport-top viewport))
+                 (clinedi:transcript-viewport-selection-extend
+                  viewport (first position) (second position))
+                 (terminal-ui--paint-live ui)
+                 t))))))
+    (and acquired-p (not (null scrolled-p)))))
+
 (-> terminal-ui-fullscreen--pointer (fullscreen-terminal-ui list) boolean)
 (defun terminal-ui-fullscreen--pointer (ui event)
   "Select transcript text with a press, drag and release, or act on a plain click, as pointer EVENT says.
@@ -569,21 +626,28 @@ drag is a click: the selection ends and the transcript action there runs."
       (ecase kind
         (:click
          (clinedi:transcript-viewport-selection-start viewport column row)
-         (setf (fullscreen-terminal-ui-press ui)     (list column row)
-               (fullscreen-terminal-ui-dragged-p ui) nil)
+         (setf (fullscreen-terminal-ui-press ui) (list column row)
+               (fullscreen-terminal-ui-dragged-p ui) nil
+               (fullscreen-terminal-ui-drag-position ui) nil
+               (fullscreen-terminal-ui-autoscroll-direction ui) nil
+               (fullscreen-terminal-ui-autoscroll-time ui) nil)
          (terminal-ui--paint-live ui)
          t)
         (:drag
          (when (fullscreen-terminal-ui-press ui)
            (clinedi:transcript-viewport-selection-extend viewport column row)
-           (setf (fullscreen-terminal-ui-dragged-p ui) t)
+           (setf (fullscreen-terminal-ui-dragged-p ui) t
+                 (fullscreen-terminal-ui-drag-position ui) (list column row))
            (terminal-ui--paint-live ui))
          t)
         (:release
          (let* ((press (shiftf (fullscreen-terminal-ui-press ui) nil))
                 (text  (and press
-                            (shiftf (fullscreen-terminal-ui-dragged-p ui) nil)
-                            (clinedi:transcript-viewport-selection-text viewport))))
+                             (shiftf (fullscreen-terminal-ui-dragged-p ui) nil)
+                             (clinedi:transcript-viewport-selection-text viewport))))
+           (setf (fullscreen-terminal-ui-drag-position ui) nil
+                 (fullscreen-terminal-ui-autoscroll-direction ui) nil
+                 (fullscreen-terminal-ui-autoscroll-time ui) nil)
            (cond
              (text
               (setf (terminal-ui-pending-action ui) (list ':copy text)))
