@@ -1199,14 +1199,19 @@
              (multiple-value-bind (request delivery)
                  (provider-request-object provider conversation tools :goal-context
                                           "keep the active goal" :compaction-p nil)
-              (let ((*provider-reasoning-effort* "high"))
-                (multiple-value-bind (overridden ignored-delivery)
-                    (provider-request-object provider conversation tools :goal-context
-                                             "keep the active goal" :compaction-p nil)
-                  (declare (ignore ignored-delivery))
-                  (test-assert
-                   (string= (json-get overridden "reasoning_effort") "high")
-                   "a request-local effort overrides the configured Chat Completions effort")))
+                (let ((overridden-provider
+                        (provider-with-configuration
+                         provider
+                         (configuration-copy (provider-configuration provider)
+                                             :reasoning-effort      "high"
+                                             :provider-validation-p nil))))
+                  (multiple-value-bind (overridden ignored-delivery)
+                      (provider-request-object overridden-provider conversation tools :goal-context
+                                               "keep the active goal" :compaction-p nil)
+                    (declare (ignore ignored-delivery))
+                    (test-assert
+                     (string= (json-get overridden "reasoning_effort") "high")
+                     "a request configuration overrides the configured Chat Completions effort")))
                (let* ((messages       (json-get request "messages"))
                       (stream-options (json-get request "stream_options"))
                       (wire-tools     (json-get request "tools"))
@@ -1482,15 +1487,19 @@
                        (equal (json-get request "prompt_cache_key")
                               (conversation-prompt-cache-key conversation)))
                   "modern and legacy models use default reasoning, storage disabled, parallel calls, and the conversation's cache key")
-                  (let ((*provider-reasoning-effort* "none"))
-                    (let* ((overridden (provider-request-object
-                                        provider conversation
-                                        (tool-registry-provider-schemas registry)))
-                           (reasoning  (json-get overridden "reasoning")))
-                      (test-assert
-                       (and reasoning
-                            (string= (json-get reasoning "effort") "none"))
-                       "a request-local effort overrides the configured Responses effort")))
+                    (let ((overridden-provider
+                            (provider-with-configuration
+                             provider
+                             (configuration-copy (provider-configuration provider)
+                                                 :reasoning-effort      "none"
+                                                 :provider-validation-p nil))))
+                      (let* ((overridden (provider-request-object
+                                          overridden-provider conversation
+                                          (tool-registry-provider-schemas registry)))
+                             (reasoning  (json-get overridden "reasoning")))
+                        (test-assert
+                         (null reasoning)
+                         "a request configuration keeps the provider's Responses effort policy")))
                  (test-assert
                   (every (lambda (tool)
                            (let ((schema (json-get tool "parameters"))

@@ -422,12 +422,6 @@ questions of the same views reuse them.")
 Inference frames bind this to their reserved output tranche so one
 response cannot dramatically overrun the shared subtree budget.")
 
-(defparameter *provider-reasoning-effort* nil
-  "An optional wire reasoning effort for the current provider request.
-
-Title generation binds this to \"none\" so a reasoning model answers
-within its small output ceiling instead of spending it on reasoning.")
-
 (defparameter *provider-mission-output-allowance* nil
   "Internal output reservation for this request, distinct from a caller's ceiling.
 

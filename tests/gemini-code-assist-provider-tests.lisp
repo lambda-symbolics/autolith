@@ -108,17 +108,22 @@
          (json-get (json-get (json-get request "request") "generationConfig")
                    "thinkingConfig")
          "Code Assist requests thinking at the configured effort")
-        (let ((*provider-reasoning-effort* "none"))
-          (multiple-value-bind (overridden ignored-delivery)
-              (provider-request-object provider conversation tools
-                                       :goal-context "keep the active goal")
-            (declare (ignore ignored-delivery))
-            (test-assert
-             (let ((generation-config
-                     (json-get (json-get overridden "request") "generationConfig")))
-               (or (null generation-config)
-                   (null (json-get generation-config "thinkingConfig"))))
-             "a request-local effort disables Code Assist thinking")))
+          (let ((overridden-provider
+                  (provider-with-configuration
+                   provider
+                   (configuration-copy (provider-configuration provider)
+                                       :reasoning-effort      "none"
+                                       :provider-validation-p nil))))
+            (multiple-value-bind (overridden ignored-delivery)
+                (provider-request-object overridden-provider conversation tools
+                                         :goal-context "keep the active goal")
+              (declare (ignore ignored-delivery))
+              (test-assert
+               (let ((generation-config
+                       (json-get (json-get overridden "request") "generationConfig")))
+                 (or (null generation-config)
+                     (null (json-get generation-config "thinkingConfig"))))
+               "a request configuration disables Code Assist thinking")))
         (test-assert
          (string= (json-get (aref declarations 0) "name")
                   (provider-wire-function-name--encode "fs" "read"))

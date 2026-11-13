@@ -4542,7 +4542,10 @@ model's calls in a turn."
 
 (-> application--conversation-title-generate (application) (option non-empty-string))
 (defun application--conversation-title-generate (application)
-  "Generate one isolated tool-free title for APPLICATION's conversation."
+  "Generate one isolated tool-free title for APPLICATION's conversation.
+
+  The request runs without reasoning so a reasoning model answers within the
+  title's small output ceiling instead of spending it on reasoning tokens."
   (let* ((configuration (application-configuration application))
          (provider      (application-provider application))
          (context
@@ -4553,13 +4556,18 @@ model's calls in a turn."
                (conversation-create
                 configuration
                 :storage-root (configuration-inference-root configuration)))
+               (provider
+                 (provider-with-configuration
+                  provider
+                  (configuration-copy configuration
+                                      :reasoning-effort      "none"
+                                      :provider-validation-p nil)))
              (request                           (application--conversation-title-request context))
              (*system-prompt-override*
                *application-conversation-title-system-prompt*)
              (*provider-maximum-output-tokens*
                *conversation-title-generation-output-tokens*)
              (*telemetry-request-role*          ':title-generation)
-             (*provider-reasoning-effort*       "none")
              (*provider-hosted-tools-enabled-p* nil))
         (setf (conversation-input-items conversation)
               (list (user-message-item request)))

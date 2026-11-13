@@ -210,9 +210,8 @@ routes every request of the conversation to one provider from the first."
            (wire-model (openrouter--wire-model-name model))
            (effort
             (openrouter--reasoning-effort
-             (or *provider-reasoning-effort*
-                 (config :reasoning-effort
-                  (provider-configuration provider)))))
+             (config :reasoning-effort
+              (provider-configuration provider))))
            (model-supports-reasoning-p
             (openrouter--model-supports-reasoning-p model)))
       (setf (gethash "model" request)      wire-model

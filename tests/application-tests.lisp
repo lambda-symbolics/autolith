@@ -6052,15 +6052,17 @@
                                  :configuration configuration
                                  :conversation  conversation
                                  :provider      (provider-create configuration)))
-                (observed nil))
+                 (observed-effort :unset))
            (dolist (message '("one" "two" "three"))
              (conversation-append-user-message conversation message))
            (test-call-with-function-replacements
             (list
              (list 'provider-stream-turn
-                   (lambda (&rest arguments)
+                     (lambda (provider &rest arguments)
                      (declare (ignore arguments))
-                     (setf observed *provider-reasoning-effort*)
+                       (setf observed-effort
+                             (config :reasoning-effort
+                                     (provider-configuration provider)))
                      nil))
              (list 'provider-result-assistant-text
                    (lambda (result)
@@ -6068,8 +6070,8 @@
                      nil)))
             (lambda ()
               (application--conversation-title-generate application)))
-           (test-assert
-            (equal observed "none")
+             (test-assert
+              (equal observed-effort "none")
             "title generation requests no provider reasoning"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
