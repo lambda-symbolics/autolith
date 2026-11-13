@@ -2181,7 +2181,7 @@
                               "a notice starts no agent turn")
                  (test-assert (search "the build is green" (recording-terminal-output terminal))
                               "the notice shows in full once a terminal shows the inbox")
-                 (test-assert (search "(switch \"b-secnd2\")" (recording-terminal-output terminal))
+                 (test-assert (search "(open \"b-secnd2\")" (recording-terminal-output terminal))
                               "the notice shows the form that goes where it was said")
                  (test-assert (null (world-inbox-deliveries configuration inbox))
                               "a shown notice leaves the inbox's waiting messages")

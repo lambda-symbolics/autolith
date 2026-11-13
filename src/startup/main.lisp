@@ -1111,7 +1111,7 @@ state, including an empty list after successful or pristine startup."
              *active-application*
              :initial-command    (and pick-channel-p
                                       (null effective-open-id)
-                                      "(switch)")
+                                      "(open)")
              :initial-input
              (if handoff-record
                  (localgroup-handoff-initial-input handoff-record)

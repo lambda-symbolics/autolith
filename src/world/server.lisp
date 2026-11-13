@@ -1156,7 +1156,7 @@ forgotten again when no thread could start."
           (application-world-adopt-pending-context application)
           (world-server--serve-host server host
                                     :initial-command    (and (getf arguments :pick-channel-p)
-                                                             "(switch)")
+                                                             "(open)")
                                     :recovery-diagnosis (getf arguments :recovery-diagnosis)
                                     :adaptation-offer-p (not (null (getf arguments :pick-channel-p)))
                                     :boot-screen-p      (not (getf arguments :switch-p))))

@@ -247,7 +247,7 @@
                        (declare (ignore candidate steer-p))
                        (setf submitted text))))
          (lambda () (application-input-controller--process-event controller ':channel-picker)))
-        (test-assert (equal submitted "(switch)")
+        (test-assert (equal submitted "(open)")
                      "the relayed picker event follows the existing switch command path"))
       (localgroup-screen-close screen)))
   nil)

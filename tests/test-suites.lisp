@@ -914,7 +914,7 @@
   test-built-in-application-command-policies
   test-channel-command-admission-safety
   test-built-in-application-command-calls
-  test-switch-command-direct
+  test-open-command-direct
   test-rename-command
   test-application-codex-fast-mode-command
   test-application-compact-setting-transitions

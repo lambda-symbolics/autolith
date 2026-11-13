@@ -846,11 +846,11 @@
       (terminal-ui-append-finalized
        ui ':notice
        (list (terminal-span ':dim "  ↪ ")
-             (termdown:make-widget ':code "(switch \"b-x\")" '(:submit "(switch \"b-x\")"))))
+             (termdown:make-widget ':code "(open \"b-x\")" '(:submit "(open \"b-x\")"))))
       (terminal-ui-insert-input ui "half typed")
       (multiple-value-bind (action payload) (fullscreen-test--click ui 8 1)
         (test-assert (and (eq action ':submit)
-                          (equal payload "(switch \"b-x\")")
+                          (equal payload "(open \"b-x\")")
                           (null actions))
                      "a clicked form returns as its submission, not as an action"))
       (test-assert (equal (line-editor-text (terminal-ui-editor ui)) "half typed")

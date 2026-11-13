@@ -496,7 +496,7 @@
       (case
        '(("/model" t)
          ("/effort high" nil)
-         ("/switch K-8vQ2mp" nil)
+         ("/open K-8vQ2mp" nil)
          ("/compact" nil)))
     (destructuring-bind (input expected) case
       (let* ((invocation (application-command-invocation-parse input))
@@ -519,7 +519,7 @@
   (dolist
       (case
        '(("/help" (&optional topic))
-         ("/switch" (&optional (designator nil designator-p)))
+         ("/open" (&optional (designator nil designator-p)))
          ("/cwd" (&optional pathname))
          ("/trace" (&optional (mode ':status)))
          ("/timestamps" (&optional (mode ':status)))
@@ -644,16 +644,26 @@
        "an explicit NIL optional argument never invokes its picker"))
     (let ((*application-command-interactive-p* nil))
       (test-assert
-       (eq (application--builtin-switch-command application) ':continue)
+       (eq (application--builtin-open-command application) ':continue)
        "noninteractive omission remains nonmodal")))
   nil)
 
-(-> test-switch-command-direct () null)
-(defun test-switch-command-direct ()
-  "Test (switch) resuming the named conversation in place when no server hosts the session."
+(-> test-open-command-direct () null)
+(defun test-open-command-direct ()
+  "Test (open) resuming the named conversation in place when no server hosts the session."
   (multiple-value-bind (application root terminal tool)
       (application-operation-tests--application)
     (declare (ignore terminal tool))
+    (let ((operation (application-operation-find application 'open)))
+      (test-assert
+       (and (typep operation 'application-command-operation)
+            (eq (application-operation-backend operation)
+                (application-command-find "/open")))
+       "open resolves to the channel command")
+      (test-assert
+       (find "(open" (application-operation-completion-entries application)
+             :key (lambda (entry) (getf entry :name)) :test #'equal)
+       "the channel command is available through Lisp completion"))
     (unwind-protect
          (let* ((configuration (application-configuration application))
                 (other         (conversation-create configuration :identifier "switchtarget"))
@@ -673,15 +683,19 @@
                           (declare (ignore candidate identifier))
                           (push entry presented))))
             (lambda ()
-              (application--builtin-switch-command application "switchtar")
+               (test-assert
+                (eq (application-lisp-evaluation-status
+                     (application-lisp-evaluate "(open \"switchtar\")" :application application))
+                    ':ok)
+                "the canonical open call executes through local Lisp")
               (test-assert (and (equal resumed '("switchtarget"))
                                 (null presented))
                            "a direct session resumes the channel a unique fragment names, without a line about it")
-              (application--builtin-switch-command application "operation-surf")
+              (application--builtin-open-command application "operation-surf")
               (test-assert (and (equal resumed '("switchtarget"))
                                 (search "already" (terminal--spans-text (first presented))))
                            "the current channel is reported without a resume")
-              (application--builtin-switch-command application "zzzz")
+              (application--builtin-open-command application "zzzz")
               (test-assert (and (equal resumed '("switchtarget"))
                                 (= 2 (length presented))
                                 (eq (terminal-span-style (first (first presented))) ':failure))

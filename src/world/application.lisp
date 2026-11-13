@@ -1187,12 +1187,12 @@ inbox and the channel resource."
 
 (-> application--channel-link-spans ((option string)) list)
 (defun application--channel-link-spans (channel)
-  "Return a line holding the (switch ...) form that goes to CHANNEL, or NIL without one.
+  "Return a line holding the (open ...) form that goes to CHANNEL, or NIL without one.
 
 The form is highlighted Lisp, so a plain terminal shows what to type; in
 fullscreen each of its tokens is a widget that submits it when clicked."
   (when (non-empty-string-p channel)
-    (let* ((form   (format nil "(switch ~S)" (conversation-identifier-display channel)))
+    (let* ((form   (format nil "(open ~S)" (conversation-identifier-display channel)))
            (action (list ':submit form)))
       (append (list (terminal-span ':dim "  ↪ "))
               (mapcar (lambda (token)

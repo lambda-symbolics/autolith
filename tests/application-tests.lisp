@@ -5135,7 +5135,7 @@
                  "the permission picker takes terminal ownership")
     (test-assert (terminal-owner-p "/model gpt-5.6-luna")
                  "explicit model changes own the terminal for the effort picker")
-    (test-assert (terminal-owner-p "/switch")
+    (test-assert (terminal-owner-p "/open")
                  "switch declares terminal ownership for its modal selector")
     (test-assert (not (terminal-owner-p "/compact"))
                  "nonmodal model commands retain responsive input")
@@ -6036,7 +6036,7 @@
        (let ((*main-direct-start-p* t))
          (main-dispatch '("open")))))
     (test-assert
-     (string= observed-initial-command "(switch)")
+     (string= observed-initial-command "(open)")
      "plain command-line resume starts the channel picker"))
   (test-assert
    (string= (application--selected-conversation-id

@@ -145,7 +145,7 @@ Talk to Autolith in plain text. Run local commands as Lisp forms.
 ## Everyday commands
 
 ```lisp
-(switch)  ; go to another channel
+(open)  ; go to another channel
 (new)     ; open a new channel here
 (model)   ; choose a model
 (cwd)     ; show workspace

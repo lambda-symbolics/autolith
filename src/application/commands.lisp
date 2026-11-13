@@ -1708,7 +1708,7 @@ searches every task directory."
                  :hint          browse-hint
                  :initial-value current-identifier
                  :on-event      #'on-event
-                 :usage         "Usage: (switch \"ID\")"
+                 :usage         "Usage: (open \"ID\")"
                  :search-p      t
                  :empty-notice  (application-notice-line "no other channels exist"))))
           (unless (eq mode ':remove)
@@ -1721,7 +1721,7 @@ searches every task directory."
                    (handler-case
                        (let ((removed (channel-remove (application-configuration application)
                                                       (list (getf pending :value))
-                                                      :tool-name "(switch)")))
+                                                      :tool-name "(open)")))
                          (application-present
                           application
                           (application-notice-line
@@ -2904,7 +2904,7 @@ The current value and its source sit in aligned columns of their own."
           (unless (localgroup-terminal-switch-controller terminal identifier)
             (application-present
              application
-             (application-notice-line (format nil "new channel ~A opened; (switch ~S) goes there"
+             (application-notice-line (format nil "new channel ~A opened; (open ~S) goes there"
                                               display display)))))
         (progn
           ;; A standalone session replaces its own conversation instead of
@@ -2962,7 +2962,7 @@ show."
     (world-error ()
       (application-present application
                            (application-failure-line
-                            (format nil "no channel matches ~S; (switch) picks one" designator)))
+                            (format nil "no channel matches ~S; (open) picks one" designator)))
       nil)))
 
 (-> application--pick-among (application string list &key (:title string) (:usage string)) (option string))
@@ -2993,8 +2993,8 @@ show."
                                       (terminal-span ':dim (format nil "~@[  ~A~]" (channel-title channel)))))))
           nil))))
 
-(define-application-command application--builtin-switch-command
-    (:name              "/switch"
+(define-application-command application--builtin-open-command
+    (:name              "/open"
      :argument          "[ID]"
      :description       "move this terminal to another channel"
      :tip               "takes a channel ID or a unique fragment of one, or picks one without; the channel you leave keeps running."
@@ -3008,8 +3008,8 @@ show."
                               (application--pick-channel application))))
          (identifier (and designator
                           (application--channel-or-ask application (princ-to-string designator)
-                                                       :title "switch to which channel?"
-                                                       :usage "Usage: (switch \"ID\")")))
+                                                       :title "open which channel?"
+                                                       :usage "Usage: (open \"ID\")")))
          (display    (and identifier (conversation-identifier-display identifier)))
          (current    (and identifier
                           (conversation-identifier (application-conversation application))))
@@ -3031,7 +3031,7 @@ show."
        (application-present
         application
         (application-notice-line
-         (format nil "wait for the turn to finish, then (switch ~S)" display))))
+         (format nil "wait for the turn to finish, then (open ~S)" display))))
       (t
        (application-resume-conversation application identifier)
        (application-render-records application))))

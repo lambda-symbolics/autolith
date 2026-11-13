@@ -1441,10 +1441,10 @@ provider generation.
 Provider-generated refreshes are enabled by default. Use =(titles)=, =(titles t)=,
 or =(titles nil)= to inspect or change the durable global preference.
 
-=(switch)= picks a channel: the inbox, then each workspace's channels by their
+=(open)= picks a channel: the inbox, then each workspace's channels by their
 agents' names, children under their parents. Type to search; the Delete key
 removes the highlighted channel, after a confirmation, with its history and
-the channels nested in it. An explicit =(switch "ID")= accepts the stable
+the channels nested in it. An explicit =(open "ID")= accepts the stable
 conversation identifier, a part that identifies one channel, or =@NAME= for
 the channel where that agent resides. The terminal status bar and local session
 status show the title when one is available; otherwise they show the conversation
@@ -1540,7 +1540,7 @@ If the server cannot be started or does not answer, the start ends with the
 reason. No session runs in the terminal's own process instead.
 
 Closing the terminal, detaching, or losing the connection leaves the channel
-running. Use =(quit)= to end it. Use =(switch "ID")= to attach to another
+running. Use =(quit)= to end it. Use =(open "ID")= to attach to another
 channel; the server opens it if needed and leaves the previous one running.
 In a pristine or recovery session, which runs apart from the server, use the
 same command to resume that conversation in place.
@@ -1636,7 +1636,7 @@ by default. Press =Ctrl-T= to open a full-screen channel drawer. Use =↑= and
 tree node.
 Press =Esc= or =Ctrl-T=, or select the current channel, to return to the
 composer. Opening another channel closes the drawer. Select the overflow
-row with the mouse or keyboard to open the =(switch)= picker.
+row with the mouse or keyboard to open the =(open)= picker.
 
 *** Session endpoints
 
@@ -1667,7 +1667,7 @@ autolith open
 With =--detached=, Autolith prints the full conversation ID and session PID,
 then exits without attaching. This works with closed stdin. Detached resume
 requires an ID. Without
-=--detached=, omit the ID to open the =(switch)= channel picker. An exact canonical
+=--detached=, omit the ID to open the =(open)= channel picker. An exact canonical
 or displayed ID wins; otherwise any part of an ID selects the one conversation
 containing it, without regard to case, and a part matching several reports
 every matching ID with its available title, workspace, time, and preview
@@ -1774,7 +1774,7 @@ and agent. The world lives in =world/= below the data root. One world server
 process hosts the open channels, each with its own endpoint for terminals;
 see Local sessions.
 
-The sidebar and the =(switch)= picker show the channels, and the =(move)=
+The sidebar and the =(open)= picker show the channels, and the =(move)=
 picker the agents, the parked ones too. Agents are all one kind of
 participant: an agent has a parent and may have children, and any agent,
 a child too, may create child agents. A child agent resides in a channel
@@ -1849,7 +1849,7 @@ accent color.
 Messages travel between channels through the same path for people and agents.
 =(tell "ID" "text")= sends a message to channel =ID= as yourself, where =ID=
 may be any part of the identifier that names one channel, or =@NAME=, as in
-=channel:id/ID= and =(switch "ID")=. =(tell)= picks the channel and leaves
+=channel:id/ID= and =(open "ID")=. =(tell)= picks the channel and leaves
 =(tell "ID" "")= in the input for the message. The agent
 tools =channel.send=, =channel.subscribe= and =channel.unsubscribe= do the same
 for an agent, a child agent included: it is the resident of its nested
@@ -1866,9 +1866,9 @@ agent takes it as a turn. Once a terminal shows the inbox, the notice is
 recorded in the inbox's history and shown in full; until then it waits,
 unread. The sidebar counts it, and so does the modeline of every channel,
 as in =✉ 2 unread=, in plain mode too. Each notice ends with the form that goes
-where it was said, such as =(switch "b-6uouHJ")=; in fullscreen, clicking it
-runs it as if you had typed it. =(switch "inbox")= opens the inbox, which
-the =(switch)= picker lists first. Typing in the inbox
+where it was said, such as =(open "b-6uouHJ")=; in fullscreen, clicking it
+runs it as if you had typed it. =(open "inbox")= opens the inbox, which
+the =(open)= picker lists first. Typing in the inbox
 reaches no agent; =(tell "ID" "text")= writes to a channel from there.
 Messages you write elsewhere name the channel you wrote them in as their
 source. Messages wait in the channel's inbox under

@@ -1281,7 +1281,7 @@ not steer the active primary message."
         (append (list (failure "· no agent responds to your inbox. try "))
                 (application-lisp-code-spans "(tell \"OTHER-CHANNEL\" \"TEXT\")")
                 (list (failure " or "))
-                (application-lisp-code-spans "(switch \"ID\")")
+                (application-lisp-code-spans "(open \"ID\")")
                 (list (failure ".")))
         (append (list (failure "· this channel has no agent. try "))
                 (application-lisp-code-spans "(move \"ID\")")
@@ -2544,7 +2544,7 @@ may execute immediately; other Lisp waits for the idle boundary."
          (application-command
           (application-input-controller-application controller) "/detach"))
         ((eq event ':channel-picker)
-         (application-input-controller--handle-submission controller "(switch)" :steer-p nil))
+         (application-input-controller--handle-submission controller "(open)" :steer-p nil))
         ((eq event ':detach)
          (application-command
           (application-input-controller-application controller) "/detach"))

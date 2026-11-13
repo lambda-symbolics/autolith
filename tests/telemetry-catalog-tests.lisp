@@ -415,7 +415,7 @@
                                            '(("Accept" . "application/json")
                                              ("Accept-Encoding" . "gzip")))
                                     "No authorization or model lookup is sent, and compression is requested.")
-                       (setf opened (open path :element-type '(unsigned-byte 8)))
+                       (setf opened (cl:open path :element-type '(unsigned-byte 8)))
                        (values opened status))))
          (lambda ()
            (test-assert (equal (model-catalog--http-fetch) body) "Complete public body is returned.")

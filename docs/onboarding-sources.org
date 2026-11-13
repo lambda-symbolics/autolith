@@ -434,7 +434,7 @@ The timestamps you see in this example are configurable in =(settings)=.
 Use *channels* for separate conversations and projects in one background Autolith server.
 Each channel has its own history and workspace. Your main agent and its children appear by name.
 
-Use =(switch)= or click a channel in the sidebar to visit it.
+Use =(open)= or click a channel in the sidebar to visit it.
 Work in other channels continues while you are elsewhere.
 
 Choose the *inbox* to read messages addressed to you.
@@ -454,7 +454,7 @@ If the channel is running, you join its live agent with its jobs intact.
 If it has closed or left memory, you resume its saved conversation.
 
 The old =autolith resume= command is now =autolith open=.
-Inside Autolith, use =(switch)= for either case.
+Inside Autolith, use =(open)= for either case.
 Add =--detached= with an ID to open it without attaching a terminal.
 
 * Detached sessions
@@ -616,7 +616,7 @@ Use =(child.roles)= to browse available roles.
 =.autolith/agents/=       project roles
 =<config-root>/agents/=   user roles
 
-Each child has its own channel. Use =(switch)= to visit it.
+Each child has its own channel. Use =(open)= to visit it.
 
 Steer a running child with =(prompt :to 'child-name "...")=. If it has a response for you, you will see it.
 

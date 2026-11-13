@@ -634,7 +634,7 @@ run once the wake has."
 
 (-> test-world-server-switch () null)
 (defun test-world-server-switch ()
-  "Test (switch) asking the controlling terminal to move to another channel."
+  "Test (open) asking the controlling terminal to move to another channel."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry       (world-client-entry configuration))
@@ -655,10 +655,10 @@ run once the wake has."
                       (declare (ignore application identifier))
                       (push entry presented))))
         (lambda ()
-          (application--builtin-switch-command application id-a)
+          (application--builtin-open-command application id-a)
           (test-assert (search "already" (terminal--spans-text (first presented)))
                        "switching to the channel the terminal is in changes nothing")
-          (application--builtin-switch-command application (conversation-identifier-display id-b))
+          (application--builtin-open-command application (conversation-identifier-display id-b))
           (test-assert (search "no terminal controls" (terminal--spans-text (first presented)))
                        "without a controller there is no terminal to move")
           (setf presented nil)
@@ -667,7 +667,7 @@ run once the wake has."
                                                              :styled-p nil :session-id id-a)
             (declare (ignore released-p))
             (test-assert attached-p "the switch test attaches a controller"))
-          (application--builtin-switch-command application (conversation-identifier-display id-b))
+          (application--builtin-open-command application (conversation-identifier-display id-b))
           (test-assert (null presented)
                        "a controlled channel switches without a line about it")
           (let ((packets (coerce (structlisp:deque->vector
@@ -678,7 +678,7 @@ run once the wake has."
                                       (search id-b packet)))
                                packets)
                          "the controller is sent the switch request naming the channel"))
-          (test-assert (and (eq (application--builtin-switch-command application "zzzzzzz") ':continue)
+          (test-assert (and (eq (application--builtin-open-command application "zzzzzzz") ':continue)
                             (search "no channel matches" (terminal--spans-text (first presented))))
                        "an unknown channel is said in a line, not signaled"))))))
   nil)
@@ -2477,8 +2477,8 @@ run once the wake has."
                        (submit (if (eq syntax ':lisp) "(new)" "/new"))
                        (test-assert (= (length (world-server--hosts server)) (1+ before))
                                     "new opens another hosted channel before A finishes"))
-                     (submit (if (eq syntax ':lisp) (format nil "(switch ~S)" id-b)
-                                 (format nil "/switch ~A" id-b)))
+                     (submit (if (eq syntax ':lisp) (format nil "(open ~S)" id-b)
+                                 (format nil "/open ~A" id-b)))
                      (test-assert (some (lambda (packet)
                                           (and (search ":SWITCH" (string-upcase packet)) (search id-b packet)))
                                         (coerce (structlisp:deque->vector (image-daemon:attachment-queue attachment)) 'list))
@@ -2498,7 +2498,7 @@ run once the wake has."
                      (test-assert (equal id-b (participant-residence
                                                (world-participant-find (world-load configuration) (participant-identifier agent))))
                                   "move places B's agent before A finishes"))
-                   (submit "(switch)")
+                   (submit "(open)")
                    (submit "(tell)")
                    (test-assert (search id-b (line-editor-text (terminal-ui-editor (application-ui app-a))))
                                 "tell's picker prefills the composer during inference")
