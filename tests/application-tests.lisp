@@ -5988,54 +5988,60 @@
               (string= (conversation-title conversation)
                        "Ship </transcript> session titles")
               "the cheap local initial title is independent of provider generation"))
-            (setf (config :session-title-generation-p configuration) t)
-            (let ((generation-count 0))
-              (test-call-with-function-replacements
-               (list
-                (list 'application--conversation-title-generate
-                      (lambda (ignored)
-                        (declare (ignore ignored))
-                        (incf generation-count)
-                        nil)))
-               (lambda ()
-                 (application--maybe-refresh-conversation-title application)
-                 (test-assert
-                  (eq (conversation-title-source conversation) ':generation-failed)
-                  "a failed provider generation marks the conversation once")
-                 (application--maybe-refresh-conversation-title application)
-                 (test-assert
-                  (= generation-count 1)
-                  "a failed provider generation is not retried on every turn")
-                 (test-assert
-                  (string= (conversation-title conversation)
-                           "Ship </transcript> session titles")
-                  "the local title survives a failed provider generation"))))
-            (let* ((success-conversation
-                     (conversation-create configuration :identifier "title-refresh-ok"))
-                   (success-application
-                     (make-instance 'application
-                                    :configuration configuration
-                                    :conversation  success-conversation)))
-              (dolist (message '("one" "two" "three"))
-                (conversation-append-user-message success-conversation message))
-              (test-call-with-function-replacements
-               (list
-                (list 'application--conversation-title-generate
-                      (lambda (ignored)
-                        (declare (ignore ignored))
-                        "generated session title")))
-               (lambda ()
-                 (application--maybe-refresh-conversation-title success-application)))
-              (test-assert
-               (and (string= (conversation-title success-conversation)
-                             "Generated session title")
-                    (eq (conversation-title-source success-conversation) ':generated))
-               "enabled title generation persists a normalized replacement")
-              (let ((reloaded
-                      (conversation-load-by-id configuration "title-refresh-ok")))
+           (setf (config :session-title-generation-p configuration) t)
+           (let ((generation-count 0))
+             (test-call-with-function-replacements
+              (list
+               (list 'application--conversation-title-generate
+                     (lambda (ignored)
+                       (declare (ignore ignored))
+                       (incf generation-count)
+                       nil)))
+              (lambda ()
+                (application--maybe-refresh-conversation-title application)
                 (test-assert
-                 (string= (conversation-title reloaded) "Generated session title")
-                 "the generated replacement survives conversation reload"))))
+                 (and (conversation-title-refresh-completed-p conversation)
+                      (eq (conversation-title-source conversation) ':initial))
+                 "a failed provider generation marks the conversation once")
+                (application--maybe-refresh-conversation-title application)
+                (test-assert
+                 (= generation-count 1)
+                 "a failed provider generation is not retried on every turn")
+                (test-assert
+                 (conversation-title-refresh-completed-p
+                  (conversation-load-by-id configuration "title-refresh"))
+                 "the failed attempt survives conversation reload")
+                (test-assert
+                 (string= (conversation-title conversation)
+                          "Ship </transcript> session titles")
+                 "the local title survives a failed provider generation"))))
+           (let* ((success-conversation
+                    (conversation-create configuration :identifier "title-refresh-ok"))
+                  (success-application
+                    (make-instance 'application
+                                   :configuration configuration
+                                   :conversation  success-conversation)))
+             (dolist (message '("one" "two" "three"))
+               (conversation-append-user-message success-conversation message))
+             (test-call-with-function-replacements
+              (list
+               (list 'application--conversation-title-generate
+                     (lambda (ignored)
+                       (declare (ignore ignored))
+                       "generated session title")))
+              (lambda ()
+                (application--maybe-refresh-conversation-title success-application)))
+             (test-assert
+              (and (string= (conversation-title success-conversation)
+                            "Generated session title")
+                   (eq (conversation-title-source success-conversation) ':generated)
+                   (conversation-title-refresh-completed-p success-conversation))
+              "enabled title generation persists a normalized replacement")
+             (let ((reloaded
+                     (conversation-load-by-id configuration "title-refresh-ok")))
+               (test-assert
+                (string= (conversation-title reloaded) "Generated session title")
+                "the generated replacement survives conversation reload"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -6052,26 +6058,26 @@
                                  :configuration configuration
                                  :conversation  conversation
                                  :provider      (provider-create configuration)))
-                 (observed-effort :unset))
+                (observed-effort :unset))
            (dolist (message '("one" "two" "three"))
              (conversation-append-user-message conversation message))
            (test-call-with-function-replacements
             (list
              (list 'provider-stream-turn
                      (lambda (provider &rest arguments)
-                     (declare (ignore arguments))
-                       (setf observed-effort
-                             (config :reasoning-effort
-                                     (provider-configuration provider)))
-                     nil))
+                      (declare (ignore arguments))
+                      (setf observed-effort
+                            (config :reasoning-effort
+                                    (provider-configuration provider)))
+                      nil))
              (list 'provider-result-assistant-text
                    (lambda (result)
                      (declare (ignore result))
                      nil)))
             (lambda ()
               (application--conversation-title-generate application)))
-             (test-assert
-              (equal observed-effort "none")
+           (test-assert
+            (equal observed-effort "none")
             "title generation requests no provider reasoning"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

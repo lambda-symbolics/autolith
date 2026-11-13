@@ -4556,12 +4556,12 @@ model's calls in a turn."
                (conversation-create
                 configuration
                 :storage-root (configuration-inference-root configuration)))
-               (provider
-                 (provider-with-configuration
-                  provider
-                  (configuration-copy configuration
-                                      :reasoning-effort      "none"
-                                      :provider-validation-p nil)))
+             (provider
+               (provider-with-configuration
+                provider
+                (configuration-copy configuration
+                                    :reasoning-effort      "none"
+                                    :provider-validation-p nil)))
              (request                           (application--conversation-title-request context))
              (*system-prompt-override*
                *application-conversation-title-system-prompt*)
@@ -4587,10 +4587,8 @@ model's calls in a turn."
 (-> application--conversation-title-mark-failed (conversation) null)
 (defun application--conversation-title-mark-failed (conversation)
   "Record one failed title generation so later turns do not retry it."
-  (ignore-errors
-    (let ((title (conversation-title conversation)))
-      (when title
-        (conversation-set-title conversation title :source ':generation-failed))))
+  (handler-case (conversation-note-title-refresh-failed conversation)
+    (error () nil))
   nil)
 
 (-> application--maybe-refresh-conversation-title (application) null)

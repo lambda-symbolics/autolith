@@ -1487,19 +1487,19 @@
                        (equal (json-get request "prompt_cache_key")
                               (conversation-prompt-cache-key conversation)))
                   "modern and legacy models use default reasoning, storage disabled, parallel calls, and the conversation's cache key")
-                    (let ((overridden-provider
-                            (provider-with-configuration
-                             provider
-                             (configuration-copy (provider-configuration provider)
-                                                 :reasoning-effort      "none"
-                                                 :provider-validation-p nil))))
-                      (let* ((overridden (provider-request-object
-                                          overridden-provider conversation
-                                          (tool-registry-provider-schemas registry)))
-                             (reasoning  (json-get overridden "reasoning")))
-                        (test-assert
-                         (null reasoning)
-                         "a request configuration keeps the provider's Responses effort policy")))
+                 (let ((overridden-provider
+                         (provider-with-configuration
+                          provider
+                          (configuration-copy (provider-configuration provider)
+                                              :reasoning-effort      "none"
+                                              :provider-validation-p nil))))
+                   (let* ((overridden (provider-request-object
+                                       overridden-provider conversation
+                                       (tool-registry-provider-schemas registry)))
+                          (reasoning  (json-get overridden "reasoning")))
+                     (test-assert
+                      (null reasoning)
+                      "a request configuration keeps the provider's Responses effort policy")))
                  (test-assert
                   (every (lambda (tool)
                            (let ((schema (json-get tool "parameters"))
