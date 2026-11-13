@@ -1439,6 +1439,38 @@ A frame sends its shared views and its task as consecutive user messages."
                  "unsafe trace identifiers are refused at resolution"))
   nil)
 
+(-> test-agent-configured-max-output-tokens () null)
+(defun test-agent-configured-max-output-tokens ()
+  "Apply and clear the configured generation cap on ordinary agent turns."
+  (with-test-configuration (configuration)
+    (flet ((observed-limit (active-configuration)
+             "Run one tool-free turn and return the observed output limits."
+             (let* ((provider
+                      (make-instance
+                       'rlm-inference-test-provider
+                       :results
+                       (list (rlm-inference-test-result "max-output" "plain" 10))))
+                    (agent
+                      (agent-create
+                       :configuration active-configuration
+                       :provider      provider
+                       :conversation  (conversation-create active-configuration)
+                       :tool-registry (make-instance 'tool-registry)
+                       :worker        ':unused)))
+               (agent-run-user-turn agent "Say plain." :tools-p nil)
+               (reverse (rlm-inference-test-provider-output-limits provider)))))
+      (test-assert
+       (equal (observed-limit
+               (configuration-copy configuration :max-output-tokens 4096))
+              '(4096))
+       "a configured maximum output cap reaches the ordinary provider request")
+      (test-assert
+       (equal (observed-limit
+               (configuration-copy configuration :max-output-tokens nil))
+              '(nil))
+       "an unset maximum output cap leaves the provider request uncapped")))
+  nil)
+
 (-> test-rlm-permission-classifier () null)
 (defun test-rlm-permission-classifier ()
   "Test automatic permission context, decisions, and fail-closed fallbacks."

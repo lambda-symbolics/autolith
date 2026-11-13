@@ -347,6 +347,7 @@
   test-core-defaults
   test-xdg-directory-selection
   test-context-window-environment
+  test-max-output-tokens-environment
   test-model-environment-validation
   test-text-line-splitting
   test-make-identifier
@@ -1454,6 +1455,7 @@
   test-rlm-designator-confinement
   test-rlm-root-context-size
   test-rlm-whole-resource-views
+  test-agent-configured-max-output-tokens
   test-rlm-permission-classifier)
 
 (define-test-suite run-job

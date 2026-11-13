@@ -65,6 +65,37 @@
       (tests--restore-environment variable saved)))
   nil)
 
+(-> test-max-output-tokens-environment () null)
+(defun test-max-output-tokens-environment ()
+  "Test that the maximum output token setting accepts positive integers or none."
+  (with-test-configuration (fixture)
+    (labels ((current ()
+               "Create a configuration from the fixture roots and the process environment."
+               (configuration-create
+                :source-root       (config :source-root fixture)
+                :working-directory (config :working-directory fixture)
+                :config-root       (config :config-root fixture)
+                :data-root         (config :data-root fixture)
+                :state-root        (config :state-root fixture)
+                :cache-root        (config :cache-root fixture)
+                :durable-p         nil)))
+      (with-test-environment (("AUTOLITH_MAX_OUTPUT_TOKENS" "4096"))
+        (test-assert (= (config :max-output-tokens (current)) 4096)
+                     "AUTOLITH_MAX_OUTPUT_TOKENS accepts a positive integer"))
+      (dolist (value '("none" "off" "unset" ""))
+        (with-test-environment (("AUTOLITH_MAX_OUTPUT_TOKENS" value))
+          (test-assert (null (config :max-output-tokens (current)))
+                       (format nil "AUTOLITH_MAX_OUTPUT_TOKENS reads ~S as no limit" value))))
+      (dolist (value '("0" "-1" "abc"))
+        (with-test-environment (("AUTOLITH_MAX_OUTPUT_TOKENS" value))
+          (test-assert
+           (handler-case
+               (progn (current) nil)
+             (setting-error ()
+               t))
+           (format nil "AUTOLITH_MAX_OUTPUT_TOKENS rejects ~S" value))))))
+  nil)
+
 (-> test-model-environment-validation () null)
 (defun test-model-environment-validation ()
   "Test that configured models are validated after provider registration."

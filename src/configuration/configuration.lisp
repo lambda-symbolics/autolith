@@ -59,6 +59,31 @@
                             "~A must be a positive integer or unlimited, not ~S."
                             (setting-label setting) value))))))
 
+(defclass optional-positive-integer-setting (setting)
+  ()
+  (:default-initargs :type '(option (integer 1)))
+  (:documentation "An optional positive integer; empty or textual off values mean none."))
+
+(defmethod setting-coerce ((setting optional-positive-integer-setting) (value string) configuration)
+  "Read a positive integer, or NONE, OFF, and UNSET as no value."
+  (declare (ignore configuration))
+  (let ((text (string-trim '(#\Space #\Tab #\Newline #\Return) value)))
+    (cond
+      ((member text '("" "none" "off" "unset") :test #'string-equal)
+       nil)
+      (t
+       (handler-case
+           (let ((parsed (parse-integer text :junk-allowed nil)))
+             (if (plusp parsed)
+                 parsed
+                 (setting-reject setting value
+                                 "~A must be a positive integer, NONE, OFF, or UNSET, not ~S."
+                                 (setting-label setting) value)))
+         (parse-error ()
+           (setting-reject setting value
+                           "~A must be a positive integer, NONE, OFF, or UNSET, not ~S."
+                           (setting-label setting) value)))))))
+
 (defmethod setting-coerce ((setting web-search-mode-setting) (value string) configuration)
   "Read the mode name in lower case."
   (declare (ignore setting configuration))
@@ -380,6 +405,14 @@ Ordinary native defaults remain lazy and follow the current environment."
   :environment                          "AUTOLITH_CONTEXT_OUTPUT_RESERVE"
   :default                              (lambda (configuration)
                                           (max 1 (min 8192 (floor (config :context-window configuration) 10)))))
+
+(define-setting :max-output-tokens (optional-positive-integer-setting)
+  :label                           "Maximum output tokens"
+  :group                           :model
+  :documentation                   "The enforced output token limit sent on ordinary model requests. NONE leaves the provider limit unspecified; this is a generation cap, unlike the admission headroom in context-output-reserve."
+  :scope                           :durable
+  :environment                     "AUTOLITH_MAX_OUTPUT_TOKENS"
+  :default                         nil)
 
 (define-setting :vertex-project (string-setting)
   :label                        "Vertex project"

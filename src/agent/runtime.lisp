@@ -1771,6 +1771,12 @@ continues."
       ':auto
       ':none))
 
+(-> agent--configured-max-output-tokens (agent) (option integer))
+(defun agent--configured-max-output-tokens (agent)
+  "Return AGENT's configured generation cap, or NIL when none is set."
+  (let ((value (config :max-output-tokens (agent-configuration agent))))
+    (and (integerp value) (plusp value) value)))
+
 (-> agent--validate-compaction-projection
     (agent conversation &key (:goal-context (option string))
                       (:tool-restriction-p boolean) (:tool-allowlist (option list))
@@ -1791,7 +1797,9 @@ continues."
                (agent-tool-registry agent) :canonical-names tool-allowlist))
              (t
               (tool-registry-provider-schemas (agent-tool-registry agent))))))
-    (let ((*provider-maximum-output-tokens* maximum-output-tokens)
+    (let ((*provider-maximum-output-tokens*
+            (or maximum-output-tokens
+                (agent--configured-max-output-tokens agent)))
           (*provider-tool-choice*
             (agent--request-tool-choice tools-p tool-restriction-p tool-rounds))
           (*context-request-contributions*
@@ -1972,8 +1980,10 @@ publication. Return issued request count and optional next-request details."
                             observer :provider-request-started
                             (list :request-number (+ request-number issued 1)
                                   :tool-rounds    next-request-tool-rounds))))
-                     (and (integerp value) (plusp value) value))
-                   *provider-maximum-output-tokens*))
+                     (or (and (integerp value) (plusp value) value)
+                         (agent--configured-max-output-tokens agent)))
+                   (or *provider-maximum-output-tokens*
+                       (agent--configured-max-output-tokens agent))))
              (next-request-details
                (and next-request-status-details
                     (list :announced-p           t
@@ -2040,7 +2050,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
           (storm-state                  (agent-tool-storm-state-create))
           (tool-rounds                  0)
           (tool-calls                   0)
-          (maximum-output-tokens        nil)
+          (maximum-output-tokens        (agent--configured-max-output-tokens agent))
           (next-request-details         nil))
      (declare (special *task-unfinished-work-agent*))
      (loop for recovery-used-p = nil
@@ -2095,8 +2105,10 @@ loop, so compaction ahead of the user message shares the turn's budget."
                                observer :provider-request-started
                                (list :request-number request-number :tool-rounds tool-rounds)))))
                     (setf next-request-details  nil
-                          maximum-output-tokens (and (integerp output-limit)
-                                                     (plusp output-limit) output-limit)
+                          maximum-output-tokens
+                          (or (and (integerp output-limit)
+                                   (plusp output-limit) output-limit)
+                              (agent--configured-max-output-tokens agent))
                           cache-prefix          nil))
                   (handler-case
                       (return

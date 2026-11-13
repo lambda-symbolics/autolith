@@ -419,8 +419,9 @@ questions of the same views reuse them.")
 (defparameter *provider-maximum-output-tokens* nil
   "An optional output token ceiling for the current provider request.
 
-Inference frames bind this to their reserved output tranche so one
-response cannot dramatically overrun the shared subtree budget.")
+Ordinary agent requests bind this from the configured maximum output setting.
+Inference frames bind it to their reserved output tranche so one response cannot
+dramatically overrun the shared subtree budget.")
 
 (defparameter *provider-mission-output-allowance* nil
   "Internal output reservation for this request, distinct from a caller's ceiling.
