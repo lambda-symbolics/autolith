@@ -1293,6 +1293,15 @@ admission metadata for provenance; imported contracts require local admission.
 Trusted Lisp callers of =knowledge-define-contract= admit their definitions by
 default; pass =:admit nil= to propose one for separate authorization.
 
+Run =(reset-contracts)=, or ask the agent to call =contracts.reset=, to abandon
+all tool contracts and saved diagnosis probes across the knowledge store. Use
+this recovery operation even when damaged contract records prevent ordinary
+tool calls. The agent invokes it without contract preconditions or replay.
+Autolith archives the original log privately and atomically removes contract
+and diagnosis records, including those inside mixed transactions. Facts,
+evidence, rules, methods, procedures and prose memories are preserved. Define
+new contracts normally afterward.
+
 Requirements may bind variables used by effects and observations. A call needs
 one distinct binding environment; ambiguous bindings or an incomplete search
 refuse it before execution. Evidence records retain the supporting claim IDs.

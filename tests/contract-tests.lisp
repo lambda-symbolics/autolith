@@ -363,3 +363,78 @@
                         (hash-table-count (knowledge-base-claims (knowledge-base-read configuration))))
                      "no stale effect or observation is written after supersession"))))
   nil)
+
+(-> test-contract-replacement-replay () null)
+(defun test-contract-replacement-replay ()
+  "Replay vector-valued admissions and reject structurally different receipts before append."
+  (with-test-configuration (configuration)
+    (contract-tests--define-ready configuration)
+    (let ((pathname (configuration-knowledge-path configuration)))
+      (labels ((conditions ()
+                 "Return independently allocated conditions with an array-valued argument."
+                 (json-object "targets" (vector "Report" 1)))
+
+               (reload-entry ()
+                 "Discard the cached fold and read this contract from its durable records."
+                 (remhash (namestring pathname) *knowledge-base-cache*)
+                 (contract-tests--entry configuration)))
+        (knowledge-define-contract
+         configuration :id "report-read" :tool "resource.read" :when (conditions)
+         :observes (gethash "observes" (contract-tests--operation "old")))
+        (let ((admission (getf (reload-entry) :admission)))
+          (knowledge-define-contract
+           configuration :id "report-read" :tool "resource.read" :when (conditions)
+           :observes (gethash "observes" (contract-tests--operation "new")) :admit nil)
+          (let ((entry (reload-entry)))
+            (test-assert (not (knowledge-contract-admitted-p entry))
+                         "a replacement proposal is not itself admitted")
+            (test-assert (knowledge--contract-data-equal-p admission (getf entry :admission))
+                         "fresh replay preserves the earlier array-valued admission")
+            (test-assert
+             (knowledge--contract-data-equal-p
+              (getf admission :contract)
+              (first (knowledge-base-contracts
+                      (knowledge-base-read configuration) "resource.read"
+                      :workspace (knowledge--workspace configuration))))
+             "the earlier authorized definition remains active during review")
+            (multiple-value-bind (id changed-p version)
+                (knowledge-define-contract
+                 configuration :id "report-read" :tool "resource.read" :when (conditions)
+                 :observes (gethash "observes" (contract-tests--operation "new")) :admit nil)
+              (declare (ignore id))
+              (test-assert (and (not changed-p) (= 2 version))
+                           "repeating equivalent array-valued input does not create a version"))
+            (let* ((*read-eval* nil)
+                   (snapshot    (read-from-string
+                                 (write-to-string (getf entry :contract) :readably t :circle t))))
+              (knowledge-admit-contract configuration "report-read" :contract snapshot
+                                        :version 2 :by "test-review")))
+          (test-assert (knowledge-contract-admitted-p (reload-entry))
+                       "an independently decoded reviewed definition can be admitted and replayed"))
+        (dolist (targets (list (vector "report" 1) (vector "Report" 1.0)))
+          (let* ((base      (knowledge-base-read configuration))
+                 (entry     (contract-tests--entry configuration))
+                 (admission (copy-tree (getf entry :admission)))
+                 (contract  (copy-tree (getf entry :contract)))
+                 (original  (uiop:read-file-string pathname)))
+            (setf (getf (rest (getf admission :contract)) :when)
+                  (list (cons "targets" targets)))
+            (let ((forged (list :contract-defined :version *knowledge-format-version*
+                                :scope ':workspace :workspace (knowledge--workspace configuration)
+                                :contract contract :contract-version 3 :admission admission
+                                :time             (get-universal-time))))
+              (test-assert
+               (handler-case
+                   (progn
+                     (knowledge-transact configuration
+                                         (lambda (current)
+                                           (declare (ignore current))
+                                           (values (list forged) nil t)))
+                     nil)
+                 (knowledge-error () t))
+               "case and scalar-type changes cannot reuse an unrelated admission"))
+            (test-assert (eq base (knowledge-base-read configuration))
+                         "a rejected write leaves the cached base unchanged")
+            (test-assert (string= original (uiop:read-file-string pathname))
+                         "a rejected write never reaches the durable log"))))))
+  nil)

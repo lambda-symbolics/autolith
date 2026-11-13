@@ -1667,18 +1667,18 @@ changes also invalidate the cache. External files are sampled at these boundarie
          (key           (application--context-estimate-key application family))
          (cached        (application-context-estimate-cache application)))
     (unless (equal key (first cached))
-      (setf cached
-            (list key
-                  (context-estimate-known-tokens
-                   configuration (application-conversation application)
-                   :hurry-up-p (application-hurry-up-p application)
-                   :family     family
-                   :provider   provider
-                   :tool-registry
-                   (and (slot-boundp application 'tool-registry)
-                        (application-tool-registry application))))
-            (application-context-estimate-cache application) cached))
-    (values (second cached) t)))
+      (multiple-value-bind (tokens exact-p)
+          (context-estimate-known-tokens
+           configuration (application-conversation application)
+           :hurry-up-p (application-hurry-up-p application)
+           :family     family
+           :provider   provider
+           :tool-registry
+           (and (slot-boundp application 'tool-registry)
+                (application-tool-registry application)))
+        (setf cached (list key tokens exact-p)
+              (application-context-estimate-cache application) cached)))
+    (values (second cached) (not (third cached)))))
 
 (-> application-refresh-context-meter (application) null)
 (defun application-refresh-context-meter (application)

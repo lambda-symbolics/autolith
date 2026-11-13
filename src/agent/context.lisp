@@ -562,13 +562,14 @@ stays cached across midnight; this separate block carries the change instead."
     (configuration conversation
      &key (:tool-registry (option tool-registry)) (:hurry-up-p boolean)
           (:family (option keyword)) (:provider (option model-provider)))
-    (integer 0))
+    (values (integer 0) boolean))
 (defun context-estimate-known-tokens
     (configuration conversation &key tool-registry hurry-up-p family provider)
   "Estimate current known input using matched ordinary usage when available.
 
 New history and current session state are charged before the next response.
-Request-local contributors are resolved only at the final admission boundary."
+Request-local contributors are resolved only at the final admission boundary.
+Return the token count and whether it uses only an exact matched measurement."
   (let* ((tools   (if tool-registry (tool-registry-provider-schemas tool-registry) #()))
          (items   (conversation-input-items-for-family
                    conversation
@@ -582,18 +583,28 @@ Request-local contributors are resolved only at the final admission boundary."
                 sample (provider-context--soft-header provider tools)
                 (mapcar #'provider-cache-prefix--entry items)))
       (let ((new (nthcdr (getf sample :history-count) items)))
-        (return-from context-estimate-known-tokens
-          (+ (getf sample :tokens)
-             (ceiling (+ (if new
-                             (provider-context--request-characters (coerce new 'vector))
-                             0)
-                         (provider-context--request-characters session))
-                      4)))))
-    (ceiling (+ (length (system-prompt configuration))
-                (length session)
-                (context--known-value-character-count items)
-                (context--known-value-character-count tools))
-             4)))
+        (multiple-value-bind (new-characters new-uncertain-p)
+            (if new
+                (provider-context--request-characters (coerce new 'vector))
+                (values 0 nil))
+          (multiple-value-bind (session-characters session-uncertain-p)
+              (if (plusp (length session))
+                  (provider-context--request-characters session)
+                  (values 0 nil))
+            (return-from context-estimate-known-tokens
+              (values (+ (getf sample :tokens)
+                         (ceiling (+ new-characters session-characters) 4))
+                      (and (null new)
+                           (zerop session-characters)
+                           (not new-uncertain-p)
+                           (not session-uncertain-p))))))))
+    (values
+     (ceiling (+ (length (system-prompt configuration))
+                 (length session)
+                 (context--known-value-character-count items)
+                 (context--known-value-character-count tools))
+              4)
+     nil)))
 
 (-> context--render (list) (option string))
 (defun context--render (contributions)

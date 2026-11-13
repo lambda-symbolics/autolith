@@ -690,26 +690,29 @@ Require a clean process first; this is not recovery for a real shutdown failure.
   (with-test-configuration (configuration root)
     (declare (ignore configuration))
     (test-check--call "CHECK--PARSE-ARGUMENTS" '("--jobs" "1"))
-    (let ((runner    (symbol-function (find-symbol "CHECK--RUN-PROCESSES" '#:cl-user)))
-          (unrelated (test-make-temporary-root)))
+    (let ((runner         (symbol-function (find-symbol "CHECK--RUN-PROCESSES" '#:cl-user)))
+          (unrelated      (test-make-temporary-root))
+          (native-library "/stable/colorlisp.dll"))
       (unwind-protect
            (dolist (mode '(:normal :failure :crash :timeout :invalid :incomplete :unwind))
              (let ((owned     nil)
                    (entry     nil)
                    (output    (make-string-output-stream))
                    (directory (merge-pathnames (format nil "~(~A~)/" mode) root)))
-               (test-call-with-function-replacements
-                (list
-                 (list (find-symbol "CHECK--RUN-PROCESSES" '#:cl-user)
-                       (lambda (entries &rest arguments)
-                         (setf entry (first entries)
-                               owned (getf (test-check--call
-                                            "CHECK--READ-SINGLE-FORM"
-                                            (fourth (test-check--call "CHECK-PROCESS-COMMAND" entry)))
-                                           ':temporary-root))
-                         (when (eq mode ':normal)
-                           (let ((environment (test-check--call "CHECK-PROCESS-ENVIRONMENT" entry))
-                                 (worker-root (merge-pathnames "worker-1/" directory)))
+              (test-call-with-function-replacements
+               (list
+                (list (find-symbol "CHECK--COLORLISP-NATIVE-LIBRARY-PATH" '#:cl-user)
+                      (lambda () native-library))
+                (list (find-symbol "CHECK--RUN-PROCESSES" '#:cl-user)
+                      (lambda (entries &rest arguments)
+                       (setf entry (first entries)
+                             owned (getf (test-check--call
+                                          "CHECK--READ-SINGLE-FORM"
+                                          (fourth (test-check--call "CHECK-PROCESS-COMMAND" entry)))
+                                         ':temporary-root))
+                       (when (eq mode ':normal)
+                         (let ((environment (test-check--call "CHECK-PROCESS-ENVIRONMENT" entry))
+                               (worker-root (merge-pathnames "worker-1/" directory)))
                              (dolist (entry '(("XDG_CONFIG_HOME" "config/")
                                               ("XDG_STATE_HOME" "state/")
                                               ("XDG_CACHE_HOME" "cache/")))
@@ -717,62 +720,66 @@ Require a clean process first; this is not recovery for a real shutdown failure.
                                 (member (format nil "~A=~A" (first entry)
                                                 (merge-pathnames (second entry) worker-root))
                                         environment :test #'string=)
-                                "Default-root configurations use worker-owned configuration, state and caches."))))
-                         (snapshot-write (merge-pathnames "unclaimed/state.sexp" owned)
-                                         '(:fixture :present))
-                         (when (eq mode :unwind)
-                           (throw 'worker-exit :escaped))
-                         (when (member mode '(:normal :invalid :incomplete))
-                           (test-check--call
-                            "CHECK--WRITE-FORM"
-                            (test-check--call "CHECK-PROCESS-RESULT-PATH" entry)
-                            (when (member mode '(:normal :incomplete))
-                              '(:version 1 :cases 1 :checks 1 :failures nil
-                                :timings (("fixture-probe" 0d0))))))
-                         (funcall (fdefinition '(setf cl-user::check-process-command))
-                                  (list "sh" "-c"
-                                        (case mode
-                                          (:failure
-                                           "exit 7")
-                                          (:crash
-                                           "kill -KILL $$")
-                                          (:timeout
-                                           "sleep 30 & wait")
-                                          (otherwise
-                                           "exit 0")))
-                                  entry)
-                         (apply runner entries arguments))))
-                (lambda ()
-                  (let ((*standard-output* output)
-                        (*error-output*    output))
-                    (test-assert
-                     (eql (catch 'worker-exit
-                             (test-check--call "CHECK--RUN-WORKERS"
-                                               (if (eq mode ':incomplete)
-                                                   '(fixture-probe missing-probe)
-                                                   '(fixture-probe))
-                                              :source-root (asdf:system-source-directory :autolith)
-                                              :temporary-root directory :jobs 1 :timeout 1))
-                          (case mode
-                            (:normal
-                             t)
-                            (:unwind
-                             :escaped)
-                            (otherwise
-                             nil)))
-                     "worker success, process failures and unwind preserve their outcomes"))))
-               (when (eq mode ':incomplete)
-                 (let ((diagnostic (get-output-stream-string output)))
-                   (test-assert (and (search "fixture-probe" diagnostic)
-                                     (search "missing-probe" diagnostic))
-                                "unvalidated partial shard reports every missing assigned case")))
-               (test-assert (and owned (not (probe-file owned)))
-                            "the parent deletes fixtures a dead worker cannot clean up")
-               (test-assert (probe-file unrelated)
-                            "worker cleanup preserves other runs' directories")
-               (unless (eq mode :unwind)
-                 (test-assert
-                  (not (uiop:process-alive-p (test-check--call "CHECK-PROCESS-PROCESS" entry)))
-                  "workers terminate before parent cleanup finishes"))))
-        (platform-delete-directory-tree *platform* unrelated :validate t :if-does-not-exist ':ignore))))
+                                "Default-root configurations use worker-owned configuration, state and caches."))
+                             (test-assert
+                              (member (format nil "COLORLISP_NATIVE_LIBRARY=~A" native-library)
+                                      environment :test #'string=)
+                              "Workers receive the stable ColorLisp native library path.")))
+                       (snapshot-write (merge-pathnames "unclaimed/state.sexp" owned)
+                                       '(:fixture :present))
+                       (when (eq mode :unwind)
+                         (throw 'worker-exit :escaped))
+                       (when (member mode '(:normal :invalid :incomplete))
+                         (test-check--call
+                          "CHECK--WRITE-FORM"
+                          (test-check--call "CHECK-PROCESS-RESULT-PATH" entry)
+                          (when (member mode '(:normal :incomplete))
+                            '(:version 1 :cases 1 :checks 1 :failures nil
+                              :timings (("fixture-probe" 0d0))))))
+                       (funcall (fdefinition '(setf cl-user::check-process-command))
+                                (list "sh" "-c"
+                                      (case mode
+                                        (:failure
+                                         "exit 7")
+                                        (:crash
+                                         "kill -KILL $$")
+                                        (:timeout
+                                         "sleep 30 & wait")
+                                        (otherwise
+                                         "exit 0")))
+                                entry)
+                       (apply runner entries arguments))))
+               (lambda ()
+                 (let ((*standard-output* output)
+                       (*error-output*    output))
+                   (test-assert
+                    (eql (catch 'worker-exit
+                            (test-check--call "CHECK--RUN-WORKERS"
+                                              (if (eq mode ':incomplete)
+                                                  '(fixture-probe missing-probe)
+                                                  '(fixture-probe))
+                                             :source-root (asdf:system-source-directory :autolith)
+                                             :temporary-root directory :jobs 1 :timeout 1))
+                         (case mode
+                           (:normal
+                            t)
+                           (:unwind
+                            :escaped)
+                           (otherwise
+                            nil)))
+                    "worker success, process failures and unwind preserve their outcomes"))))
+              (when (eq mode ':incomplete)
+                (let ((diagnostic (get-output-stream-string output)))
+                  (test-assert (and (search "fixture-probe" diagnostic)
+                                    (search "missing-probe" diagnostic))
+                               "unvalidated partial shard reports every missing assigned case")))
+              (test-assert (and owned (not (probe-file owned)))
+                           "the parent deletes fixtures a dead worker cannot clean up")
+              (test-assert (probe-file unrelated)
+                           "worker cleanup preserves other runs' directories")
+              (unless (eq mode :unwind)
+                (test-assert
+                 (not (uiop:process-alive-p (test-check--call "CHECK-PROCESS-PROCESS" entry)))
+                 "workers terminate before parent cleanup finishes"))))
+       (platform-delete-directory-tree *platform* unrelated :validate t :if-does-not-exist ':ignore))))
   nil)

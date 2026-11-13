@@ -1201,6 +1201,11 @@ socket."
     (default-tools--register-web registry)
     (default-tools--register-search registry search-worker)
     (default-tools--register-shell registry)
+    (default-tools--register
+     registry
+     (list 'contracts-reset-tool "contracts" "reset"
+           "Abandon all tool contracts and saved diagnosis probes, including unreadable contract state. Preserve facts, rules and memories; archive the original log. This recovery call bypasses contract preconditions."
+           (tool-object-schema (json-object) nil)))
     (default-tools--register-papercut registry)
     (default-tools--register-agenda registry)
     (default-tools--register-plan registry

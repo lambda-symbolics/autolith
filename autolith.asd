@@ -444,6 +444,7 @@
                                           (:file "contract-binding-tests")
                                           (:file "memory-manager-model-tests")
                                           (:file "contract-tests")
+                                          (:file "contract-recovery-tests")
                                           (:file "knowledge-fixture-tests")
                                           (:file "learning-tests")
                                           (:file "procedure-preflight-tests")

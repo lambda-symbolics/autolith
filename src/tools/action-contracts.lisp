@@ -2,6 +2,9 @@
 
 ;;;; -- Contracted Tool Calls --
 
+(defclass contracts-reset-tool (tool) ()
+  (:documentation "Emergency recovery that must never depend on contract replay."))
+
 (defclass contract-recording-result (tool-result)
   ((original
     :initarg :original :reader contract-recording-result-original
@@ -130,6 +133,8 @@ resolves to TOOL. Without a registry, match only the canonical name."
   "Execute TOOL with ARGUMENTS under CONTEXT, applying matching contracts.
 
 Match canonical names and unique display aliases through CONTEXT's registry."
+  (when (typep tool 'contracts-reset-tool)
+    (return-from tool-execute-with-contracts (tool-execute tool context arguments)))
   (let* ((configuration (tool-context-configuration context))
          (name          (tool-canonical-name tool))
          (matches       (and configuration
@@ -166,3 +171,12 @@ Match canonical names and unique display aliases through CONTEXT's registry."
                       (if errors
                           (tool-contract--recording-result result errors)
                           result)))))))))
+
+(defmethod tool-execute ((tool contracts-reset-tool) context arguments)
+  "Abandon contract and diagnosis state without reading it through the reducer."
+  (declare (ignore tool arguments))
+  (multiple-value-bind (removed archive)
+      (knowledge-reset-contracts (tool-context-configuration context))
+    (tool-success
+     (format nil "Abandoned ~D contract and diagnosis records.~@[ Original log archived at ~A.~]"
+             removed archive))))

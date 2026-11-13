@@ -616,6 +616,11 @@
   test-contract-admission-reload
   test-contract-import-duplicate-properties
   test-contract-import-preserves-local-admission
+  test-contract-replacement-replay
+  test-contract-reset-unreadable
+  test-contract-reset-publication-failure
+  test-contract-reset-command
+  test-contract-reset-reader-failure
   test-contract-record-supersession)
 
 (define-test-suite papercut

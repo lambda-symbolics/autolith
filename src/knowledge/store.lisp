@@ -513,11 +513,12 @@ by a newer generation stays readable after a rollback."
                                (getf previous :admission))))
            (unless (or (null admission)
                        (and (eql version (getf admission :contract-version))
-                            (equal contract (getf admission :contract)))
-                       (equal admission (getf previous :admission)))
+                            (knowledge--contract-data-equal-p contract (getf admission :contract)))
+                       (knowledge--contract-data-equal-p admission (getf previous :admission)))
              (fail "A contract proposal carries an admission for an unknown earlier definition."))
            (setf (gethash key (knowledge-base-contracts-table base))
-                 (list :contract contract :contract-version version :admission admission
+                 (list :contract contract :contract-version version
+                       :admission admission
                        :scope     (getf properties :scope)
                        :workspace (getf properties :workspace)
                        :time      (getf properties :time)))))

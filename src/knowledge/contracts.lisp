@@ -141,12 +141,31 @@ allow predicted effects from earlier calls to satisfy requirements."
 
 ;;;; -- Stored Contracts --
 
+(-> knowledge--contract-data-equal-p (t t) boolean)
+(defun knowledge--contract-data-equal-p (left right)
+  "Compare persisted contract data structurally, preserving string case and scalar types."
+  (cond
+    ((and (consp left) (consp right))
+     (and (knowledge--contract-data-equal-p (first left) (first right))
+          (knowledge--contract-data-equal-p (rest left) (rest right))))
+    ((and (hash-table-p left) (hash-table-p right))
+     (and (= (hash-table-count left) (hash-table-count right))
+          (loop for key being the hash-keys of left using (hash-value value)
+                always (multiple-value-bind (other present-p) (gethash key right)
+                         (and present-p (knowledge--contract-data-equal-p value other))))))
+    ((and (vectorp left) (not (stringp left))
+          (vectorp right) (not (stringp right)))
+     (and (= (length left) (length right))
+          (every #'knowledge--contract-data-equal-p left right)))
+    (t
+     (equal left right))))
+
 (-> knowledge-contract-admitted-p (list) boolean)
 (defun knowledge-contract-admitted-p (entry)
   "Return true when ENTRY's exact current contract has an admission receipt."
   (let ((admission (getf entry :admission)))
     (and admission
-         (equal (getf admission :contract) (getf entry :contract))
+         (knowledge--contract-data-equal-p (getf admission :contract) (getf entry :contract))
          (eql (getf admission :contract-version) (getf entry :contract-version))
          t)))
 
@@ -189,7 +208,7 @@ Return its ID, whether content changed, and its version."
                              (knowledge-base-schema base predicate
                                                     :workspace (and (eq scope ':workspace) viewer)))))
                (existing  (gethash (list scope workspace id) (knowledge-base-contracts-table base)))
-               (changed-p (not (equal (getf existing :contract) contract)))
+               (changed-p (not (knowledge--contract-data-equal-p (getf existing :contract) contract)))
                (version   (+ (or (getf existing :contract-version) 0) (if changed-p 1 0)))
                (time      (get-universal-time)))
           (if (and (not changed-p) (or (not admit) (knowledge-contract-admitted-p existing)))
@@ -222,7 +241,7 @@ Refuse if a concurrent edit replaced the proposed definition."
      configuration
      (lambda (base)
        (let ((entry (gethash (list scope workspace id) (knowledge-base-contracts-table base))))
-         (unless (and entry contract (equal contract (getf entry :contract))
+         (unless (and entry contract (knowledge--contract-data-equal-p contract (getf entry :contract))
                       (eql version (getf entry :contract-version)) (non-empty-string-p by))
            (knowledge--fail ':invalid-contract id
                             "Contract ~A changed before admission; review its current version." id))
@@ -456,3 +475,88 @@ never change the external action's outcome and never disappear silently."
                     (record (knowledge-make-proposition schema inputs) ':observation))
                 (knowledge-error (condition) (failed "observation" condition))))))))
     (values (nreverse claims) (nreverse errors))))
+
+
+;;;; -- Emergency Contract Recovery --
+
+(-> knowledge--without-contracts (list) (values list integer))
+(defun knowledge--without-contracts (record)
+  "Remove contract and diagnosis records without validating or replaying them.
+
+Return the retained record, or NIL, and the number of abandoned records.
+Preserve unrelated members of an atomic transaction."
+  (case (first record)
+    ((:contract-defined :diagnosis-defined :diagnosis-recorded)
+     (values nil 1))
+    (:transaction
+     (let ((retained nil)
+           (removed  0))
+       (dolist (inner (getf (rest record) :records))
+         (multiple-value-bind (filtered count) (knowledge--without-contracts inner)
+           (incf removed count)
+           (when filtered
+             (push filtered retained))))
+       (if retained
+           (let ((copy (copy-list record)))
+             (setf (getf (rest copy) :records) (nreverse retained))
+             (values copy removed))
+           (values nil removed))))
+    (otherwise
+     (values record 0))))
+
+(-> knowledge--archive-contract-reset (pathname) pathname)
+(defun knowledge--archive-contract-reset (pathname)
+  "Archive every byte of PATHNAME privately before replacing its operational log."
+  (let ((archive (make-pathname :name    (format nil "~A.before-contract-reset-~A"
+                                               (pathname-name pathname)
+                                               (make-identifier))
+                               :defaults pathname)))
+    (uiop:call-with-temporary-file
+     (lambda (temporary)
+       (platform-make-private *platform* temporary)
+       (with-open-file (input pathname :element-type '(unsigned-byte 8))
+         (with-open-file (output temporary :direction         ':output
+                                           :element-type      '(unsigned-byte 8)
+                                           :if-exists         ':overwrite
+                                           :if-does-not-exist ':error)
+           (uiop:copy-stream-to-stream input output :element-type '(unsigned-byte 8))))
+       (rename-file temporary archive))
+     :want-stream-p nil
+     :directory     (uiop:pathname-directory-pathname pathname)
+     :prefix        ".contract-reset-archive.")
+    archive))
+
+(-> knowledge-reset-contracts (configuration) (values integer (option pathname)))
+(defun knowledge-reset-contracts (configuration)
+  "Abandon all contracts and saved diagnosis probes in CONFIGURATION's store.
+
+Read forms with evaluation disabled, bypassing semantic validation and replay.
+Archive the original bytes privately, then atomically publish the retained log
+under the ordinary knowledge writer lock. Preserve facts, evidence, rules,
+methods, procedures and prose memories. Return the removed count and archive
+pathname, or zero and NIL when no log exists. New contracts may be defined
+normally afterward."
+  (let ((pathname (configuration-knowledge-path configuration)))
+    (knowledge--translate-store-errors
+     (lambda ()
+       (with-recursive-lock-held (*knowledge-lock*)
+         (call-with-file-lock
+          (knowledge--lock-pathname configuration)
+          (lambda ()
+            (if (probe-file pathname)
+                (let ((archive (knowledge--archive-contract-reset pathname))
+                      (removed 0))
+                  (sexp-store:log-write-streaming
+                   pathname
+                   (lambda (emit)
+                     (sexp-store:log-map
+                      (lambda (record)
+                        (multiple-value-bind (retained count)
+                            (knowledge--without-contracts record)
+                          (incf removed count)
+                          (when retained
+                            (funcall emit retained))))
+                      archive)))
+                  (remhash (namestring pathname) *knowledge-base-cache*)
+                  (values removed archive))
+                (values 0 nil)))))))))

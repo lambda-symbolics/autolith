@@ -276,6 +276,17 @@ inherited XDG or HOME entry would silently defeat an override placed first."
                        (sb-ext:posix-environ))
             overrides)))
 
+#+win32
+(defun check--colorlisp-native-library-path ()
+  "Resolve ColorLisp's native library before worker cache isolation begins."
+  (uiop:native-namestring
+   (uiop:symbol-call '#:colorlisp '#:native-library-path)))
+
+#-win32
+(defun check--colorlisp-native-library-path ()
+  "Return NIL on hosts where the Windows native-library pin is unnecessary."
+  nil)
+
 (defun check--build-active-core (source-root temporary-root)
   "Build this run's active image from the checked source and return its core.
 
@@ -334,7 +345,8 @@ from this runner's heap."
 Parent cleanup follows process-group termination, including crashes and timeouts.
 WORKER-CORE contains the test system; ACTIVE-CORE is passed separately for cases
 that start fresh Autolith processes. Private XDG roots isolate user preferences."
-  (let ((entries nil) (results nil) (fixture-roots nil) (successful-p t))
+  (let ((entries nil) (results nil) (fixture-roots nil) (successful-p t)
+        (colorlisp-native-library (check--colorlisp-native-library-path)))
     (unwind-protect
          (progn
            (loop for partition in (check--partition-cases cases jobs) for index from 1
@@ -358,6 +370,9 @@ that start fresh Autolith processes. Private XDG roots isolate user preferences.
                                                 (format nil "XDG_CACHE_HOME=~Acache/" directory)
                                                 (format nil "AUTOLITH_TEST_ACTIVE_CORE=~A"
                                                         (uiop:native-namestring active-core)))
+                                          (when colorlisp-native-library
+                                            (list (format nil "COLORLISP_NATIVE_LIBRARY=~A"
+                                                          colorlisp-native-library)))
                                           (when worker-core
                                             (list (format nil "AUTOLITH_TEST_WORKER_CORE=~A"
                                                           (uiop:native-namestring worker-core))))))

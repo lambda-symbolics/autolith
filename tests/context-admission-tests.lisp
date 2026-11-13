@@ -1026,9 +1026,13 @@
        (test-assert (null (conversation-context-usage-sample conversation))
                     "input arriving in flight is not charged to the provider output allowance")
        (context-admission-test--measure agent :envelope-length 64)
-       (conversation-append-provider-metadata conversation '(:compaction :native :usage (("input_tokens" 0) ("output_tokens" 0))))
+       (conversation-append-provider-metadata conversation '(:usage (("input_tokens" 1200) ("output_tokens" 200))))
+       (test-assert (conversation-context-usage-sample conversation)
+                    "ordinary provider metadata does not discard the latest measured anchor")
+       (conversation-append-provider-metadata
+        conversation '(:compaction :native :usage (("input_tokens" 1200) ("output_tokens" 200))))
        (test-assert (null (conversation-context-usage-sample conversation))
-                    "native compaction usage cannot replace the ordinary baseline")
+                    "native compaction metadata invalidates the ordinary response anchor")
        (context-admission-test--measure agent :envelope-length 64)
        (conversation-append-summary conversation "A replacement context.")
        (test-assert (null (conversation-context-usage-sample conversation)) "summary publication invalidates the sample")
@@ -1085,22 +1089,30 @@
          (setf (gethash "instructions" request) "Different wire policy.")
          (test-assert (not (nth-value 1 (provider-context--matched-input provider request)))
                       "restart does not bypass final wire validation"))
-       (let ((before (application-context-usage application)))
+       (multiple-value-bind (before estimated-p)
+           (application-context-usage application)
+         (test-assert (not estimated-p)
+                      "an exact measured anchor without retained suffix is not estimated")
          (conversation-append-provider-item
           conversation (json-object "type" "function_call" "name" "test" "call_id" "resume-output"
                                     "arguments" "{}"))
          (conversation-append-tool-result conversation "resume-output" :tool-name "test"
                                           :output (make-string 20000 :initial-element #\e) :success-p t)
-         (test-assert (> (application-context-usage application) before)
-                      "the meter includes tool output not covered by the last response")
-         (test-assert (= (application-context-usage application)
-                         (context-estimate-known-tokens configuration conversation
-                                                       :provider provider :tool-registry registry))
-                      "the meter uses the same current estimate as soft compaction")
-         (test-assert (agent-should-compact-p agent)
-                      "new retained evidence can cross the soft limit after restart"))
-       (conversation-append-provider-metadata
-        conversation '(:usage (("input_tokens" 1000) ("output_tokens" 200) ("total_tokens" 1200))))
+        (test-assert (nth-value 1 (application-context-usage application))
+                     "new retained evidence makes the context meter estimated")
+        (test-assert (> (application-context-usage application) before)
+                     "the meter includes tool output not covered by the last response")
+        (test-assert (= (application-context-usage application)
+                        (context-estimate-known-tokens configuration conversation
+                                                      :provider provider :tool-registry registry))
+                     "the meter uses the same current estimate as soft compaction")
+        (test-assert (agent-should-compact-p agent)
+                     "new retained evidence can cross the soft limit after restart"))
+       (agent--persist-provider-result
+        agent (make-instance 'provider-result :output-items nil
+                             :usage                         (json-object "input_tokens" 1000 "output_tokens" 200
+                                                                         "total_tokens" 1200))
+        :request-number 2)
        (test-assert (null (conversation-context-usage-sample
                            (conversation-load (conversation-pathname conversation))))
                     "a response interrupted before publishing coverage invalidates the older anchor")
