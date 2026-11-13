@@ -527,7 +527,15 @@ REASON, when given, is what each attached terminal is told before it lets go."
              "Dispatch the request and flush its response before releasing admission."
              (let ((response
                      (handler-case
-                         (world-server--dispatch server operation arguments)
+                        (handler-bind
+                            ((channel-loading-progress
+                               (lambda (progress)
+                                 (when (getf arguments :progress-p)
+                                   (daemon-write-packet
+                                    stream (list :progress
+                                                 :step (channel-loading-progress-step progress)
+                                                 :description (channel-loading-progress-description progress)))))))
+                          (world-server--dispatch server operation arguments))
                        (error (condition)
                          (append (list :error :message (bounded-string (princ-to-string condition) :limit 1000))
                                  (when (and (typep condition 'world-error)
@@ -651,6 +659,7 @@ instead says so."
         (unless (getf arguments :switch-p)
           (setf (world-server-fullscreen-p server) (not (null (getf arguments :fullscreen-p)))))
         (world-server--host-for server arguments))
+    (channel-loading-report 5 "Starting channel")
     (world-server--wait-ready server host)
     (loop for (identifier . message) in skipped
           do (application-present (world-host-application host)

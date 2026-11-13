@@ -383,6 +383,19 @@
              (test-assert (some (lambda (chunk) (search text chunk))
                                 (recording-terminal-chunks terminal))
                           "the pending operation is painted before a channel can answer")
+             (localgroup-screen-show-loading screen text :step 4 :description "initializing")
+             (let ((frame (localgroup-screen--loading-frame screen)))
+               (test-assert (some (lambda (row) (find #\= row))
+                                  (clinedi:frame-snapshot-rows frame))
+                            "completed milestones fill the loading bar"))
+             (setf (terminal-columns terminal) 24
+                   (recording-terminal-chunks terminal) nil)
+             (localgroup-screen-resized screen)
+             (test-assert (and (recording-terminal-chunks terminal)
+                               (null (localgroup-screen-frame screen))
+                               (= 24 (clinedi:frame-snapshot-width
+                                      (localgroup-screen--loading-frame screen))))
+                          "resizing repaints loading without establishing a channel frame")
              (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
                (setf (recording-terminal-chunks terminal) nil)
                (localgroup-screen-handle-packet
@@ -393,15 +406,24 @@
                (localgroup-screen-handle-packet
                 screen (list :frame :height height :width width :complete-p t
                                     :rows '((0 "ready")) :cursor-row 0 :cursor-column 0))
-               (test-assert (equalp (clinedi:frame-snapshot-rows (localgroup-screen-frame screen))
-                                    #("ready" "" "" "" "" "" "" ""))
-                            "the new channel replaces loading without rows from the previous channel")))
+              (test-assert (equalp (clinedi:frame-snapshot-rows (localgroup-screen-frame screen))
+                                   #("ready" "" "" "" "" "" "" ""))
+                           "the new channel replaces loading without rows from the previous channel")
+              (test-assert (null (localgroup-screen-loading screen))
+                           "the destination's complete frame ends loading")))
         (localgroup-screen-close screen))))
   (let* ((terminal (make-instance 'recording-terminal))
          (screen   (localgroup-screen-create :terminal terminal)))
     (localgroup-screen-show-loading screen "pending navigation")
     (test-assert (null (recording-terminal-chunks terminal))
-                 "loading paints only a screen the client already owns"))
+                 "loading paints only a screen the client already owns")
+    (unwind-protect
+         (progn
+           (localgroup-screen-show-loading screen "startup" :start-p t)
+           (test-assert (and (localgroup-screen-active-p screen)
+                             (localgroup-screen-loading screen))
+                        "initial fullscreen loading can explicitly take the terminal"))
+      (localgroup-screen-close screen)))
   nil)
 
 (-> test-localgroup-screen-panel () null)

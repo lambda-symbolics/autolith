@@ -37,6 +37,30 @@ A slow answer means the process is alive, so its record stays."
              (not (typep (image-daemon:daemon-error-cause condition)
                          'sb-sys:deadline-timeout))))))
 
+(-> localgroup--query-with-progress (list keyword list) list)
+(defun localgroup--query-with-progress (record operation arguments)
+  "Request OPERATION with optional loading notifications before its final response."
+  (multiple-value-bind (socket stream)
+      (daemon-connect (localgroup--record-port record))
+    (declare (ignore socket))
+    (unwind-protect
+         (sb-sys:with-deadline (:seconds image-daemon:*daemon-connect-timeout-seconds*)
+           (daemon-write-packet
+            stream (list :localgroup-request :version image-daemon:*daemon-protocol-version*
+                         :token              (localgroup--record-token record)
+                         :operation operation :arguments arguments))
+           (loop for packet = (image-daemon:daemon-read-response stream operation)
+                 until (not (eq (first packet) ':progress))
+                 do (let ((step        (getf (rest packet) :step))
+                          (description (getf (rest packet) :description)))
+                      (unless (and (typep step '(integer 1 6)) (stringp description))
+                        (error 'localgroup-error :message  "Invalid loading notification."
+                                                :operation operation))
+                      (channel-loading-report step description))
+                 finally (return packet)))
+      ; mallet:suppress no-ignore-errors -- closing the finished connection must not mask its response
+      (ignore-errors (close stream)))))
+
 (-> localgroup-query-record
     (cons keyword &optional list)
     list)
@@ -47,11 +71,13 @@ A slow answer means the process is alive, so its record stays."
          (session-id (localgroup--record-session-id record))
          (response
            (handler-case
-               (daemon-call
-                (localgroup--record-port record)
-                (localgroup--record-token record)
-                operation
-                :arguments arguments)
+                (if (getf arguments :progress-p)
+                    (localgroup--query-with-progress record operation arguments)
+                    (daemon-call
+                     (localgroup--record-port record)
+                     (localgroup--record-token record)
+                     operation
+                     :arguments arguments))
              (error (condition)
                (when (localgroup--record-stale-p record condition)
                  (localgroup--remove-stale-record pathname record))

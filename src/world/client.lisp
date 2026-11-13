@@ -103,6 +103,7 @@ takes them, and a channel already served refuses the ones it cannot change.
 Return the opened channel's session identifier, whose endpoint answers by
 then, and whether the server started the channel for this open rather than
 sharing one it already served."
+  (channel-loading-report 1 "Connecting to world")
   (let ((deadline (+ (get-internal-real-time)
                      (* *world-client-wait-seconds* internal-time-units-per-second))))
     (multiple-value-bind (rows columns)
@@ -121,6 +122,7 @@ sharing one it already served."
                              (max image-daemon:*daemon-connect-timeout-seconds*
                                   (/ (- deadline (get-internal-real-time))
                                      internal-time-units-per-second))))
+                       (channel-loading-report 2 "Selecting an available channel")
                        (localgroup-query-record
                         entry ':open
                         (append (when channel
@@ -137,7 +139,8 @@ sharing one it already served."
                                   (list :mcp-servers mcp-servers))
                                 (when switch-p
                                   (list :switch-p t))
-                                (list :permission-mode    permission-mode
+                                (list :progress-p         t
+                                      :permission-mode    permission-mode
                                       :fullscreen-p       (not (null (config :fullscreen-p configuration)))
                                       :pick-channel-p     (not (null pick-channel-p))
                                       :recovery-diagnosis recovery-diagnosis
@@ -159,6 +162,7 @@ sharing one it already served."
                   (error 'localgroup-error
                          :message   "The world server did not name the opened channel."
                          :operation ':open))
+                (channel-loading-report 6 "Attaching terminal")
                 (return (values identifier (not (null (getf (rest response) :started-p))))))
               (sleep 0.5)))))))
 

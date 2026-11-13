@@ -844,7 +844,7 @@ run once the wake has."
 
 (-> test-world-server-open-latest-touched () null)
 (defun test-world-server-open-latest-touched ()
-  "Test a workspace open takes the latest touched channel even when an older one is hosted."
+  "Open the newest unattached channel across hosted and cold candidates, streaming real milestones."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry     (world-client-entry configuration))
@@ -853,20 +853,43 @@ run once the wake has."
        (world-tests--persisted-conversation
         (configuration-copy configuration :working-directory workspace) "blater1" 1000)
        (world-server--reconcile configuration)
-       (let ((dates (list (cons hosted 1000) (cons "blater1" 5000))))
+       (let ((dates (list (cons hosted 6000) (cons "blater1" 5000)))
+             (steps nil))
          (test-call-with-function-replacements
           (list (list 'conversation-storage-write-date
                       (lambda (pathname)
                         (or (rest (assoc (pathname-name pathname) dates :test #'string=)) 0))))
           (lambda ()
-            (multiple-value-bind (host started-p)
-                (world-server--host-for server (list :directory workspace))
-              (test-assert (and started-p (string= (world-host-channel host) "blater1"))
-                           "a conversation written after the hosted one wins the open")
-              (multiple-value-bind (again again-started-p)
-                  (world-server--host-for server (list :directory workspace))
-                (test-assert (and (eq again host) (not again-started-p))
-                             "the next open joins it rather than starting it twice")))))))))
+            (flet ((open-latest ()
+                     "Open through the client transport and record its loading notifications."
+                     (setf steps nil)
+                     (handler-bind ((channel-loading-progress
+                                      (lambda (progress)
+                                        (push (channel-loading-progress-step progress) steps))))
+                       (world-client-open configuration :directory workspace :switch-p t))))
+              (multiple-value-bind (identifier started-p) (open-latest)
+                (test-assert (and (string= identifier hosted) (not started-p))
+                             "the newest unattended hosted channel wins over a cold channel")
+                (test-assert (equal (reverse steps) '(1 2 5 6))
+                             "reuse skips history and initialization milestones"))
+              (setf (rest (assoc hosted dates :test #'string=)) 1000)
+              (multiple-value-bind (identifier started-p) (open-latest)
+                (test-assert (and started-p (string= identifier "blater1"))
+                             "a newer cold channel wins over the hosted channel")
+                (test-assert (equal (reverse steps) '(1 2 3 4 5 6))
+                             "cold loading streams its milestones before the final response"))
+              (multiple-value-bind (identifier started-p) (open-latest)
+                (test-assert (and (string= identifier "blater1") (not started-p))
+                             "the next open reuses the loaded newest channel"))
+              (multiple-value-bind (socket stream response)
+                  (test-localgroup--attach (world-server-tests--session server "blater1") ':control)
+                (declare (ignore response))
+                (unwind-protect
+                     (multiple-value-bind (identifier started-p) (open-latest)
+                       (test-assert (and (string= identifier hosted) (not started-p))
+                                    "the attached newest channel is skipped for the next unattended host"))
+                  (close stream)
+                  (sb-bsd-sockets:socket-close socket))))))))))
   nil)
 
 (-> test-world-server-generation-warning-once () null)
@@ -1540,8 +1563,8 @@ run once the wake has."
                                 (declare (ignore arguments))
                                 nil))
                         (list 'localgroup-screen-show-loading
-                              (lambda (screen text)
-                                (declare (ignore screen text))
+                              (lambda (screen text &rest arguments)
+                                (declare (ignore screen text arguments))
                                 (setf loading-p t)))
                         (list 'world-client-open
                               (lambda (candidate &rest arguments)

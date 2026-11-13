@@ -1234,6 +1234,7 @@ servers. Release acquired resources if construction fails."
          (completed-p                     nil))
     (unwind-protect
          (progn
+           (channel-loading-report 3 "Reading channel history")
            (multiple-value-setq
                (conversation
                 conversation-lease
@@ -1243,6 +1244,7 @@ servers. Release acquired resources if construction fails."
                   nil configuration selected-conversation-id)
                  (application--conversation-create-owned
                   nil configuration)))
+           (channel-loading-report 4 "Initializing provider and tools")
            (let* ((permission-state
                     (permissions-load configuration))
                   (configuration

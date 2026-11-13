@@ -14,6 +14,19 @@
 (defparameter *localgroup-screen-toggle-event* '(:control #\t)
   "The key event showing or hiding the side panel.")
 
+(define-condition channel-loading-progress (condition)
+  ((step :initarg :step :reader channel-loading-progress-step :type (integer 1 6)
+         :documentation "The loading milestone currently in progress.")
+   (description :initarg :description :reader channel-loading-progress-description :type string
+                :documentation "The operation currently in progress."))
+  (:documentation "An optional notification of actual channel-opening work."))
+
+(-> channel-loading-report ((integer 1 6) string) null)
+(defun channel-loading-report (step description)
+  "Notify interested callers of loading STEP and DESCRIPTION."
+  (signal 'channel-loading-progress :step step :description description)
+  nil)
+
 
 ;;;; -- Side Panels --
 
@@ -97,6 +110,12 @@ switches. The default methods leave the choice local to each screen."))
     :accessor      localgroup-screen-frame
     :type          (option clinedi:frame-snapshot)
     :documentation "The session's frame snapshot, or NIL before a complete frame.")
+
+   (loading
+    :initform      nil
+    :accessor      localgroup-screen-loading
+    :type          list
+    :documentation "The loading title, milestone and description, independent of channel frames.")
    (painted-layout
     :initform      nil
     :accessor      localgroup-screen-painted-layout
@@ -367,6 +386,7 @@ client it has not synchronized."
     ((localgroup-screen--frame-packet-p packet)
      (with-lock-held ((localgroup-screen-lock screen))
        (when (localgroup-screen--apply-frame screen (rest packet))
+         (setf (localgroup-screen-loading screen) nil)
          (localgroup-screen--paint screen)))
      t)
     ((equal packet '(:screen :leave))
@@ -376,33 +396,58 @@ client it has not synchronized."
     (t
      nil)))
 
-(-> localgroup-screen-show-loading (localgroup-screen string) null)
-(defun localgroup-screen-show-loading (screen text)
-  "Replace SCREEN's displayed channel with TEXT while keeping its side panel.
+(-> localgroup-screen-show-loading
+    (localgroup-screen string &key (:step (integer 1 6)) (:description string) (:start-p boolean))
+    null)
+(defun localgroup-screen-show-loading
+    (screen text &key (step 1) (description "Connecting to world") start-p)
+  "Show a staged loading bar in SCREEN's channel pane, retaining its side panel.
 
-The next channel supplies a complete frame before any incremental rows apply."
+START-P permits taking the terminal at initial fullscreen startup. Loading is
+independent of the next channel's required complete frame and adapts to resizes."
   (with-lock-held ((localgroup-screen-lock screen))
-    (when (localgroup-screen-active-p screen)
+    (when (or start-p (localgroup-screen-active-p screen))
+      (unless (localgroup-screen-active-p screen)
+        (localgroup-screen--enter screen))
       (setf (localgroup-screen-drawer-open-p screen) nil
-            (localgroup-screen-frame screen) nil)
+            (localgroup-screen-frame screen) nil
+            (localgroup-screen-loading screen) (list text step description)
+            (localgroup-screen-cursor screen) (list 0 0 nil))
       (localgroup-screen--take-whole-screen screen nil)
-      (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
-        (unwind-protect
-             (progn
-               (localgroup-screen--apply-frame
-                screen
-                (list :height           height
-                      :width            width
-                      :complete-p       t
-                      :rows             (list (list 0 (terminal--render-spans
-                                                       (localgroup-screen-terminal screen)
-                                                       (list (terminal-span ':notice text)))))
-                      :cursor-row       0
-                      :cursor-column    0
-                      :cursor-visible-p nil))
-               (localgroup-screen--paint screen))
-          (setf (localgroup-screen-frame screen) nil)))))
+      (localgroup-screen--paint screen)))
   nil)
+
+(-> localgroup-screen--loading-frame (localgroup-screen) clinedi:frame-snapshot)
+(defun localgroup-screen--loading-frame (screen)
+  "Render SCREEN's current milestone centered in the current channel pane."
+  (destructuring-bind (title step description) (localgroup-screen-loading screen)
+    (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
+      (let* ((content-width (min 54 width))
+             (bar-width     (max 1 (- content-width 2)))
+             (filled        (floor (* bar-width (1- step)) 6))
+             (bar           (format nil "[~A~A]"
+                                    (make-string filled :initial-element #\=)
+                                    (make-string (- bar-width filled) :initial-element #\-)))
+             (stage         (format nil "~D/6  ~A" step description))
+             (lines         (cond
+                              ((>= height 4)
+                               (list title "" bar stage))
+                              ((>= height 2)
+                               (list bar stage))
+                              (t
+                               (list stage))))
+             (top           (floor (- height (length lines)) 2))
+             (left          (make-string (floor (- width content-width) 2) :initial-element #\Space)))
+        (clinedi:frame-snapshot-apply
+         nil
+         (loop for text in lines
+               for row from top
+               collect (list row
+                             (terminal--render-spans
+                              (localgroup-screen-terminal screen)
+                              (terminal--clip-spans
+                               (list (terminal-span ':notice (concatenate 'string left text))) width))))
+         :height height :width width :complete-p t)))))
 
 (-> localgroup-screen-resized (localgroup-screen) null)
 (defun localgroup-screen-resized (screen)
@@ -470,7 +515,8 @@ client tells the session, and the next paint rewrites the whole screen."
   (when (localgroup-screen-active-p screen)
     (let ((terminal (localgroup-screen-terminal screen)))
       (setf (localgroup-screen-active-p screen) nil
-            (localgroup-screen-frame screen) nil)
+            (localgroup-screen-frame screen) nil
+            (localgroup-screen-loading screen) nil)
       (unwind-protect
            (terminal-screen-leave terminal (shiftf (localgroup-screen-token screen) nil))
         (terminal-screen-invalidate terminal (localgroup-screen-painter screen)))))
@@ -488,9 +534,12 @@ client tells the session, and the next paint rewrites the whole screen."
 (-> localgroup-screen--paint (localgroup-screen) null)
 (defun localgroup-screen--paint (screen)
   "Paint the session's frame, beside the side panel when it shows, on the client's terminal."
-  (let ((frame (localgroup-screen-frame screen)))
+  (let ((frame (or (localgroup-screen-frame screen)
+                   (when (localgroup-screen-loading screen)
+                     (localgroup-screen--loading-frame screen)))))
     (when (and frame (localgroup-screen-active-p screen)
-               (localgroup-screen--frame-fits-p screen))
+               (or (localgroup-screen-loading screen)
+                   (localgroup-screen--frame-fits-p screen)))
       (destructuring-bind (cursor-row cursor-column cursor-visible-p)
           (localgroup-screen-cursor screen)
         (let ((terminal (localgroup-screen-terminal screen))

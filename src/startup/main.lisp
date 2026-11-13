@@ -1221,6 +1221,19 @@ request it conflicts with from one that says nothing."
           (conversation-identifier-display identifier)
           (autolith-error-message condition)))
 
+(-> main--call-with-channel-loading
+    (localgroup-screen string function &key (:start-p boolean)) t)
+(defun main--call-with-channel-loading (screen title function &key start-p)
+  "Call FUNCTION while displaying its actual channel-opening milestones on SCREEN."
+  (localgroup-screen-show-loading screen title :start-p start-p)
+  (handler-bind
+      ((channel-loading-progress
+         (lambda (progress)
+           (localgroup-screen-show-loading
+            screen title :step        (channel-loading-progress-step progress)
+                         :description (channel-loading-progress-description progress)))))
+    (funcall function)))
+
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
@@ -1242,96 +1255,104 @@ options; when that channel refuses the open or the terminal's attachment,
 the terminal attaches to the one it left. One screen, with one sidebar of
 the world, follows the terminal from channel to channel, so a switch never
 gives the terminal back in between."
-  (multiple-value-bind (session-id started-p)
-      (main--open-world-channel configuration
-                                :permission-mode    permission-mode
-                                :immutable-p        immutable-p
-                                :conversation-id    conversation-id
-                                :pick-channel-p     pick-channel-p
-                                :recovery-diagnosis recovery-diagnosis
-                                :launch             launch
-                                :images             images)
-    (let* ((panel  (world-sidebar-create configuration))
-           (screen (localgroup-client-screen-create :panel panel)))
-      (world-sidebar-start panel)
-      (unwind-protect
-           (loop
-             with origin = nil
-             with notice = nil
-            do
-            (let* ((record (localgroup--find-record configuration session-id))
-                   (exit
-                     (flet ((close-started ()
-                              ;; A channel started for this terminal would
-                              ;; otherwise idle in the server. The server closes
-                              ;; it only while no terminal controls it: another
-                              ;; one may have attached since this one started it.
-                              (when started-p
-                                ; mallet:suppress no-ignore-errors -- best-effort close of a channel nobody attached to
-                                (ignore-errors
-                                  (let ((world (world-client-entry configuration)))
-                                    (when world
-                                      (localgroup-query-record world ':close
-                                                              (list :channel           session-id
-                                                                    :unattached-only-p t))))))))
-                       (handler-case
-                           (progn
-                             (setf (world-sidebar-current panel) session-id)
-                             (localgroup-attach-record configuration record ':control
-                                                       :panel  panel
-                                                       :screen screen
-                                                       :notice (shiftf notice nil)))
-                         (localgroup-error (condition)
-                           (close-started)
-                           ;; A switch whose channel refuses this terminal, as
-                           ;; when another terminal controls it, returns it to
-                           ;; the channel it left.
-                           (unless (and origin
-                                        (eq (image-daemon:daemon-error-operation condition) ':attach))
-                             (error condition))
-                           (setf notice (main--switch-failure session-id condition))
-                           (list ':return))
-                         (serious-condition (condition)
-                           (close-started)
-                           (error condition))))))
-              (cond
-                ((and (consp exit) (eq (first exit) ':return))
-                 (setf session-id origin
-                       origin     nil
-                       started-p  nil))
-                ((and (consp exit) (eq (first exit) ':switch))
-                  ;; A switch navigates: it states none of this start's launch
-                  ;; options, and a channel that refuses it leaves the terminal
-                  ;; where it was.
-                 (let ((left   session-id)
-                       (target (getf (rest exit) :session-id)))
-                   (handler-case
-                       (progn
-                         (setf (world-sidebar-current panel) target)
-                         (localgroup-screen-show-loading
-                          screen
-                          (format nil "Loading channel ~A..."
-                                  (conversation-identifier-display target)))
-                         (multiple-value-setq (session-id started-p)
-                           (world-client-open configuration
-                                              :channel         target
-                                              :permission-mode permission-mode
-                                              :immutable-p     immutable-p
-                                              :switch-p        t))
-                         (setf origin left))
-                     (localgroup-error (condition)
-                       (setf notice     (main--switch-failure target condition)
-                             session-id left
-                             origin     nil
-                             started-p  nil)))))
-                (t
-                 ;; The terminal comes back before the session's last word,
-                 ;; so the word lands on it rather than on the screen it left.
-                 (localgroup-client-screen-release screen)
-                 (localgroup-relay-exit configuration exit ':control)
-                 (return t)))))
-        (localgroup-client-screen-release screen)
-        (world-sidebar-stop panel)))))
+  (let* ((panel  (world-sidebar-create configuration))
+         (screen (localgroup-client-screen-create :panel panel)))
+    (unwind-protect
+         (progn
+           (world-sidebar-start panel)
+           (multiple-value-bind (session-id started-p)
+               (main--call-with-channel-loading
+                screen "Opening channel"
+                (lambda ()
+                  (main--open-world-channel configuration
+                                            :permission-mode    permission-mode
+                                            :immutable-p        immutable-p
+                                            :conversation-id    conversation-id
+                                            :pick-channel-p     pick-channel-p
+                                            :recovery-diagnosis recovery-diagnosis
+                                            :launch             launch
+                                            :images             images))
+                :start-p (and (config :fullscreen-p configuration)
+                              (not (null (terminal--terminal-mode-or-nil
+                                          (localgroup-screen-terminal screen))))))
+             (loop
+              with origin = nil
+              with notice = nil
+              do
+              (let* ((record (localgroup--find-record configuration session-id))
+                     (exit
+                       (flet ((close-started ()
+                                ;; A channel started for this terminal would
+                                ;; otherwise idle in the server. The server closes
+                                ;; it only while no terminal controls it: another
+                                ;; one may have attached since this one started it.
+                                (when started-p
+                                  ; mallet:suppress no-ignore-errors -- best-effort close of a channel nobody attached to
+                                  (ignore-errors
+                                    (let ((world (world-client-entry configuration)))
+                                      (when world
+                                        (localgroup-query-record world ':close
+                                                                (list :channel           session-id
+                                                                      :unattached-only-p t))))))))
+                         (handler-case
+                             (progn
+                               (setf (world-sidebar-current panel) session-id)
+                               (localgroup-attach-record configuration record ':control
+                                                         :panel  panel
+                                                         :screen screen
+                                                         :notice (shiftf notice nil)))
+                           (localgroup-error (condition)
+                             (close-started)
+                             ;; A switch whose channel refuses this terminal, as
+                             ;; when another terminal controls it, returns it to
+                             ;; the channel it left.
+                             (unless (and origin
+                                          (eq (image-daemon:daemon-error-operation condition) ':attach))
+                               (error condition))
+                             (setf notice (main--switch-failure session-id condition))
+                             (list ':return))
+                           (serious-condition (condition)
+                             (close-started)
+                             (error condition))))))
+                (cond
+                  ((and (consp exit) (eq (first exit) ':return))
+                   (setf session-id origin
+                         origin     nil
+                         started-p  nil))
+                  ((and (consp exit) (eq (first exit) ':switch))
+                    ;; A switch navigates: it states none of this start's launch
+                    ;; options, and a channel that refuses it leaves the terminal
+                    ;; where it was.
+                   (let ((left   session-id)
+                         (target (getf (rest exit) :session-id)))
+                     (handler-case
+                         (progn
+                           (setf (world-sidebar-current panel) target)
+                           (multiple-value-setq (session-id started-p)
+                             (main--call-with-channel-loading
+                              screen
+                              (format nil "Loading channel ~A"
+                                      (conversation-identifier-display target))
+                              (lambda ()
+                                (world-client-open configuration
+                                                   :channel         target
+                                                   :permission-mode permission-mode
+                                                   :immutable-p     immutable-p
+                                                   :switch-p        t))))
+                           (setf origin left))
+                       (localgroup-error (condition)
+                         (setf notice     (main--switch-failure target condition)
+                               session-id left
+                               origin     nil
+                               started-p  nil)))))
+                  (t
+                   ;; The terminal comes back before the session's last word,
+                   ;; so the word lands on it rather than on the screen it left.
+                   (localgroup-client-screen-release screen)
+                   (localgroup-relay-exit configuration exit ':control)
+                   (return t)))))))
+      (localgroup-client-screen-release screen)
+      (world-sidebar-stop panel))))
 
 (-> main--session-options () list)
 (defun main--session-options ()
