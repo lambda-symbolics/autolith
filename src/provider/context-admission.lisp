@@ -55,9 +55,7 @@ may use provider token counts when available; the default is not a tokenizer."))
       (provider-context--matched-input provider request)
     (if matched-p
         (values tokens uncertain-p)
-        (multiple-value-bind (characters non-text-p)
-            (provider-context--request-characters request)
-          (values (ceiling characters 4) non-text-p)))))
+        (provider-context--input-tokens nil request))))
 
 (-> provider-context--soft-header (model-provider vector) (option list))
 (defun provider-context--soft-header (provider tools)
@@ -90,10 +88,11 @@ may use provider token counts when available; the default is not a tokenizer."))
   (let ((header (provider-context--soft-header provider tools)))
     ;; Preallocate mutable fields to preserve the shared evidence plist head.
     (list :provider provider :conversation conversation
-          :history     (and header (provider-context--history provider conversation))
-          :soft-header header
-          :eligible-p  (and header (null (conversation-ephemeral-input-entries conversation)) t)
-          :encoder nil :projection nil :tools nil :wire-provider nil :wire nil)))
+          :history         (and header (provider-context--history provider conversation))
+          :soft-header     header
+          :eligible-p      (and header (null (conversation-ephemeral-input-entries conversation)) t)
+          :encoder nil :projection nil :tools nil :wire-provider nil :wire nil
+          :wire-characters 0)))
 
 (-> provider-context--wire-body (hash-table) hash-table)
 (defun provider-context--wire-body (request)
@@ -144,10 +143,37 @@ may use provider token counts when available; the default is not a tokenizer."))
         (getf sample :history-digest) (getf sample :history-count) history)
        t))
 
+(-> provider-context--request-items (hash-table) (option vector))
+(defun provider-context--request-items (request)
+  "Return the encoded conversation sequence inside REQUEST."
+  (let ((body (provider-context--wire-body request)))
+    (loop for field in *provider-cache-wire-sequence-fields*
+          for items = (json-get body field)
+          when (provider-cache-wire--array-p items)
+            return items)))
+
+(-> provider-context--input-tokens
+    (list t &key (:replaced-characters (integer 0)))
+    (values (integer 0) boolean))
+(defun provider-context--input-tokens (sample additions &key (replaced-characters 0))
+  "Return one input count and non-text uncertainty for measured or cold context.
+
+Retain measured occupancy, charge additions, and replace previously measured
+temporary context instead of charging its replacement a second time."
+  (multiple-value-bind (characters uncertain-p)
+      (if additions (provider-context--request-characters additions) (values 0 nil))
+    (values (max 0 (+ (getf sample :tokens 0)
+                      (ceiling (- characters
+                                  (if (and sample (vectorp additions)
+                                           (not (stringp additions))) 2 0)
+                                  replaced-characters)
+                               4)))
+            uncertain-p)))
+
 (-> provider-context--matched-input (model-provider hash-table)
     (values (integer 0) boolean boolean))
 (defun provider-context--matched-input (provider request)
-  "Return measured input plus new encoded items after revalidating the covered prefix."
+  "Revalidate coverage and pass encoded additions to the shared input accountant."
   (declare (ignore provider))
   (let* ((context      *provider-context-request*)
          (conversation (getf context :conversation))
@@ -155,24 +181,20 @@ may use provider token counts when available; the default is not a tokenizer."))
     (when (and (getf context :eligible-p)
                (provider-context--sample-matches-p
                 sample (getf context :soft-header) (getf context :history)))
-      (let ((current (provider-context--wire-plan request)))
-        (when (and (equal (getf sample :wire-fields) (getf current :fields))
+      (let ((current (provider-context--wire-plan request))
+            (items   (provider-context--request-items request)))
+        (when (and items
+                   (equal (getf sample :wire-fields) (getf current :fields))
                    (provider-context--prefix-matches-p
                     (getf sample :wire-digest) (getf sample :wire-count)
                     (getf current :items)))
-          (let* ((body  (provider-context--wire-body request))
-                 (field (find-if (lambda (name)
-                                   (provider-cache-wire--array-p (json-get body name)))
-                                 *provider-cache-wire-sequence-fields*))
-                 (items (and field (json-get body field)))
-                 (count (getf sample :wire-count)))
-            (when items
-              (multiple-value-bind (characters uncertain-p)
-                  (if (= count (length items))
-                      (values 0 nil)
-                      (provider-context--request-characters (subseq items count)))
-                (return-from provider-context--matched-input
-                  (values (+ (getf sample :tokens) (ceiling characters 4)) t uncertain-p))))))))
+          (let ((count (getf sample :wire-count)))
+            (multiple-value-bind (tokens uncertain-p)
+                (provider-context--input-tokens
+                 sample (unless (= count (length items)) (subseq items count))
+                 :replaced-characters (getf sample :temporary-characters 0))
+              (return-from provider-context--matched-input
+                (values tokens t uncertain-p)))))))
     (values 0 nil nil)))
 
 (-> provider-context--response-entries-p (list list) boolean)
@@ -231,13 +253,23 @@ messages that later change fail closed."
             (let* ((options                          (copy-list (cl-llm-provider-api:wire-request-options projection)))
                    (*provider-context-request*       nil)
                    (*provider-cache-prefix-function* nil)
-                   (covered
+                   (base
                      (make-instance 'cl-llm-provider-api:wire-request
                                     :model   (cl-llm-provider-api:wire-request-model projection)
                                     :prefix  (cl-llm-provider-api:wire-request-prefix projection)
-                                    :items   (append (cl-llm-provider-api:wire-request-items projection)
-                                                     (nthcdr (length before) history))
+                                    :items   (cl-llm-provider-api:wire-request-items projection)
                                     :options options))
+                   (base-characters
+                     (provider-context--request-characters
+                      (provider-context--request-items
+                       (provider-request-object adapter base (getf context :tools)))))
+                   (covered
+                      (make-instance 'cl-llm-provider-api:wire-request
+                                     :model   (cl-llm-provider-api:wire-request-model projection)
+                                     :prefix  (cl-llm-provider-api:wire-request-prefix projection)
+                                     :items   (append (cl-llm-provider-api:wire-request-items projection)
+                                                      (nthcdr (length before) history))
+                                     :options options))
                    (wire                             (provider-context--wire-plan
                                                       (provider-request-object adapter covered (getf context :tools)))))
               (when (provider-context--wire-fields-compatible-p (getf wire :fields) (getf (getf context :wire) :fields))
@@ -249,7 +281,9 @@ messages that later change fail closed."
                               :wire-count     (length (getf wire :items))
                               :wire-digest    (provider-cache-prefix--entry
                                                (coerce (getf wire :items) 'vector))
-                              :tokens         (max (+ input output) (or total 0)))))
+                              :tokens         (max (+ input output) (or total 0))
+                              :temporary-characters
+                              (max 0 (- (getf context :wire-characters) base-characters)))))
                   (conversation-append-record conversation (list :context-usage :sample sample))
                   (setf (conversation-context-usage-sample conversation) sample)))))))))
   nil)
@@ -345,7 +379,9 @@ messages that later change fail closed."
   (when (and conversation *provider-context-request*
              (eq conversation (getf *provider-context-request* :conversation)))
     (setf (getf *provider-context-request* :wire-provider) provider
-          (getf *provider-context-request* :wire) (provider-context--wire-plan request)))
+          (getf *provider-context-request* :wire) (provider-context--wire-plan request)
+          (getf *provider-context-request* :wire-characters)
+          (provider-context--request-characters (provider-context--request-items request))))
   (provider-consume-compaction-recovery-permit provider)
   (when *provider-context-admission-state*
     (setf (first *provider-context-admission-state*) :entered

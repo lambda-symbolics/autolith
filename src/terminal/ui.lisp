@@ -1793,8 +1793,7 @@ its parenthesis open, and are dropped once the name closes it itself."
 (-> terminal-ui--context-compact-text (terminal-ui) string)
 (defun terminal-ui--context-compact-text (ui)
   "Return UI's complete compact used/window context count."
-  (format nil "~A~A/~A"
-          (if (terminal-ui-context-estimated-p ui) "~" "")
+  (format nil "~A/~A"
           (terminal-ui--context-count-text (terminal-ui-context-used ui))
           (terminal-ui--context-count-text (terminal-ui-context-window ui))))
 
@@ -1839,9 +1838,7 @@ its parenthesis open, and are dropped once the name closes it itself."
         (window (terminal-ui-context-window ui))
         (limit  (terminal-ui-context-compaction-limit ui)))
     (when (and used window limit (plusp maximum-width))
-      (let* ((used-text      (format nil "~A~A"
-                                     (if (terminal-ui-context-estimated-p ui) "~" "")
-                                     (terminal-ui--context-count-text used)))
+      (let* ((used-text      (terminal-ui--context-count-text used))
              (window-text    (terminal-ui--context-count-text window))
              (full-prefix    "ctx ")
              (full-suffix

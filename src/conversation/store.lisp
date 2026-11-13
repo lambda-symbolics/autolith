@@ -3091,7 +3091,8 @@ usage metadata does not replace coverage; pending responses and compaction do."
 (defun conversation-context-usage-sample-p (sample)
   "Validate bounded fingerprint-only measured context evidence loaded from storage."
   (and (proper-list-p sample)
-       (= 16 (length sample))
+       (member (length sample) '(16 18))
+       (typep (getf sample :temporary-characters 0) '(integer 0))
        (loop for tail on sample by (partial #'nthcdr 2)
              always (keywordp (first tail)))
        (eql 1 (getf sample :format))

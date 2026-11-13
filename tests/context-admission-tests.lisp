@@ -862,17 +862,19 @@
          (lambda () (funcall function agent)))))))
 
 (-> context-admission-test--measure
-    (agent &key (:usage t) (:envelope-length (integer 1)) (:during-request (option function))) null)
+    (agent &key (:usage t) (:envelope-length (integer 1))
+           (:during-request (option function)) (:goal-context (option string))) null)
 (defun context-admission-test--measure
     (agent &key (usage (json-object "input_tokens" 1000 "output_tokens" 200
                                    "total_tokens" 1200 "cached_input_tokens" 900))
-                (envelope-length 30000) during-request)
+         (envelope-length 30000) during-request goal-context)
   "Admit a real request, persist opaque reasoning and anchor its ordinary usage."
   (let* ((provider                   (agent-provider agent))
          (conversation               (agent-conversation agent))
          (context                    (provider-context-request-create provider conversation #()))
          (*provider-context-request* context)
-         (request                    (provider-request-object provider conversation #()))
+         (request                    (provider-request-object provider conversation #()
+                                                              :goal-context goal-context))
          (result                     (make-instance 'provider-result
                                                     :output-items
                                                     (list (json-object "type" "reasoning" "summary" #()
@@ -972,6 +974,35 @@
          (multiple-value-bind (tokens uncertain-p) (provider-request-input-token-estimate provider request)
            (test-assert (and uncertain-p (> tokens *provider-image-token-estimate*))
                         "new media retains its bounded allowance alongside measured input"))))))
+  (context-admission-test--with-measured-context
+   (lambda (agent)
+     (let* ((configuration (agent-configuration agent))
+            (conversation  (agent-conversation agent))
+            (provider      (agent-provider agent))
+            (guidance      (make-string 800 :initial-element #\g)))
+       (test-call-with-function-replacements
+        (list (list 'request-context-session-state
+                    (lambda (configuration &key hurry-up-p)
+                      (declare (ignore configuration hurry-up-p))
+                      guidance)))
+        (lambda ()
+          (context-admission-test--measure agent :goal-context guidance)
+          (test-assert (= 1200 (context-estimate-known-tokens
+                                configuration conversation :provider provider))
+                       "the meter counts already measured nonempty guidance once")
+          (setf conversation (conversation-load (conversation-pathname conversation)))
+          (dolist (entry (list (list guidance #'=)
+                              (list (make-string 1200 :initial-element #\g) #'>)
+                              (list (make-string 400 :initial-element #\g) #'<)
+                              (list nil #'<)))
+            (let* ((*provider-context-request*
+                     (provider-context-request-create provider conversation #()))
+                   (request (provider-request-object provider conversation #()
+                                                     :goal-context (first entry))))
+              (test-assert (funcall (second entry)
+                                    (provider-request-input-token-estimate provider request)
+                                    1200)
+                           "admission replaces measured guidance after reload"))))))))
   nil)
 
 (-> test-context-admission-measured-invalidation () null)

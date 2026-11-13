@@ -2288,11 +2288,11 @@ GPT-6.1, GPT-6, and GPT-5.6 models, which compact at about 218K tokens by defaul
 ctx [==========|..] 218K / 272K used
 #+END_EXAMPLE
 
-Before provider usage is available, =~= marks an estimate from the known system
-prompt, session state, retained conversation, and tool schemas. The estimate uses
-four characters per token. After compaction, the meter estimates the replacement
-context until the next provider report. Compaction request usage is recorded
-separately as work spent on the checkpoint and summary.
+Before provider usage is available, the count uses four characters per token
+from the known system prompt, request-local guidance, retained conversation,
+and tool schemas. After compaction it estimates the replacement context until
+next provider report. Compaction request usage is recorded separately as work
+spent on the checkpoint and summary.
 
 At narrow widths, the meter keeps the used and window counts and drops the bar.
 
@@ -2338,11 +2338,12 @@ Before transport, admission checks the encoded request, including current tools
 and temporary context, with output headroom. Set
 =(settings :context-output-reserve 8192)= to reserve at least 8,192 tokens, or use
 =AUTOLITH_CONTEXT_OUTPUT_RESERVE=. A larger explicit generation cap takes precedence.
-When the provider, policy, and covered prompt match a measured response, the
-estimate uses its input and output occupancy, then adds new input. Cached input
-counts at its full token count. Verified usage anchors survive conversation
-resume; the context meter uses this same current estimate. Changed projections
-use a local text estimate with separate image allowances. Candidate checkpoints
+When the provider, policy, and covered prompt match a measured response, shared
+accounting uses its input and output occupancy, then adds new input. Cached input
+counts at its full token count. Request-local context is already included;
+admission replaces its previous contribution when encoding the next request.
+Verified anchors survive resume. Changed projections use a local text estimate
+with separate image allowances. Candidate checkpoints
 are admitted with arrivals before publication; a rejected candidate leaves the
 previous projection intact.
 

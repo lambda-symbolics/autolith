@@ -676,31 +676,11 @@
          (search "ctx [===.......|..] 263K / 1.05M used"
                  (row-text active-ui 120))
          "a quarter-full context meter shows used and window tokens")
-        (recording-terminal-reset terminal)
-        (terminal-ui-set-context-usage active-ui
-                                       :used             262500
-                                       :estimated-p      t
-                                       :window           1050000
-                                       :compaction-limit 840000)
-        (test-assert
-         (and (terminal-ui-context-estimated-p active-ui)
-              (search "~263K / 1.05M used" (row-text active-ui 120))
-              (search "~263K" (recording-terminal-output terminal)))
-         "changing only usage provenance repaints the full meter with an estimate marker")
         (dolist (width '(12 24 30 40))
-          (let ((estimated (row-text active-ui width)))
-            (test-assert (and (search "~263K/1.05M" estimated)
-                              (<= (text-cell-width estimated) width))
-                         "compact estimates retain their marker and complete counts")))
-        (recording-terminal-reset terminal)
-        (terminal-ui-set-context-usage active-ui
-                                       :used             262500
-                                       :window           1050000
-                                       :compaction-limit 840000)
-        (test-assert
-         (and (not (terminal-ui-context-estimated-p active-ui))
-              (search "263K / 1.05M used" (recording-terminal-output terminal)))
-         "an equal provider-reported count repaints and replaces the estimate")
+          (let ((compact (row-text active-ui width)))
+            (test-assert (and (search "263K/1.05M" compact)
+                              (<= (text-cell-width compact) width))
+                         "compact meters retain complete counts")))
         (terminal-ui-set-context-usage active-ui
                                        :used             840000
                                        :window           1050000

@@ -535,29 +535,6 @@ stays cached across midnight; this separate block carries the change instead."
   "Return the library's default request-context cost for product diagnostics."
   (cl-llm-provider-api:context-contribution-token-estimate contribution))
 
-(-> context--known-value-character-count (t) (integer 0))
-(defun context--known-value-character-count (value)
-  "Count portable JSON-like VALUE characters without serializing its whole tree."
-  (typecase value
-    (string
-     (length value))
-    (number
-     (length (princ-to-string value)))
-    (hash-table
-     (loop for key being the hash-keys of value using (hash-value item)
-           sum (+ (context--known-value-character-count key)
-                  (context--known-value-character-count item))))
-    (vector
-     (loop for item across value
-           sum (context--known-value-character-count item)))
-    (cons
-     (loop for item in value
-           sum (context--known-value-character-count item)))
-    (null
-     0)
-    (t
-     (length (princ-to-string value)))))
-
 (-> context-estimate-known-tokens
     (configuration conversation
      &key (:tool-registry (option tool-registry)) (:hurry-up-p boolean)
@@ -565,45 +542,30 @@ stays cached across midnight; this separate block carries the change instead."
     (values (integer 0) boolean))
 (defun context-estimate-known-tokens
     (configuration conversation &key tool-registry hurry-up-p family provider)
-  "Estimate current known input using matched ordinary usage when available.
+  "Return shared input accounting and whether no unmeasured history was added.
 
-New history and current session state are charged before the next response.
-Request-local contributors are resolved only at the final admission boundary.
-Return the token count and whether it uses only an exact matched measurement."
-  (let* ((tools   (if tool-registry (tool-registry-provider-schemas tool-registry) #()))
-         (items   (conversation-input-items-for-family
-                   conversation
-                   (or family (model-family (config :model configuration)
-                                            (config :model-provider configuration)))))
-         (session (request-context-session-state configuration :hurry-up-p hurry-up-p))
-         (sample  (conversation-context-usage-sample conversation)))
+A matched measurement already includes request-local guidance. Charge only
+new retained history here; admission replaces temporary context when encoding."
+  (let* ((tools  (if tool-registry (tool-registry-provider-schemas tool-registry) #()))
+         (items  (conversation-input-items-for-family
+                  conversation
+                  (or family (model-family (config :model configuration)
+                                           (config :model-provider configuration)))))
+         (sample (conversation-context-usage-sample conversation)))
     (when (and provider
                (null (conversation-ephemeral-input-entries conversation))
                (provider-context--sample-matches-p
                 sample (provider-context--soft-header provider tools)
                 (mapcar #'provider-cache-prefix--entry items)))
       (let ((new (nthcdr (getf sample :history-count) items)))
-        (multiple-value-bind (new-characters new-uncertain-p)
-            (if new
-                (provider-context--request-characters (coerce new 'vector))
-                (values 0 nil))
-          (multiple-value-bind (session-characters session-uncertain-p)
-              (if (plusp (length session))
-                  (provider-context--request-characters session)
-                  (values 0 nil))
-            (return-from context-estimate-known-tokens
-              (values (+ (getf sample :tokens)
-                         (ceiling (+ new-characters session-characters) 4))
-                      (and (null new)
-                           (zerop session-characters)
-                           (not new-uncertain-p)
-                           (not session-uncertain-p))))))))
+        (return-from context-estimate-known-tokens
+          (values (provider-context--input-tokens sample (and new (coerce new 'vector)))
+                  (null new)))))
     (values
-     (ceiling (+ (length (system-prompt configuration))
-                 (length session)
-                 (context--known-value-character-count items)
-                 (context--known-value-character-count tools))
-              4)
+     (provider-context--input-tokens
+      nil (vector (system-prompt configuration)
+                  (request-context-session-state configuration :hurry-up-p hurry-up-p)
+                  (coerce items 'vector) tools))
      nil)))
 
 (-> context--render (list) (option string))

@@ -522,9 +522,9 @@ notice preference is on, so enabling it mid-session takes effect immediately."
              (list "context"
                    (multiple-value-bind (used estimated-p)
                        (application-context-usage application)
-                     (let ((window (config :context-window configuration)))
-                       (format nil "~A~A of ~A used (~D%), compacts at ~D%"
-                               (if estimated-p "~" "")
+                      (declare (ignore estimated-p))
+                      (let ((window (config :context-window configuration)))
+                        (format nil "~A of ~A used (~D%), compacts at ~D%"
                                (application--token-count-description used)
                                (application--token-count-description window)
                                (round (* 100 used) (max 1 window))
