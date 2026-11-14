@@ -1,430 +1,494 @@
-#+TITLE: Autolith Plugin System
+#+TITLE: Plugin System: Lodes
 #+STARTUP: content
 
-*Status*: intended design. The plugin manager is not implemented. Registration sources carry plugin identity, and the tool registry records a source layer with per-source removal.
+*Status*: design under construction. A core data model exists in =src/plugins/=
+(identity, records, store, image layers, lock); the manager, =autolith-asdf=,
+and the distribution client are not implemented. The tool and extension
+registries already record a registration source per contribution and remove
+contributions by source.
 
 * Overview
 
-Autolith plugins let users share code, tools, skills, providers, commands, and
-MCP servers as ordinary git repositories, outside the Autolith source tree and
-without shipping them in the core.
+A lode is an installable extension; other tools call these plugins. Each
+lode is an ASDF system of class =autolith-asdf:system=, and its files
+arrive from a source: usually a git repository, sometimes an archive or a
+directory. The =.asd= file at the source root is the manifest: it names the
+lode, its version, its code dependencies, its activation entry point, and
+its capabilities.
 
-A plugin is a git repository whose root holds one required file,
-=manifest.sexp=. The manifest names the plugin and its entry point and declares
-its dependencies. Everything else the plugin does, it does from code: skills,
-tool registrations, MCP servers, providers, commands, and context contributors
-are registered at load time through the same calls built-ins use.
+=autolith-asdf= is a small library outside the Autolith repository. It
+depends only on ASDF. Autolith pins it through the qlfile. Lode authors
+load it through Quicklisp or their own setup, so an Autolithic system also
+works outside Autolith.
 
-Users choose what is installed. Declarations live in Lisp initialization files
-and are gated by an explicit permission. The agent can operate the whole
-plugin system through the same gate.
+Outside Autolith, the class has one cost: =autolith-asdf= must be present,
+or the ASD does not load. =:defsystem-depends-on= fails first, and the
+class name is unknown. With the library present, the system loads as a
+normal ASDF system. The extra slots sit inert: nothing activates, nothing
+registers, full entries resolve by name, and the user resolves the
+dependencies. Inside Autolith, the class changes no ASDF mechanics: compile
+and load run through standard ASDF, and the manager reads the slots around
+the load.
 
-* Decisions
+Three layers own the work:
 
-- Installation is user-gated. One permission record per plugin identity plus
-  resolved commit covers install, load, disable, update, and remove.
-- Plugins are declared from Lisp; users build the dependency tree with function
-  calls.
-- Declarations are accepted from global, site, and project scopes.
-- Third-party plugin code lives in its own package and reaches Autolith only
-  through the exported extension surface.
-- Plugins register tools, MCP servers, providers, commands, and context
-  contributors directly, under their own registration source.
-- Plugins may ship their own ASDF systems and dependencies.
-  - A dependency conflict has a deterministic contract, not a solver. A plugin
-    and its commit resolve once; where two plugins require different commits of
-    the same plugin, scope order decides the winner, the losing requirement is
-    recorded in the lock, and the load reports it. A manifest may declare
-    =:on-conflict :abort= to fail its own plugin instead.
-  - Loading is hot; changing what is loaded is not. Removing a plugin or
-    changing its code rebuilds the image: a clean base boots, durable state and
-    committed mutations are restored, and the new plugin set loads. That is not
-    a rollback, and it discards no self-modification.
-- The tool schema stays vanilla: a tool carries the existing single
-  =:description=.
-  - Plugin residency is layered. The global image carries core plus global
-    plugins, and a project image is derived from it to add that project's local
-    plugins.
+1. *Distribution client*: obtains sources, selects releases, verifies
+   artifacts, maintains the environment lock.
+2. *ASDF*: discovers systems by name, compiles, loads, runs tests.
+3. *Autolith*: approves activation, registers capabilities, manages runtime
+   instances, deactivates, diagnoses.
 
 * Terms
 
-- *Plugin identity* :: the pair of a plugin's git source and a resolved commit.
-- *Resolved commit* :: the exact git object a requested ref points at.
-- *Plugin store* :: the per-user checkout directory holding fetched plugins.
-- *Plugin lock* :: the record of resolved refs, the transitive plugin graph,
-  and checkout paths.
-- *Permission record* :: the user's consent to load one plugin identity.
-- *Registration source* :: the layer tag every contribution carries, used to
-  remove a plugin's contributions as a group.
-  - *Plugin image* :: a saved core that already contains a resolved plugin set.
-  - *Image layer* :: one rung of the plugin image ladder, from the global image
-    down to a project image.
+- *Lode identity* :: the system name, the source spec, and the revision.
+- *Revision* :: what a fetcher returns: a git commit, a content digest, or
+  a store hash.
+- *Source kind* :: the keyword that names a fetcher: =:git=, =:http=,
+  =:file=, or a custom kind.
+- *Fetcher* :: the code that turns a source spec into lode files and a
+  revision.
+- *Lode store* :: the =lodes/= directory under the state root, holding
+  fetched checkouts.
+- *Environment lock* :: the record of resolved specs, the transitive lode
+  graph, and checkout paths.
+- *Permission record* :: the user's consent to load one lode identity.
+- *Registration source* :: the layer tag every contribution carries, used
+  to remove a lode's contributions as a group.
+- *Lode image* :: a saved core that already contains a resolved lode set,
+  as definitions.
+- *Image layer* :: one rung of the lode image ladder, from the global image
+  down to a project image.
 
-* Plugin repository and manifest
-
-The only required file is =manifest.sexp= at the repository root. No directory
-layout is prescribed beyond that; the manifest names an entry point, and the
-plugin organizes everything else as it sees fit.
-
-#+BEGIN_SRC lisp
-(:manifest-version 1
- :name "my-cool-autolith-plugin"
- :version "0.3.0"
- :entry "src/init.lisp"          ; or :system "my-cool-autolith-plugin"
- :deps ((:plugin "autolith-plugin-utils"
-          :git "github.com/example/autolith-plugin-utils"
-          :ref (:tag "v1.1.0"))
-         (:system "dexador"))
-  :on-undefined :abort
-  :on-conflict :record)
-#+END_SRC
-
-** Manifest reference
-
-| Key                 | Required | Meaning                                             |
-|---------------------+----------+-----------------------------------------------------|
-| =:manifest-version= | yes      | schema version, checked before anything loads       |
-| =:name=             | yes      | plugin name, the default identifier                 |
-| =:version=          | no       | human-readable plugin version                       |
-| =:entry=            | one of   | path, relative to the root, of a Lisp file to load  |
-| =:system=           | one of   | ASDF system name inside the checkout                |
-| =:deps=             | no       | plugin and ASDF dependencies                        |
-| =:on-undefined=     | no       | =:abort= (default) or =:warn=                       |
-| =:on-conflict=      | no       | =:record= (default) or =:abort=                     |
-
-=:entry= and =:system= are alternatives. A plugin that ships an ASD names the
-system and brings its own build; a plugin without one names a file. There is no
-API-version key: no versioned extension API exists yet, and one is added when
-the exported surface is actually versioned.
-
-=:deps= entries are either plugin source specs or ASDF system names:
+* The ASD manifest
 
 #+BEGIN_SRC lisp
-(:deps ((:plugin "autolith-plugin-utils"
-          :git "github.com/example/autolith-plugin-utils"
-          :ref (:tag "v1.1.0")
-          :hash "a91c04f0")            ; optional exact pin
-         (:system "dexador")))
+(defsystem "autolith-planning"
+  :defsystem-depends-on ((:version "autolith-asdf" "0.1"))
+  :class "autolith-asdf:system"
+  :version "1.0.0"
+  :depends-on ("alexandria"
+               ("autolith-plugin-utils"
+                :git "github.com/example/autolith-plugin-utils"
+                :ref (:tag "v1.1.0")
+                :hash "a91c04f0"))
+  :activate "autolith-planning:activate"
+  :capabilities (:tools :skills :context)
+  :activation-depends-on ("autolith-plugin-utils")
+  :components ((:file "package")
+               (:file "planning")))
 #+END_SRC
 
-Skills, MCP servers, providers, commands, and tools are not declared in the
-manifest. They are things a plugin does at load time, so they are registered
-from code and carry the plugin's registration source.
+| Slot                     | Meaning                                                   |
+|--------------------------+-----------------------------------------------------------|
+| =:defsystem-depends-on=  | loads =autolith-asdf=, with a minimum version             |
+| =:class=                 | =autolith-asdf:system=                                    |
+| =:version=               | system version, checked by version requirements           |
+| =:depends-on=            | dependencies: plain names, version entries, full entries  |
+| =:activate=              | entry point name; absent for a library lode               |
+| =:capabilities=          | registration kinds the activation may use                 |
+| =:activation-depends-on= | systems whose activation must finish first                |
+| =:components=            | ordinary ASDF components                                  |
 
-* Declaring plugins
+=autolith-asdf= defines the slot schema. Its own version is the schema
+version, so no =:manifest-version= key exists.
 
-=plugin-get= declares intent. It performs no network access and returns a
-plugin record in the =declared= state.
+A =:depends-on= entry is a plain name, a version requirement
+=(:version "name" "min")=, or a full entry. A full entry carries the
+dependency once, with its source spec: the kind key (=:git=, =:http=,
+=:file=) gives the origin, =:ref= gives the default for kinds that resolve
+refs, and a pin (=:hash= for git, a digest for http) turns the entry into
+an exact requirement on that source and that revision. =:version "min"=
+inside a full entry states the compatibility requirement; the client checks
+it against whatever implementation resolves. Each dependency appears once,
+in one entry. The kinds are defined in =* Sources and fetchers=.
+
+=autolith-asdf= resolves a full entry to the system by name. The
+distribution client places the checkout where ASDF finds it before any
+load. Outside Autolith, a full entry also resolves by name; the user
+provides the systems.
+
+A full entry may point at any ASDF system, not only a lode. A system of
+class =autolith-asdf:system= is a lode: it activates and carries
+capabilities. A system of plain class =asdf:system= is a library: the
+client fetches it, ASDF loads it, and it never activates. Both kinds need a
+permission record and a lock entry. The name in a full entry is a claim the
+client verifies: after the fetch, preflight reads the ASD, and an origin
+that does not provide the named system fails resolution.
+
+** Preflight
+
+An ASD file is executable code. The distribution client reads a candidate
+ASD in a disposable worker process: =autolith-asdf= loaded, no network, the
+checkout as the only source tree. The worker returns the system metadata as
+data. The approval prompt then shows name, version, capabilities,
+dependencies, and origins before any lode code runs in the active image.
+
+* Declaring lodes
 
 #+BEGIN_SRC lisp
 ;; user init.lisp
-(plugin-get :git "github.com/example/my-cool-autolith-plugin"
-            :hash "efffff"
-            :deps '((:plugin "autolith-plugin-utils"
-                      :git "github.com/me/autolith-plugin-utils-fork"
-                      :hash "0badc0de"))
-            :enabled t
-            :on-failure :disable
-            :config (lambda (plugin) ...))
+(lode-get :system "autolith-planning"
+          :source  (:git "github.com/example/autolith-planning" 
+                    :ref (:tag "v1.0.0") 
+                    :hash "efffff")
+          :config (lambda (lode) ...))
+
+(lode-get :system "autolith-channel-fax-integration"
+          :source  (:file "/home/authlith/plugins/channel-fax-integration")
+          :config (lambda (lode) ...))
 #+END_SRC
 
-| Key           | Meaning                                            |
-|---------------+----------------------------------------------------|
-| =:git=        | repository URL or shorthand                        |
-| =:ref=        | =:tag=, =:branch=, =:commit=, or =:version=         |
-| =:hash=       | exact commit; equivalent to =:ref (:commit ...)=   |
-| =:local=      | path to a development checkout instead of a fetch  |
-| =:deps=       | user-level dependency selection, overrides pins    |
-| =:enabled=    | start disabled when false                          |
-| =:on-failure= | =:disable=, =:abort=, or =:prompt=                 |
-| =:config=     | Lisp run after the plugin loads                    |
+A declaration maps a system name to a source spec. A declaration for a
+name replaces the origin in every dependency entry for that name, so a user
+pins a dependency by declaring the system directly. Declarations nest by
+scope: a project declaration replaces a site or global declaration for the
+same name. This rule owns the name. It does not settle conflicts between
+requirements.
 
-Declarations are accepted from global and site =init.lisp= and from a project's
-=.autolith/= configuration. A project-scoped plugin set applies only inside
-trusted directories, matching the existing directory-scope trust model.
+Declarations are accepted from global and site =init.lisp= and from a
+project's =.autolith/= configuration. A project-scoped lode set applies only
+inside trusted directories, matching the existing directory-scope trust
+model.
 
-* Resolution and the plugin lock
+* Sources and fetchers
 
-A requested ref resolves once at install and pins. =:hash= and
-=:ref (:commit ...)= are exact and never re-resolve. =:tag=, =:branch=, and
-=:version= resolve to a commit that is then recorded, so startup is
-reproducible offline without contacting the remote again. Re-resolution happens
-only on an explicit update.
+A source spec is a kind, a location, and options. A fetcher is defined per
+kind. The fetcher takes the spec and a target directory, writes the lode
+files there, and returns a revision. The revision is a git commit, a
+content digest, or a store hash. It takes the place of the resolved commit
+everywhere: lode identity, lock, permission record, image cache key.
 
-=plugins.lock= under the state root records, for each declared plugin:
+Built-in kinds:
 
-- the requested git source and ref,
-- the resolved commit,
-- the checkout path in the plugin store,
-- the transitive plugin dependency graph,
-- the winner wherever the user or Autolith overrode a plugin's own pin.
+| Kind    | Spec                                  | Revision         |
+|---------+---------------------------------------+------------------|
+| =:git=  | URL or path, =:ref=, optional =:hash= | a git commit     |
+| =:http= | an archive URL, optional digest       | a content digest |
+| =:file= | a directory path, read in place       | a content digest |
 
-The lock is machine-managed and regenerated on resolve or update. It is
-separate from permissions: the permission store records user consent and
-persists until changed, while the lock records resolution state and is rebuilt
-whenever a ref is re-resolved. The permission store answers "may this run"; the
-lock answers "what did this ref mean last time".
-** Dependency conflicts
+=:git= resolves branches, tags, and commits, and =:hash= pins a commit.
+=:http= fetches an archive and unpacks it; an optional digest pins it; the
+client fetches with its own HTTP. =:file= reads a working tree in place,
+git or not: there is no fetch and no ref, and edits are read at the next
+build. The lode store plus every declared =:file= path form the search path
+for lode systems.
 
-Two plugins requiring different commits of the same plugin is the only conflict
-the lock has to settle. ASDF system dependencies are not versioned, so ASDF
-resolves them by finding the first system with that name and there is no
-selection to make. Plugin identities, being a git source plus a commit, are the
-only things that can genuinely disagree.
+** Custom fetchers
 
-There is no solver. Resolving version ranges would mean inventing compatibility
-semantics for plugins that declare none, so the contract is deterministic
-precedence plus an honest record instead:
+Any user defines a new kind with =define-lode-fetcher=. The kind keyword in
+a spec names its fetcher. An unknown kind fails resolution with "no
+fetcher for =:kind=".
 
-1. Requirements are ordered by scope: a user-level =:deps= selection, then
-   global, then site, then project, then the declaring plugin's own pin.
-2. The first requirement in that order wins and is the resolved commit.
-3. Every losing requirement is recorded in the lock beside the winner, with the
-   plugin that made it, so the outcome stays inspectable after the fact.
-4. The load reports the conflict, naming both requirements and the winner.
-5. A manifest that declares =:on-conflict :abort= fails its own plugin rather
-   than loading against a dependency it did not pin.
+#+BEGIN_SRC lisp
+(define-lode-fetcher :nix
+  (lambda (spec target) ...))    ; returns the revision, a store hash
+#+END_SRC
 
-=:on-conflict= defaults to =:record=, so a plugin that merely uses its
-dependency tolerates a different commit, and a plugin that needs its pin gets
-to insist on one. Either way nothing is chosen silently, and no plugin is
-dropped because another plugin wanted something else.
+A custom fetcher is user code in the init files. It runs at build time with
+the manager's authority. The trust rules of init code apply. Fetchers
+declared in project scope run only in trusted directories. 
+
+** Pinned and live
+
+A fetcher declares its mutability class.
+
+- *Pinned*: the revision is the identity. Git refs and pins, HTTP archives
+  with a digest, a locked nix ref. A new revision is a new identity and
+  re-prompts. The lock records what was resolved; an explicit update
+  re-resolves.
+- *Live*: the location is the identity. A =:file= directory read in place.
+  The permission covers the path, not a snapshot. The digest is recorded at
+  each build and joins the image cache key: an edit moves the key, and the
+  next boot rebuilds. The prompt shows the current capabilities at each
+  rebuild; a capability set that grew since approval re-prompts.
+
+A full entry with a live kind warns at preflight: the location exists only
+on the author's machine. Published lodes use pinned kinds. A live-kind
+entry whose location is missing is skipped on a fresh machine; resolution
+falls back to the entries and that machine's declarations.
+
+* Resolution and the environment lock
+
+The distribution client resolves one environment: for every reachable
+system name, exactly one implementation, as one source spec plus one
+revision. Systems in the local Quicklisp dist resolve through it. Systems
+with a declared origin resolve through their specs and user declarations.
+The client materializes checkouts in the lode store, and the lode store
+plus every declared =:file= path is the ASDF search path for lode systems,
+so ASDF never sees two implementations of one name. A name that resolves
+as a lode never also resolves from the Qlot environment or the tracked
+source; the client checks that boundary and rejects the overlap with a
+report. Lodes never write qlfile entries: the qlfile stays Autolith's own.
+
+A requirement is a plain name, a minimum version, or an exact pin. A
+requirement is violated when the resolved implementation has a different
+source, a different revision than an exact pin, or a version below a
+minimum.
+Violations are rejected, not recorded. The resolution report names every
+requirement, its requirer, and the resolved implementation. A lode with a
+violated requirement fails to load with that reason; startup stays intact.
+No precedence order picks a winner silently. The user settles a
+disagreement by declaring the name explicitly.
+
+Two entries for one name from the same origin with different refs are not a
+conflict. The client checks each ref against every version requirement,
+picks the highest version that satisfies them all, and records the unused
+defaults in the lock. Entries from different origins conflict: the client
+rejects the resolution, reports both origins, and the user settles the
+disagreement by declaring the name.
+
+=environment.lock= records, per system name: the kind, the location, the
+revision, the version, the checkout path, the requirers, and every rejected
+alternative with its reason. Global and site environments keep the lock
+under the state root. A project environment keeps its lock at
+=.autolith/environment.lock=; whether it is committed is the project's git
+configuration. Specs resolve once and pin. Re-resolution happens only on an
+explicit update. The lock is machine-managed. Permissions stay separate:
+the permission store answers "may this run", the lock answers "what did
+this spec mean last time".
+
+** The resolver
+
+The final goal is a dependency resolver in the distribution client. It
+takes the same requirement records, searches for one implementation per
+system name that satisfies every requirement, and writes the same lock.
+When no assignment exists, it reports the requirements that conflict, not
+only the first violation.
+
+The design keeps the path open:
+
+- Requirements are data. Every requirement, its requirer, and its strength
+  are recorded in the lock. The solver consumes those records and adds no
+  new manifest syntax.
+- Constraint kinds generalize. A minimum version is the first kind; ranges
+  arrive with the solver, and existing manifests keep their meaning.
+- Exact pins stay hard constraints. A solver never overrides a pin, so a
+  user declaration that violates a lode's pin still fails that lode.
+- Resolution stays reportable. The solver replaces rejection with search,
+  never with silence: the lock records the assignment and the requirements
+  it satisfied.
+- ASDF stays below the solver. ASDF loads one implementation per name; the
+  solver only decides which one the environment holds.
 
 * Permissions
 
-One permission record per plugin identity: the plugin's git source plus its
-resolved commit. It covers install, load, disable, update, and remove, and it is
-required of the agent and the user alike. The record is stored the way command
-permissions already are, as a validated transactional sexp file under the state
-root with a lock file.
+One permission record per lode identity: system name, source spec,
+revision. It covers install, load, disable, update, and remove, and it is
+required of the agent and the user alike. The prompt shows the preflight
+metadata, capabilities included. Installing presents the transitive sourced
+lode set in the same approval view. Missing consent prompts and never
+blocks startup. A pinned source re-prompts on a new revision. A live source
+covers the location, not a snapshot; a capability set that grew since
+approval re-prompts. The lode system stays a decision boundary, not a
+container: code loaded into the active image is exactly as privileged as
+the image.
 
-- A new resolved commit is a new identity and re-prompts.
-- Installing a plugin presents its transitive dependencies in the same approval
-  view.
-- The plugin system is a decision boundary, not a container. Code loaded into
-  the active image is exactly as privileged as the image, consistent with the
-  existing stance that process separation is not a security claim.
+* Verification
 
-* Loading
+Verification runs at install time in a fresh worker process, offline:
 
-1. =init.lisp= evaluates =plugin-get= forms. Plugins enter =declared=.
-2. A background job resolves and fetches each approved plugin into the plugin
-   store, writing =plugins.lock=. Missing consent prompts and never blocks
-   startup.
-3. The manager checks =:manifest-version=.
-  4. ASDF compiles the plugin. A compile failure, which by ASDF's definition
-     includes any non-style warning, raises
-     =asdf/lisp-build:compile-file-error= and fails the plugin with its
-     description. Undefined-reference diagnostics are collected during this pass
-     and judged after the load.
-5. It binds the registration source to the plugin identity and loads =:system=
-   then =:entry=, or =:entry= alone.
-6. =:config= runs after the plugin is loaded, as ordinary user code.
+1. =load-op= with =asdf/lisp-build:*compile-file-failure-behaviour*= bound
+   to =:error=. A compile failure, undefined-variable warnings included,
+   fails verification.
+2. =test-op=, when the system defines one. Failing tests fail verification.
+3. An activation probe: activate with a scratch runtime context, then
+   deactivate. An error, a registration outside the declared capabilities,
+   or a missing cleanup handle fails verification.
 
-A failure at any step marks the plugin =failed= with its reason and leaves
-startup intact. Registry changes roll back through the existing extension
-registry transaction; arbitrary Lisp side effects are not reversible, the same
-caveat executable filesystem configuration already carries.
+There is no separate undefined-reference gate. The compiler's own
+diagnostics, the lode's tests, and the activation probe cover the load.
+References the compiler cannot see, dynamic calls through =funcall= and
+macro-hidden references, stay covered only by the lode's own tests.
 
-** States
+* Loading and activation
 
-=declared= -> =approved= -> =fetching= -> =resolved= -> =loading= ->
-=enabled= / =failed= / =disabled=.
+Loading and activation are different operations.
 
-** Undefined references
+1. =asdf:load-system= makes the definitions available. Loading happens when
+   an image is built. Definitions are permanent in that image.
+2. Autolith invokes the =:activate= entry point with a runtime context.
+3. The activation registers through the context, tracks its resources, and
+   returns a cleanup handle.
+4. Partial failure unwinds completed registrations through the extension
+   registry transaction.
+5. Deactivation stops new work, waits for in-flight work within a bounded
+   timeout, runs cleanup, then removes the registrations.
 
-ASDF performs the compile, and its diagnostics are the primary source. There is
-no source pre-scan: the manager does not walk defining heads, because the
-compiler already knows which references are unresolved, and a hand-written walk
-over =defun=, =defgeneric=, and =defclass= heads reproduces the compiler's job
-worse than the compiler does.
-
-Two ASDF knobs cover the compile pass:
-
-- =asdf/lisp-build:*compile-file-failure-behaviour*= is bound to =:error=, so a
-  compile failure raises =asdf/lisp-build:compile-file-error= and fails the
-  plugin. ASDF defines a failure as including any non-style warning, so an
-  undefined *variable*, which SBCL signals as a plain =SIMPLE-WARNING=, is
-  already a load failure through this path alone.
-- A =handler-bind= on =warning= around the compile operation collects the
-  remaining style warnings, which ASDF would otherwise only print.
-
-Undefined *functions* and *types* are style warnings, so they reach the handler
-rather than the failure path. The manager keeps the reports that are undefined
-references and discards the rest. The discriminator is the condition's format
-arguments, not its format control: SBCL passes =(kind symbol)=, where =kind= is
-=:function=, =:variable=, or =:type=. The format control is a compiled
-=SB-FORMAT::FMT-CONTROL= structure rather than a string, so it cannot be
-prefix-matched. SBCL also aggregates repeats past
-=sb-c::*undefined-warning-limit*=, which is 3, so the first argument is
-sometimes a count: both =(count kind symbol)= and =(kind symbol)= occur. No SBCL
-predicate helps here, since =sb-c:undefined-warning-p= names an internal
-accumulator structure that is not the condition SBCL signals.
-
-Collected names are judged after the load rather than during the compile pass,
-because per-file compilation cannot see the plugin as a whole: a file that calls
-a function another file defines warns during its own compile. Once the whole
-plugin is loaded, each recorded name is re-checked with =fboundp=, =boundp=, or
-=find-class= as its kind requires, and only a name still unresolved then is a
-failure. =:on-undefined :abort= fails the plugin; =:warn= loads it and records
-the unresolved names in =plugin.status=.
-
-Three cases stay outside this and are accepted rather than worked around:
-
-- Undefined *classes*. =defclass= with an unknown superclass compiles with no
-  diagnostic at all, so no name is ever recorded and none is checked. Class
-  references are invisible to this gate.
-- Calls through =funcall= and computed symbols are not statically visible.
-- A macro that expands to a reference the compiler never sees, because the macro
-  itself is not loaded yet at compile time.
-
-* Registration and removal
-
-A plugin registers through the same calls built-ins use, and the manager tags
-every contribution with the plugin's registration source.
+The runtime context exposes one registration call per capability and one
+resource call:
 
 #+BEGIN_SRC lisp
-(in-package #:my-cool-autolith-plugin)
-
-(register-plugin-tool
- :namespace "deploy" :name "start"
- :description "Start a deployment for one target and stream its status."
- :parameters (json-object "target" (tool-string-property "Deployment target."))
- :function #'start-deployment)
-
-(register-plugin-skill-root (merge-pathnames "docs/skills/" *plugin-root*))
-
-(register-mcp-server
- '(:name "deploy-registry" :transport (:type :stdio :command "deploy-mcp")))
-
-(define-application-command /deploy
-  (:name "/deploy" :description "deploy the current workspace"))
-
-(register-plugin-lifecycle :deactivate #'stop-deployment)
+(defun activate (context)
+  (register-lode-tool context
+                      :namespace "deploy" :name "start"
+                      :description "Start a deployment for one target."
+                      :function #'start-deployment)
+  (spawn-lode-resource context (start-deployment-worker))
+  (make-cleanup-handle :stop #'stop-deployment))
 #+END_SRC
 
-Disable removes every registration by source and runs =:deactivate= so the
-plugin stops its threads, sockets, and workers. It does not remove definitions;
-Lisp code is not unloadable.
+=:activation-depends-on= orders activations as a directed graph. A cycle is
+rejected at resolution. =:depends-on= does not order activation: ASDF
+dependencies say which definitions load first, not which services start
+first.
 
-** Tools
+The image stores definitions, not activations. ASDF compiles and loads each
+lode once, at image build; no boot recompiles or reloads lode code.
+Activation is the only per-boot work, and it is small: registrations are
+registry writes, and resources are thread and process starts. Activations
+that the =:activation-depends-on= graph leaves independent run concurrently,
+so the wall-clock cost is the slowest single activation.
 
-Plugin tools use the existing tool schema: a namespace, a name, one
-=:description=, and a JSON Schema. There is no separate short and long
-description, and no skill-linked tool documentation.
+Activation is not saved into the image, for one reason: threads, sockets,
+and subprocesses do not survive an image save. Saved registrations would
+pair with dead resources. One activation entry point at boot keeps
+registrations and resources in agreement.
 
-** Skill roots
+Each boot activates the enabled set from the definitions already in the
+image, in graph order. Enable and disable activate and deactivate in place.
+Add, remove, and update change definitions and complete through a rebuild.
+=:config= hooks run after activation.
 
-Plugin skill roots are registered from code, tagged by plugin source, and
-ordered below every declarative scope. Highest to lowest precedence:
+* Capabilities
 
-| Rank | Root                                                  |
-|------+-------------------------------------------------------|
-| 1    | project =.autolith/skills/=                           |
-| 2    | Autolith user =skills/=                               |
-| 3    | shared user =~/.agents/skills/=                       |
-| 4    | site =skills/=                                        |
-| 5    | plugin-contributed roots, in declaration order        |
-| 6    | bundled =skills/=                                     |
+A capability is a named kind of registration a lode may contribute. The
+lode declares the kinds it uses in =:capabilities=, and the activation
+context checks every registration call against that list.
 
-Project, user, shared, and site skills therefore win over plugin skills, and
-plugin skills win over bundled first-party skills. A plugin skill that shadows
-a bundled skill name is reported at load.
+| Capability   | Registration call            | Contribution              |
+|--------------+------------------------------+---------------------------|
+| =:tools=     | =register-lode-tool=         | tools the model can call  |
+| =:skills=    | =register-lode-skill-root=   | directories of skills     |
+| =:commands=  | =define-application-command= | interactive commands      |
+| =:mcp=       | =register-mcp-server=        | MCP servers               |
+| =:providers= | =register-provider=          | model providers           |
+| =:context=   | =add-context-contributor=    | guidance in each request  |
+
+Lode tools use the existing tool schema: one =:description= and a JSON
+Schema.
+
+An absent =:capabilities= list means none: the lode loads and activates but
+registers nothing. A registration outside the declared capabilities fails
+the activation and unwinds. The failure reason names the keyword to add, so
+setup costs one error and one line per kind.
+
+The vocabulary is closed: it is the set of registration kinds Autolith has,
+and an unknown keyword fails preflight.
+
+Resources are separate. Threads, sockets, and workers are tracked resources
+through =spawn-lode-resource=. They join the cleanup path and the quiesce
+path. No capability gates them.
+
+Skill-root precedence is unchanged: lode-contributed roots sit below every
+declarative scope and above bundled skills.
+
+| Rank | Root                                           |
+|------+-------------------------------------------------|
+| 1    | project =.autolith/skills/=                    |
+| 2    | Autolith user =skills/=                        |
+| 3    | shared user =~/.agents/skills/=                |
+| 4    | site =skills/=                                 |
+| 5    | lode-contributed roots, in declaration order   |
+| 6    | bundled =skills/=                              |
 
 * Lifecycle and restart
 
-=plugin.enable= and =plugin.disable= add and remove registrations in place.
-=plugin.update= fetches a new commit. Loaded code cannot be removed from a
-running image, so removing a plugin, or changing which plugin supplies a name,
-is completed by starting a new image rather than by mutating this one.
+A lode moves through =declared=, =approved=, =fetching=, =resolved=,
+=loading=, then =enabled=, =failed=, or =disabled=.
 
-Two operations look similar and mean different things.
-
-*Rebuild.* =plugin.restart= boots a clean base image, restores durable state,
-replays the committed mutation lineage, and loads the declared plugin set as it
-now stands. Nothing is reverted: mutations, conversation, memory, and agenda
-all survive, and the only thing that changes is which plugins are loaded. Every
+*Rebuild.* A rebuild boots a clean base, restores durable state, loads the
+resolved lode environment, then replays the committed mutation lineage. The
+lineage replays with lode definitions present, so a mutation may reference
+lode definitions. Nothing is reverted: mutations, conversation, memory, and
+agenda survive, and the only change is which lodes are loaded. Every
 removal, update, and conflict resolution completes through this.
 
-*Rollback.* Selecting a retained generation boots that generation's saved image
-directly, which is what it means, so self-modifications made after it are gone.
-That is correct for a generation rollback and is not a plugin operation.
-=plugin.restart= never selects a generation, and the plugin system never
-reaches for one.
+*Rollback.* Selecting a retained generation boots that generation's saved
+image directly, so self-modifications made after it are gone. That is
+correct for a generation rollback and is not a lode operation. The lode
+system never selects a generation.
 
-The distinction matters because the two have different blast radii. A rebuild
-costs a boot and keeps the user's work; a rollback costs the self-modifications
-made since that generation. Conflating them would let removing a plugin
-silently discard live agent changes.
+A mutation whose replay needs a system the new environment does not hold
+fails the whole build. No image is saved. The report names the mutation and
+the missing system, and states the two remedies: declare the system again,
+or select an older mutation commit. Autolith then boots the vanilla image:
+tracked source, no lodes, no private mutations, durable state restored.
+The session stays intact, because conversation, memory, and agenda follow
+the state root, not the image. The lineage stays in the private Git
+repository; nothing is deleted. A later rebuild that succeeds loads
+mutations and lodes together.
 
-- The loader is idempotent and records, in the live image, which plugins and
-  resolved commits are present, so a rebuilt image reconciles declared against
-  present instead of double-loading.
-- Plugin-owned runtimes join the checkpoint quiesce path and the runtime-close
-  ordering, so a checkpoint taken with plugins loaded is clean.
-- Windows withholds rollback rather than rebuild; a rebuild there re-executes
-  into the base core and replays as above.
+Skipping and truncation stay out. A later mutation may build on a skipped
+one, and a truncated lineage discards committed work silently. =self.commit=
+warns when a mutation references lode-origin definitions, so the coupling
+is visible at commit time.
 
-* Image layers and project switching
+* Image layers and caching
 
-A plugin set is part of what an image is, so a workspace carrying
-project-local plugins needs its own image. Images form a ladder, and every rung
-is derived from the rung above it rather than rebuilt from source:
+An image is a base plus one resolved lode environment.
 
 | Layer | Contents                                          |
-|-------+---------------------------------------------------|
-| 1     | tracked source plus the selected mutation commit  |
-| 2     | layer 1 plus global and site plugins              |
-| 3     | layer 2 plus one project's local plugins          |
+|-------+----------------------------------------------------|
+| 1     | tracked source plus the selected mutation commit   |
+| 2     | layer 1 plus the global and site environment       |
+| 3     | layer 2 plus one project environment               |
 
-Layer 2 is the image a global install builds, and it is what boots wherever a
-directory declares no local plugins. Layer 3 is produced by loading layer 2 and
-saving, which is why the ladder only descends: a project image is always a child
-of the image its parent produced, never a sibling of it.
+The cache key is the parent image identity, the mutation commit, and the
+sorted set of name, source, and revision for the environment.
+Workspaces with the same environment share one image, so layer 3 is keyed
+by content, not by workspace path. Switching project boots the image for
+that environment. When any key component moves, the cached image is stale
+and is rebuilt on demand. Only layers 1 and 2 are retained deliberately;
+layer 3 is disposable. Windows descends a rung through a process exit
+rather than a fork.
 
-Consequences worth naming:
+Changing the lode configuration does not build at once. It moves the cache
+key. The next boot builds the image for the new key, or reuses a cached
+image when that key was built before. Toggling between two lode sets reuses
+two images instead of rebuilding.
 
-- Switching project boots a different image, because the plugin set differs.
-  Durable state follows the user rather than the image, so the switch costs a
-  boot and nothing else.
-- A project image is invalidated when its own plugin set changes, when the
-  global image beneath it changes, or when the mutation commit changes. It is a
-  cache keyed on all three, not a durable artifact, and it is rebuilt on demand
-  when stale.
-- Layer 3 is per workspace, so a machine with many plugin-bearing projects
-  accumulates one image each. Only layers 1 and 2 are retained deliberately;
-  layer 3 is disposable.
-- Windows cannot fork and saves an image by exiting through
-  =save-lisp-and-die=, so descending a rung there costs a process rather than a
-  fork.
+These layer images are cached artifacts, not commits in the mutation
+lineage. A rebuild replays the mutation lineage regardless of which images
+exist.
 
 * Observability
 
 #+BEGIN_SRC lisp
-> (plugins)
-  my-cool-autolith-plugin  0.3.0  efffff  enabled   2 tools, 1 mcp, 1 provider
-  autolith-plugin-utils    1.1.0  a91c04  enabled   (dependency)
-  vault                    main   3f21bd  failed: could not load entry file
+> (lodes)
+  autolith-planning      1.0.0  efffff  enabled   :tools :skills :context  2 tools, 1 mcp
+  autolith-plugin-utils  1.1.0  a91c04  enabled   (library)
+  vault                  main   3f21bd  failed    activation probe: capability :mcp not declared
 #+END_SRC
 
-=plugins= lists each plugin with its version, resolved commit, state, and
-contributed counts. Mutating operations are tools and commands behind the
-plugin permission: =plugin.install=, =plugin.enable=, =plugin.disable=,
-=plugin.update=, =plugin.remove=, =plugin.restart=. =plugin.list= and
-=plugin.status= are unrestricted.
+=lodes= lists each lode with its version, revision, state,
+capabilities, and contributed counts. Mutating operations are tools and
+commands behind the lode permission: =lode.install=, =lode.enable=,
+=lode.disable=, =lode.update=, =lode.remove=, =lode.restart=. =lode.list=
+and =lode.status= are unrestricted. =lode.update= presents the pending
+changes before it applies them: the current revision, the target
+revision, and the effect on every lode that requires the system. The user
+confirms or rejects the update as one review.
 
 * Implementation gaps
 
-- =skill-roots= computes a fixed list; it needs plugin-contributed roots, tagged
-  by source and ordered as above.
-- Plugin images need a cache key covering the plugin set, the parent image, and
-  the mutation commit, plus invalidation when any of the three moves.
-- Plugin-owned runtimes must participate in checkpoint quiescence and runtime
-  close ordering
+- =autolith-asdf= does not exist yet. Create it outside this repository and
+  pin it in the qlfile.
+- The activation runtime context, cleanup handles, and capability checks
+  need implementation.
+- =skill-roots= computes a fixed list; it needs lode-contributed roots,
+  tagged by source.
+- Image caching needs the environment key and invalidation.
+- Mutation replay needs failure attribution against the resolved
+  environment.
+- The distribution client needs the fetcher protocol, the =:git=, =:http=,
+  and =:file= kinds, and ref resolution, wired to the lock structures in
+  =src/plugins/=.
 
 * Deferred
 
-- A versioned extension API with a compatibility key in the manifest.
-- Two-tier tool metadata (short summary plus detailed description) and
-  skill-linked tool documentation.
+- Artifact signing and source verification beyond commit hashes.
+- A versioned extension API beyond =autolith-asdf= versioning.
+- Two-tier tool metadata and skill-linked tool documentation.
 - Static detection of dynamic calls through =funcall= and computed symbols.
+- Registrations saved into the image, with resource-restart descriptors, if
+  boot-time activation ever measures slow.
