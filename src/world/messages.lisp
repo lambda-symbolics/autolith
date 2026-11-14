@@ -13,7 +13,7 @@
 (defparameter *world-inbox-version* 1
   "The readable inbox format version.")
 
-(defparameter *world-message-text-limit* 8192
+(defparameter *world-message-text-limit* 131072
   "The maximum characters in one channel message.")
 
 (defparameter *world-inbox-limit* 256
@@ -73,6 +73,12 @@ The world server sets it while it runs, so a message wakes the agent it is for."
     :reader        world-delivery-text
     :type          non-empty-string
     :documentation "The message text.")
+   (images
+    :initarg       :images
+    :initform      nil
+    :reader        world-delivery-images
+    :type          list
+    :documentation "Validated image pathnames carried by every copy of this message.")
    (mentions
     :initarg       :mentions
     :initform      nil
@@ -116,6 +122,9 @@ The world server sets it while it runs, so a message wakes the agent it is for."
             (lambda (value)
               (and (non-empty-string-p value) (<= (length value) *world-message-text-limit*)))
             :encode 'world-portable-string)
+     (field ':images 'world-delivery-images
+            (lambda (value) (and (proper-list-p value) (every #'stringp value)))
+            :required nil :encode 'copy-list :decode 'copy-list)
      (field ':mentions 'world-delivery-mentions 'world--identifier-list-p
             :encode (lambda (value) (mapcar #'world-portable-string value)) :decode 'copy-list)
      (field ':kind 'world-delivery-kind (lambda (value) (typep value 'world-delivery-kind)))))
@@ -454,11 +463,20 @@ writes can pass for that header."
                (format nil "to channel ~A, for the person" target))))
           (uiop:split-string (world-delivery-text delivery) :separator '(#\Newline))))
 
+(-> world-delivery-input (world-delivery) (or string user-message-input))
+(defun world-delivery-input (delivery)
+  "Return DELIVERY's labeled text and image attachments for admission."
+  (if (world-delivery-images delivery)
+      (user-message-input-create
+       :text            (world-delivery-label delivery)
+       :image-pathnames (mapcar #'pathname (world-delivery-images delivery)))
+      (world-delivery-label delivery)))
+
 (-> world-delivery-steering-input (world-delivery) (values agent-steering-input &optional))
 (defun world-delivery-steering-input (delivery)
   "Return DELIVERY as steering input that records the same request as a delivery between turns."
   (agent-steering-input-create :identifier        (world-delivery-pending-identifier delivery)
-                               :content           (world-delivery-label delivery)
+                               :content           (world-delivery-input delivery)
                                :operation-request (world-delivery-request delivery)))
 
 (-> world-delivery-request (world-delivery) list)
@@ -570,11 +588,11 @@ parent reaches."
 (-> world-message-plan
     (world &key (:sender participant) (:channel channel) (:text string) (:mentions list)
                 (:identifier string) (:now timestamp) (:post-p boolean)
-                (:subscribers-p boolean) (:source (option string)))
+                (:subscribers-p boolean) (:source (option string)) (:images list))
     list)
 (defun world-message-plan (world &key sender channel text mentions identifier
                                       (now (get-universal-time)) (post-p t)
-                                      (subscribers-p post-p) source)
+                                      (subscribers-p post-p) source images)
   "Return the deliveries one message from SENDER to CHANNEL produces, as (CHANNEL-ID . DELIVERY) pairs.
 
 The channel itself gets a post for its residents. Except for the sender, each
@@ -601,6 +619,7 @@ but speaks in the channel on screen."
                               :source      (or source (participant-residence sender))
                               :target      target
                               :text        text
+                              :images      images
                               :mentions    mentions
                               :kind        kind))
 
@@ -687,11 +706,11 @@ count."
 (-> world-message-send
     (configuration &key (:sender string) (:channel string) (:text string) (:mentions list)
                         (:notify-p boolean) (:now timestamp) (:post-p boolean)
-                        (:subscribers-p boolean) (:source (option string)))
+                        (:subscribers-p boolean) (:source (option string)) (:images list))
     list)
 (defun world-message-send (configuration &key sender channel text mentions (notify-p t)
                                               (now (get-universal-time)) (post-p t)
-                                              (subscribers-p post-p) source)
+                                              (subscribers-p post-p) source images)
   "Send TEXT from participant SENDER to channel CHANNEL and return what happened.
 
 MENTIONS are explicit participant designators added to the @mentions found in
@@ -712,12 +731,17 @@ whose serving process was reached)."
                                  :operation  ':send
                                  :identifier sender)))
          (target      (world-channel-designated world configuration channel))
-         (text        (world-message--text text))
-         (identifier  (make-identifier)))
-    (let* ((mentioned (append (world-message-mentions world text :sender participant)
+         (text        (world-message--text
+                       (if images
+                           (format nil "~{[Image #~D] ~}~A"
+                                   (loop for n from 1 to (length images) collect n) text)
+                           text)))
+         (paths       (mapcar #'image-input-validate-pathname images))
+         (identifier  (make-identifier))
+         (mentioned   (append (world-message-mentions world text :sender participant)
                               (loop for designator in mentions
                                     for found = (world-message-participant world designator
-                                                                           :sender participant)
+                                                                          :sender participant)
                                     do (unless found
                                          (error 'world-error
                                                 :message    (format nil "No participant is named ~A." designator)
@@ -725,29 +749,43 @@ whose serving process was reached)."
                                                 :operation  ':send
                                                 :identifier designator))
                                     collect (participant-identifier found))))
-           (pairs     (world-message-plan world
-                                          :sender        participant
-                                          :channel       target
-                                          :text          text
-                                          :mentions      (remove-duplicates mentioned :test     #'string=
-                                                                                      :from-end t)
-                                          :identifier    identifier
-                                          :now           now
-                                          :post-p        post-p
-                                          :subscribers-p subscribers-p
-                                          :source        source)))
-      (when pairs
-        (world-outbox-write configuration identifier pairs))
-      (multiple-value-bind (delivered refused)
-          (world-message--deliver configuration identifier)
-        (list :id       identifier
-              :channels delivered
-              :pending  (mapcar #'first refused)
-              :parked   (loop for mention in mentioned
-                              for participant = (world-participant-find world mention)
-                              when (and participant (null (participant-residence participant)))
-                                collect (participant-name participant))
-              :notified (and notify-p (world-message-notify configuration delivered)))))))
+         (attachments nil)
+         (published-p nil))
+    (unwind-protect
+         (progn
+           (dolist (path paths)
+             (push (image-input-prepare
+                    path (merge-pathnames "world/images/" (config :data-root configuration)))
+                   attachments))
+           (let ((pairs (world-message-plan
+                         world
+                         :sender        participant
+                         :channel       target
+                         :text          text
+                         :images        (mapcar (lambda (attachment)
+                                                  (namestring (image-attachment-pathname attachment)))
+                                                (reverse attachments))
+                         :mentions      (remove-duplicates mentioned :test #'string= :from-end t)
+                         :identifier    identifier
+                         :now           now
+                         :post-p        post-p
+                         :subscribers-p subscribers-p
+                         :source        source)))
+             (when pairs
+               (world-outbox-write configuration identifier pairs)
+               (setf published-p t)))
+           (multiple-value-bind (delivered refused)
+               (world-message--deliver configuration identifier)
+             (list :id       identifier
+                   :channels delivered
+                   :pending  (mapcar #'first refused)
+                   :parked   (loop for mention in mentioned
+                                   for participant = (world-participant-find world mention)
+                                   when (and participant (null (participant-residence participant)))
+                                     collect (participant-name participant))
+                   :notified (and notify-p (world-message-notify configuration delivered)))))
+      (unless published-p
+        (conversation--delete-image-attachments attachments)))))
 
 
 ;;;; -- Steering Delivery --

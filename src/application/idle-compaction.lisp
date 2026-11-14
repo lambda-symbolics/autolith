@@ -128,7 +128,6 @@ Neither successful nor failed compaction can rearm this opportunity."
          (not (application-input-controller-queued-work-paused-p controller))
          (not (application-input-controller-turn-cancellation-p controller))
          (not (application-localgroup-paused-p application))
-         (not (application-localgroup-handoff-pending-p application))
          (null (application-input-controller-follow-up-edit-index controller))
          (every #'deque-empty-p
                 (list (application-input-controller-initial-work-items controller)

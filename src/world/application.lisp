@@ -142,7 +142,7 @@ after, rather than waiting for the next send to come by."
               (unless (gethash identifier table)
                 (when (application-input-controller-enqueue-operation-request
                        controller
-                       (world-delivery-label delivery)
+                       (world-delivery-input delivery)
                        (world-delivery-request delivery)
                        :pending-input-identifier identifier)
                   (setf (gethash identifier table) ':queued)
@@ -159,7 +159,7 @@ settlement settles it on the next delivery instead of showing it twice."
   (let ((conversation (application-conversation application)))
     (dolist (notice notices)
       (let ((record (nth-value 1 (conversation-append-user-message
-                                  conversation (world-delivery-label notice)
+                                  conversation (world-delivery-input notice)
                                   :automatic-p              t
                                   :pending-input-identifier (world-delivery-pending-identifier notice)
                                   :operation-request        (world-delivery-request notice)))))

@@ -2111,8 +2111,8 @@
              (test-assert (and (eql start 4) (eql end 14) (string= token "@docs/docu"))
                           "@ tokens are bounded by whitespace"))
            (multiple-value-bind (start end token)
-               (terminal-path-token "(prompt \"read @docs/g\")" 20)
-             (test-assert (and (eql start 14) (eql end 21) (string= token "@docs/g"))
+                (terminal-path-token "(channel.send :text \"read @docs/g\")" 32)
+              (test-assert (and (eql start 26) (eql end 33) (string= token "@docs/g"))
                           "@ tokens stop at Lisp string quotes"))
            (test-assert (null (nth-value 2 (terminal-path-token "see docs" 3)))
                         "a cursor in whitespace has no path token")
@@ -2193,21 +2193,21 @@
                 "accepting an @ mention drops @ and keeps the rest")
                (terminal-ui--end-completion active-ui)
                (selector-set-items (terminal-ui-completion-selector active-ui) nil)
-               (let ((source "(prompt \"read @docs/g\")"))
-                 (line-editor-set-text
-                  (terminal-ui-editor active-ui)
-                  source
-                  :cursor 20)
-                 (test-assert
-                  (equal '("docs/guide.org")
-                         (mapcar (lambda (entry) (getf entry :name))
-                                 (terminal-ui--matching-completions active-ui)))
-                  "@ mentions complete inside a Lisp prompt form")
-                 (terminal-ui-process-event active-ui :complete)
-                 (test-assert
-                  (string= (line-editor-text (terminal-ui-editor active-ui))
-                           "(prompt \"read docs/guide.org\")")
-                  "accepting @ inside Lisp drops @ and keeps the quotes"))
+               (let ((source "(channel.send :text \"read @docs/g\")"))
+                (line-editor-set-text
+                 (terminal-ui-editor active-ui)
+                 source
+                 :cursor 32)
+                (test-assert
+                 (equal '("docs/guide.org")
+                        (mapcar (lambda (entry) (getf entry :name))
+                                (terminal-ui--matching-completions active-ui)))
+                 "@ mentions complete inside a Lisp prompt form")
+                (terminal-ui-process-event active-ui :complete)
+                (test-assert
+                 (string= (line-editor-text (terminal-ui-editor active-ui))
+                          "(channel.send :text \"read docs/guide.org\")")
+                 "accepting @ inside Lisp drops @ and keeps the quotes"))
                (terminal-ui-set-input active-ui "(resource.read :uri")
                (test-assert (null (terminal-ui--matching-completions active-ui))
                             "operation arguments still do not complete as paths"))))

@@ -308,19 +308,19 @@ This is also useful if a Lisp form you want to evaluate does not start with a pa
 :ID: prompt-function
 :VERSION: 4
 :END:
-Use =(prompt ...)= to send a prompt programmatically.
+Use =(channel.send ...)= to send a message programmatically.
 
-E.g. you can compute the text or read it from a file.
+E.g. you can compute the text or read it from a file:
 
-This is actually what your plain text evaluates to when you type it into the prompt.
+=(channel.send :text "Review this change")=
 
-=(prompt "Review this change")=
+Use =:channel= to send a request to a named child channel that is already running:
 
-Use =:to= to send a request to a named child that is already running:
-=(prompt :to 'test-review
-        "Run focused tests and report failures.")=
+=(channel.send :channel "@test-review"
+              :text "Run focused tests and report failures.")=
 
-Omit =:to= to address the primary Autolith.
+The current channel is the default. Optional =:images= accepts a vector or list
+of pathname strings, for example =#("/tmp/diagram.png")=.
 
 * Steering and follow-ups
 :PROPERTIES:
@@ -618,7 +618,7 @@ Use =(child.roles)= to browse available roles.
 
 Each child has its own channel. Use =(open)= to visit it.
 
-Steer a running child with =(prompt :to 'child-name "...")=. If it has a response for you, you will see it.
+Steer a running child with =(channel.send :channel "@child-name" :text "...")=. If it has a response for you, you will see it.
 
 * Name, reuse and remove children
 :PROPERTIES:

@@ -504,7 +504,7 @@
 (-> test-job-cancellation-presentation-boundaries () null)
 (defun test-job-cancellation-presentation-boundaries ()
   "Own ticket and actual-output guards, with synchronized closure after handler admission."
-  (dolist (boundary '(stopping-p failure localgroup-handoff-p queued-work-paused-p session-pause))
+  (dolist (boundary '(stopping-p failure queued-work-paused-p session-pause))
     (job-completion-tests--held-cancellation
      (lambda (parent controller start)
        (let* ((job (funcall start)) (application (application-input-controller-application controller))

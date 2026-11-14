@@ -677,11 +677,10 @@
                (application-render-records application)
                (recording-terminal-reset (terminal-ui-terminal (application-ui application)))
                (funcall function application controller parent job)))
-        (setf (application-input-controller-stopping-p controller) nil
-              (application-input-controller-failure controller) nil
-              (application-input-controller-localgroup-handoff-p controller) nil
-              (application-input-controller-follow-up-edit-index controller) nil
-              (application-input-controller-queued-work-paused-p controller) nil)
+          (setf (application-input-controller-stopping-p controller) nil
+                (application-input-controller-failure controller) nil
+                (application-input-controller-follow-up-edit-index controller) nil
+                (application-input-controller-queued-work-paused-p controller) nil)
         (application-localgroup-resume application)
         (application-input-controller-stop controller)
         (setf (application-input-controller application) nil)
@@ -762,7 +761,7 @@
 (-> test-job-completion-terminal-boundaries () null)
 (defun test-job-completion-terminal-boundaries ()
   "Defer queued and post-selection delivery across edit, pause, stop and ownership changes."
-  (dolist (boundary '(follow-up-edit-index queued-work-paused-p stopping-p failure localgroup-handoff-p session-pause owner))
+  (dolist (boundary '(follow-up-edit-index queued-work-paused-p stopping-p failure session-pause owner))
     (job-completion-controller-tests--terminal-fixture
      (lambda (application controller parent job)
        (declare (ignore job))

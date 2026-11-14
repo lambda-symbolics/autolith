@@ -23,11 +23,15 @@
 (-> channel-tool--sender (tool-context string) participant)
 (defun channel-tool--sender (context tool-name)
   "Return the participant acting for CONTEXT's conversation, or signal for TOOL-NAME."
-  (or (world-session-participant (tool-context-configuration context)
-                                 (tool-context-conversation context))
-      (error 'tool-error
-             :message   "This conversation has no participant yet; it gets one with its first durable message."
-             :tool-name tool-name)))
+  (declare (special *application-local-user-evaluation-p*))
+  (let ((participant (world-session-participant (tool-context-configuration context)
+                                                (tool-context-conversation context))))
+    (or (if *application-local-user-evaluation-p*
+            (world-human-participant (world-load (tool-context-configuration context)))
+            participant)
+        (error 'tool-error
+               :message   "This conversation has no participant yet; it gets one with its first durable message."
+               :tool-name tool-name))))
 
 (defparameter *channel-tool-channel-description*
   "The channel: its identifier or a unique part of it, inbox for the person's inbox, or @name for the channel where that agent resides."
@@ -69,9 +73,12 @@
          (channel       (progn
                           (task--validate-tool-arguments
                            arguments
-                           (if (string= name "send") '("channel" "text" "mentions") '("channel"))
+                           (if (string= name "send") '("channel" "text" "mentions" "images") '("channel"))
                            tool-name)
-                          (channel-tool--channel context arguments)))
+                          (if (and (string= name "send")
+                                   (null (tool-argument arguments "channel")))
+                              (conversation-identifier (tool-context-conversation context))
+                              (channel-tool--channel context arguments))))
          (display       (conversation-identifier-display channel)))
     (cond
       ((string= name "send")
@@ -79,6 +86,13 @@
                                          :sender   (participant-identifier sender)
                                          :channel  channel
                                          :text     (tool-argument arguments "text" :required t)
+                                         :source   (conversation-identifier (tool-context-conversation context))
+                                          :images  (let ((images (tool-argument arguments "images")))
+                                                     (mapcar (lambda (path)
+                                                               (workspace-tool-path context path
+                                                                                    :tool-name tool-name))
+                                                             (if (stringp images) (list images)
+                                                                 (and images (coerce images 'list)))))
                                          :mentions (let ((mentions (tool-argument arguments "mentions")))
                                                      (and mentions (coerce mentions 'list))))))
          (task-tool-result (channel-tool--send-text configuration result) result)))
@@ -109,16 +123,22 @@
                            :description description
                            :parameters  (tool-object-schema properties required)))))
     (register "send"
-              "Send a message to a channel. It reaches the channel's residents, its subscribers and every participant mentioned as @name or @id. @parent reaches your parent agent; when it is parked, the nearest ancestor that is not, or the person. channel:current lists your children; channel:list finds other channels."
+              "Send a message with optional images. Omit channel to address the current channel. It reaches residents, subscribers and @mentions. @parent reaches your parent agent, or the nearest active ancestor or person."
               (json-object "channel" (tool-string-property *channel-tool-channel-description*)
                            "text" (tool-string-property
                                    (format nil "The message, 1 to ~:D characters."
                                            *world-message-text-limit*))
+                            "images" (json-object
+                                      "description" "Local image pathnames to attach."
+                                      "oneOf" (vector
+                                               (json-object "type" "string")
+                                               (json-object "type" "array" "items"
+                                                            (json-object "type" "string"))))
                            "mentions" (json-object
                                        "type" "array"
                                        "description" "Participants to deliver to as well, by name or identifier."
                                        "items" (json-object "type" "string" "minLength" 1)))
-              '("channel" "text"))
+              '("text"))
     (register "subscribe"
               "Receive future messages of a channel without residing in it."
               (json-object "channel" (tool-string-property *channel-tool-channel-description*))

@@ -109,8 +109,6 @@
                (images (getf arguments :images)))
            (unless (and controller (stringp text) (listp images) (every #'stringp images))
              (refuse "A submit carries text and optional image pathnames."))
-           (when (application-localgroup-handoff-pending-p application)
-             (refuse "The channel is detaching and no longer accepts input."))
            (application-localgroup-resume application)
            (if (and (not (non-empty-string-p text)) (null images))
                (application-clients-publish

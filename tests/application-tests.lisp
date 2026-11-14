@@ -5362,7 +5362,7 @@
                  (uiop:temporary-directory)))
               (input                  nil)
               (observed               nil)
-              (original-submit-prompt (symbol-function 'application-submit-prompt)))
+              (original-submit-prompt (symbol-function 'application-input-controller-submit-primary-prompt)))
          (unwind-protect
               (progn
                 (test-conversation--write-tiny-png image)
@@ -5372,14 +5372,14 @@
                        :image-pathnames (list (truename image))))
                 (test-call-with-function-replacements
                  (list
-                   (list 'application-submit-prompt
+                   (list 'application-input-controller-submit-primary-prompt
                          (lambda (&rest arguments)
                            (setf observed arguments)
                            (apply original-submit-prompt arguments))))
                  (lambda ()
                    (application-input-controller--handle-submission
                     controller input :steer-p t)))
-                (let ((observed-input (third observed))
+                (let ((observed-input (second observed))
                       (steering-input
                         (first (application-input-controller--state
                                 controller :steering-items))))
@@ -5389,14 +5389,14 @@
                                  "[Image #1] steer active message")
                         (equal (user-message-input-image-pathnames observed-input)
                                (list (truename image)))
-                        (getf (nthcdr 3 observed) :prefer-steering-p)
+                        (getf (nthcdr 2 observed) :prefer-steering-p)
                       (string=
                        (user-message-input-text steering-input)
                        "[Image #1] steer active message")
                       (equal
                        (user-message-input-image-pathnames steering-input)
                        (list (truename image))))
-                   "terminal image prose invokes canonical PROMPT with steering")))
+                   "terminal image prose invokes the primary composer admission with steering")))
            (ignore-errors (delete-file image))))))
     (call-with-controller
      (lambda (controller)
@@ -5410,10 +5410,10 @@
                  (application-input-controller-application controller)))
               (observed nil)
               (original-submit-prompt
-                (symbol-function 'application-submit-prompt)))
+                (symbol-function 'application-input-controller-submit-primary-prompt)))
          (test-call-with-function-replacements
           (list
-            (list 'application-submit-prompt
+            (list 'application-input-controller-submit-primary-prompt
                   (lambda (&rest arguments)
                     (setf observed arguments)
                     (apply original-submit-prompt arguments))))
@@ -5421,13 +5421,13 @@
             (terminal-ui-set-input ui "ordinary during local Lisp")
             (application-input-controller--process-event controller ':complete)))
          (test-assert
-           (and (equal (third observed) "ordinary during local Lisp")
-                (null (getf (nthcdr 3 observed) :prefer-steering-p))
+           (and (equal (second observed) "ordinary during local Lisp")
+                (null (getf (nthcdr 2 observed) :prefer-steering-p))
                (null (application-input-controller--state
                       controller :steering-items))
                (equal (application-input-controller--state controller :work-items)
                       '((:message "ordinary during local Lisp"))))
-          "terminal prose invokes canonical PROMPT without message steering"))))
+          "terminal prose invokes the primary composer admission without message steering"))))
     (call-with-controller
      (lambda (controller)
        (application-input-controller--enqueue
@@ -5494,27 +5494,6 @@
            "completion race keeps earlier steering ahead of a late prompt"))))
     (call-with-controller
      (lambda (controller)
-       (setf (application-input-controller-localgroup-handoff-p controller) t)
-       (multiple-value-bind (accepted-p delivery)
-           (application-input-controller-submit-primary-prompt
-            controller "handoff prompt")
-          (test-assert
-           (and (null accepted-p)
-                (eq delivery ':rejected)
-                (null (application-input-controller--state controller :work-items)))
-           "localgroup handoff rejects new primary prompts"))
-       (setf (application-input-controller-localgroup-handoff-p controller) nil
-             (application-input-controller-stopping-p controller) t)
-       (multiple-value-bind (accepted-p delivery)
-           (application-input-controller-submit-primary-prompt
-            controller "stopping prompt")
-          (test-assert
-           (and (null accepted-p)
-                (eq delivery ':rejected)
-                (null (application-input-controller--state controller :work-items)))
-           "stopping rejects new primary prompts"))))
-    (call-with-controller
-     (lambda (controller)
        (application-input-controller--enqueue
         controller ':message "initial active message")
        (application-input-controller--next-work controller)
@@ -5554,37 +5533,6 @@
                  (:message "late prompt after restore")
                  (:message "older follow-up")))
         "restored prefix places a late prompt after promoted steering")))
-    (call-with-controller
-     (lambda (controller)
-       (application-input-controller--enqueue controller ':lisp "(+ 5 6)")
-       (application-input-controller--next-work controller)
-       (setf (application-input-controller-follow-up-edit-index controller) 0
-             (application-input-controller-follow-up-edit-work controller)
-             '(:message "recalled original")
-             (application-input-controller-localgroup-handoff-p controller) t)
-       (let ((ui
-               (application-ui
-                (application-input-controller-application controller))))
-         (terminal-ui-set-input ui "recalled during handoff")
-         (application-input-controller--process-event controller ':complete)
-         (test-assert
-          (and (eql (application-input-controller-follow-up-edit-index controller)
-                    0)
-               (equal (application-input-controller-follow-up-edit-work controller)
-                      '(:message "recalled original"))
-               (null (application-input-controller--state controller :work-items)))
-          "terminal event keeps recalled prose selected during handoff")
-         (setf (application-input-controller-localgroup-handoff-p controller) nil
-               (application-input-controller-stopping-p controller) t)
-         (terminal-ui-set-input ui "recalled while stopping")
-         (application-input-controller--process-event controller ':complete)
-         (test-assert
-          (and (eql (application-input-controller-follow-up-edit-index controller)
-                    0)
-               (equal (application-input-controller-follow-up-edit-work controller)
-                      '(:message "recalled original"))
-               (null (application-input-controller--state controller :work-items)))
-          "terminal event keeps recalled prose selected while stopping"))))
     (call-with-controller
      (lambda (controller)
        (setf (application-input-controller-pending-persistence-enabled-p controller)

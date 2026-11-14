@@ -19,7 +19,7 @@ Autolith's prompt window can also evaluate Lisp forms directly:
 #+BEGIN_SRC lisp
 (help)
 (resource.read :uri "workspace:.")
-(prompt (read-file "review-notes.org"))
+(channel.send :text (read-file "review-notes.org"))
 #+END_SRC
 
 You can use the same tools and Lisp machinery as the clanker.
@@ -859,26 +859,26 @@ runtime in use lives inside them.
 
 ** Prose, Lisp, and commands
 
-Ordinary text is a prompt to the primary agent. It is equivalent to:
+Ordinary text is sent to the current channel. It is equivalent to:
 
 #+BEGIN_SRC lisp
-(prompt :to 'autolith "Review this change")
+(channel.send :text "Review this change")
 #+END_SRC
 
-=autolith= is reserved, case-insensitively, for the primary agent.
-
-Omit =:to= to address the primary agent:
+The current channel is the default. Use =:channel= with a named participant
+channel or explicit channel identifier:
 
 #+BEGIN_SRC lisp
-(prompt "Shut yourself down homie")
+(channel.send :channel "@test-review"
+              :text "Run focused tests and report failures.")
 #+END_SRC
 
-=prompt= can also compute text or attach local images:
+=channel.send= accepts computed text and optional image pathnames:
 
 #+BEGIN_SRC lisp
-(prompt (read-file "request.org"))
-(prompt :images "/tmp/diagram.png" "Review this diagram")
-(prompt :to 'test-review "Run focused tests and report failures.")
+(channel.send :text (read-file "request.org"))
+(channel.send :text "Review this diagram"
+              :images #("/tmp/diagram.png"))
 #+END_SRC
 
 If you message a child agent, it can respond to you in the main conversation
@@ -1789,7 +1789,7 @@ Every participant has a unique name, its handle, so =@name= reaches exactly
 one of them. A session's agent is named after its workspace directory, =frob=
 for an agent working in =~/work/frob=, and a second agent there is =frob-2=;
 a child agent takes the name its parent gave it, as in
-=(prompt :to 'test-review ...)=, or =agent= when it has none; you are =user=.
+E442  =(channel.send :channel "@test-review" :text ...)=, or =agent= when it has none; you are =user=.
 Names are letters, digits, hyphens and underscores, matched without regard to
 case. =(rename "NAME")= renames this channel's agent and
 =(rename "WHO" "NAME")= renames the participant =WHO= names by handle,

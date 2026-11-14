@@ -1198,6 +1198,7 @@ socket."
         (search-worker (search-worker-create :configuration configuration)))
     (default-tools--register-workspace registry
                                        :knowledge-p (knowledge-active-p configuration))
+    (channel-register-tools registry)
     (default-tools--register-web registry)
     (default-tools--register-search registry search-worker)
     (default-tools--register-shell registry)

@@ -209,11 +209,6 @@
     :type     boolean
     :documentation
     "Whether an explicit interruption is holding queued work for user review.")
-   (localgroup-handoff-p
-    :initform      nil
-    :accessor      application-input-controller-localgroup-handoff-p
-    :type          boolean
-    :documentation "Whether localgroup has stopped new input for process handoff.")
    (turn-cancellation-p
     :initform      nil
     :accessor      application-input-controller-turn-cancellation-p
@@ -1111,21 +1106,20 @@ The caller must hold CONTROLLER's publication lock."
   (let ((queued-p  nil)
         (resumed-p nil))
     (with-lock-held ((application-input-controller-lock controller))
-      (unless (or (application-input-controller-stopping-p controller)
-                  (application-input-controller-localgroup-handoff-p controller))
-        (setf resumed-p
-              (application-input-controller-queued-work-paused-p controller)
-              (application-input-controller-queued-work-paused-p controller) nil
-              queued-p t
-              (application-input-controller-live-vault-sync-p controller) t)
-        (deque-push-back
-         (application-input-controller-work-items controller)
-         (append (list kind (user-message-input-copy
-                             (if (eq kind ':message) input (user-message-input-text input))))
-                 (when (and (not (eq kind ':message)) (user-message-input-submission input))
-                   (list :submission (user-message-input-submission input)))))
-        (sb-thread:condition-broadcast
-         (application-input-controller-condition-variable controller))))
+        (unless (application-input-controller-stopping-p controller)
+         (setf resumed-p
+               (application-input-controller-queued-work-paused-p controller)
+               (application-input-controller-queued-work-paused-p controller) nil
+               queued-p t
+               (application-input-controller-live-vault-sync-p controller) t)
+         (deque-push-back
+          (application-input-controller-work-items controller)
+          (append (list kind (user-message-input-copy
+                              (if (eq kind ':message) input (user-message-input-text input))))
+                  (when (and (not (eq kind ':message)) (user-message-input-submission input))
+                    (list :submission (user-message-input-submission input)))))
+         (sb-thread:condition-broadcast
+          (application-input-controller-condition-variable controller))))
     (when resumed-p
       (terminal-ui-set-notice
        (application-ui (application-input-controller-application controller))
@@ -1134,7 +1128,7 @@ The caller must hold CONTROLLER's publication lock."
     queued-p))
 
 (-> application-input-controller-enqueue-operation-request
-    (application-input-controller string list
+    (application-input-controller (or string user-message-input) list
      &key (:pending-input-identifier (option non-empty-string)))
     boolean)
 (defun application-input-controller-enqueue-operation-request
@@ -1148,18 +1142,17 @@ PENDING-INPUT-IDENTIFIER, the turn records that receipt and is skipped when
 the conversation already holds it."
   (let ((queued-p nil))
     (with-lock-held ((application-input-controller-lock controller))
-      (unless (or (application-input-controller-stopping-p controller)
-                  (application-input-controller-localgroup-handoff-p controller))
-        (deque-push-back
-         (application-input-controller-work-items controller)
-         (list ':operation-request
-               (list :text                     (copy-seq text)
-                     :request                  (copy-tree request)
-                     :pending-input-identifier (and pending-input-identifier
-                                                    (copy-seq pending-input-identifier)))))
-        (setf queued-p t)
-        (sb-thread:condition-broadcast
-         (application-input-controller-condition-variable controller))))
+        (unless (application-input-controller-stopping-p controller)
+         (deque-push-back
+          (application-input-controller-work-items controller)
+          (list ':operation-request
+                 (list :text                    (user-message-input-copy text)
+                      :request                  (copy-tree request)
+                      :pending-input-identifier (and pending-input-identifier
+                                                     (copy-seq pending-input-identifier)))))
+         (setf queued-p t)
+         (sb-thread:condition-broadcast
+          (application-input-controller-condition-variable controller))))
     queued-p))
 
 (-> application-input-controller-enqueue-work (application-input-controller list) boolean)
@@ -1170,12 +1163,11 @@ Such work is not input: it is never persisted as a follow-up, recorded in
 input history, or kept in the recovery vault."
   (let ((queued-p nil))
     (with-lock-held ((application-input-controller-lock controller))
-      (unless (or (application-input-controller-stopping-p controller)
-                  (application-input-controller-localgroup-handoff-p controller))
-        (deque-push-back (application-input-controller-work-items controller) work)
-        (setf queued-p t)
-        (sb-thread:condition-broadcast
-         (application-input-controller-condition-variable controller))))
+        (unless (application-input-controller-stopping-p controller)
+         (deque-push-back (application-input-controller-work-items controller) work)
+         (setf queued-p t)
+         (sb-thread:condition-broadcast
+          (application-input-controller-condition-variable controller))))
     queued-p))
 
 (-> application-input-controller--queue-input
@@ -1188,23 +1180,22 @@ input history, or kept in the recovery vault."
         (resumed-p nil))
     (when work
       (with-lock-held ((application-input-controller-lock controller))
-        (unless (or (application-input-controller-stopping-p controller)
-                    (application-input-controller-localgroup-handoff-p controller))
-          (let ((index
-                  (application-input-controller-follow-up-edit-index controller))
-                (items (application-input-controller-work-items controller)))
-            (setf resumed-p
-                  (application-input-controller-queued-work-paused-p controller)
-                  (application-input-controller-queued-work-paused-p controller) nil
-                  (application-input-controller-follow-up-edit-index controller) nil
-                  (application-input-controller-follow-up-edit-work controller) nil
-                  queued-p t
-                  (application-input-controller-live-vault-sync-p controller) t)
-            (if index
-                (deque-insert items (min index (deque-count items)) work)
-                (deque-push-back items work)))
-          (sb-thread:condition-broadcast
-           (application-input-controller-condition-variable controller))))
+          (unless (application-input-controller-stopping-p controller)
+           (let ((index
+                   (application-input-controller-follow-up-edit-index controller))
+                 (items (application-input-controller-work-items controller)))
+             (setf resumed-p
+                   (application-input-controller-queued-work-paused-p controller)
+                   (application-input-controller-queued-work-paused-p controller) nil
+                   (application-input-controller-follow-up-edit-index controller) nil
+                   (application-input-controller-follow-up-edit-work controller) nil
+                   queued-p t
+                   (application-input-controller-live-vault-sync-p controller) t)
+             (if index
+                 (deque-insert items (min index (deque-count items)) work)
+                 (deque-push-back items work)))
+           (sb-thread:condition-broadcast
+            (application-input-controller-condition-variable controller))))
       (when resumed-p
         (terminal-ui-set-notice
          (application-ui (application-input-controller-application controller))
@@ -1235,9 +1226,8 @@ input history, or kept in the recovery vault."
 
 QUEUE-INDEX restores recalled work to its virtual FIFO position when INPUT does
 not steer the active primary message."
-  (when (or (application-input-controller-stopping-p controller)
-            (application-input-controller-localgroup-handoff-p controller))
-    (return-from application-input-controller--admit-primary-prompt-locked nil))
+    (when (application-input-controller-stopping-p controller)
+      (return-from application-input-controller--admit-primary-prompt-locked nil))
   (let ((copied-input (user-message-input-copy input))
         (work         (application-input-controller-work-items controller)))
     (cond
@@ -1334,197 +1324,6 @@ the ordinary FIFO queue."
     (when delivery
       (application-world-share (application-input-controller-application controller) input))
     (values (not (null delivery)) (or delivery ':rejected))))
-
-(-> application-prompt--primary-target-p (string) boolean)
-(defun application-prompt--primary-target-p (target)
-  "Return whether TARGET explicitly names the primary agent."
-  (string-equal target "autolith"))
-
-(-> application-prompt--primary-rejection-reason
-    (application-input-controller)
-    keyword)
-(defun application-prompt--primary-rejection-reason (controller)
-  "Return the stable reason CONTROLLER rejected a validated primary prompt."
-  (cond
-    ((not (application-input-controller-pending-persistence-enabled-p controller))
-     ':storage-unavailable)
-    (t
-     (with-lock-held ((application-input-controller-lock controller))
-       (cond
-         ((application-input-controller-stopping-p controller)
-          ':stopping)
-         ((application-input-controller-localgroup-handoff-p controller)
-          ':handoff)
-         (t
-          ':unavailable))))))
-
-(-> application-prompt--visible-child-jobs (application) list)
-(defun application-prompt--visible-child-jobs (application)
-  "Return task jobs visible to APPLICATION's primary agent."
-  (let ((orchestrator (application--task-orchestrator application))
-        (viewer
-          (and (slot-boundp application 'agent)
-               (application-agent application))))
-    (unless (and (typep orchestrator 'task-orchestrator)
-                 (typep viewer 'agent))
-      (prompt--error
-       ':task-runtime-unavailable
-       "No task runtime is available for named child prompting."))
-    (remove-if-not
-     (lambda (job) (typep job 'task-job))
-     (task-orchestrator-list-visible-jobs orchestrator viewer))))
-
-(-> application-prompt--find-child (application string) task-job)
-(defun application-prompt--find-child (application target)
-  "Return TARGET's unique visible child, matching display name before job ID."
-  (let* ((jobs (application-prompt--visible-child-jobs application))
-         (name-matches
-           (remove-if-not
-            (lambda (job)
-              (string-equal target (task-job-display-name job)))
-            jobs)))
-    (cond
-      ((> (length name-matches) 1)
-       (prompt--error
-        ':ambiguous-target
-        (format nil "More than one visible child is named ~S." target)
-        :target target))
-      ((first name-matches)
-       (first name-matches))
-      (t
-       (let ((identifier-matches
-               (remove-if-not
-                (lambda (job)
-                  (string-equal target (session-job-identifier job)))
-                jobs)))
-         (cond
-           ((> (length identifier-matches) 1)
-            (prompt--error
-             ':ambiguous-target
-             (format nil "More than one visible child has job ID ~S." target)
-             :target target))
-           ((first identifier-matches)
-            (first identifier-matches))
-           (t
-            (prompt--error
-             ':unknown-target
-             (format nil "No visible child is named ~S." target)
-             :target target))))))))
-
-(-> application-prompt--child-admission-error
-    (task-job string keyword)
-    nil)
-(defun application-prompt--child-admission-error (job target reason)
-  "Signal a typed prompt failure for JOB's rejected steering REASON."
-  (let* ((snapshot            (task-job-snapshot job))
-         (state               (getf snapshot :state))
-         (cancellation-reason (getf snapshot :cancellation-reason))
-         (name                (task-job-display-name job)))
-    (cond
-      (cancellation-reason
-       (prompt--error
-        ':cancelled
-        (format nil "Child ~A is cancelling or cancelled." name)
-        :target target))
-      ((eq state ':queued)
-       (prompt--error
-        ':not-running
-        (format nil "Child ~A is queued and not yet running." name)
-        :target target))
-      ((task--terminal-state-p state)
-       (prompt--error
-        ':terminal
-        (format nil "Child ~A has already reached terminal state ~S." name state)
-        :target target))
-      ((eq reason ':full)
-       (prompt--error
-        ':full
-        (format nil "Child ~A cannot retain another prompt yet." name)
-        :target target))
-      ((eq reason ':content-too-large)
-       (prompt--error
-        ':content-too-large
-        (format nil "Prompt content exceeds child ~A's steering limit." name)
-        :target target))
-      ((eq reason ':closing)
-       (prompt--error
-        ':closing
-        (format nil "Child ~A is closing and cannot accept another prompt." name)
-        :target target))
-      ((eq reason ':closed)
-       (prompt--error
-        ':closed
-        (format nil "Child ~A has closed prompt admission." name)
-        :target target))
-      (t
-       (prompt--error
-        ':not-running
-        (format nil "Child ~A is not accepting prompts." name)
-        :target target)))))
-
-(defmethod application-submit-prompt
-    ((application application) target input &key (prefer-steering-p t))
-  "Prompt APPLICATION's primary agent or steer one visible running child."
-  (if (application-prompt--primary-target-p target)
-      (let ((controller
-              (and (slot-boundp application 'input-controller)
-                   (application-input-controller application))))
-        (unless (typep controller 'application-input-controller)
-          (prompt--error
-           ':controller-unavailable
-           "Primary Autolith has no active input controller."
-           :target target))
-        (application-localgroup-resume application)
-        (multiple-value-bind (accepted-p delivery)
-            (application-input-controller-submit-primary-prompt
-             controller input :prefer-steering-p prefer-steering-p)
-          (unless accepted-p
-            (let ((reason
-                    (if (eq delivery ':no-agent)
-                        ':no-agent
-                        (application-prompt--primary-rejection-reason controller))))
-              (prompt--error
-               reason
-               (format nil "Primary Autolith is not accepting prompts (~(~A~))."
-                       reason)
-               :target target)))
-          (list :prompt
-                :accepted-p t
-                :target             ':autolith
-                :delivery           delivery
-                :content-characters (length (user-message-input-text input))
-                :image-count        (length
-                                     (user-message-input-image-pathnames input)))))
-      (let* ((controller (application-input-controller application))
-             (job        (application-prompt--find-child application target))
-             (snapshot   (task-job-snapshot job)))
-        (unless (and controller
-                     (application-input-controller--prompt-storage-ready-p
-                      controller))
-          (prompt--error
-           ':storage-unavailable
-           "Recovered input storage is unavailable. Use (vault) to inspect it or (vault-discard) to discard the preserved input before submitting more work."
-           :target target))
-        (unless (eq (getf snapshot :state) ':running)
-          (application-prompt--child-admission-error
-           job target ':not-running))
-        (application-recovery-input-vault-capture-message application input)
-        (multiple-value-bind (entry reason)
-            (task-job-enqueue-steering
-             job input :promote-response-p t)
-          (unless entry
-            (application-prompt--child-admission-error job target reason))
-          (list :prompt
-                :accepted-p t
-                :target             ':child
-                :child-name         (task-job-display-name job)
-                :job-id             (session-job-identifier job)
-                :execution-id       (task-job-execution-identifier job)
-                :steering-id        (agent-steering-input-identifier entry)
-                :delivery           ':steering
-                :content-characters (length (user-message-input-text input))
-                :image-count        (length
-                                     (user-message-input-image-pathnames input)))))))
 
 (-> application-input-controller--take-steering
     (application-input-controller)
@@ -2258,27 +2057,11 @@ may execute immediately; other Lisp waits for the idle boundary."
     (application-input-controller (or string user-message-input)
      &key (:prefer-steering-p boolean))
     boolean)
-(defun application-input-controller--prompt
-    (controller input &key (prefer-steering-p t))
-  "Submit terminal INPUT through the prompt protocol and report acceptance."
-  (let ((application
-          (application-input-controller-application controller)))
-    (handler-case
-        (progn
-          (application-submit-prompt
-           application "autolith" input
-           :prefer-steering-p prefer-steering-p)
-          t)
-      (prompt-error (condition)
-        ;; Storage failures are reported elsewhere, and a channel without an
-        ;; agent has shown its refusal already.
-        (unless (member (prompt-error-reason condition) '(:storage-unavailable :no-agent))
-          (let ((message (autolith-error-message condition)))
-            (application-present
-             application
-             (format nil "· ~A"
-                     (string-downcase message :end (min 1 (length message)))))))
-        nil))))
+(defun application-input-controller--prompt (controller input &key (prefer-steering-p t))
+  "Submit terminal INPUT through the shared input controller."
+  (application-localgroup-resume (application-input-controller-application controller))
+  (nth-value 0 (application-input-controller-submit-primary-prompt
+                controller input :prefer-steering-p prefer-steering-p)))
 
 (-> application-input-controller--call-submitted-input
     (application-input-controller (or string user-message-input) function) t)
@@ -3409,32 +3192,6 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                  (application-input-controller-active-p controller) t)
            (return))
           ((and (not (application-localgroup-paused-p application))
-                ;; A ready handoff preempts queued work and steering alike:
-                ;; both are durably persisted and the detached replacement
-                ;; restores them, so detaching changes nothing about them.
-                ;; Only startup work, pending boundary applies, and an open
-                ;; follow-up edit still hold the handoff: those resolve in
-                ;; this process, and a recalled draft lives only here.
-                (deque-empty-p
-                 (application-input-controller-initial-work-items controller))
-                (deque-empty-p
-                 (application-input-controller-pending-apply-items controller))
-                (or (deque-empty-p
-                     (application-input-controller-work-items controller))
-                    ;; With queued work the clause must match only when a
-                    ;; handoff is actually takable, or it would starve the
-                    ;; work-dispatch clause below.
-                    (and (not (application-input-controller-queued-work-paused-p
-                               controller))
-                         (application-localgroup-ready-handoff-p application)))
-                (null
-                 (application-input-controller-follow-up-edit-index controller)))
-           (let ((mode (application-localgroup-take-ready-handoff application)))
-             (when mode
-               (setf work (list ':localgroup-handoff mode)
-                     (application-input-controller-active-p controller) t)
-               (return))))
-          ((and (not (application-localgroup-paused-p application))
                 (not
                  (application-input-controller-queued-work-paused-p controller))
                 (not
@@ -3463,23 +3220,22 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
         (let* ((cache-wait        (application-input-controller--idle-compaction-wait controller))
                (deadline          (application-job-completions--next-time controller))
                (completion-wait   (and deadline (max 1/100 (- deadline (get-universal-time)))))
-               (handoff-wait      (and (application-localgroup-handoff-pending-p application) 1/10))
                (cancellation-wait (and (application-job-completions--presentation-admissible-p controller)
                                        (task-cancellation-scan-wait (application-agent application))))
-               (waits             (remove nil (list completion-wait handoff-wait cache-wait cancellation-wait)))
+               (waits             (remove nil (list completion-wait cache-wait cancellation-wait)))
                (wait-seconds      (and waits (apply #'min waits))))
-          (when (and cache-wait (zerop cache-wait))
-            (setf work (list ':idle-compaction (application-idle-compaction-episode application))
-                  (application-input-controller-active-p controller) t)
-            (return))
-          (if wait-seconds
-              (condition-wait
-               (application-input-controller-condition-variable controller)
-               (application-input-controller-lock controller)
-               :timeout wait-seconds)
-              (condition-wait
-               (application-input-controller-condition-variable controller)
-               (application-input-controller-lock controller)))))
+         (when (and cache-wait (zerop cache-wait))
+           (setf work (list ':idle-compaction (application-idle-compaction-episode application))
+                 (application-input-controller-active-p controller) t)
+           (return))
+         (if wait-seconds
+             (condition-wait
+              (application-input-controller-condition-variable controller)
+              (application-input-controller-lock controller)
+              :timeout wait-seconds)
+             (condition-wait
+              (application-input-controller-condition-variable controller)
+              (application-input-controller-lock controller)))))
       (when work
         (setf (application-input-controller-active-work-kind controller)
               (first work)))
@@ -4029,13 +3785,7 @@ however it ended."
                               (application-input-controller--apply-pending-commands
                                controller :agent owner)))))))))))
              (:project-adaptation-offer
-              (application-maybe-offer-project-adaptation application))
-             (:localgroup-handoff
-              (handler-case
-                  (application-localgroup-run-handoff
-                   application (second work) controller)
-                (localgroup-error (condition)
-                  (application-handle-expected-error application condition)))))
+              (application-maybe-offer-project-adaptation application)))
            ;; Non-message input does not reset the per-message continuation budget.
            (when (and (member (first work) '(:command :lisp :native-lisp))
                       (application--take-deferred-goal-continuation-p application work))

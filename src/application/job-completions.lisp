@@ -80,7 +80,6 @@ Persistence and follow-up editing restrict inference, not terminal presentation.
          (typep (application-agent application) 'agent)
          (not (application-input-controller-stopping-p controller))
          (not (application-input-controller-failure controller))
-         (not (application-input-controller-localgroup-handoff-p controller))
          (not (application-input-controller-queued-work-paused-p controller))
          (not (if session-locked-p
                   (let ((session (application-localgroup-session application)))
@@ -96,7 +95,6 @@ Persistence and follow-up editing restrict inference, not terminal presentation.
          (typep (application-agent application) 'agent)
          (not (application-input-controller-stopping-p controller))
          (not (application-input-controller-failure controller))
-         (not (application-input-controller-localgroup-handoff-p controller))
          (not (application-input-controller-queued-work-paused-p controller))
          (null (application-input-controller-follow-up-edit-index controller))
          (application-input-controller-pending-persistence-enabled-p controller)

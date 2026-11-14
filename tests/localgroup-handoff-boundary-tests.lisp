@@ -1,5 +1,31 @@
 (in-package #:autolith)
 
+(-> test-localgroup--write-startup-ticket
+    (application localgroup-session keyword)
+    pathname)
+(defun test-localgroup--write-startup-ticket (application session mode)
+  "Publish a startup ticket for cancellation boundary tests."
+  (let ((conversation (application-conversation application)))
+    (unless (conversation-persisted-p conversation)
+      (conversation-append-record conversation (list :localgroup-handoff :mode mode))))
+  (let* ((configuration (application-configuration application))
+         (conversation  (application-conversation application))
+         (pathname
+          (localgroup-handoff--pathname configuration
+                                        (image-daemon:daemon-runtime-identifier
+                                         session)))
+         (draft         (line-editor-text (terminal-ui-editor (application-ui application))))
+         (record
+          (list :localgroup-handoff :version *localgroup-handoff-version* :session-id
+                (image-daemon:daemon-runtime-identifier session) :token
+                (image-daemon:daemon-runtime-token session) :created-at
+                (image-daemon:daemon-runtime-created-at session) :mode mode :state
+                ':pending :fresh-conversation-p nil :old-pid (current-process-id)
+                :replacement-pid nil :conversation-id
+                (conversation-identifier conversation) :draft draft)))
+    (localgroup-handoff--write-record pathname record)
+    pathname))
+
 ;;;; -- Localgroup Handoff Boundary Tests --
 
 (-> test-localgroup-handoff-cancellation () null)
@@ -35,7 +61,7 @@
              (setf application new-application
                    session (localgroup-start new-application)
                    pathname
-                   (localgroup-handoff--write
+                   (test-localgroup--write-startup-ticket
                     new-application session ':detach)))
            (let ((record (localgroup-handoff--read configuration pathname)))
              (setf process
@@ -69,7 +95,7 @@
                     (image-daemon:handoff-ticket-sibling pathname ':cancelled)))
               "a delayed replacement cannot reclaim an invalidated handoff"))
            (setf claimed-pathname
-                 (localgroup-handoff--write application session ':detach))
+                 (test-localgroup--write-startup-ticket application session ':detach))
            (let ((record
                    (localgroup-handoff--read
                     configuration claimed-pathname)))

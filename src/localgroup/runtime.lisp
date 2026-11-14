@@ -24,16 +24,6 @@
     :accessor      localgroup-session-checkpoint-reconnect-id
     :type          (option string)
     :documentation "The checkpoint transition that created this endpoint.")
-   (handoff-mode
-    :initform      nil
-    :accessor      localgroup-session-handoff-mode
-    :type          (option keyword)
-    :documentation "The detach or take-over process handoff waiting for strict idle.")
-   (handoff-running-p
-    :initform      nil
-    :accessor      localgroup-session-handoff-running-p
-    :type          boolean
-    :documentation "Whether a detached replacement is being started.")
    (detached-explicitly-p
     :initarg       :detached-explicitly-p
     :initform      nil
@@ -175,20 +165,16 @@ conversation transaction can roll back before releasing either lease."
 (-> application-localgroup-pause (application) boolean)
 (defun application-localgroup-pause (application)
   "Pause queued work and request cancellation of APPLICATION's active turn."
-  (let ((session    (application-localgroup-session application))
-        (controller (application-input-controller application)))
-    (unless (and session controller) (return-from application-localgroup-pause nil))
-    (with-lock-held ((image-daemon:daemon-runtime-lock session))
-      (when
-          (or (localgroup-session-handoff-mode session)
-              (localgroup-session-handoff-running-p session))
-        (return-from application-localgroup-pause nil))
-      (setf (localgroup-session-paused-p session) t))
-    (application-input-controller--request-active-turn-cancellation controller)
-    (with-lock-held ((application-input-controller-lock controller))
-      (sb-thread:condition-broadcast
-       (application-input-controller-condition-variable controller)))
-    t))
+    (let ((session    (application-localgroup-session application))
+          (controller (application-input-controller application)))
+      (unless (and session controller) (return-from application-localgroup-pause nil))
+      (with-lock-held ((image-daemon:daemon-runtime-lock session))
+        (setf (localgroup-session-paused-p session) t))
+      (application-input-controller--request-active-turn-cancellation controller)
+      (with-lock-held ((application-input-controller-lock controller))
+        (sb-thread:condition-broadcast
+         (application-input-controller-condition-variable controller)))
+      t))
 
 (-> localgroup--task-counts (application) (values (integer 0) (integer 0)))
 (defun localgroup--task-counts (application)
@@ -220,7 +206,6 @@ conversation transaction can roll back before releasing either lease."
          (conversation      (application-conversation application))
          (controller        (application-input-controller application))
          (paused-p          (application-localgroup-paused-p application))
-         (handoff-p         (application-localgroup-handoff-pending-p application))
          (active-p          nil)
          (queued-count      0)
          (steering-count    0)
@@ -248,17 +233,15 @@ conversation transaction can roll back before releasing either lease."
     (multiple-value-setq (task-live-count task-active-count)
       (localgroup--task-counts application))
     (let* ((waiting-for-input-p
-            (and controller (not active-p) (zerop queued-count) (zerop steering-count)
-                 (not recalled-p) (not stopping-p) (not cancelling-p) (not handoff-p)
-                 (not reader-paused-p) (not failed-p)))
+             (and controller (not active-p) (zerop queued-count) (zerop steering-count)
+                  (not recalled-p) (not stopping-p) (not cancelling-p)
+                  (not reader-paused-p) (not failed-p)))
            (idle-p (and waiting-for-input-p (not paused-p) (zerop task-live-count)))
            (state
             (cond (stopping-p
                    ':stopping)
                   (failed-p
                    ':failed)
-                  (handoff-p
-                   ':detaching)
                   (paused-p
                    ':paused)
                   (cancelling-p
@@ -276,7 +259,7 @@ conversation transaction can roll back before releasing either lease."
             (conversation-identifier conversation) :pid (current-process-id)
             :autolith-version *autolith-version* :state state :idle-p (not (null idle-p))
             :waiting-for-input-p (not (null waiting-for-input-p)) :paused-p
-            (not (null paused-p)) :handoff-p (not (null handoff-p)) :cwd
+              (not (null paused-p)) :cwd
             (namestring (config :working-directory configuration)) :conversation-id
             (conversation-identifier conversation) :conversation-display-id
             (conversation-identifier-display (conversation-identifier conversation))
@@ -466,14 +449,6 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
          (application (localgroup-session-application session))
          (controller  (application-input-controller application))
          (terminal    (localgroup--terminal session)))
-    (when (and (eq mode ':take-over)
-               (eq (image-daemon:relay-attachment-kind terminal) ':foreground))
-      (let ((response (application-localgroup-request-handoff application ':take-over)))
-        (daemon-write-packet
-         stream (list :handoff
-                      :session-id (image-daemon:daemon-runtime-identifier session)
-                      :old-pid (getf (rest response) :old-pid))))
-      (return-from localgroup--serve-attachment nil))
     (let ((attachment (image-daemon:attachment-create socket stream mode)))
       (labels ((attach ()
                  (with-lock-held ((image-daemon:daemon-runtime-lock session))
@@ -519,17 +494,19 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
 
 (-> localgroup--detach-terminal (localgroup-session) list)
 (defun localgroup--detach-terminal (session)
-  "Release SESSION's current controlling terminal or schedule foreground detach."
+  "Release SESSION's current controlling terminal."
   (let* ((application (localgroup-session-application session))
          (terminal    (localgroup--terminal session)))
-    (if (eq (image-daemon:relay-attachment-kind terminal) ':foreground)
-        (application-localgroup-request-handoff application ':detach)
-        (progn
-         (localgroup--mark-explicit-detach session)
-         (image-daemon:relay-release-control terminal)
-         (localgroup--detach-live-region application)
-         (list :ok :operation :detach :scheduled-p nil :session-id
-               (image-daemon:daemon-runtime-identifier session))))))
+    (when (eq (image-daemon:relay-attachment-kind terminal) ':foreground)
+      (error 'localgroup-error
+             :message    "This foreground process cannot detach. Open a supervised session first."
+             :operation  ':detach
+             :session-id (image-daemon:daemon-runtime-identifier session)))
+    (localgroup--mark-explicit-detach session)
+    (image-daemon:relay-release-control terminal)
+    (localgroup--detach-live-region application)
+    (list :ok :operation :detach :scheduled-p nil :session-id
+          (image-daemon:daemon-runtime-identifier session))))
 
 (-> localgroup-finish-attachments
     ((option application)

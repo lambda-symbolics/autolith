@@ -1627,15 +1627,11 @@
 
 (define-test-suite localgroup-handoff
   test-localgroup-handoff-site-arguments
-  test-localgroup-handoff-records
-  test-localgroup-handoff-scheduling
-  test-localgroup-detach-preempts-active-work
   test-localgroup-client-first-resume
   test-localgroup-abandoned-session-exit
   test-localgroup-lingering-session
   test-localgroup-fresh-session-spawn
-  test-localgroup-world-spawn
-  test-localgroup-process-handoff)
+  test-localgroup-world-spawn)
 
 (define-test-suite localgroup-handoff-boundary
   test-localgroup-handoff-cancellation

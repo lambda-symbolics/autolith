@@ -69,6 +69,13 @@ A present NIL entry records ambiguous provenance.")
 (defgeneric application-operation-immediate-arguments-p (operation argument-forms)
   (:documentation "Return whether OPERATION may inspect ARGUMENT-FORMS immediately."))
 
+(defmethod application-operation-immediate-arguments-p
+    ((operation application-tool-operation) argument-forms)
+  "Permit computed channel messages at the local user boundary."
+  (declare (ignore argument-forms))
+  (or (typep (application-operation-backend operation) 'channel-tool)
+      (call-next-method)))
+
 (defgeneric application-operation-invoke (operation application arguments &key context)
   (:documentation "Invoke OPERATION with native arguments, a parsed command invocation, or a tool's JSON object and explicit CONTEXT."))
 
@@ -97,206 +104,20 @@ A present NIL entry records ambiguous provenance.")
 (defvar *application-local-user-evaluation-p* nil
   "Whether evaluation came from one explicit local Lisp submission.")
 
-(define-condition prompt-error (autolith-error)
-  ((reason
-    :initarg       :reason
-    :reader        prompt-error-reason
-    :type          keyword
-    :documentation "The stable reason prompt admission failed.")
-   (target
-    :initarg       :target
-    :initform      nil
-    :reader        prompt-error-target
-    :type          t
-    :documentation "The requested primary or child target, when available."))
-  (:documentation "A local PROMPT form could not be validated or admitted."))
-
-(defparameter *prompt-maximum-characters* 131072
-  "The largest text accepted by one local PROMPT form.")
-
-(defparameter *prompt-target-maximum-characters* 200
-  "The largest prompt target name accepted by one local PROMPT form.")
-
-(-> prompt--error (keyword string &key (:target t)) nil)
-(defun prompt--error (reason message &key target)
-  "Signal a typed prompt failure with stable REASON and optional TARGET."
-  (error 'prompt-error :message message :reason reason :target target))
-
-(-> prompt--target-name ((or string symbol)) non-empty-string)
-(defun prompt--target-name (target)
-  "Return TARGET as a bounded case-preserving name or signal PROMPT-ERROR."
-  (let ((name (string target)))
-    (unless (and (non-empty-string-p name)
-                 (<= (length name) *prompt-target-maximum-characters*))
-      (prompt--error
-       ':invalid-target
-       (format nil "PROMPT target must contain from 1 to ~D characters."
-               *prompt-target-maximum-characters*)
-       :target target))
-    (copy-seq name)))
-
-(-> prompt--image-pathnames (t) list)
-(defun prompt--image-pathnames (images)
-  "Return validated local image pathnames from IMAGES or signal PROMPT-ERROR."
-  (let ((locations
-          (cond
-            ((null images)
-             nil)
-            ((typep images '(or string pathname))
-             (list images))
-            ((handler-case
-                 (and (listp images) (integerp (list-length images)))
-               (type-error ()
-                 nil))
-             images)
-            (t
-             (prompt--error
-              ':invalid-images
-              "PROMPT :IMAGES must be a pathname or a proper list of pathnames.")))))
-    (unless (every (lambda (location)
-                     (typep location '(or string pathname)))
-                   locations)
-      (prompt--error
-       ':invalid-images
-       "Every PROMPT image must be a string or pathname."))
-    (mapcar
-     (lambda (location)
-       (handler-case
-           (image-input-validate-pathname location)
-         (autolith-error (condition)
-           (prompt--error ':invalid-image
-                          (autolith-error-message condition)
-                          :target location))))
-     locations)))
-
-(-> prompt--input (t t) (or string user-message-input))
-(defun prompt--input (content images)
-  "Return validated prompt CONTENT with optional local IMAGES."
-  (cond
-    ((typep content 'user-message-input)
-     (when images
-       (prompt--error
-        ':invalid-images
-        "A rich PROMPT input cannot also supply :IMAGES."))
-     (let* ((text (user-message-input-text content))
-            (image-pathnames
-              (prompt--image-pathnames
-               (user-message-input-image-pathnames content))))
-       (unless (or (plusp (length text)) image-pathnames)
-         (prompt--error ':empty-content "PROMPT content must not be empty."))
-       (when (> (length text) *prompt-maximum-characters*)
-         (prompt--error
-          ':content-too-large
-          (format nil "PROMPT content exceeds the ~D-character limit."
-                  *prompt-maximum-characters*)))
-       (user-message-input-create
-        :text            (copy-seq text)
-        :image-pathnames image-pathnames)))
-    ((stringp content)
-     (let* ((image-pathnames (prompt--image-pathnames images))
-            (labels
-              (format nil "~{[Image #~D]~^ ~}"
-
-                      (loop for number from 1 to (length image-pathnames)
-                            collect number)))
-            (text
-              (cond
-                ((null image-pathnames)
-                 content)
-                ((plusp (length content))
-                 (format nil "~A ~A" labels content))
-                (t
-                 labels))))
-       (unless (plusp (length text))
-         (prompt--error ':empty-content "PROMPT content must not be empty."))
-       (when (> (length text) *prompt-maximum-characters*)
-         (prompt--error
-          ':content-too-large
-          (format nil "PROMPT content exceeds the ~D-character limit."
-                  *prompt-maximum-characters*)))
-       (if image-pathnames
-           (user-message-input-create
-            :text            text
-            :image-pathnames image-pathnames)
-           (copy-seq text))))
-    (t
-     (prompt--error
-      ':invalid-content
-      "PROMPT content must be a string or rich user message input."))))
-
-(defgeneric application-submit-prompt
-    (application target input &key prefer-steering-p)
-  (:documentation
-   "Submit INPUT to primary AUTOLITH or to one named running child TARGET."))
-
 (-> read-file ((or string pathname)) string)
 (defun read-file (path)
-  "Read UTF-8 text from PATH without exceeding the local prompt content bound."
-  (let ((pathname   (pathname path))
-        (buffer     (make-string 4096))
-        (output     (make-string-output-stream))
-        (characters 0))
-    (with-open-file (stream pathname
-                            :direction       ':input
-                            :external-format ':utf-8)
-      (loop for count = (read-sequence buffer stream)
-            while (plusp count)
-            do (incf characters count)
-               (when (> characters *prompt-maximum-characters*)
-                 (prompt--error
-                  ':content-too-large
-                  (format nil "File ~A exceeds the PROMPT content limit."
-                          (namestring pathname))
-                  :target (namestring pathname)))
-               (write-string buffer output :end count)))
-    (get-output-stream-string output)))
-
-(-> prompt (&rest t) list)
-(defun prompt (&rest arguments)
-  "Prompt primary Autolith or steer a named running child with optional images."
-  (unless (typep *application-operation-application* 'application)
-    (prompt--error
-     ':no-application
-     "PROMPT requires an active local Autolith evaluation."))
-  (unless (and arguments (oddp (length arguments)))
-    (prompt--error
-     ':malformed-arguments
-     "Use (prompt [:to TARGET] [:images IMAGES] CONTENT)."))
-  (let ((target            'autolith)
-        (images            nil)
-        (target-supplied-p nil)
-        (images-supplied-p nil)
-        (content           (first (last arguments))))
-    (loop for (key value) on (butlast arguments) by (partial #'nthcdr 2)
-          do (case key
-               (:to
-                (when target-supplied-p
-                  (prompt--error
-                   ':malformed-arguments
-                   "PROMPT :TO may appear only once."))
-                (setf target value
-                      target-supplied-p t))
-               (:images
-                (when images-supplied-p
-                  (prompt--error
-                   ':malformed-arguments
-                   "PROMPT :IMAGES may appear only once."))
-                (setf images value
-                      images-supplied-p t))
-               (otherwise
-                (prompt--error
-                 ':malformed-arguments
-                 "Use only :TO and :IMAGES before PROMPT content."))))
-    (unless (typep target '(or string symbol))
-      (prompt--error
-       ':invalid-target
-       "PROMPT target must be a symbol or string."
-       :target target))
-    (application-submit-prompt
-     *application-operation-application*
-     (prompt--target-name target)
-     (prompt--input content images)
-     :prefer-steering-p t)))
+  "Read bounded UTF-8 text from PATH for a local message."
+  (with-open-file (stream path :external-format ':utf-8)
+    (let ((buffer (make-string 4096))
+          (count  0))
+      (with-output-to-string (output)
+        (loop for size = (read-sequence buffer stream)
+              while (plusp size)
+              do (incf count size)
+                 (when (> count *world-message-text-limit*)
+                   (error 'tool-error :tool-name "read-file"
+                          :message               "The file exceeds the channel message text limit."))
+                 (write-string buffer output :end size))))))
 
 (defmacro eval-now (&body body)
   "Evaluate BODY as explicit local input even while an agent turn is active.
@@ -313,22 +134,15 @@ local-user override."
 
 (defparameter *application-local-operations*
   (list
-   (make-instance 'application-local-operation
-                  :name        "prompt"
-                  :description "Prompt primary Autolith or steer a named running child."
-                  :backend     'prompt)
-   (make-instance 'application-local-operation
-                  :name        "read-file"
-                  :description "Read bounded UTF-8 text for a computed local prompt."
-                  :backend     'read-file)
-   (make-instance 'application-local-operation
-                  :name        "eval-now"
-                  :description "Force explicit local Lisp to run during an active turn."
-                  :backend     'eval-now)
-   (make-instance 'application-local-operation
-                  :name        "vault-contents"
-                  :description "Read or edit the queued input vault."
-                  :backend     'vault-contents))
+   (make-instance 'application-local-operation :name "read-file" :description
+                  "Read bounded UTF-8 text for a computed local message."
+                  :backend 'read-file)
+   (make-instance 'application-local-operation :name "eval-now" :description
+                  "Force explicit local Lisp to run during an active turn."
+                  :backend 'eval-now)
+   (make-instance 'application-local-operation :name "vault-contents"
+                  :description "Read or edit the queued input vault." :backend
+                  'vault-contents))
   "The built-in local forms advertised beside registered commands and tools.")
 
 (defgeneric tool-user-callable-p (tool)
@@ -347,6 +161,11 @@ local-user override."
 (defgeneric tool-active-turn-action (tool)
   (:documentation
    "Return :EXECUTE or :HOLD for an explicit local call to TOOL during an active turn."))
+
+(defmethod tool-active-turn-action ((tool channel-tool))
+  "Admit channel messages and subscriptions beside an active turn."
+  (declare (ignore tool))
+  ':execute)
 
 (defmacro define-tool-active-turn-actions (action &body specifications)
   "Define constant ACTION methods for tool classes in SPECIFICATIONS."
@@ -775,22 +594,31 @@ such as :|filePath|, was escaped on purpose and keeps its case."
       (error 'application-operation-value-error
              :reason (portable-value-error-reason condition)))))
 
-(-> application-operation--tool-arguments (list) json-object)
-(defun application-operation--tool-arguments (arguments)
-  "Translate alternating Lisp keyword ARGUMENTS into one JSON object."
-  (unless (and (proper-list-p arguments)
-               (evenp (length arguments)))
-    (error 'configuration-error
-           :message
+(-> application-operation--tool-arguments (list &optional (option tool)) json-object)
+(defun application-operation--tool-arguments (arguments &optional tool)
+  "Translate native keyword arguments to JSON, expanding rich channel messages."
+  (unless (and (proper-list-p arguments) (evenp (length arguments)))
+    (error 'configuration-error :message
            "A local tool call requires alternating keyword and value arguments."))
+  (when
+      (and (typep tool 'channel-tool) (string= (tool-name tool) "send")
+           (typep (getf arguments :text) 'user-message-input))
+    (when (nth-value 1 (get-properties arguments '(:images)))
+      (error 'tool-error :tool-name "channel.send" :message
+             "Rich content already supplies its images."))
+    (let ((input (getf arguments :text)))
+      (setf arguments (copy-list arguments)
+            (getf arguments :text) (user-message-input-text input)
+            (getf arguments :images)
+            (user-message-input-image-pathnames input))))
   (let ((object (json-object)))
     (loop for (key value) on arguments by (partial #'nthcdr 2)
           for name = (application-operation--json-key key)
-          do
-             (when (nth-value 1 (gethash name object))
-               (error 'application-operation-value-error :reason ':duplicate-key))
-             (setf (gethash name object)
-                   (application-operation--json-value value)))
+          do (when (nth-value 1 (gethash name object))
+               (error 'application-operation-value-error :reason
+                      ':duplicate-key)) (setf (gethash name object)
+                                              (application-operation--json-value
+                                               value)))
     object))
 
 (-> application-operation-tool-call-form (string (option json-object)) string)
@@ -1052,7 +880,7 @@ No live result, tool, or native data object escapes in the snapshot."
          (canonical-name (tool-canonical-name tool))
          (json-arguments (if (hash-table-p arguments)
                              arguments
-                             (application-operation--tool-arguments arguments)))
+                             (application-operation--tool-arguments arguments tool)))
          (decoded-arguments
            (tool-decode-arguments tool (json-encode json-arguments))))
     (unless (json-object-p decoded-arguments)
