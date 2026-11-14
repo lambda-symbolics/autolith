@@ -85,6 +85,76 @@
   (with-open-file (stream pathname :element-type '(unsigned-byte 8))
     (list :file (file-namestring pathname) :bytes (file-length stream))))
 
+(-> world-restart-tests--phase-pathname (configuration) pathname)
+(defun world-restart-tests--phase-pathname (configuration)
+  "Return this fixture's independently written checkpoint phase log."
+  (merge-pathnames "checkpoint-phases.sexp" (config :state-root configuration)))
+
+(-> world-restart-tests--write-phase-probe (stream pathname) null)
+(defun world-restart-tests--write-phase-probe (stream pathname)
+  "Write test-only instrumentation into the fresh process's executable init."
+  (write
+   `(let ((prepare (symbol-function 'checkpoint--prepare-saver))
+          (records 0) (armed-p nil) (ordinal 0) (busy-p nil) (failed-p nil)
+          (worker-kind "") (active-p nil))
+      (declare (notinline write close))
+      (labels ((record-phase (phase)
+                 "Append one bounded record, refusing reentry and stopping after any I/O error."
+                 (when (and (not busy-p) (not failed-p) (< records 64))
+                   (setf busy-p t)
+                   (unwind-protect
+                        (handler-case
+                            (progn
+                              (incf records)
+                              (with-open-file (output ,pathname :direction ':output :if-exists ':append
+                                                               :if-does-not-exist ':create)
+                                (write (list :phase phase :pid (current-process-id) :gc ordinal
+                                             :worker-kind worker-kind :active-p active-p)
+                                       :stream output :readably t)
+                                (terpri output)))
+                          (error () (setf failed-p t)))
+                     (setf busy-p nil)))))
+        (setf (symbol-function 'checkpoint--prepare-saver)
+              (lambda (worker generation)
+                (setf armed-p t ordinal 0
+                      worker-kind (symbol-name (type-of worker))
+                      active-p (not (null *active-application*)))
+                (record-phase ':prepare-enter)
+                (multiple-value-prog1 (funcall prepare worker generation)
+                  (record-phase ':prepare-exit))))
+        (push (lambda ()
+                (when armed-p
+                  (incf ordinal)
+                  (record-phase ':after-gc)))
+              sb-ext:*after-gc-hooks*)
+        (setf sb-ext:*save-hooks*
+              (append (list (lambda () (when armed-p (record-phase ':save-hooks-enter))))
+                      sb-ext:*save-hooks*
+                      (list (lambda ()
+                              (when armed-p
+                                (record-phase ':save-hooks-exit)
+                                (setf armed-p nil))))))))
+   :stream stream :readably t)
+  (terpri stream)
+  nil)
+
+(-> world-restart-tests--phases (configuration) list)
+(defun world-restart-tests--phases (configuration)
+  "Read at most 64 phase records from a small log, tolerating an incomplete final record."
+  (let ((pathname (world-restart-tests--phase-pathname configuration)))
+    (if (probe-file pathname)
+        (with-open-file (stream pathname)
+          (if (> (file-length stream) 32768)
+              (list :status ':oversized)
+              (let ((*read-eval* nil)
+                    (end         (list ':end)))
+                (loop for record = (handler-case (read stream nil end)
+                                     (end-of-file () end))
+                      repeat 64
+                      until (eq record end)
+                      collect record))))
+        (list :status ':absent))))
+
 (-> world-restart-tests--diagnostics (configuration (integer 1) t) list)
 (defun world-restart-tests--diagnostics (configuration old-pid process)
   "Collect bounded stage metadata without changing restart or lease state."
@@ -103,6 +173,7 @@
                                                  (platform-process-object-pid *platform* process))))
           :owned-tree-alive-p (probe (lambda () (when process
                                                  (platform-process-object-alive-p *platform* process))))
+          :checkpoint-phases  (probe (lambda () (world-restart-tests--phases configuration)))
           :world-lease        (probe (lambda ()
                                        (multiple-value-list
                                         (platform-file-lock-owner *platform*
@@ -131,9 +202,129 @@
                            (limited (uiop:subdirectories
                                      (merge-pathnames "generations/" (config :data-root configuration))))))))))
 
+(-> world-restart-tests--check-phase-emission-failures () null)
+(defun world-restart-tests--check-phase-emission-failures ()
+  "Inject GC during emission and I/O failures without leaving global hooks or functions replaced."
+  (with-test-configuration (configuration)
+    (configuration-ensure-directories configuration)
+    (let ((old-after-gc-hooks sb-ext:*after-gc-hooks*)
+          (old-save-hooks     sb-ext:*save-hooks*))
+      (unwind-protect
+           (dolist (scenario '(:gc :write :close))
+             (let* ((pathname  (world-restart-tests--phase-pathname configuration))
+                    (operation (if (eq scenario ':close) 'close 'write))
+                    (original  (symbol-function operation))
+                    (attempts  0))
+               (when (probe-file pathname)
+                 (delete-file pathname))
+               (setf sb-ext:*after-gc-hooks* nil sb-ext:*save-hooks* nil)
+               (test-call-with-function-replacements
+                (list (list 'checkpoint--prepare-saver
+                            (lambda (worker generation)
+                              (declare (ignore worker generation))
+                              nil)))
+                (lambda ()
+                  (let* ((source      (with-output-to-string (stream)
+                                        (world-restart-tests--write-phase-probe stream pathname)))
+                         (*read-eval* nil))
+                    (eval (read-from-string source)))
+                  (sb-ext:without-package-locks
+                    (test-call-with-function-replacements
+                     (list (list operation
+                                 (lambda (&rest arguments)
+                                   (incf attempts)
+                                   (case scenario
+                                     (:gc
+                                      (funcall (first sb-ext:*after-gc-hooks*))
+                                      (apply original arguments))
+                                     (:write
+                                      (write-string "(" (getf (rest arguments) :stream))
+                                      (error 'platform-error :operation ':phase-probe
+                                             :message                   "Injected partial-record write failure."))
+                                     (:close
+                                      (apply original arguments)
+                                      (error 'platform-error :operation ':phase-probe
+                                             :message                   "Injected record-close failure."))))))
+                     (lambda ()
+                       (checkpoint--prepare-saver nil nil)
+                       (checkpoint--prepare-saver nil nil))))))
+               (test-assert (if (eq scenario ':gc)
+                                (and (= attempts 4)
+                                     (equal (mapcar (lambda (record) (getf record :phase))
+                                                    (world-restart-tests--phases configuration))
+                                            '(:prepare-enter :prepare-exit :prepare-enter :prepare-exit)))
+                                (= attempts 1))
+                            (format nil "Phase emission scenario ~S made ~D I/O attempts; GC must not reenter and errors must stop emission."
+                                    scenario attempts))))
+        (setf sb-ext:*after-gc-hooks* old-after-gc-hooks
+              sb-ext:*save-hooks* old-save-hooks))))
+  nil)
+
+(-> world-restart-tests--check-phase-probe () null)
+(defun world-restart-tests--check-phase-probe ()
+  "Test generated probes preserve hooks and produce bounded, crash-readable records."
+  (with-test-configuration (configuration)
+    (configuration-ensure-directories configuration)
+    (let* ((pathname             (world-restart-tests--phase-pathname configuration))
+           (order                nil)
+           (old-after-gc-hooks   sb-ext:*after-gc-hooks*)
+           (old-save-hooks       sb-ext:*save-hooks*)
+           (*active-application* nil))
+      (unwind-protect
+           (progn
+             (setf sb-ext:*after-gc-hooks* nil
+                   sb-ext:*save-hooks* (list (lambda () (push ':first order))
+                                            (lambda () (push ':second order))))
+             (test-call-with-function-replacements
+              (list (list 'checkpoint--prepare-saver
+                          (lambda (worker generation)
+                            (declare (ignore worker generation))
+                            nil)))
+              (lambda ()
+                (let* ((source      (with-output-to-string (stream)
+                                      (world-restart-tests--write-phase-probe stream pathname)))
+                       (*read-eval* nil))
+                  (eval (read-from-string source)))
+                (funcall (first sb-ext:*after-gc-hooks*))
+                (test-assert (not (probe-file pathname)) "GC probes are dormant before checkpoint preparation")
+                (checkpoint--prepare-saver nil nil)
+                (funcall (first sb-ext:*after-gc-hooks*))
+                (mapc #'funcall sb-ext:*save-hooks*)
+                (let ((records (world-restart-tests--phases configuration)))
+                  (test-assert (and (equal (reverse order) '(:first :second))
+                                    (equal (mapcar (lambda (record) (getf record :phase)) records)
+                                           '(:prepare-enter :prepare-exit :after-gc :save-hooks-enter :save-hooks-exit))
+                                    (= (getf (third records) :gc) 1))
+                               "phase probes preserve hook order and report the gated GC ordinal")
+                  (with-open-file (stream pathname :direction ':output :if-exists ':append)
+                    (write-string "(" stream))
+                  (test-assert (equal records (world-restart-tests--phases configuration))
+                               "collection tolerates an interrupted final record"))
+                (with-open-file (stream pathname :direction ':output :if-exists ':supersede)
+                  (declare (ignorable stream)))
+                (loop repeat 70 do (checkpoint--prepare-saver nil nil))
+                (let ((count (length (world-restart-tests--phases configuration))))
+                  (test-assert (and (plusp count) (<= count 64))
+                               "probe emission is bounded across repeated preparations"))))
+             (with-open-file (stream pathname :direction ':output :if-exists ':supersede)
+               (dotimes (index 65)
+                 (write (list :phase ':prepare-enter :gc index) :stream stream)
+                 (terpri stream)))
+             (test-assert (= (length (world-restart-tests--phases configuration)) 64)
+                          "collection also bounds an overlong record sequence")
+             (with-open-file (stream pathname :direction ':output :if-exists ':supersede)
+               (write-string (make-string 32769 :initial-element #\Space) stream))
+             (test-assert (eq (getf (world-restart-tests--phases configuration) :status) ':oversized)
+                          "oversized logs are not parsed"))
+        (setf sb-ext:*after-gc-hooks* old-after-gc-hooks
+              sb-ext:*save-hooks* old-save-hooks))))
+  nil)
+
 (-> test-world-server-restart-diagnostics () null)
 (defun test-world-server-restart-diagnostics ()
   "Test timeout evidence for missing, saved and unreadable checkpoint stages."
+  (world-restart-tests--check-phase-probe)
+  (world-restart-tests--check-phase-emission-failures)
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let* ((pid     (current-process-id))
@@ -237,7 +428,9 @@ skips the repository check."
   (source-revision (make-source-provenance (config :source-root configuration))))
 (defun checkpoint--revalidate-source (configuration commit &key allow-dirty-p)
   (declare (ignore configuration commit allow-dirty-p))
-  nil)" stream))
+  nil)" stream)
+    (terpri stream)
+    (world-restart-tests--write-phase-probe stream (world-restart-tests--phase-pathname configuration)))
   (test-call-with-function-replacements
    (list (list 'platform-session-launch-command
                (lambda (platform source-root)
