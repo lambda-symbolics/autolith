@@ -3091,22 +3091,37 @@ usage metadata does not replace coverage; pending responses and compaction do."
 (defun conversation-context-usage-sample-p (sample)
   "Validate bounded fingerprint-only measured context evidence loaded from storage."
   (and (proper-list-p sample)
-       (member (length sample) '(16 18))
-       (typep (getf sample :temporary-characters 0) '(integer 0))
+       (evenp (length sample))
        (loop for tail on sample by (partial #'nthcdr 2)
              always (keywordp (first tail)))
-       (eql 1 (getf sample :format))
+       (case (getf sample :format)
+         (1
+          (member (length sample) '(16 18)))
+         (2
+          (and (= 26 (length sample))
+               (every (lambda (key) (get-properties sample (list key)))
+                      '(:format :soft-header :policy :prompt :tool-header
+                        :history-count :history-digest :wire-fields :encoder-fields
+                        :wire-count :wire-digest :tokens :temporary-characters))
+               (every #'conversation--context-fingerprint-p
+                      (list (getf sample :policy) (getf sample :prompt)
+                            (getf sample :tool-header))))))
+       (typep (getf sample :temporary-characters 0) '(integer 0))
        (typep (getf sample :tokens) '(integer 1))
        (typep (getf sample :history-count) '(integer 0))
        (typep (getf sample :wire-count) '(integer 0))
        (every #'conversation--context-fingerprint-p
               (list (getf sample :soft-header) (getf sample :history-digest)
                     (getf sample :wire-digest)))
-       (proper-list-p (getf sample :wire-fields))
-       (every (lambda (field)
-                (and (consp field) (stringp (first field))
-                     (conversation--context-fingerprint-p (rest field))))
-              (getf sample :wire-fields))
+       (every (lambda (fields)
+                (and (proper-list-p fields)
+                     (every (lambda (field)
+                              (and (consp field) (stringp (first field))
+                                   (conversation--context-fingerprint-p (rest field))))
+                            fields)))
+              (if (= 2 (getf sample :format))
+                  (list (getf sample :wire-fields) (getf sample :encoder-fields))
+                  (list (getf sample :wire-fields))))
        t))
 
 (defmethod conversation--project-record

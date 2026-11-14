@@ -69,6 +69,24 @@ may use provider token counts when available; the default is not a tokenizer."))
                 (config :reasoning-effort configuration) (config :provider-endpoint configuration)
                (system-prompt configuration) tools)))))
 
+(-> provider-context--header-components (model-provider vector) list)
+(defun provider-context--header-components (provider tools)
+  "Separate stable accounting policy from replaceable prompt and tool fingerprints."
+  (let ((configuration (provider-configuration provider)))
+    (list :policy      (provider-cache-prefix--entry
+                        (vector (symbol-name (class-name (class-of provider)))
+                                (config :model configuration) (config :model-provider configuration)
+                                (config :reasoning-effort configuration) (config :provider-endpoint configuration)))
+          :prompt      (provider-cache-prefix--entry (system-prompt configuration))
+          :tool-header (provider-cache-prefix--entry tools))))
+
+(-> provider-context--header-charge (list list) (integer 0))
+(defun provider-context--header-charge (sample components)
+  "Charge full current changed components without subtracting unmeasured old costs."
+  (loop for key in '(:prompt :tool-header)
+        unless (equal (getf sample key) (getf components key))
+          sum (ceiling (second (getf components key)) 4)))
+
 (-> provider-context--history (model-provider conversation) list)
 (defun provider-context--history (provider conversation)
   "Fingerprint compatible retained history without storing prompt bodies."
@@ -87,12 +105,13 @@ may use provider token counts when available; the default is not a tokenizer."))
   "Start ordinary request-local evidence; ephemera require the unmeasured fallback."
   (let ((header (provider-context--soft-header provider tools)))
     ;; Preallocate mutable fields to preserve the shared evidence plist head.
-    (list :provider provider :conversation conversation
+    (append (and header (provider-context--header-components provider tools))
+     (list :provider provider :conversation conversation
           :history         (and header (provider-context--history provider conversation))
           :soft-header     header
           :eligible-p      (and header (null (conversation-ephemeral-input-entries conversation)) t)
           :encoder nil :projection nil :tools nil :wire-provider nil :wire nil
-          :wire-characters 0)))
+          :wire-characters 0))))
 
 (-> provider-context--wire-body (hash-table) hash-table)
 (defun provider-context--wire-body (request)
@@ -133,12 +152,14 @@ may use provider token counts when available; the default is not a tokenizer."))
               (provider-cache-prefix--entry (coerce (subseq entries 0 count) 'vector)))
        t))
 
-(-> provider-context--sample-matches-p (list (option list) list) boolean)
-(defun provider-context--sample-matches-p (sample header history)
-  "Verify a portable measured SAMPLE against current policy and retained HISTORY."
+(-> provider-context--sample-matches-p (list (option list) list &key (:components list)) boolean)
+(defun provider-context--sample-matches-p (sample header history &key components)
+  "Verify measured history under exact headers or a format-two stable policy."
   (and (conversation-context-usage-sample-p sample)
        header
-       (equal (getf sample :soft-header) header)
+       (or (equal (getf sample :soft-header) header)
+           (and (= 2 (getf sample :format)) components
+                (equal (getf sample :policy) (getf components :policy))))
        (provider-context--prefix-matches-p
         (getf sample :history-digest) (getf sample :history-count) history)
        t))
@@ -170,31 +191,65 @@ temporary context instead of charging its replacement a second time."
                                4)))
             uncertain-p)))
 
+(-> provider-context--current-wire-p (list hash-table list) boolean)
+(defun provider-context--current-wire-p (context request sample)
+  "Reproduce current encoding while retaining measured transport-only fields."
+  (let ((adapter    (getf context :encoder))
+        (projection (getf context :projection))
+        (tools      (getf context :tools)))
+    (when (and adapter projection tools)
+      (let* ((*provider-context-request*       nil)
+             (*provider-cache-prefix-function* nil)
+             (encoded                          (provider-context--wire-plan
+                                                (provider-request-object adapter projection tools)))
+             (current                          (provider-context--wire-plan request))
+             (transport-fields
+               (remove-if (lambda (field)
+                            (equal field (assoc (first field) (getf sample :encoder-fields) :test #'equal)))
+                          (getf sample :wire-fields)))
+             (expected-fields
+               (append transport-fields
+                       (remove-if (lambda (field)
+                                    (assoc (first field) transport-fields :test #'equal))
+                                  (getf encoded :fields)))))
+        (and (equal (getf encoded :items) (getf current :items))
+             (= (length expected-fields) (length (getf current :fields)))
+             (every (lambda (field)
+                      (equal field (assoc (first field) (getf current :fields) :test #'equal)))
+                    expected-fields)
+             t)))))
+
 (-> provider-context--matched-input (model-provider hash-table)
     (values (integer 0) boolean boolean))
 (defun provider-context--matched-input (provider request)
-  "Revalidate coverage and pass encoded additions to the shared input accountant."
-  (declare (ignore provider))
-  (let* ((context      *provider-context-request*)
-         (conversation (getf context :conversation))
-         (sample       (and conversation (conversation-context-usage-sample conversation))))
-    (when (and (getf context :eligible-p)
+  "Revalidate history, encoding and policy before retaining measured occupancy."
+  (let* ((context          *provider-context-request*)
+         (conversation     (getf context :conversation))
+         (sample           (and conversation (conversation-context-usage-sample conversation)))
+         (header-changed-p (not (equal (getf sample :soft-header) (getf context :soft-header)))))
+    (when (and (eq provider (getf context :provider)) (getf context :eligible-p)
                (provider-context--sample-matches-p
-                sample (getf context :soft-header) (getf context :history)))
-      (let ((current (provider-context--wire-plan request))
-            (items   (provider-context--request-items request)))
+                sample (getf context :soft-header) (provider-context--history provider conversation)
+                :components context))
+      (let* ((current    (provider-context--wire-plan request))
+             (items      (provider-context--request-items request))
+             (fields     (getf current :fields))
+             (old-fields (getf sample :wire-fields)))
         (when (and items
-                   (equal (getf sample :wire-fields) (getf current :fields))
+                   (if header-changed-p
+                       (provider-context--current-wire-p context request sample)
+                       (equal old-fields fields))
                    (provider-context--prefix-matches-p
-                    (getf sample :wire-digest) (getf sample :wire-count)
-                    (getf current :items)))
+                    (getf sample :wire-digest) (getf sample :wire-count) (getf current :items)))
           (let ((count (getf sample :wire-count)))
             (multiple-value-bind (tokens uncertain-p)
                 (provider-context--input-tokens
                  sample (unless (= count (length items)) (subseq items count))
                  :replaced-characters (getf sample :temporary-characters 0))
               (return-from provider-context--matched-input
-                (values tokens t uncertain-p)))))))
+                (values (+ tokens (if header-changed-p
+                                      (provider-context--header-charge sample context) 0))
+                        t (or header-changed-p uncertain-p))))))))
     (values 0 nil nil)))
 
 (-> provider-context--response-entries-p (list list) boolean)
@@ -274,10 +329,14 @@ messages that later change fail closed."
                                                       (provider-request-object adapter covered (getf context :tools)))))
               (when (provider-context--wire-fields-compatible-p (getf wire :fields) (getf (getf context :wire) :fields))
                 (let ((sample
-                        (list :format 1 :soft-header (getf context :soft-header)
+                        (list :format 2 :soft-header (getf context :soft-header)
+                              :policy         (getf context :policy)
+                              :prompt         (getf context :prompt)
+                              :tool-header    (getf context :tool-header)
                               :history-count  (length entries)
                               :history-digest (provider-cache-prefix--entry (coerce entries 'vector))
                               :wire-fields    (getf (getf context :wire) :fields)
+                              :encoder-fields (getf wire :fields)
                               :wire-count     (length (getf wire :items))
                               :wire-digest    (provider-cache-prefix--entry
                                                (coerce (getf wire :items) 'vector))

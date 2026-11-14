@@ -546,21 +546,24 @@ stays cached across midnight; this separate block carries the change instead."
 
 A matched measurement already includes request-local guidance. Charge only
 new retained history here; admission replaces temporary context when encoding."
-  (let* ((tools  (if tool-registry (tool-registry-provider-schemas tool-registry) #()))
-         (items  (conversation-input-items-for-family
-                  conversation
-                  (or family (model-family (config :model configuration)
-                                           (config :model-provider configuration)))))
-         (sample (conversation-context-usage-sample conversation)))
+  (let* ((tools      (if tool-registry (tool-registry-provider-schemas tool-registry) #()))
+         (items      (conversation-input-items-for-family
+                      conversation
+                      (or family (model-family (config :model configuration)
+                                               (config :model-provider configuration)))))
+         (sample     (conversation-context-usage-sample conversation))
+         (components (and provider (provider-context--header-components provider tools))))
     (when (and provider
                (null (conversation-ephemeral-input-entries conversation))
                (provider-context--sample-matches-p
                 sample (provider-context--soft-header provider tools)
-                (mapcar #'provider-cache-prefix--entry items)))
-      (let ((new (nthcdr (getf sample :history-count) items)))
+                (mapcar #'provider-cache-prefix--entry items) :components components))
+      (let* ((new    (nthcdr (getf sample :history-count) items))
+             (charge (if (= 2 (getf sample :format))
+                         (provider-context--header-charge sample components) 0)))
         (return-from context-estimate-known-tokens
-          (values (provider-context--input-tokens sample (and new (coerce new 'vector)))
-                  (null new)))))
+          (values (+ charge (provider-context--input-tokens sample (and new (coerce new 'vector))))
+                  (and (null new) (zerop charge))))))
     (values
      (provider-context--input-tokens
       nil (vector (system-prompt configuration)

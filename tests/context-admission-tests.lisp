@@ -862,18 +862,18 @@
          (lambda () (funcall function agent)))))))
 
 (-> context-admission-test--measure
-    (agent &key (:usage t) (:envelope-length (integer 1))
+    (agent &key (:usage t) (:envelope-length (integer 1)) (:tools vector)
            (:during-request (option function)) (:goal-context (option string))) null)
 (defun context-admission-test--measure
     (agent &key (usage (json-object "input_tokens" 1000 "output_tokens" 200
                                    "total_tokens" 1200 "cached_input_tokens" 900))
-         (envelope-length 30000) during-request goal-context)
+         (envelope-length 30000) (tools #()) during-request goal-context)
   "Admit a real request, persist opaque reasoning and anchor its ordinary usage."
   (let* ((provider                   (agent-provider agent))
          (conversation               (agent-conversation agent))
-         (context                    (provider-context-request-create provider conversation #()))
+         (context                    (provider-context-request-create provider conversation tools))
          (*provider-context-request* context)
-         (request                    (provider-request-object provider conversation #()
+         (request                    (provider-request-object provider conversation tools
                                                               :goal-context goal-context))
          (result                     (make-instance 'provider-result
                                                     :output-items
@@ -944,7 +944,18 @@
        (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
               (request                    (provider-request-object provider conversation #())))
          (test-assert (= 1200 (provider-request-input-token-estimate provider request))
-                      "the next request reuses the measured input"))))
+                      "the next request reuses the measured input"))
+       (test-call-with-function-replacements
+        (list (list 'system-prompt
+                    (lambda (configuration) (declare (ignore configuration)) "changed policy")))
+        (lambda ()
+          (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
+                 (request                    (provider-request-object provider conversation #())))
+            (test-assert (nth-value 1 (provider-context--matched-input provider request))
+                         "changed policy preserves measured transport fields and overrides")
+            (setf (gethash "session_id" request) "tampered transport")
+            (test-assert (not (nth-value 1 (provider-context--matched-input provider request)))
+                         "encoder-invisible transport edits reject the anchor"))))))
    :provider-class 'context-admission-transport-fields-test-provider)
   nil)
 
@@ -1092,6 +1103,113 @@
             (provider-context-budget-error (condition)
               (= 5000 (provider-context-budget-error-estimated-input-tokens condition))))
           "a small envelope cannot erase authoritative measured occupancy")))))
+  nil)
+
+(-> test-context-admission-measured-header-resume () null)
+(defun test-context-admission-measured-header-resume ()
+  "Keep opaque measured history through disk resume and changed environment policy."
+  (context-admission-test--with-measured-context
+   (lambda (original)
+     (let ((tools (vector (json-object "type" "function" "name" "lookup"
+                                       "description" (make-string 2000 :initial-element #\d)
+                                       "parameters" (json-object "type" "object")))))
+       (context-admission-test--measure original :tools tools)
+       (let* ((configuration (agent-configuration original))
+              (conversation  (conversation-load (conversation-pathname (agent-conversation original))))
+              (provider      (make-instance 'context-admission-test-provider :configuration configuration))
+              (registry      (make-instance 'tool-registry))
+              (agent         (agent-create :configuration configuration :conversation conversation
+                                           :provider provider :tool-registry registry))
+              (application   (make-instance 'application :configuration configuration
+                                            :conversation conversation :provider provider
+                                            :agent agent :tool-registry registry))
+              (prompt        "small policy with new working environment"))
+         (test-call-with-function-replacements
+          (list (list 'system-prompt
+                      (lambda (configuration) (declare (ignore configuration)) prompt))
+                (list 'tool-registry-provider-schemas
+                      (lambda (registry &key canonical-names)
+                        (declare (ignore registry canonical-names)) tools)))
+          (lambda ()
+            (let* ((charge   (ceiling (second (provider-cache-prefix--entry prompt)) 4))
+                   (expected (+ 1200 charge)))
+              (multiple-value-bind (tokens exact-p)
+                  (context-estimate-known-tokens configuration conversation
+                                                 :provider provider :tool-registry registry)
+                (test-assert (= tokens expected) "only the changed prompt is charged over measured occupancy")
+                (test-assert (not exact-p) "changed policy is an estimated meter"))
+              (multiple-value-bind (tokens estimated-p) (application-context-usage application)
+                (test-assert (and (= expected tokens) estimated-p)
+                             "the resumed UI exposes the conservative estimated occupancy"))
+              (let* ((*provider-context-request* (provider-context-request-create provider conversation tools))
+                     (request                    (provider-request-object provider conversation tools)))
+                (test-assert (null (getf *provider-context-request* :wire))
+                             "initial admission has no transport observation")
+                (multiple-value-bind (tokens uncertain-p)
+                    (provider-request-input-token-estimate provider request)
+                  (test-assert (and (= expected tokens) uncertain-p)
+                               "wire admission retains opaque history before transport observation"))
+                (provider-open-response-stream provider request :conversation conversation)
+                (setf (gethash "instructions" request) "Post-encode tamper")
+                (test-assert (not (nth-value 1 (provider-context--matched-input provider request)))
+                             "changed soft headers do not authorize post-encode edits")
+                (setf (gethash "instructions" request) "small policy")
+                (test-assert (not (nth-value 1 (provider-context--matched-input provider request)))
+                             "restoring an old measured header also rejects post-encode tamper")))
+            (setf tools #())
+            (let* ((*provider-context-request* (provider-context-request-create provider conversation tools))
+                   (request                    (provider-request-object provider conversation tools))
+                   (expected                   (+ 1200 (ceiling (second (provider-cache-prefix--entry prompt)) 4)
+                                                  (ceiling (second (provider-cache-prefix--entry tools)) 4))))
+              (test-assert (= expected (provider-request-input-token-estimate provider request))
+                           "tool replacement charges its current size without subtracting unmeasured old cost"))
+            (setf prompt (make-string 20000 :initial-element #\p))
+            (test-assert (agent-should-compact-p agent) "genuine prompt growth crosses soft admission")
+            (let* ((*provider-context-request* (provider-context-request-create provider conversation tools))
+                   (request                    (provider-request-object provider conversation tools)))
+              (test-assert
+               (handler-case (progn (provider-open-response-stream provider request :conversation conversation) nil)
+                 (provider-context-budget-error () t))
+               "genuine prompt growth crosses hard admission"))))))))
+  nil)
+
+(-> test-context-admission-measured-header-identity () null)
+(defun test-context-admission-measured-header-identity ()
+  "Reject model changes, modified measured history and malformed format-two persistence."
+  (context-admission-test--with-measured-context
+   (lambda (agent)
+     (context-admission-test--measure agent)
+     (let* ((conversation (agent-conversation agent))
+            (provider     (agent-provider agent))
+            (sample       (copy-tree (conversation-context-usage-sample conversation))))
+       (dolist (key '(:policy :prompt :tool-header :encoder-fields))
+         (let ((malformed (copy-tree sample)))
+           (setf (getf malformed key) '("invalid" 1))
+           (conversation-append-record conversation (list :context-usage :sample malformed))
+           (test-assert (null (conversation-context-usage-sample
+                               (conversation-load (conversation-pathname conversation))))
+                        "malformed component fingerprints are rejected on disk resume")))
+       (setf (conversation-context-usage-sample conversation) sample)
+       (let* ((components (provider-context--header-components provider #()))
+              (history    (provider-context--history provider conversation)))
+         (setf (getf components :policy) (provider-cache-prefix--entry "different model"))
+         (test-assert (not (provider-context--sample-matches-p
+                            sample (provider-cache-prefix--entry "different header") history :components components))
+                      "a different model policy cannot retain measured occupancy"))
+       (let ((*provider-context-request* (provider-context-request-create provider conversation #())))
+         (let ((request (provider-request-object provider conversation #())))
+           (setf (gethash "encrypted_content"
+                          (first (conversation-input-items-for-family conversation (provider-family provider))))
+                 "Edited measured history")
+           (test-assert (not (nth-value 1 (provider-context--matched-input provider request)))
+                        "history is revalidated at admission rather than trusting its captured snapshot")))
+       (let ((legacy (copy-tree sample)))
+          (dolist (key '(:policy :prompt :tool-header :encoder-fields)) (remf legacy key))
+         (setf (getf legacy :format) 1)
+         (test-assert (conversation-context-usage-sample-p legacy) "legacy exact anchors are readable")
+         (test-assert (not (provider-context--sample-matches-p
+                            legacy (provider-cache-prefix--entry "changed legacy header") nil))
+                      "legacy samples do not authorize a changed header")))))
   nil)
 
 (-> test-context-admission-measured-resume () null)

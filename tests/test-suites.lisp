@@ -40,6 +40,8 @@
   test-context-admission-measured-invalidation
   test-context-admission-measured-high-usage
   test-context-admission-measured-resume
+  test-context-admission-measured-header-resume
+  test-context-admission-measured-header-identity
   test-context-admission-final-request
   test-context-admission-images
   test-context-admission-checkpoint-transaction)
