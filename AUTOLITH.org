@@ -18,6 +18,22 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Sender-relative parent channel targets
+
+- Problem: channel tools resolved the reserved parent target as an ordinary
+  participant name without the requesting sender, despite intact child ancestry.
+- Behavior: resolve that target through the existing parent-recipient traversal;
+  use the ordinary resolver for other channel designators.
+- Scope and location: private =channel-tool--channel= definition, image commit
+  =5ac0c86b-4c8a-497d-b725-74d12dfd1e22=, private Git =e4d6c642=;
+  papercut =F2TE7DZ=.
+- Verification: fresh and older child mappings, case folding, ordinary channel
+  designators and root fallback passed. Actual child-context tool dispatch
+  delivered only to the parent channel, where the message was received.
+  Clean-process private replay passed.
+- Removal condition: discard the override after installing equivalent tracked
+  sender-relative channel-target resolution.
+
 ** Reversible type declarations during live reload
 
 - Problem: journaled definition installation rejected the project's =->= forms,
