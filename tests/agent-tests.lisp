@@ -2338,9 +2338,16 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                                      :conversation  conversation
                                      :tool-registry (agent-test-registry)
                                      :worker        nil))
+                (sample
+                  (list :format 1 :soft-header (provider-context--soft-header provider #())
+                        :history-count 0 :history-digest (provider-cache-prefix--entry #())
+                        :wire-fields nil :wire-count 0 :wire-digest (provider-cache-prefix--entry #())
+                        :tokens 1200))
                 (records-before
-                  (conversation--read-records
-                   (conversation-pathname conversation)))
+                  (progn
+                    (conversation-append-record conversation (list :context-usage :sample sample))
+                    (setf (conversation-context-usage-sample conversation) sample)
+                    (conversation--read-records (conversation-pathname conversation))))
                 (failure
                   (handler-case
                       (progn
@@ -2367,6 +2374,11 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                  (equal (provider-error-response failure)
                         (getf (agent--provider-error-metadata failure) :response)))
               "empty compaction output is a structured provider protocol error")
+             (test-assert (equal sample (conversation-context-usage-sample conversation))
+                          "failed compaction preserves the live ordinary measured anchor")
+             (test-assert (equal sample (conversation-context-usage-sample
+                                         (conversation-load (conversation-pathname conversation))))
+                          "disk replay preserves the ordinary measured anchor after failed compaction")
              (let* ((records-after
                       (conversation--read-records (conversation-pathname conversation)))
                     (added (nthcdr (length records-before) records-after)))

@@ -1080,13 +1080,31 @@
        (conversation-append-provider-metadata conversation '(:usage (("input_tokens" 1200) ("output_tokens" 200))))
        (test-assert (conversation-context-usage-sample conversation)
                     "ordinary provider metadata does not discard the latest measured anchor")
-       (conversation-append-provider-metadata
-        conversation '(:compaction :native :usage (("input_tokens" 1200) ("output_tokens" 200))))
-       (test-assert (null (conversation-context-usage-sample conversation))
-                    "native compaction metadata invalidates the ordinary response anchor")
-       (context-admission-test--measure agent :envelope-length 64)
+       (let ((sample (copy-tree (conversation-context-usage-sample conversation))))
+         (loop for kind in '(:native :summary)
+               for request-number from 2
+               do (agent--note-compaction-request
+                   agent (make-instance 'agent-observer) :request-number request-number
+                   :kind kind :usage (json-object "input_tokens" 1200 "output_tokens" 200))
+                  (test-assert (equal sample (conversation-context-usage-sample conversation))
+                               "compaction request metering preserves the live ordinary anchor")
+                  (test-assert (equal sample (conversation-context-usage-sample
+                                              (conversation-load (conversation-pathname conversation))))
+                               "disk replay preserves the ordinary anchor after compaction metering")))
        (conversation-append-summary conversation "A replacement context.")
        (test-assert (null (conversation-context-usage-sample conversation)) "summary publication invalidates the sample")
+       (test-assert (null (conversation-context-usage-sample
+                           (conversation-load (conversation-pathname conversation))))
+                    "disk replay invalidates the sample at summary publication")
+       (context-admission-test--measure agent :envelope-length 64)
+       (conversation-append-native-compaction
+        conversation (list (json-object "type" "compaction" "encrypted_content" "checkpoint"))
+        :family (provider-family provider) :summary "A native replacement context.")
+       (test-assert (null (conversation-context-usage-sample conversation))
+                    "native checkpoint publication invalidates the live sample")
+       (test-assert (null (conversation-context-usage-sample
+                           (conversation-load (conversation-pathname conversation))))
+                    "disk replay invalidates the sample at native checkpoint publication")
        (context-admission-test--measure agent :envelope-length 64)
        (test-assert (conversation-context-usage-sample
                      (conversation-load (conversation-pathname conversation)))
