@@ -563,7 +563,7 @@ page movement. Use =Ctrl-PageUp= and =Ctrl-PageDown= to jump between user and
 assistant messages while skipping reasoning and tool activity. Use =Ctrl-Home= and
 =Ctrl-End= for the oldest and newest transcript positions, and the mouse wheel
 for incremental scrolling. In a terminal attached to a hosted channel,
-=Ctrl-T= hides and shows the channel sidebar; see Local sessions. A message
+=Ctrl-S= hides and shows the channel sidebar; see Local sessions. A message
 jump places the end of the message on the row above the composer. If the
 message is taller than the window, its header appears at the top instead. The
 =--fullscreen= and =--plain= options choose the mode for one launch without
@@ -1637,17 +1637,17 @@ mentions of you. Each terminal tracks its own unread counts. A channel first
 seen by that terminal starts at zero. The =✉= count shows deliveries waiting
 for a channel that no process serves.
 
-The sidebar takes about a fifth of a wide terminal's width. Press =Ctrl-T=
+The sidebar takes about a fifth of a wide terminal's width. Press =Ctrl-S=
 to hide or show it; that preference is kept across channel switches and
 reconnects. When docking the sidebar would leave fewer than 90 transcript
 columns after subtracting the sidebar and its divider, the channel is visible
-by default. Press =Ctrl-T= to open a full-screen channel drawer. Use =↑= and
+by default. Press =Ctrl-S= to open a full-screen channel drawer. Use =↑= and
 =↓= to select, =Enter= to open a channel, and =←= or =→= to close or open a
 tree node. Scroll the tree with the mouse wheel or =PageUp= and =PageDown=.
 In the docked sidebar, click the heading's scroll arrows. The =(new)= and
 =(delete)= buttons are fixed below the tree;
 select either to run the command in this terminal's current channel.
-Press =Esc= or =Ctrl-T=, or select the current channel, to return to the
+Press =Esc= or =Ctrl-S=, or select the current channel, to return to the
 composer. Opening another channel closes the drawer.
 
 *** Session endpoints

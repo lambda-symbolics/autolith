@@ -39,7 +39,7 @@
                              lines))
                  "the sidebar fills its height with rows of exactly its width")
     (test-assert (and (search "CHANNELS" (first lines))
-                      (search "Ctrl-T" (first (last lines))))
+                      (search "Ctrl-S" (first (last lines))))
                  "the sidebar shows its heading and toggle shortcut")
     (test-assert (search "▾ frob  ~/claude-work/frob" (third lines))
                  "an open workspace row names the directory and its short path")

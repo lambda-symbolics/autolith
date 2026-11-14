@@ -464,7 +464,7 @@
                    "a drag goes to the pane, and over the panel stays on the pane's edge")
       (test-assert (eq (localgroup-screen-filter-event screen ':page-up) ':page-up)
                    "other events pass through")
-      (test-assert (and (eq (localgroup-screen-filter-event screen '(:control #\t)) ':ignore)
+      (test-assert (and (eq (localgroup-screen-filter-event screen '(:control #\s)) ':ignore)
                         (localgroup-screen-take-resize screen)
                         (not (localgroup-screen-take-resize screen))
                         (equal (pane) '(6 80)))
@@ -474,7 +474,7 @@
                 :cursor-row 1 :cursor-column 2 :cursor-visible-p t))
       (test-assert (equal (localgroup-screen-filter-event screen '(:click 5 2)) '(:click 5 2))
                    "with the panel hidden clicks keep their columns")
-      (localgroup-screen-filter-event screen '(:control #\t))
+      (localgroup-screen-filter-event screen '(:control #\s))
       (localgroup-screen-take-resize screen)
       (localgroup-screen-handle-packet
        screen '(:frame :height 6 :width 69 :complete-p t :rows ((0 "boot screen"))

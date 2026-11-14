@@ -11,7 +11,7 @@
 (defparameter *localgroup-screen-dimension-limit* 10000
   "The largest frame height or width a client accepts from a session.")
 
-(defparameter *localgroup-screen-toggle-event* '(:control #\t)
+(defparameter *localgroup-screen-toggle-event* '(:control #\s)
   "The key event showing or hiding the side panel.")
 
 (define-condition channel-loading-progress (condition)

@@ -18,7 +18,7 @@
   "The fewest columns the sidebar takes beside the channel.")
 
 (defparameter *world-sidebar-minimum-columns* 90
-  "The minimum transcript width beside the sidebar; below it Ctrl-T opens a fullscreen drawer.")
+  "The minimum transcript width beside the sidebar; below it Ctrl-S opens a fullscreen drawer.")
 
 (defparameter *world-sidebar-marker-columns* 3
   "The columns at the start of a sidebar row where a click opens or closes the row's tree node.")
@@ -630,7 +630,7 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
          (legend        (when (plusp legend-count)
                           (list (if drawer-p
                                     (list (terminal-span ':legend-dim " ↑↓ select · PgUp/PgDn scroll · Enter · Esc"))
-                                    (list (terminal-span ':legend-accent " Ctrl-T")
+                                    (list (terminal-span ':legend-accent " Ctrl-S")
                                           (terminal-span ':legend-dim " toggle")))))))
     (values
      (append heading (mapcar #'world-sidebar--entry-spans shown) filler
