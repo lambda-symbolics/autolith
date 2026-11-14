@@ -2342,6 +2342,12 @@ request and protocol-required tool/reasoning groups can exceed that bound. Curre
 mission policy and the authoritative active plan are rebuilt from their stores
 for each ordinary request, independently of the summary.
 
+Set =(settings :max-output-tokens 4096)= to cap ordinary model replies, or set
+=AUTOLITH_MAX_OUTPUT_TOKENS=. The positive-integer setting persists across
+restarts; =nil=, or the text =none=, =off= or =unset=, leaves the provider limit
+unspecified. Compaction projection uses this cap and request admission reserves
+its full size when it exceeds the configured output headroom.
+
 Automatic compaction compares freshly projected input with the soft threshold.
 Before transport, admission checks the encoded request, including current tools
 and temporary context, with output headroom. Set
@@ -2469,11 +2475,18 @@ Register an OpenAI-compatible provider:
 
 #+BEGIN_SRC lisp
 (register-openai-compatible-provider
- :name            "my-provider"
- :description     "My OpenAI-compatible provider"
- :endpoint        "https://api.example.com/v1/chat/completions"
- :models-endpoint "https://api.example.com/v1/models")
+ :name                         "my-provider"
+ :description                  "My OpenAI-compatible provider"
+ :endpoint                     "https://api.example.com/v1/chat/completions"
+ :models-endpoint              "https://api.example.com/v1/models"
+ :api-key-environment-variable "MY_PROVIDER_API_KEY")
 #+END_SRC
+
+The optional =:api-key-environment-variable= names the environment variable to
+read for authentication. Its nonempty value takes precedence over the private
+API-key store; an unset or empty value falls back to the stored key. Model
+discovery and requests use the same source. Provider configuration retains the
+variable name, not its secret value.
 
 List every model ID known to Autolith without authenticating or starting a session:
 
@@ -3325,7 +3338,23 @@ autolith --permissions auto run-job \
   --output /path/to/result.sexp
 #+END_SRC
 
-The input is exactly one bounded data-only S-expression:
+For an inline assignment, use =--prompt TEXT= instead of =--input=. Use
+=--prompt -= to read the prompt from standard input:
+
+#+BEGIN_SRC sh
+autolith --permissions auto run-job \
+  --prompt "Review the current change and report the result." \
+  --role task --timeout-seconds 900 --id review-change \
+  --output /path/to/result.sexp
+#+END_SRC
+
+The inline defaults are role =task=, timeout 86,400 seconds, a generated job ID,
+and a permissive object output contract. Inline jobs use the same role
+validation, telemetry, events and atomic result publication as envelope jobs.
+Prompt-read failures and oversized prompts produce the normal failure artifact
+and terminal events.
+
+With =--input=, supply exactly one bounded data-only S-expression:
 
 #+BEGIN_SRC lisp
 (:autolith-job
