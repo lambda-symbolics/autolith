@@ -232,6 +232,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :reader        application-render-lock
     :type          t
     :documentation "The lock serializing transcript cursors and history boundaries.")
+   (stream-finish-function
+    :initform      nil
+    :accessor      application-stream-finish-function
+    :type          (option function)
+    :documentation "The active stream's flush/reconciliation callback, owning display until finished under RENDER-LOCK.")
    (rendered-sequence
     :initform      0
     :accessor      application-rendered-sequence
@@ -2925,15 +2930,26 @@ The channel's structured clients receive its text as a :PRESENT event."
               (setf *application-command-presentation-pending-p* nil))
             emitted-p)))))
 
-(-> application--assistant-message-record-text (list) (option string))
-(defun application--assistant-message-record-text (record)
-  "Return the visible assistant text carried by durable RECORD, when present."
-  (when (eq (first record) :provider-item)
+(-> application--assistant-message-record-text (list &key (:raw-p boolean)) (option string))
+(defun application--assistant-message-record-text (record &key raw-p)
+  "Return RECORD's visible assistant text, optionally concatenating its raw content parts."
+  (when (eq (first record) ':provider-item)
     (let ((wire-json (getf (rest record) :wire-json)))
       (when (stringp wire-json)
-        (let ((item (json-decode wire-json)))
-          (and (json-object-p item)
-               (application--visible-assistant-text item)))))))
+        (let* ((item (json-decode wire-json))
+               (text (and (json-object-p item)
+                          (if raw-p
+                              (response-item-assistant-text item)
+                              (application--visible-assistant-text item)))))
+          (when text
+            (if raw-p
+                (format nil "~{~A~}"
+                        (loop for part across (json-get item "content")
+                              when (and (json-object-p part)
+                                        (member (json-get part "type") '("output_text" "text") :test #'equal)
+                                        (stringp (json-get part "text")))
+                                collect (json-get part "text")))
+                text)))))))
 
 (-> application--reasoning-record-text (list) (option string))
 (defun application--reasoning-record-text (record)
@@ -3419,6 +3435,15 @@ may fill the remainder."
                   (return))))))))
   nil)
 
+(-> application--finish-stream (application) null)
+(defun application--finish-stream (application)
+  "Release, flush and reconcile APPLICATION's stream atomically, including on turn unwind."
+  (with-recursive-lock-held ((application-render-lock application))
+    (let ((finish (shiftf (application-stream-finish-function application) nil)))
+      (when finish
+        (funcall finish))))
+  nil)
+
 (-> application--render-streamed-records
     (application (option string) (option string))
     null)
@@ -3460,9 +3485,13 @@ may fill the remainder."
                      (assistant-stream-match-p
                        (and streamed-assistant-text
                             assistant-texts
-                            (string=
-                             streamed-assistant-text
-                             (format nil "~{~A~^~%~}" assistant-texts))))
+                             (or (string= streamed-assistant-text
+                                          (format nil "~{~A~^~%~}" assistant-texts))
+                                 (string= streamed-assistant-text
+                                          (format nil "~{~A~}"
+                                                  (loop for record in records
+                                                        for text = (application--assistant-message-record-text record :raw-p t)
+                                                        when text collect text))))))
                      (reasoning-stream-match-p
                        (and streamed-reasoning-text
                             reasoning-texts
@@ -3495,6 +3524,8 @@ text exactly matches the corresponding streamed text. Suppressed identifiers
 remain finalized so later conversation replay cannot duplicate streamed rows."
   (with-recursive-lock-held ((application-render-lock application))
     (cond
+      ((application-stream-finish-function application)
+       nil)
       ((and (not (application-transcript-synchronized-p application))
             (null streamed-assistant-text)
             (null streamed-reasoning-text))
@@ -4105,7 +4136,44 @@ clients as :TEXT, :REASONING and :STATUS events."
         (stream-marker-pending-p  nil)
         (stream-started-at        nil)
         (stream-renderer          nil))
-    (labels ((stream-mark (rows)
+    (labels ((stream-call (callback)
+               "Serialize stream display with durable replay and release ownership on abnormal exit."
+               (with-recursive-lock-held ((application-render-lock application))
+                 (let ((completed-p nil))
+                   (unwind-protect
+                        (multiple-value-prog1 (funcall callback)
+                          (setf completed-p t))
+                     (unless completed-p
+                       (application--finish-stream application))))))
+
+             (stream-begin ()
+               "Claim display before any request output can race durable replay."
+               (unless (application-stream-finish-function application)
+                 (setf (application-stream-finish-function application) #'stream-finish)))
+
+             (stream-finish ()
+               "Flush this request, reconcile exact durable text, and clear all request-local buffers."
+               (unwind-protect
+                    (progn
+                      (reasoning-flush)
+                      (let ((assistant (and stream-open-p (text-buffer-string stream-text)))
+                            (reasoning presented-reasoning-text))
+                        (stream-flush)
+                        (when (slot-boundp application 'conversation)
+                          (application-render-records application
+                                                      :streamed-assistant-text assistant
+                                                      :streamed-reasoning-text reasoning))))
+                 (text-buffer-clear reasoning-text)
+                 (text-buffer-clear stream-text)
+                 (text-buffer-clear stream-source)
+                 (setf presented-reasoning-text nil
+                       stream-pending ""
+                       stream-open-p nil
+                       stream-presentation nil
+                       stream-marker-pending-p nil
+                       stream-renderer nil)))
+
+             (stream-mark (rows)
                "Mark ROWS' first content row as the REPL-style reply while it is pending."
                (let ((position (position-if-not #'null rows)))
                  (if (and stream-marker-pending-p position)
@@ -4227,245 +4295,242 @@ clients as :TEXT, :REASONING and :STATUS events."
       (callback-agent-observer-create
        :text-callback
        (lambda (delta)
-         (application-clients-publish application (list :text :delta delta))
-         (stream-text-delta delta))
+         (stream-call
+          (lambda ()
+            (stream-begin)
+            (application-clients-publish application (list :text :delta delta))
+            (stream-text-delta delta))))
        :reasoning-callback
        (lambda (delta)
-         (application-clients-publish application (list :reasoning :delta delta))
-         (when (plusp (length delta))
-           (terminal-ui-note-status-progress ui))
-         (when (and (application-reasoning-traces-p application)
-                    (null presented-reasoning-text)
-                    (plusp (length delta)))
-           (text-buffer-append reasoning-text delta)
-           (terminal-ui-set-preview-rows
-            ui
-            (application--reasoning-preview-rows application reasoning-text))))
+         (stream-call
+          (lambda ()
+            (stream-begin)
+            (application-clients-publish application (list :reasoning :delta delta))
+           (when (plusp (length delta))
+             (terminal-ui-note-status-progress ui))
+           (when (and (application-reasoning-traces-p application)
+                      (null presented-reasoning-text)
+                      (plusp (length delta)))
+             (text-buffer-append reasoning-text delta)
+             (terminal-ui-set-preview-rows
+              ui
+               (application--reasoning-preview-rows application reasoning-text))))))
        :status-callback
        (lambda (status details)
-         (when (eq status ':provider-request-completed)
-           (application-clients-note-usage application (getf details :usage)))
-         (application-clients-publish application (list :status :status status :details details))
-         (case status
-           (:user-message-persisted
-            (setf related-memories-shown-p nil
-                  procedure-offers-shown-p nil)
-            (let ((pending-input-identifier
-                    (getf details :pending-input-identifier)))
-              (when (and pending-input-identifier
-                         user-message-persisted-function)
-                (funcall user-message-persisted-function
-                         pending-input-identifier)))
-            (let ((sequence  (getf details :sequence))
-                  (timestamp (getf details :time)))
-              (unless (typep sequence '(integer 0))
-                (error 'conversation-invariant-error
-                       :message
-                       "The persisted user message has no valid sequence."
-                       :pathname
-                       (conversation-pathname
-                        (application-conversation application))
-                       :sequence sequence))
-              (with-recursive-lock-held
-                  ((application-render-lock application))
-                (let* ((identifier
-                         (list :conversation
-                               (conversation-identifier (application-conversation application))
-                               sequence))
-                       (text  (user-message-input-text user-message-input))
-                       (layout
-                         (lambda (columns)
-                           (let ((*application-transcript-layout-columns* columns))
-                             (cond
-                               (continuation-p
-                                (application--continuation-entry text))
-                               (operation-request
-                                (application--operation-request-entry
-                                 application operation-request timestamp))
-                               (t
-                                (application--user-message-entry application text timestamp))))))
-                       (entry (funcall layout (application--transcript-columns application))))
-                  (if (terminal-ui-fullscreen-p ui)
-                      (terminal-ui-present-records
-                       ui (list (list identifier entry
-                                      (list :entry-layout layout :source-characters (length text)))))
-                      (terminal-ui-append-finalized ui identifier entry)))
-                (setf (application-rendered-sequence application) sequence)))
-            (application-publish-recovery-session application))
-           (:related-memories
-            (unless related-memories-shown-p
-              (application-present
-               application
-               (application--related-memories-notice
-                (getf details :count)
-                :stale      (getf details :stale 0)
-                :unverified (getf details :unverified 0)
-                :facts      (getf details :facts 0)
-                :ids        (getf details :ids)))
-              (setf related-memories-shown-p t)))
-           (:knowledge-changes
-            (application-present
-             application
-             (list (terminal-span
-                    ':notice
-                    (application--knowledge-changes-notice (getf details :count))))))
-           (:procedure-offers
-            (unless procedure-offers-shown-p
+         (stream-call
+          (lambda ()
+           (when (eq status ':provider-request-completed)
+             (application-clients-note-usage application (getf details :usage)))
+           (application-clients-publish application (list :status :status status :details details))
+           (case status
+             (:user-message-persisted
+              (setf related-memories-shown-p nil
+                    procedure-offers-shown-p nil)
+              (let ((pending-input-identifier
+                      (getf details :pending-input-identifier)))
+                (when (and pending-input-identifier
+                           user-message-persisted-function)
+                  (funcall user-message-persisted-function
+                           pending-input-identifier)))
+              (let ((sequence  (getf details :sequence))
+                    (timestamp (getf details :time)))
+                (unless (typep sequence '(integer 0))
+                  (error 'conversation-invariant-error
+                         :message
+                         "The persisted user message has no valid sequence."
+                         :pathname
+                         (conversation-pathname
+                          (application-conversation application))
+                         :sequence sequence))
+                (with-recursive-lock-held
+                    ((application-render-lock application))
+                  (let* ((identifier
+                           (list :conversation
+                                 (conversation-identifier (application-conversation application))
+                                 sequence))
+                         (text  (user-message-input-text user-message-input))
+                         (layout
+                           (lambda (columns)
+                             (let ((*application-transcript-layout-columns* columns))
+                               (cond
+                                 (continuation-p
+                                  (application--continuation-entry text))
+                                 (operation-request
+                                  (application--operation-request-entry
+                                   application operation-request timestamp))
+                                 (t
+                                  (application--user-message-entry application text timestamp))))))
+                         (entry (funcall layout (application--transcript-columns application))))
+                    (if (terminal-ui-fullscreen-p ui)
+                        (terminal-ui-present-records
+                         ui (list (list identifier entry
+                                        (list :entry-layout layout :source-characters (length text)))))
+                        (terminal-ui-append-finalized ui identifier entry)))
+                  (setf (application-rendered-sequence application) sequence)))
+              (application-publish-recovery-session application))
+             (:related-memories
+              (unless related-memories-shown-p
+                (application-present
+                 application
+                 (application--related-memories-notice
+                  (getf details :count)
+                  :stale      (getf details :stale 0)
+                  :unverified (getf details :unverified 0)
+                  :facts      (getf details :facts 0)
+                  :ids        (getf details :ids)))
+                (setf related-memories-shown-p t)))
+             (:knowledge-changes
               (application-present
                application
                (list (terminal-span
-                      ':brand
-                      (sanitize-text
-                       (if (getf details :related-p)
-                           (format nil "@ learned procedure~P ~{~A~^, ~} may fit this request"
-                                   (length (getf details :names)) (getf details :names))
-                           (format nil "@ learned procedure~P ~{~A~^, ~} fit~:[s~;~] this request"
-                                   (length (getf details :names)) (getf details :names)
-                                   (rest (getf details :names))))
-                       :single-line-p t))))
-              (setf procedure-offers-shown-p t)))
-           (:procedures-learned
-            (application-present
-             application
-             (list (terminal-span ':success
-                                  (sanitize-text
-                                   (application--procedures-learned-notice
-                                    (getf details :procedures))
-                                   :single-line-p t)))))
-           (:plan-changes
-            (application-present
-             application
-             (list (terminal-span
-                    ':notice
-                    (format nil "@ ~D plan step~:P changed with ~:*~[~;its~:;their~] facts"
-                            (getf details :count))))))
-           (:provider-progress
-            (terminal-ui-note-status-progress ui))
-           (:provider-request-started
-            (setf request-empty-p t)
-            (terminal-ui-set-preview-rows ui nil)
-            (text-buffer-clear reasoning-text)
-            (text-buffer-clear stream-text)
-            (setf presented-reasoning-text nil
-                  activity-label (application-thinking-label))
-            (application-note-prompt-cache-request-started application)
-            (application-publish-recovery-session application)
-            (application-set-activity application activity-label))
-           (:provider-retries-exhausted
-            (stream-flush)
-            (application-set-activity application nil)
-            (application-present
-             application
-             (list (terminal-span
-                    ':failure
-                    (format nil "∙ provider retries exhausted after ~D attempts (~A)"
-                            (getf details :attempts)
-                            (or (getf details :code) "transient provider error"))))))
-           (:provider-retrying
-            (let ((partial-output-p
-                    (or stream-open-p
-                        (plusp (length reasoning-text)))))
-              (stream-flush)
-              (terminal-ui-set-preview-rows ui nil)
-              (when partial-output-p
+                      ':notice
+                      (application--knowledge-changes-notice (getf details :count))))))
+             (:procedure-offers
+              (unless procedure-offers-shown-p
                 (application-present
                  application
-                 (list
-                  (terminal-span
-                   ':hint
-                   (format nil
-                           "∙ provider stream interrupted; retrying ~D/~D"
-                           (getf details :attempt)
-                           (getf details :maximum-attempts))))))
+                 (list (terminal-span
+                        ':brand
+                        (sanitize-text
+                         (if (getf details :related-p)
+                             (format nil "@ learned procedure~P ~{~A~^, ~} may fit this request"
+                                     (length (getf details :names)) (getf details :names))
+                             (format nil "@ learned procedure~P ~{~A~^, ~} fit~:[s~;~] this request"
+                                     (length (getf details :names)) (getf details :names)
+                                     (rest (getf details :names))))
+                         :single-line-p t))))
+                (setf procedure-offers-shown-p t)))
+             (:procedures-learned
+              (application-present
+               application
+               (list (terminal-span ':success
+                                    (sanitize-text
+                                     (application--procedures-learned-notice
+                                      (getf details :procedures))
+                                     :single-line-p t)))))
+             (:plan-changes
+              (application-present
+               application
+               (list (terminal-span
+                      ':notice
+                      (format nil "@ ~D plan step~:P changed with ~:*~[~;its~:;their~] facts"
+                              (getf details :count))))))
+             (:provider-progress
+              (terminal-ui-note-status-progress ui))
+             (:provider-request-started
+              (application--finish-stream application)
+              (stream-begin)
+              (setf request-empty-p t)
+              (terminal-ui-set-preview-rows ui nil)
               (text-buffer-clear reasoning-text)
               (text-buffer-clear stream-text)
               (setf presented-reasoning-text nil
-                    stream-pending ""
-                    stream-open-p nil
-                    stream-renderer nil)
+                    activity-label (application-thinking-label))
+              (application-note-prompt-cache-request-started application)
+              (application-publish-recovery-session application)
+              (application-set-activity application activity-label))
+             (:provider-retries-exhausted
+              (application--finish-stream application)
+              (application-set-activity application nil)
+              (application-present
+               application
+               (list (terminal-span
+                      ':failure
+                      (format nil "∙ provider retries exhausted after ~D attempts (~A)"
+                              (getf details :attempts)
+                              (or (getf details :code) "transient provider error"))))))
+             (:provider-retrying
+              (let ((partial-output-p
+                      (or stream-open-p
+                          (plusp (length reasoning-text)))))
+                (application--finish-stream application)
+                (terminal-ui-set-preview-rows ui nil)
+                (when partial-output-p
+                  (application-present
+                   application
+                   (list
+                    (terminal-span
+                     ':hint
+                     (format nil
+                             "∙ provider stream interrupted; retrying ~D/~D"
+                             (getf details :attempt)
+                             (getf details :maximum-attempts))))))
+                (application-set-activity
+                 application
+                 (let ((delay (getf details :delay)))
+                   (if (and (integerp delay) (plusp delay))
+                       (format nil "reconnecting ~D/~D in ~Ds"
+                               (getf details :attempt)
+                               (getf details :maximum-attempts)
+                               delay)
+                       ;; The attempt is in flight, so no countdown remains.
+                       (format nil "reconnecting ~D/~D"
+                               (getf details :attempt)
+                               (getf details :maximum-attempts)))))))
+             (:assistant-response-persisted
+              (setf request-empty-p nil)
+              ;; Only the reply to the person's typed message reaches the
+              ;; channel's subscribers. A reply to a channel message, a job
+              ;; completion or any other automatic turn stays here, so two
+              ;; agents subscribed to each other never answer each other forever.
+              (when (and (null operation-request) (not continuation-p))
+                (application-world-share-reply application (getf details :text))))
+             (:provider-request-completed
+              (when (plusp (getf details :tool-call-count 0))
+                (setf request-empty-p nil))
+              (application--finish-stream application)
+              (application-refresh-context-meter application)
+              (application-note-prompt-cache-request-completed
+               application details))
+             (:tool-call-started
               (application-set-activity
                application
-               (let ((delay (getf details :delay)))
-                 (if (and (integerp delay) (plusp delay))
-                     (format nil "reconnecting ~D/~D in ~Ds"
-                             (getf details :attempt)
-                             (getf details :maximum-attempts)
-                             delay)
-                     ;; The attempt is in flight, so no countdown remains.
-                     (format nil "reconnecting ~D/~D"
-                             (getf details :attempt)
-                             (getf details :maximum-attempts)))))))
-           (:assistant-response-persisted
-            (setf request-empty-p nil)
-            ;; Only the reply to the person's typed message reaches the
-            ;; channel's subscribers. A reply to a channel message, a job
-            ;; completion or any other automatic turn stays here, so two
-            ;; agents subscribed to each other never answer each other forever.
-            (when (and (null operation-request) (not continuation-p))
-              (application-world-share-reply application (getf details :text))))
-           (:provider-request-completed
-            (when (plusp (getf details :tool-call-count 0))
-              (setf request-empty-p nil))
-            (reasoning-flush)
-            (let ((completed-stream-text
-                    (and stream-open-p (text-buffer-string stream-text)))
-                  (completed-reasoning-text presented-reasoning-text))
-              (stream-flush)
-              (application-render-records
-               application
-               :streamed-assistant-text completed-stream-text
-               :streamed-reasoning-text completed-reasoning-text))
-            (application-refresh-context-meter application)
-            (application-note-prompt-cache-request-completed
-             application details))
-           (:tool-call-started
-            (application-set-activity
-             application
-             (format nil "running ~A" (getf details :tool))))
-           (:tool-call-progress
-            (let ((activity (getf details :activity)))
-              (when (non-empty-string-p activity)
-                (application-set-activity application activity))))
-           (:tool-call-completed
-            (application-render-records application)
-            (let ((tool-name (or (getf details :tool) "")))
-              (cond
-                ((string= tool-name "skill.load")
-                 (if (and (getf details :success-p)
-                          (application-compact-view-p application)
-                          (nth-value
-                           2
-                           (application--skill-load-result-details
-                            (getf details :details))))
-                     (application--present-skill-load-result
-                      application details)
-                     (application--present-transient-tool-result
-                      application details)))))
-            (application-set-activity application activity-label))
-           (:steering-applied
-            (setf related-memories-shown-p nil
-                  procedure-offers-shown-p nil)
-            (application-render-records application)
-            (application-set-activity application activity-label))
-           (:compaction-started
-            (setf (application-idle-compaction-episode application) nil)
-            (application-set-activity application "compacting the conversation")
-            (terminal-ui-set-compacting ui t))
-           (:compaction-completed
-            (terminal-ui-set-compacting ui nil)
-            (application-refresh-context-meter application)
-            ;; The rewritten prompt cannot hit the old cache, so the expected
-            ;; miss on the next request is not worth a notice.
-            (setf (application-prompt-cache-baseline application) nil)
-            (application-render-records application)
-            (application-set-activity application activity-label))
-           (:turn-completed
-            (terminal-ui-set-compacting ui nil)
-            (terminal-ui-set-preview-rows ui nil)
-            (when request-empty-p
-              (setf request-empty-p nil)
-              (application-job-completions-present-yield application details))
-            (application-set-activity application nil))))
+               (format nil "running ~A" (getf details :tool))))
+             (:tool-call-progress
+              (let ((activity (getf details :activity)))
+                (when (non-empty-string-p activity)
+                  (application-set-activity application activity))))
+             (:tool-call-completed
+              (application-render-records application)
+              (let ((tool-name (or (getf details :tool) "")))
+                (cond
+                  ((string= tool-name "skill.load")
+                   (if (and (getf details :success-p)
+                            (application-compact-view-p application)
+                            (nth-value
+                             2
+                             (application--skill-load-result-details
+                              (getf details :details))))
+                       (application--present-skill-load-result
+                        application details)
+                       (application--present-transient-tool-result
+                        application details)))))
+              (application-set-activity application activity-label))
+             (:steering-applied
+              (setf related-memories-shown-p nil
+                    procedure-offers-shown-p nil)
+              (application-render-records application)
+              (application-set-activity application activity-label))
+             (:compaction-started
+              (setf (application-idle-compaction-episode application) nil)
+              (application-set-activity application "compacting the conversation")
+              (terminal-ui-set-compacting ui t))
+             (:compaction-completed
+              (terminal-ui-set-compacting ui nil)
+              (application-refresh-context-meter application)
+              ;; The rewritten prompt cannot hit the old cache, so the expected
+              ;; miss on the next request is not worth a notice.
+              (setf (application-prompt-cache-baseline application) nil)
+              (application-render-records application)
+              (application-set-activity application activity-label))
+             (:turn-completed
+              (application--finish-stream application)
+              (terminal-ui-set-compacting ui nil)
+              (terminal-ui-set-preview-rows ui nil)
+              (when request-empty-p
+                (setf request-empty-p nil)
+                (application-job-completions-present-yield application details))
+              (application-set-activity application nil))))))
        :steering-callback           steering-function
        :steering-persisted-callback steering-persisted-function
        :pending-operations-callback pending-operations-function
@@ -4717,6 +4782,7 @@ refusal, as a secondary value."
                (application--note-goal-turn application result)
                (unless (or continuation-p operation-request)
                  (application--maybe-refresh-conversation-title application)))))
+      (application--finish-stream application)
       (terminal-ui-set-compacting ui nil)
       (terminal-ui-set-preview-rows ui nil)
       (application-set-activity application nil)

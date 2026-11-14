@@ -4398,6 +4398,134 @@
                                       :if-does-not-exist ':ignore)))
   nil)
 
+(-> application-tests--stream-ownership (configuration) null)
+(defun application-tests--stream-ownership (configuration)
+  "Exercise replay interleavings, multipart responses and turn unwind without provider calls."
+  (labels ((message (parts)
+             "Build one completed assistant item with its separate content parts."
+             (json-object "type" "message" "role" "assistant"
+                          "content" (coerce (mapcar (lambda (text)
+                                                     (json-object "type" "output_text" "text" text))
+                                                   parts)
+                                            'vector)))
+
+           (run (parts text &key fullscreen-p interleave-p)
+             "Count completed assistant entries after one controlled request."
+             (let* ((conversation (conversation-create configuration))
+                    (terminal     (make-instance 'recording-terminal :columns 120 :rows 30))
+                    (ui           (terminal-ui-create :terminal terminal :fullscreen-p fullscreen-p))
+                    (application  (make-instance 'application :configuration configuration
+                                                 :conversation conversation :ui ui))
+                    (observer     (application-agent-observer application)))
+               (unwind-protect
+                    (progn
+                      (terminal-ui-start ui)
+                      (application-render-records application)
+                      (agent-observer-status observer ':provider-request-started nil)
+                      (agent-observer-text observer text)
+                      (dolist (item parts)
+                        (conversation-append-provider-item conversation (message item)))
+                      (when interleave-p
+                        (application-render-records application))
+                      (agent-observer-status observer ':provider-request-completed nil)
+                      (application-render-records application)
+                      (test-assert (and (null (application-stream-finish-function application))
+                                        (= (application-rendered-sequence application)
+                                           (1- (conversation-next-sequence conversation))))
+                                   "completion releases stream display and consumes durable records")
+                      (let ((output
+                              (if fullscreen-p
+                                  (let ((viewport (fullscreen-terminal-ui-viewport ui)))
+                                    (format nil "~{~A~%~}"
+                                            (loop for index below (clinedi:transcript-viewport-chunk-count viewport)
+                                                  collect (clinedi:transcript-viewport-chunk-text viewport index))))
+                                  (recording-terminal-output terminal))))
+                        (terminal-tests--substring-count "● autolith" output)))
+                 (terminal-ui-stop ui)))))
+    (dolist (fullscreen-p '(nil t))
+      (dolist (case (list (list '(("single reply")) "single reply" 1)
+                          (list '(("first item") ("second item")) "first itemsecond item" 1)
+                          (list '(("first part" "second part") ("third part"))
+                                "first partsecond partthird part" 1)
+                          (list '(("A") (" ") ("B")) "A B" 1)
+                          (list '(("first part" "second part") ("third part"))
+                                (format nil "first part~%second part~%third part") 1)
+                          (list '(("authoritative correction")) "provisional answer" 2)
+                          (list '(("unstreamed answer")) "" 1)))
+        (destructuring-bind (parts text expected) case
+          (let ((control     (run parts text :fullscreen-p fullscreen-p))
+                (interleaved (run parts text :fullscreen-p fullscreen-p :interleave-p t)))
+            (test-assert (and (= control expected) (= interleaved control))
+                         "replay during a stream preserves exact matches and authoritative changes"))))))
+  (let* ((conversation (conversation-create configuration))
+         (terminal     (make-instance 'recording-terminal :columns 120))
+         (ui           (terminal-ui-create :terminal terminal))
+         (application  (make-instance 'application :configuration configuration
+                                      :conversation conversation :agent nil :ui ui)))
+    (unwind-protect
+         (progn
+           (terminal-ui-start ui)
+           (application-render-records application)
+           (test-call-with-function-replacements
+            (list (list 'agent-run-user-turn
+                        (lambda (agent content &key observer &allow-other-keys)
+                          (declare (ignore agent content))
+                          (agent-observer-status observer ':provider-request-started nil)
+                          (agent-observer-text observer "interrupted reply")
+                          (conversation-append-provider-item
+                           conversation (json-object "type" "message" "role" "assistant"
+                                                     "content" (json-array (json-object "type" "output_text"
+                                                                                       "text" "interrupted reply"))))
+                          (throw 'stream-aborted nil))))
+            (lambda ()
+              (catch 'stream-aborted
+                (application--run-turn application "test input"))))
+           (test-assert (null (application-stream-finish-function application))
+                        "nonlocal turn unwind releases stream ownership")
+           (recording-terminal-reset terminal)
+           (conversation-append-provider-item
+            conversation (json-object "type" "message" "role" "assistant"
+                                      "content" (json-array (json-object "type" "output_text"
+                                                                        "text" "authoritative after abort"))))
+           (application-render-records application)
+           (test-assert (search "authoritative after abort" (recording-terminal-output terminal))
+                        "durable replay resumes after an interrupted turn")
+           (let ((observer (application-agent-observer application)))
+             (agent-observer-status observer ':provider-request-started nil)
+             (agent-observer-text observer "stale attempt")
+             (agent-observer-status observer ':provider-request-started nil)
+             (agent-observer-text observer "fresh attempt")
+             (conversation-append-provider-item
+              conversation (json-object "type" "message" "role" "assistant"
+                                        "content" (json-array (json-object "type" "output_text"
+                                                                          "text" "fresh attempt"))))
+             (recording-terminal-reset terminal)
+             (agent-observer-status observer ':provider-request-completed nil)
+             (test-assert (not (search "● autolith" (recording-terminal-output terminal)))
+                          "request reset discards the old attempt's reconciliation text")
+             (agent-observer-status observer ':provider-request-started nil)
+             (agent-observer-text observer "partial before callback failure")
+             (test-call-with-function-replacements
+              (list (list 'application-clients-publish
+                          (lambda (&rest arguments)
+                            (declare (ignore arguments))
+                            (throw 'stream-callback-aborted nil))))
+              (lambda ()
+                (catch 'stream-callback-aborted
+                  (agent-observer-text observer "discarded event"))))
+             (test-assert (null (application-stream-finish-function application))
+                          "callback unwind releases stream ownership")
+             (recording-terminal-reset terminal)
+             (agent-observer-status observer ':provider-request-started nil)
+             (agent-observer-text observer "after callback failure")
+             (test-assert (= (terminal-tests--substring-count "● autolith"
+                                                              (recording-terminal-output terminal))
+                             1)
+                          "a failed callback closes its old block before the next request")
+             (application--finish-stream application)))
+      (terminal-ui-stop ui)))
+  nil)
+
 (-> test-streaming-presentation () null)
 (defun test-streaming-presentation ()
   "Test safe streaming, exact record reconciliation, and live tool entries."
@@ -4520,6 +4648,7 @@
                         (json-object "type" "output_text"
                                      "text" streamed-text))))
            (recording-terminal-reset terminal)
+           (application-render-records application)
            (funcall send-status :provider-request-completed nil)
            (let ((completion (recording-terminal-output terminal)))
              (test-assert (search "final tail" completion)
@@ -4562,6 +4691,7 @@
                "name" "eval"
                "arguments" (json-encode (json-object "forms" (vector "(+ 1 2)")))))
              (recording-terminal-reset terminal)
+             (application-render-records application)
              (funcall send-status :provider-request-completed nil)
              (let ((output (recording-terminal-output terminal)))
                (test-assert
@@ -4633,6 +4763,7 @@
                                 (recording-terminal-output terminal))
                         "streamed code blocks render numbered gutters")
            (funcall send-status :provider-request-completed nil)
+           (application-tests--stream-ownership configuration)
            (terminal-ui-stop (application-ui application)))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
