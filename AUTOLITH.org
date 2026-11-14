@@ -37,6 +37,35 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: discard the private accounting definitions after booting
   the equivalent tracked implementation.
 
+** Measured context through failed compaction
+
+- Problem: side-channel compaction metering erased the ordinary context sample
+  even when compaction failed without replacing retained history.
+- Behavior: retain the ordinary sample during compaction requests; invalidate it
+  when publishing replacement history or changing ownership or configuration.
+- Scope and location: tracked =src/conversation/store.lisp= in =d0085f7c=;
+  the single invalidator definition was installed live and persisted in private
+  image commit =ad5fa7b4-6e5a-4830-ba2f-b114f8137a24=, private Git =dce50286=;
+  papercut =H4RdvUE=.
+- Verification: source checks, 24 context-admission cases with 254 checks and
+  the rejected-summary case with four checks passed. Historical replay retained
+  the original valid sample through the failed attempt and subsequent paste,
+  with identical retained history. Active boundary assertions and clean-process
+  private replay passed; running and selected private commits are synchronized.
+- Removal condition: omit the private invalidator after booting the equivalent
+  tracked implementation.
+
+** Default child-agent depth
+
+- Behavior: allow three child-agent levels below the primary by default.
+- Scope and location: tracked =src/task/state.lisp= and =docs/guide.org= in
+  =7cb4ee3e=. The private setting was persisted in =0ac434f1= and carried
+  forward by =ad5fa7b4=.
+- Verification: source checks and the task-agent tool case with 15 checks passed;
+  active and new orchestrators reported depth three. An actual third-level
+  child completed the accounting review.
+- Removal condition: omit the private setting after booting the tracked default.
+
 ** Serialized stream and transcript presentation
 
 - Problem: durable replay could render a reply before its live stream finished;
