@@ -2337,22 +2337,31 @@ log references and byte counts are for the model."
 
 (defmethod application-tool-result-entry
     ((tool resource-edit-tool) (application application) record)
-  "Present a successful edit as its one-line outcome and any delimiter warning.
+  "Present a successful edit as its outcome and a compact delimiter issue count.
 
 The call entry already shows the change. The revision, anchors and line window
 that follow are the model's next observation, not something the user reads."
   (if (application--tool-result-success-p record)
-      (let* ((output  (or (getf (rest record) :output) ""))
-             (warning (search "WARNING: " output)))
+      (let* ((output       (or (getf (rest record) :output) ""))
+             (warning      (search "WARNING: " output))
+             (paren-marker "Common Lisp delimiter checking found ")
+             (paren-start  (and warning (search paren-marker output :start2 warning)))
+             (paren-count  (and paren-start
+                                (parse-integer
+                                 (remove #\, (subseq output (+ paren-start (length paren-marker))))
+                                 :junk-allowed t))))
         (application--tool-result-entry
          application
          record
          :detail (application--first-line-summary output)
-         :rows   (when warning
-                   (application--preview-rows (subseq output warning)
-                                              ':failure
-                                              *application-tool-output-lines*
-                                              :gutter "│ "))))
+         :rows   (cond
+                   ((and paren-count (plusp paren-count))
+                    (list (list (terminal-span ':notice (format nil "~D paren issue~:P found" paren-count)))))
+                   (warning
+                    (application--preview-rows (subseq output warning)
+                                               ':failure
+                                               *application-tool-output-lines*
+                                               :gutter "│ ")))))
       (application--tool-result-entry
        application record
        :rows (list (cons (terminal-span ':failure "│ ")

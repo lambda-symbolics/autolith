@@ -3038,13 +3038,15 @@
                          :tool "resource.edit" :status ':ok
                          :output (format nil "Applied replace-lines 3-4.~%URI: workspace:a.lisp~%~
                                               Revision: R1~%Content:~%     3:AB12  (foo)~%~%~
-                                              WARNING: The edit succeeded, but delimiters are unbalanced."))))
+                                               WARNING: The edit succeeded, but Common Lisp delimiter checking found 1 ~
+                                               unmatched or mismatched delimiter in /work/a.lisp.~%~
+                                               - line 20, column 1: opening `(` has no matching `)`.~%~
+                                               Review and correct the resulting file before loading or compiling it."))))
            (text  (test-terminal-row-text entry)))
       (test-assert (and (search "Applied replace-lines 3-4" text)
-                        (search "│ WARNING: The edit succeeded" text)
-                        (not (search "Revision" text))
-                        (not (search "AB12" text)))
-                   "resource.edit results show the outcome and railed warnings, not the next observation"))
+                        (search "1 paren issue found" text)
+                        (= (count #\Newline text) 1))
+                   "resource.edit shows one compact delimiter notice after the edit outcome"))
     (let* ((entry (conversation-record-entry
                    (application-tests--ui-application :columns 100 :compact-view-p nil)
                    (list :tool-result :seq 9 :time 0 :call-id "parens"
