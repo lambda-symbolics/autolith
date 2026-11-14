@@ -92,48 +92,91 @@
 
 (-> world-restart-tests--write-phase-probe (stream pathname) null)
 (defun world-restart-tests--write-phase-probe (stream pathname)
-  "Write test-only instrumentation into the fresh process's executable init."
+  "Write synchronous test-only checkpoint instrumentation into executable init."
   (write
    `(let ((prepare (symbol-function 'checkpoint--prepare-saver))
+          (gc (symbol-function 'sb-ext:gc))
+          (save (symbol-function 'sb-ext:save-lisp-and-die))
+          (checkpoint (symbol-function 'sbcl-generations:checkpoint-restart-save-and-exit))
+          (save-hooks sb-ext:*save-hooks*)
           (records 0) (armed-p nil) (ordinal 0) (busy-p nil) (failed-p nil)
-          (worker-kind "") (active-p nil))
+          (requester nil) (worker-kind "") (active-p nil))
       (declare (notinline write close))
       (labels ((record-phase (phase)
-                 "Append one bounded record, refusing reentry and stopping after any I/O error."
+                 "Append one bounded record, stopping after I/O failure and reporting its type."
                  (when (and (not busy-p) (not failed-p) (< records 64))
                    (setf busy-p t)
                    (unwind-protect
                         (handler-case
-                            (progn
+                            (let* ((name   (or (sb-thread:thread-name sb-thread:*current-thread*) ""))
+                                   (thread (subseq name 0 (min 128 (length name)))))
                               (incf records)
                               (with-open-file (output ,pathname :direction ':output :if-exists ':append
                                                                :if-does-not-exist ':create)
                                 (write (list :phase phase :pid (current-process-id) :gc ordinal
-                                             :worker-kind worker-kind :active-p active-p)
+                                             :thread thread :worker-kind worker-kind :active-p active-p)
                                        :stream output :readably t)
                                 (terpri output)))
-                          (error () (setf failed-p t)))
-                     (setf busy-p nil)))))
-        (setf (symbol-function 'checkpoint--prepare-saver)
-              (lambda (worker generation)
-                (setf armed-p t ordinal 0
-                      worker-kind (symbol-name (type-of worker))
-                      active-p (not (null *active-application*)))
-                (record-phase ':prepare-enter)
-                (multiple-value-prog1 (funcall prepare worker generation)
-                  (record-phase ':prepare-exit))))
-        (push (lambda ()
-                (when armed-p
-                  (incf ordinal)
-                  (record-phase ':after-gc)))
-              sb-ext:*after-gc-hooks*)
+                          (error (condition)
+                            (setf failed-p t)
+                            (handler-case
+                                (format *error-output* "~&CHECKPOINT-PROBE-WRITER-FAILURE ~S ~S~%"
+                                        phase (type-of condition))
+                              (error () nil))))
+                     (setf busy-p nil))))
+
+               (restore-probe ()
+                 "Restore captured definitions and hooks before saving or returning."
+                 (sb-ext:without-package-locks
+                   (setf (symbol-function 'checkpoint--prepare-saver) prepare
+                         (symbol-function 'sb-ext:gc) gc
+                         (symbol-function 'sb-ext:save-lisp-and-die) save
+                         (symbol-function 'sbcl-generations:checkpoint-restart-save-and-exit) checkpoint
+                         sb-ext:*save-hooks* save-hooks)))
+
+               (requester-p ()
+                 "Return whether this call belongs to the prepared checkpoint thread."
+                 (and armed-p (eq requester sb-thread:*current-thread*))))
+        (sb-ext:without-package-locks
+          (setf (symbol-function 'checkpoint--prepare-saver)
+                (lambda (worker generation)
+                  (setf armed-p t ordinal 0 requester sb-thread:*current-thread*
+                        worker-kind (symbol-name (type-of worker))
+                        active-p (not (null *active-application*)))
+                  (record-phase ':prepare-enter)
+                  (multiple-value-prog1 (funcall prepare worker generation)
+                    (record-phase ':prepare-exit)))
+                (symbol-function 'sb-ext:gc)
+                (lambda (&rest arguments)
+                  (if (requester-p)
+                      (let ((returned-p nil))
+                        (incf ordinal)
+                        (record-phase ':gc-enter)
+                        (unwind-protect
+                             (multiple-value-prog1 (apply gc arguments)
+                               (setf returned-p t)
+                               (record-phase ':gc-exit))
+                          (unless returned-p (record-phase ':gc-unwind))))
+                      (apply gc arguments)))
+                (symbol-function 'sb-ext:save-lisp-and-die)
+                (lambda (&rest arguments)
+                  (when (requester-p) (record-phase ':save-call-enter))
+                  (unwind-protect (apply save arguments)
+                    (restore-probe)))
+                (symbol-function 'sbcl-generations:checkpoint-restart-save-and-exit)
+                (lambda (&rest arguments)
+                  (unwind-protect (apply checkpoint arguments)
+                    (restore-probe)))))
         (setf sb-ext:*save-hooks*
-              (append (list (lambda () (when armed-p (record-phase ':save-hooks-enter))))
-                      sb-ext:*save-hooks*
+              (append (list (lambda ()
+                              (when (requester-p) (record-phase ':save-hooks-enter))
+                              (restore-probe)))
+                      save-hooks
                       (list (lambda ()
-                              (when armed-p
+                              (when (requester-p)
                                 (record-phase ':save-hooks-exit)
-                                (setf armed-p nil))))))))
+                               (setf armed-p nil))))))
+        #'restore-probe))
    :stream stream :readably t)
   (terpri stream)
   nil)
@@ -148,11 +191,12 @@
               (list :status ':oversized)
               (let ((*read-eval* nil)
                     (end         (list ':end)))
-                (loop for record = (handler-case (read stream nil end)
-                                     (end-of-file () end))
-                      repeat 64
-                      until (eq record end)
-                      collect record))))
+                (loop repeat 64
+                      collect (let ((record (handler-case (read stream nil end)
+                                              (end-of-file () end))))
+                                (when (eq record end)
+                                  (loop-finish))
+                                record)))))
         (list :status ':absent))))
 
 (-> world-restart-tests--diagnostics (configuration (integer 1) t) list)
@@ -204,30 +248,28 @@
 
 (-> world-restart-tests--check-phase-emission-failures () null)
 (defun world-restart-tests--check-phase-emission-failures ()
-  "Inject GC during emission and I/O failures without leaving global hooks or functions replaced."
+  "Inject reentry and I/O failures without leaving wrapped definitions installed."
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
-    (let ((old-after-gc-hooks sb-ext:*after-gc-hooks*)
-          (old-save-hooks     sb-ext:*save-hooks*))
-      (unwind-protect
-           (dolist (scenario '(:gc :write :close))
-             (let* ((pathname  (world-restart-tests--phase-pathname configuration))
-                    (operation (if (eq scenario ':close) 'close 'write))
-                    (original  (symbol-function operation))
-                    (attempts  0))
-               (when (probe-file pathname)
-                 (delete-file pathname))
-               (setf sb-ext:*after-gc-hooks* nil sb-ext:*save-hooks* nil)
-               (test-call-with-function-replacements
-                (list (list 'checkpoint--prepare-saver
-                            (lambda (worker generation)
-                              (declare (ignore worker generation))
-                              nil)))
-                (lambda ()
+    (dolist (scenario '(:gc :write :close))
+      (let* ((pathname  (world-restart-tests--phase-pathname configuration))
+             (operation (if (eq scenario ':close) 'close 'write))
+             (original  (symbol-function operation))
+             (attempts  0)
+             (restore   nil))
+        (when (probe-file pathname) (delete-file pathname))
+        (test-call-with-function-replacements
+         (list (list 'checkpoint--prepare-saver
+                     (lambda (worker generation)
+                       (declare (ignore worker generation))
+                       nil)))
+         (lambda ()
+           (unwind-protect
+                (progn
                   (let* ((source      (with-output-to-string (stream)
                                         (world-restart-tests--write-phase-probe stream pathname)))
                          (*read-eval* nil))
-                    (eval (read-from-string source)))
+                    (setf restore (eval (read-from-string source))))
                   (sb-ext:without-package-locks
                     (test-call-with-function-replacements
                      (list (list operation
@@ -235,7 +277,7 @@
                                    (incf attempts)
                                    (case scenario
                                      (:gc
-                                      (funcall (first sb-ext:*after-gc-hooks*))
+                                      (checkpoint--prepare-saver nil nil)
                                       (apply original arguments))
                                      (:write
                                       (write-string "(" (getf (rest arguments) :stream))
@@ -247,77 +289,125 @@
                                              :message                   "Injected record-close failure."))))))
                      (lambda ()
                        (checkpoint--prepare-saver nil nil)
-                       (checkpoint--prepare-saver nil nil))))))
-               (test-assert (if (eq scenario ':gc)
-                                (and (= attempts 4)
-                                     (equal (mapcar (lambda (record) (getf record :phase))
-                                                    (world-restart-tests--phases configuration))
-                                            '(:prepare-enter :prepare-exit :prepare-enter :prepare-exit)))
-                                (= attempts 1))
-                            (format nil "Phase emission scenario ~S made ~D I/O attempts; GC must not reenter and errors must stop emission."
-                                    scenario attempts))))
-        (setf sb-ext:*after-gc-hooks* old-after-gc-hooks
-              sb-ext:*save-hooks* old-save-hooks))))
+                       (checkpoint--prepare-saver nil nil)))))
+             (when restore (funcall restore)))))
+        (test-assert (if (eq scenario ':gc)
+                         (and (= attempts 4)
+                              (equal (mapcar (lambda (record) (getf record :phase))
+                                             (world-restart-tests--phases configuration))
+                                     '(:prepare-enter :prepare-exit :prepare-enter :prepare-exit)))
+                         (= attempts 1))
+                     (format nil "Phase emission scenario ~S made ~D attempts; reentry is refused and I/O errors stop emission."
+                             scenario attempts)))))
   nil)
 
 (-> world-restart-tests--check-phase-probe () null)
 (defun world-restart-tests--check-phase-probe ()
-  "Test generated probes preserve hooks and produce bounded, crash-readable records."
+  "Test synchronous boundaries, restoration, hook order and bounded crash-readable records."
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let* ((pathname             (world-restart-tests--phase-pathname configuration))
            (order                nil)
-           (old-after-gc-hooks   sb-ext:*after-gc-hooks*)
            (old-save-hooks       sb-ext:*save-hooks*)
-           (*active-application* nil))
+           (old-after-gc-hooks   sb-ext:*after-gc-hooks*)
+           (fail-gc-p            nil)
+           (*active-application* nil)
+           (symbols              '(checkpoint--prepare-saver sb-ext:gc sb-ext:save-lisp-and-die
+                                   sbcl-generations:checkpoint-restart-save-and-exit)))
       (unwind-protect
-           (progn
-             (setf sb-ext:*after-gc-hooks* nil
-                   sb-ext:*save-hooks* (list (lambda () (push ':first order))
-                                            (lambda () (push ':second order))))
+           (sb-ext:without-package-locks
              (test-call-with-function-replacements
               (list (list 'checkpoint--prepare-saver
                           (lambda (worker generation)
                             (declare (ignore worker generation))
-                            nil)))
+                            nil))
+                    (list 'sb-ext:gc
+                          (lambda (&rest arguments)
+                            (declare (ignore arguments))
+                            (when fail-gc-p
+                              (error 'platform-error :operation ':phase-probe
+                                     :message                   "Injected synchronous GC failure."))
+                            (values ':collected ':second)))
+                    (list 'sb-ext:save-lisp-and-die
+                          (lambda (&rest arguments)
+                            (declare (ignore arguments))
+                            (mapc #'funcall sb-ext:*save-hooks*)
+                            (values ':saved ':second)))
+                    (list 'sbcl-generations:checkpoint-restart-save-and-exit
+                          (lambda (&rest arguments)
+                            (declare (ignore arguments))
+                            (checkpoint--prepare-saver nil nil)
+                            (sb-ext:gc :full t)
+                            (sb-ext:save-lisp-and-die "unused"))))
               (lambda ()
-                (let* ((source      (with-output-to-string (stream)
-                                      (world-restart-tests--write-phase-probe stream pathname)))
-                       (*read-eval* nil))
-                  (eval (read-from-string source)))
-                (funcall (first sb-ext:*after-gc-hooks*))
-                (test-assert (not (probe-file pathname)) "GC probes are dormant before checkpoint preparation")
-                (checkpoint--prepare-saver nil nil)
-                (funcall (first sb-ext:*after-gc-hooks*))
-                (mapc #'funcall sb-ext:*save-hooks*)
-                (let ((records (world-restart-tests--phases configuration)))
-                  (test-assert (and (equal (reverse order) '(:first :second))
-                                    (equal (mapcar (lambda (record) (getf record :phase)) records)
-                                           '(:prepare-enter :prepare-exit :after-gc :save-hooks-enter :save-hooks-exit))
-                                    (= (getf (third records) :gc) 1))
-                               "phase probes preserve hook order and report the gated GC ordinal")
-                  (with-open-file (stream pathname :direction ':output :if-exists ':append)
-                    (write-string "(" stream))
-                  (test-assert (equal records (world-restart-tests--phases configuration))
-                               "collection tolerates an interrupted final record"))
-                (with-open-file (stream pathname :direction ':output :if-exists ':supersede)
-                  (declare (ignorable stream)))
-                (loop repeat 70 do (checkpoint--prepare-saver nil nil))
-                (let ((count (length (world-restart-tests--phases configuration))))
-                  (test-assert (and (plusp count) (<= count 64))
-                               "probe emission is bounded across repeated preparations"))))
-             (with-open-file (stream pathname :direction ':output :if-exists ':supersede)
-               (dotimes (index 65)
-                 (write (list :phase ':prepare-enter :gc index) :stream stream)
-                 (terpri stream)))
-             (test-assert (= (length (world-restart-tests--phases configuration)) 64)
-                          "collection also bounds an overlong record sequence")
+                (let ((originals (mapcar #'symbol-function symbols)))
+                  (dolist (scenario '(:normal :unwind :bounded))
+                    (when (probe-file pathname) (delete-file pathname))
+                    (setf order nil fail-gc-p (eq scenario ':unwind)
+                          sb-ext:*save-hooks* (list (lambda () (push ':first order))
+                                                   (lambda () (push ':second order))))
+                    (let* ((source      (with-output-to-string (stream)
+                                          (world-restart-tests--write-phase-probe stream pathname)))
+                           (*read-eval* nil)
+                           (restore     (eval (read-from-string source))))
+                      (unwind-protect
+                           (case scenario
+                             (:normal
+                              (test-assert (equal (multiple-value-list (sb-ext:gc)) '(:collected :second))
+                                           "dormant wrappers preserve multiple values")
+                              (test-assert (not (probe-file pathname)) "GC probes are dormant before preparation")
+                              (test-assert
+                               (equal (multiple-value-list
+                                       (sbcl-generations:checkpoint-restart-save-and-exit nil nil))
+                                      '(:saved :second))
+                               "the checkpoint wrapper preserves returning values")
+                              (let ((records (world-restart-tests--phases configuration)))
+                                (test-assert
+                                 (and (equal (reverse order) '(:first :second))
+                                      (equal (mapcar (lambda (record) (getf record :phase)) records)
+                                             '(:prepare-enter :prepare-exit :gc-enter :gc-exit
+                                               :save-call-enter :save-hooks-enter :save-hooks-exit))
+                                      (every (lambda (record) (<= (length (getf record :thread)) 128)) records)
+                                      (= (getf (third records) :gc) 1))
+                                 "synchronous probes preserve hook order and bounded thread identity")
+                                (with-open-file (stream pathname :direction ':output :if-exists ':append)
+                                  (write-string "(" stream))
+                                (test-assert (equal records (world-restart-tests--phases configuration))
+                                             "collection tolerates an interrupted final record")))
+                             (:unwind
+                              (test-assert
+                               (handler-case
+                                   (progn (sbcl-generations:checkpoint-restart-save-and-exit nil nil) nil)
+                                 (platform-error () t))
+                               "GC failure propagates through both wrappers")
+                              (test-assert
+                               (equal (mapcar (lambda (record) (getf record :phase))
+                                              (world-restart-tests--phases configuration))
+                                      '(:prepare-enter :prepare-exit :gc-enter :gc-unwind))
+                               "a synchronous GC nonlocal exit is distinct from return"))
+                             (:bounded
+                              (loop repeat 70 do (checkpoint--prepare-saver nil nil))
+                              (test-assert (= (length (world-restart-tests--phases configuration)) 64)
+                                           "probe emission is bounded across repeated preparations")))
+                        (funcall restore)))
+                    (test-assert (and (every #'eq originals (mapcar #'symbol-function symbols))
+                                      (eq sb-ext:*after-gc-hooks* old-after-gc-hooks))
+                                 "returning paths restore definitions without changing after-GC hooks")))))
+             (dolist (tail '("(:phase :overflow)" ")"))
+               (with-open-file (stream pathname :direction ':output :if-exists ':supersede)
+                 (dotimes (index 64)
+                   (write (list :phase ':prepare-enter :gc index) :stream stream)
+                   (terpri stream))
+                 (write-string tail stream))
+               (test-assert
+                (equal (world-restart-tests--phases configuration)
+                       (loop for index below 64 collect (list :phase ':prepare-enter :gc index)))
+                "collection never reads beyond its record budget"))
              (with-open-file (stream pathname :direction ':output :if-exists ':supersede)
                (write-string (make-string 32769 :initial-element #\Space) stream))
              (test-assert (eq (getf (world-restart-tests--phases configuration) :status) ':oversized)
                           "oversized logs are not parsed"))
-        (setf sb-ext:*after-gc-hooks* old-after-gc-hooks
-              sb-ext:*save-hooks* old-save-hooks))))
+        (setf sb-ext:*save-hooks* old-save-hooks))))
   nil)
 
 (-> test-world-server-restart-diagnostics () null)
