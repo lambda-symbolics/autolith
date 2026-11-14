@@ -1452,6 +1452,14 @@ the channel where that agent resides. The terminal status bar and local session
 status show the title when one is available; otherwise they show the conversation
 ID.
 
+Use =(delete)= to remove the channel shown in the invoking client, or
+=(delete "ID")= to select a channel by a unique ID prefix. Confirm removal in
+the dialog; the channel's history and nested channels are removed together.
+When deleting the displayed channel or one of its ancestors, the invoking
+terminal switches to the inbox first. Deletion requires the subtree to be
+idle and free of other attached clients. Cancelling the dialog leaves the
+client on its channel.
+
 If no process serves the conversation, it resumes in a fresh one. Background
 jobs, asynchronous shell runs, and Lisp worker state from before the restart no
 longer exist. The first user turn after such a resume carries a request-local
@@ -1635,10 +1643,12 @@ reconnects. When docking the sidebar would leave fewer than 90 transcript
 columns after subtracting the sidebar and its divider, the channel is visible
 by default. Press =Ctrl-T= to open a full-screen channel drawer. Use =↑= and
 =↓= to select, =Enter= to open a channel, and =←= or =→= to close or open a
-tree node.
+tree node. Scroll the tree with the mouse wheel or =PageUp= and =PageDown=.
+In the docked sidebar, click the heading's scroll arrows. The =(new)= and
+=(delete)= buttons are fixed below the tree;
+select either to run the command in this terminal's current channel.
 Press =Esc= or =Ctrl-T=, or select the current channel, to return to the
-composer. Opening another channel closes the drawer. Select the overflow
-row with the mouse or keyboard to open the =(open)= picker.
+composer. Opening another channel closes the drawer.
 
 *** Session endpoints
 
