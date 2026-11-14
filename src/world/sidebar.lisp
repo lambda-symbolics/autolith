@@ -463,21 +463,23 @@ mentions, so nothing new below it goes unseen."
   "Return the entry of CHANNEL at DEPTH, whose agent is NAME, with its hosted STATUS and PENDING deliveries."
   (let* ((identifier (channel-identifier channel))
          (current-p  (equal identifier (world-sidebar-current sidebar))))
-    (list :kind       ':channel
-          :id         identifier
-          :name       name
-          :title      (channel-title channel)
-          :depth      depth
-          :state      (if status (getf status :state) ':absent)
-          :attached-p (and status (getf status :terminal-attached-p) t)
-          :current-p  current-p
-          :unread     (world-sidebar--unread (world-sidebar-seen sidebar) identifier
-                                             :count       (and status (getf status :message-count))
-                                             :caught-up-p current-p)
-          :mentions   (world-sidebar--unread (world-sidebar-mentions-seen sidebar) identifier
-                                             :count       (and status (getf status :mention-count))
-                                             :caught-up-p current-p)
-          :pending    (or pending 0))))
+    (list :kind               ':channel
+          :id                 identifier
+          :name               name
+          :title              (channel-title channel)
+          :depth              depth
+          :state              (if status (getf status :state) ':absent)
+          :waiting-for-jobs-p (and (getf status :waiting-for-input-p)
+                                   (plusp (or (getf status :job-live-count) 0)))
+          :attached-p         (and status (getf status :terminal-attached-p) t)
+          :current-p          current-p
+          :unread             (world-sidebar--unread (world-sidebar-seen sidebar) identifier
+                                                     :count       (and status (getf status :message-count))
+                                                     :caught-up-p current-p)
+          :mentions           (world-sidebar--unread (world-sidebar-mentions-seen sidebar) identifier
+                                                     :count       (and status (getf status :mention-count))
+                                                     :caught-up-p current-p)
+          :pending            (or pending 0))))
 
 (-> world-sidebar--unread
     (hash-table string &key (:count (option integer)) (:caught-up-p boolean))
@@ -578,7 +580,7 @@ then its agent's name and its title; a closed node shows what it hides."
       (list (world-sidebar--current-span entry)
             (world-sidebar--marker-span entry)
             (terminal-span ':plain (make-string (1+ (* 2 (getf entry :depth))) :initial-element #\Space))
-            (world-sidebar--state-span (getf entry :state))
+            (world-sidebar--state-span (getf entry :state) (getf entry :waiting-for-jobs-p))
             (terminal-span (cond
                              ((getf entry :current-p)
                               ':legend-accent)
@@ -628,15 +630,17 @@ then its agent's name and its title; a closed node shows what it hides."
      (when (plusp (getf entry :hidden-unread))
        (list (terminal-span ':notice (format nil " ~D" (getf entry :hidden-unread))))))))
 
-(-> world-sidebar--state-span (keyword) cons)
-(defun world-sidebar--state-span (state)
-  "Return the glyph span showing a channel's hosted STATE."
-  (case state
-    ((:active :working :cancelling)
-     (terminal-span ':agent-spinner "● "))
-    (:idle
-     (terminal-span ':success "○ "))
-    ((:paused :detaching :stopping :failed :starting)
-     (terminal-span ':notice "○ "))
-    (otherwise
-     (terminal-span ':dim "· "))))
+(-> world-sidebar--state-span (keyword &optional boolean) cons)
+(defun world-sidebar--state-span (state &optional waiting-for-jobs-p)
+  "Return STATE's glyph, yellow while an idle agent has unfinished jobs."
+  (if (and waiting-for-jobs-p (member state '(:idle :working)))
+      (terminal-span ':notice "● ")
+      (case state
+        ((:active :working :cancelling)
+         (terminal-span ':agent-spinner "● "))
+        (:idle
+         (terminal-span ':success "○ "))
+        ((:paused :detaching :stopping :failed :starting)
+         (terminal-span ':notice "○ "))
+        (otherwise
+         (terminal-span ':dim "· ")))))

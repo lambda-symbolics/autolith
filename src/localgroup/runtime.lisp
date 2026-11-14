@@ -176,15 +176,16 @@ conversation transaction can roll back before releasing either lease."
          (application-input-controller-condition-variable controller)))
       t))
 
-(-> localgroup--task-counts (application) (values (integer 0) (integer 0)))
+(-> localgroup--task-counts (application) (values (integer 0) (integer 0) (integer 0)))
 (defun localgroup--task-counts (application)
-  "Return APPLICATION's live and actively running child-job counts."
+  "Return live children, active children, and all live jobs for APPLICATION."
   (let ((orchestrator (application-task-presentation-orchestrator application)))
     (if orchestrator
         (with-lock-held ((task-orchestrator-lock orchestrator))
           (values (task-orchestrator-live-count orchestrator)
-                  (task-orchestrator-active-count orchestrator)))
-        (values 0 0))))
+                  (task-orchestrator-active-count orchestrator)
+                  (task-orchestrator-session-live-count orchestrator)))
+        (values 0 0 0))))
 
 (-> application-terminal-attached-p (application) boolean)
 (defun application-terminal-attached-p (application)
@@ -215,7 +216,8 @@ conversation transaction can roll back before releasing either lease."
          (reader-paused-p   nil)
          (failed-p          nil)
          (task-live-count   0)
-         (task-active-count 0))
+         (task-active-count 0)
+         (job-live-count    0))
     (when controller
       (with-lock-held ((application-input-controller-lock controller))
         (setf active-p (application-input-controller-active-p controller)
@@ -230,13 +232,13 @@ conversation transaction can roll back before releasing either lease."
               cancelling-p (application-input-controller-turn-cancellation-p controller)
               reader-paused-p (application-input-controller-reader-paused-p controller)
               failed-p (not (null (application-input-controller-failure controller))))))
-    (multiple-value-setq (task-live-count task-active-count)
+    (multiple-value-setq (task-live-count task-active-count job-live-count)
       (localgroup--task-counts application))
     (let* ((waiting-for-input-p
              (and controller (not active-p) (zerop queued-count) (zerop steering-count)
                   (not recalled-p) (not stopping-p) (not cancelling-p)
                   (not reader-paused-p) (not failed-p)))
-           (idle-p (and waiting-for-input-p (not paused-p) (zerop task-live-count)))
+           (idle-p (and waiting-for-input-p (not paused-p) (zerop job-live-count)))
            (state
             (cond (stopping-p
                    ':stopping)
@@ -249,7 +251,7 @@ conversation transaction can roll back before releasing either lease."
                   (active-p
                    ':active)
                   ((or (plusp queued-count) (plusp steering-count) recalled-p
-                       (plusp task-live-count))
+                        (plusp job-live-count))
                    ':working)
                   (idle-p
                    ':idle)
@@ -273,6 +275,7 @@ conversation transaction can roll back before releasing either lease."
             steering-count :recalled-input-p (not (null recalled-p)) :turn-cancelling-p
             (not (null cancelling-p)) :reader-paused-p (not (null reader-paused-p))
             :task-live-count task-live-count :task-active-count task-active-count
+           :job-live-count      job-live-count
             :message-count      (conversation-message-count conversation)
             :mention-count
             (let ((person (application-world-human-identifier application)))

@@ -1077,6 +1077,21 @@
                  (getf (rest status) :idle-p) (getf (rest status) :waiting-for-input-p)
                  (zerop (getf (rest status) :task-live-count)))
             "new localgroup endpoints publish their active conversation identity")
+           (dolist (case '((0 0 :idle t) (1 0 :working nil) (0 1 :working nil)))
+             (destructuring-bind (children executions expected-state idle-p) case
+               (test-call-with-function-replacements
+                (list (list 'localgroup--task-counts
+                            (lambda (owner)
+                              (declare (ignore owner))
+                              (values children 0 (+ children executions)))))
+                (lambda ()
+                  (let ((properties (rest (localgroup-status-snapshot session))))
+                    (test-assert
+                     (and (eq (getf properties :state) expected-state)
+                          (eq (getf properties :idle-p) idle-p)
+                          (getf properties :waiting-for-input-p)
+                          (= (getf properties :job-live-count) (+ children executions)))
+                     "status distinguishes truly idle channels from unfinished child or tool jobs"))))))
            (test-assert
             (eq
              (first

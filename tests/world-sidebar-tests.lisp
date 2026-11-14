@@ -78,6 +78,23 @@
                                         (eq (terminal-span-style (first (first (last rows))))
                                             ':legend-accent))))
                             "short sidebars fit the heading, body and legend into their height"))))
+  (with-test-configuration (configuration)
+    (let ((sidebar (world-sidebar-create configuration))
+          (channel (make-instance 'channel :identifier "jobs" :owner "user"
+                                           :workspace "/w/" :created-at 1 :updated-at 1)))
+      (dolist (case '((:idle t 0 :success "○ ")
+                      (:working t 1 :notice "● ")
+                      (:active nil 1 :agent-spinner "● ")
+                      (:working nil 1 :agent-spinner "● ")))
+        (destructuring-bind (state waiting-p jobs style glyph) case
+          (let* ((entry (world-sidebar--channel-entry
+                         sidebar channel :status (list :state                state
+                                                        :waiting-for-input-p waiting-p
+                                                        :job-live-count      jobs)))
+                 (spans (world-sidebar--entry-spans entry)))
+            (test-assert (equal (fourth spans) (terminal-span style glyph))
+                         (format nil "channel state ~S with ~D jobs and waiting ~S has the right indicator"
+                                 state jobs waiting-p)))))))
   nil)
 
 (-> test-world-sidebar-tree () null)
