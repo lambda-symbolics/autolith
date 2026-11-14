@@ -420,9 +420,9 @@ channel that cannot be served keeps its message waiting."
     (and (world-host-ready-p host)
          (not (world-host-paused-p host))
          (null (world-host-exit-reason host))
-         (not (application-terminal-attached-p application))
+         (not (world-host-attached-p host))
          (not (and controller (application-input-controller-busy-p controller)))
-         (not (and orchestrator (plusp (task-orchestrator-active-count orchestrator)))))))
+         (not (and orchestrator (plusp (task-orchestrator-session-live-count orchestrator)))))))
 
 (-> world-server--unload-cold-hosts (world-server &key (:now real)) null)
 (defun world-server--unload-cold-hosts (server &key (now (get-internal-real-time)))
@@ -831,12 +831,13 @@ endpoint and controller locks; opening another host waits until this batch ends.
 
 (-> world-host-attached-p (world-host) boolean)
 (defun world-host-attached-p (host)
-  "Return true while a terminal controls HOST's channel or a structured client follows it."
+  "Return true while a controlling or observing terminal or structured client follows HOST."
   (let* ((application (world-host-application host))
          (ui          (application-ui application))
          (terminal    (and ui (terminal-ui-terminal ui))))
     (or (and (typep terminal 'localgroup-terminal)
-             (image-daemon:relay-attached-p terminal))
+             (or (image-daemon:relay-attached-p terminal)
+                 (plusp (image-daemon:relay-observer-count terminal))))
         (application-clients-attached-p application))))
 
 (-> world-host-live-p (world-host) boolean)

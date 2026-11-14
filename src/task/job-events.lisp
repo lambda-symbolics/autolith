@@ -441,7 +441,7 @@ canonical tool names and resource references, never caller/provider raw data."
               (if progress
                   (progn
                     (setf (run-job-event-emitter-queue emitter)
-                          (delete progress (run-job-event-emitter-queue emitter) :test #'eq :count 1))
+                         (cl:delete progress (run-job-event-emitter-queue emitter) :test #'eq :count 1))
                     (run-job-event--omit-progress emitter))
                   (progn
                     (pushnew ':queue-full (run-job-event-emitter-warning-codes emitter))

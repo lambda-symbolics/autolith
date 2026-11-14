@@ -346,7 +346,7 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
       (when hub
         (with-lock-held ((client-hub-lock hub))
           (when (eq (channel-client-hub client) hub)
-            (setf (client-hub-clients hub) (delete client (client-hub-clients hub))
+            (setf (client-hub-clients hub) (cl:delete client (client-hub-clients hub))
                   (channel-client-hub client) nil)
             (sb-thread:condition-broadcast (client-hub-condition-variable hub)))))))
   nil)

@@ -908,6 +908,13 @@
   test-mcp-reload-registry-isolation
   test-mcp-reload-transaction-boundary)
 
+(define-test-suite channel-deletion
+  test-delete-channel-targets
+  test-delete-channel-standalone
+  test-delete-channel-hosted
+  test-delete-channel-hosted-refusals
+  test-delete-channel-standalone-refusals)
+
 (define-test-suite application-command
   test-application-goal-continuation-setting
   test-application-grouped-settings

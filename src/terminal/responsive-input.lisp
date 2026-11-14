@@ -3686,6 +3686,8 @@ however it ended."
               (application-input-controller--run-idle-compaction controller (second work)))
              (:apply-pending
               (application-input-controller--apply-pending-commands controller))
+             (:channel-deletion
+              (application--finish-channel-deletion application (second work)))
              (:client-work
               (job-run-inline (second work)))
              (:job-completion

@@ -103,7 +103,7 @@
          (when event
            (debug--bounded-json event)
            (setf (debug-session-entry-events entry)
-                 (delete event (debug-session-entry-events entry) :count 1)))
+                 (cl:delete event (debug-session-entry-events entry) :count 1)))
          (or event (daphne:session-wait-event session name :timeout timeout :cancel-p cancel-p))))
       (t
        (unless (debug-session-entry-events entry)

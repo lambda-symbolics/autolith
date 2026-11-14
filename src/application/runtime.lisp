@@ -2026,17 +2026,25 @@ retiring the old registry."
         conversation :start start :limit *terminal-history-page-size*)))))
 
 (-> application--install-owned-conversation
-    (application conversation &key (:conversation-lease conversation-lease))
+    (application conversation &key (:conversation-lease conversation-lease) (:deletion-inbox-p boolean))
     application)
 (defun application--install-owned-conversation
-    (application conversation &key conversation-lease)
+    (application conversation &key conversation-lease deletion-inbox-p)
   "Atomically install owned CONVERSATION with a fresh tool runtime and agent.
 
-CONVERSATION must be in the child role the current one is in, or in none."
-  (application--check-same-role application conversation)
+Require the current child role, except for a confirmed deletion's explicit
+roleless inbox handoff. That handoff retires the former child role with its runtime."
+  (if deletion-inbox-p
+      (unless (and (conversation-inbox-p conversation)
+                   (null (conversation-role conversation)))
+        (error 'configuration-error :message "A deletion handoff must lead to the roleless inbox."))
+      (application--check-same-role application conversation))
   (let* ((configuration
            (application--configuration-for-conversation
-            (application-configuration application)
+            (if deletion-inbox-p
+                (configuration-copy (application-configuration application)
+                                    :child-role "" :child-role-instructions "")
+                (application-configuration application))
             conversation))
          (ui                          (application-ui application))
          (previous-configuration      (application-configuration application))

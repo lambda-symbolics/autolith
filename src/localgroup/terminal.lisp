@@ -85,16 +85,19 @@ only dimension writer that keeps both in step and repaints."
   (terminal-relayed-resize-publish terminal rows columns)
   nil)
 
-(-> localgroup-terminal-switch-controller (localgroup-terminal string) boolean)
-(defun localgroup-terminal-switch-controller (terminal identifier)
-  "Ask TERMINAL's controlling client to move to the channel IDENTIFIER names.
+(-> localgroup-terminal-switch-controller
+    (localgroup-terminal string &key (:controller (option image-daemon:attachment)))
+    boolean)
+(defun localgroup-terminal-switch-controller (terminal identifier &key controller)
+  "Ask TERMINAL's controlling client to move to channel IDENTIFIER.
 
-Return whether a controller was attached to ask. The client detaches on its
-own once it reads the request, so the relay keeps serving until then."
-  (let ((controller (with-lock-held ((image-daemon:relay-lock terminal))
-                      (image-daemon:relay-controller terminal))))
-    (and controller
-         (image-daemon:attachment-send controller (list :switch :session-id identifier)))))
+When CONTROLLER is supplied, refuse if another attachment took control. Return
+whether the switch was sent. The client detaches once it reads the request."
+  (let ((attached (with-lock-held ((image-daemon:relay-lock terminal))
+                    (image-daemon:relay-controller terminal))))
+    (and attached
+         (or (null controller) (eq controller attached))
+         (image-daemon:attachment-send attached (list :switch :session-id identifier)))))
 
 
 ;;;; -- Relayed Screen Frames --

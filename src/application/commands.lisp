@@ -1531,7 +1531,7 @@ INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT to TERMINAL-UI-SELECT."
                               (string-trim " " (getf item :name))))
    (list :name        "keep"
          :argument    nil
-         :description "return to the channel list")))
+         :description "keep this channel")))
 
 (-> application--channel-items (application) list)
 (defun application--channel-items (application)
