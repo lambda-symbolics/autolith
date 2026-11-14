@@ -239,6 +239,12 @@
     :accessor      conversation-title-refresh-in-progress-p
     :type          boolean
     :documentation "Whether this object has reserved the automatic generated-title request.")
+   (title-refresh-completed-p
+    :initarg       :title-refresh-completed-p
+    :initform      nil
+    :accessor      conversation-title-refresh-completed-p
+    :type          boolean
+    :documentation "Whether the one automatic generated-title request has finished.")
    (model
     :initarg       :model
     :initform      nil
@@ -1129,6 +1135,8 @@ person's inbox says it is one."
         :prompt-cache-key     (conversation-prompt-cache-key conversation)
         :title                (conversation-title conversation)
         :title-source         (conversation-title-source conversation)
+        :title-refresh-completed-p
+        (conversation-title-refresh-completed-p conversation)
         :model                (conversation-model conversation)
         :model-provider       (conversation-model-provider conversation)
         :reasoning-effort     (conversation-reasoning-effort conversation)
@@ -1784,7 +1792,7 @@ this append's original EOF, including when publication failed after the write."
     (and (conversation-persisted-p conversation)
          (>= (conversation-user-turn-count conversation)
              *conversation-title-refresh-turn-count*)
-         (not (eq (conversation-title-source conversation) ':generated))
+         (not (conversation-title-refresh-completed-p conversation))
          t)))
 
 (-> conversation-title-refresh-reserve-p (conversation) boolean)
@@ -1892,7 +1900,18 @@ this append's original EOF, including when publication failed after the write."
                       (setf (conversation-title conversation) current-title
                             (conversation-title-source conversation) current-source)
                       (error condition)))))))))
+    (when (eq source ':generated)
+      (setf (conversation-title-refresh-completed-p conversation) t))
     normalized))
+
+(-> conversation-note-title-refresh-failed (conversation) null)
+(defun conversation-note-title-refresh-failed (conversation)
+  "Durably record that the automatic generated-title request produced no title."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (unless (conversation-title-refresh-completed-p conversation)
+      (conversation-append-record conversation (list :title-refresh :outcome :failed))
+      (setf (conversation-title-refresh-completed-p conversation) t)))
+  nil)
 
 (-> conversation--append-input-item (conversation json-object) json-object)
 (defun conversation--append-input-item (conversation item)
@@ -3147,14 +3166,30 @@ usage metadata does not replace coverage; pending responses and compaction do."
            (and (stringp title)
                 (conversation-title-normalize title)))
          (source (getf properties :source)))
-    (unless (and normalized-title
-                 (member source '(:initial :generated))
-                 (conversation--title-transition-valid-p
-                  (conversation-title-source conversation) source))
-      (conversation--record-error
-       conversation properties "A persisted conversation title is invalid."))
-    (setf (conversation-title conversation) (copy-seq normalized-title)
-          (conversation-title-source conversation) source)))
+      (cond
+        ;; Logs written before the refresh flag existed recorded a failed
+        ;; attempt by repeating the current title under this retired source.
+        ((eq source ':generation-failed)
+         (setf (conversation-title-refresh-completed-p conversation) t))
+        ((and normalized-title
+              (member source '(:initial :generated))
+              (conversation--title-transition-valid-p
+               (conversation-title-source conversation) source))
+         (setf (conversation-title conversation) (copy-seq normalized-title)
+               (conversation-title-source conversation) source)
+         (when (eq source ':generated)
+           (setf (conversation-title-refresh-completed-p conversation) t)))
+        (t
+         (conversation--record-error
+          conversation properties "A persisted conversation title is invalid.")))))
+
+(defmethod conversation--project-record
+    ((kind (eql :title-refresh)) conversation properties)
+  "Record the outcome of the one automatic generated-title request."
+  (unless (eq (getf properties :outcome) ':failed)
+    (conversation--record-error
+     conversation properties "A title refresh has an unsupported outcome."))
+  (setf (conversation-title-refresh-completed-p conversation) t))
 
 (defmethod conversation--project-record
     ((kind (eql :tool-result)) conversation properties)
@@ -3442,6 +3477,9 @@ usage metadata does not replace coverage; pending responses and compaction do."
              (and (stringp title)
                   (conversation-title-normalize title)))
            (title-source        (and (= version 2) (getf properties :title-source)))
+           (title-refresh-completed-p
+            (and (= version 2)
+                 (getf properties :title-refresh-completed-p)))
            (model               (getf properties :model))
            (model-provider      (getf properties :model-provider))
            (reasoning-effort    (getf properties :reasoning-effort))
@@ -3491,8 +3529,10 @@ usage metadata does not replace coverage; pending responses and compaction do."
              (and (= version 2) (getf properties :usage-totals))))
       (unless (or (and (null title) (null title-source))
                   (and normalized-title
-                       (member title-source '(:initial :generated))))
+                       (member title-source '(:initial :generated :generation-failed))))
         (invalid "The conversation header has an invalid title."))
+      (unless (typep title-refresh-completed-p 'boolean)
+        (invalid "The conversation header has an invalid title refresh state."))
       (unless (and (stringp identity-identifier)
                    (string= identifier identity-identifier))
         (invalid
@@ -3553,7 +3593,13 @@ usage metadata does not replace coverage; pending responses and compaction do."
                              (and (stringp directory) directory)
                              :title             (and normalized-title
                                                      (copy-seq normalized-title))
-                             :title-source      title-source
+                             :title-source
+                             (if (eq title-source ':generation-failed)
+                                 ':initial
+                                 title-source)
+                             :title-refresh-completed-p
+                             (or title-refresh-completed-p
+                                 (eq title-source ':generation-failed))
                              :model             (and (non-empty-string-p model) model)
                              :model-provider    model-provider
                              :reasoning-effort

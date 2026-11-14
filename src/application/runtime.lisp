@@ -4545,7 +4545,10 @@ model's calls in a turn."
 
 (-> application--conversation-title-generate (application) (option non-empty-string))
 (defun application--conversation-title-generate (application)
-  "Generate one isolated tool-free title for APPLICATION's conversation."
+  "Generate one isolated tool-free title for APPLICATION's conversation.
+
+  The request runs without reasoning so a reasoning model answers within the
+  title's small output ceiling instead of spending it on reasoning tokens."
   (let* ((configuration (application-configuration application))
          (provider      (application-provider application))
          (context
@@ -4556,6 +4559,12 @@ model's calls in a turn."
                (conversation-create
                 configuration
                 :storage-root (configuration-inference-root configuration)))
+             (provider
+               (provider-with-configuration
+                provider
+                (configuration-copy configuration
+                                    :reasoning-effort      "none"
+                                    :provider-validation-p nil)))
              (request                           (application--conversation-title-request context))
              (*system-prompt-override*
                *application-conversation-title-system-prompt*)
@@ -4578,6 +4587,13 @@ model's calls in a turn."
               nil)))
           ""))))))
 
+(-> application--conversation-title-mark-failed (conversation) null)
+(defun application--conversation-title-mark-failed (conversation)
+  "Record one failed title generation so later turns do not retry it."
+  (handler-case (conversation-note-title-refresh-failed conversation)
+    (error () nil))
+  nil)
+
 (-> application--maybe-refresh-conversation-title (application) null)
 (defun application--maybe-refresh-conversation-title (application)
   "Best-effort replace APPLICATION's initial title after a few durable turns."
@@ -4588,11 +4604,13 @@ model's calls in a turn."
       (unwind-protect
            (handler-case
                (let ((title (application--conversation-title-generate application)))
-                 (when title
-                   (conversation-set-title conversation title :source ':generated)
-                   (application-world-sync application)))
+                 (if title
+                     (progn
+                       (conversation-set-title conversation title :source ':generated)
+                       (application-world-sync application))
+                     (application--conversation-title-mark-failed conversation)))
              (error ()
-               nil))
+               (application--conversation-title-mark-failed conversation)))
         (conversation-title-refresh-release conversation))))
   nil)
 
