@@ -143,11 +143,20 @@
            "Only validated child calls emit tool completion, with their canonical identity.")))))
   nil)
 
+(defclass run-job-tests--stalled-input (trivial-gray-streams:fundamental-character-input-stream)
+  ()
+  (:documentation "An input stream whose read blocks long enough to exercise a deadline."))
+
+(defmethod trivial-gray-streams:stream-read-char ((stream run-job-tests--stalled-input))
+  "Keep the input open until its reader's deadline expires."
+  (sleep 10)
+  :eof)
+
 (-> test-run-job-inline-prompt-envelope () null)
 (defun test-run-job-inline-prompt-envelope ()
   "Test inline prompt enveloping, defaults, and bounded stream reading."
   (let* ((form    (run-job-prompt-form "Do the task." :identifier "prompt-job"))
-         (request (run-job-validate-envelope form)))
+         (request (run-job-validate-envelope form :input-present-p nil)))
     (test-assert
      (and (string= (run-job-request-identifier request) "prompt-job")
           (string= (run-job-request-role request) *run-job-default-role*)
@@ -160,7 +169,14 @@
              *run-job-prompt-timeout-seconds*))
      "an inline prompt builds the ordinary version-one request")
     (test-assert (string= (run-job-assignment request) "Do the task.")
-                 "an inline prompt without opaque input has no input projection"))
+                 "an inline prompt without opaque input has no input projection")
+    (let* ((file-request (run-job-validate-envelope form))
+           (assignment   (run-job-assignment file-request))
+           (data-start   (1+ (position #\Newline assignment :from-end t))))
+      (test-assert (and (run-job-request-input-present-p file-request)
+                        (not (string= assignment (run-job-request-prompt file-request)))
+                        (null (read-from-string (subseq assignment data-start))))
+                   "a file envelope preserves explicitly supplied NIL as opaque input")))
   (test-assert
    (string= (run-job-read-prompt-stream
              (make-string-input-stream (format nil "first~%second~%"))
@@ -253,6 +269,37 @@
                    (eq (getf (rest record) :kind) ':run-finished))
                  records)
            "an oversized inline prompt still emits terminal events")))))
+  nil)
+
+(-> test-run-job-inline-prompt-timeout () null)
+(defun test-run-job-inline-prompt-timeout ()
+  "Test a stalled prompt read publishes a timeout artifact and terminal event."
+  (with-test-configuration (configuration root)
+    (let* ((output   (merge-pathnames "prompt-timeout.sexp" root))
+           (events   (make-string-output-stream))
+           (started  (get-internal-real-time))
+           (exit-code
+             (run-job-run-prompt
+              (make-instance 'run-job-tests--stalled-input) output ':auto
+              :configuration configuration :timeout-seconds 1 :identifier "stalled-prompt"
+              :events ':sexp :event-output events
+              :executor (lambda (&rest arguments)
+                          (declare (ignore arguments))
+                          (error "A stalled prompt reached the executor."))))
+           (result   (run-job-tests--read-result output))
+           (records  (run-job-event-tests--records (get-output-stream-string events)))
+           (terminal (find ':run-finished records
+                           :key (lambda (record) (getf (rest record) :kind)))))
+      (test-assert (and (= 1 exit-code)
+                        (< (- (get-internal-real-time) started)
+                           (* 5 internal-time-units-per-second))
+                        (eq ':timed-out (getf (rest result) :status))
+                        (eq ':timeout (getf (getf (rest result) :failure) :category)))
+                   "prompt ingestion terminates at its deadline and publishes the timeout")
+      (test-assert (and terminal
+                        (eq ':timed-out (getf (getf (rest terminal) :data) :status))
+                        (getf (getf (rest terminal) :data) :published-p))
+                   "the terminal event confirms the published prompt timeout")))
   nil)
 
 (-> test-run-job-inline-prompt-cli () null)

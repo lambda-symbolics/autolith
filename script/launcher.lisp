@@ -58,7 +58,8 @@ Pristine recovery keeps the default.")
 
 (defstruct launcher-request
   "The launcher options separated from the application arguments."
-  recovery-p from-source-p update-p uninstall-p data-p acp-p localgroup-handoff-p arguments)
+  recovery-p from-source-p update-p uninstall-p data-p acp-p run-job-p
+  localgroup-handoff-p arguments)
 
 (defun launcher-bootstrap-command-name (source-root)
   "Return the bootstrap command to show the user for SOURCE-ROOT."
@@ -133,7 +134,9 @@ before deleting the listed directories."
            (when (string= argument "data")
              (setf (launcher-request-data-p request) t))
            (when (string= argument "acp")
-             (setf (launcher-request-acp-p request) t)))
+             (setf (launcher-request-acp-p request) t))
+           (when (string= argument "run-job")
+             (setf (launcher-request-run-job-p request) t)))
          (setf command-seen-p t)
          (push argument remaining))))
     (setf (launcher-request-arguments request) (nreverse remaining))
@@ -697,6 +700,7 @@ boot therefore leaves the generation identity available to recovery."
                  0)
                 ((or (launcher-request-acp-p request)
                      (launcher-request-data-p request)
+                     (launcher-request-run-job-p request)
                      (launcher-request-localgroup-handoff-p request)
                      (member status *launcher-terminal-statuses*))
                  status)

@@ -1464,6 +1464,7 @@
   test-run-job-runtime-usage
   test-run-job-inline-prompt-envelope
   test-run-job-inline-prompt-publication
+  test-run-job-inline-prompt-timeout
   test-run-job-inline-prompt-cli
   run-run-job-tests)
 
@@ -1482,7 +1483,8 @@
   test-run-job-streaming-broken-consumer
   test-run-job-streaming-owned-observation
   test-run-job-streaming-cli
-  test-run-job-streaming-cli-blocked-exit)
+  test-run-job-streaming-cli-blocked-exit
+  test-run-job-inline-prompt-launchers)
 
 (define-test-suite task-scheduler
   test-task-child-identity

@@ -57,6 +57,7 @@ autolith_launcher_parse()
   uninstall_confirmed=false
   data_requested=false
   acp_requested=false
+  run_job_requested=false
   localgroup_handoff_requested=false
   remaining_arguments=()
   for argument in "$@"; do
@@ -110,6 +111,9 @@ autolith_launcher_parse()
         fi
         if [[ $command_seen == false && $argument == acp ]]; then
           acp_requested=true
+        fi
+        if [[ $command_seen == false && $argument == run-job ]]; then
+          run_job_requested=true
         fi
         command_seen=true
         remaining_arguments+=("$argument")

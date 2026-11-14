@@ -406,3 +406,67 @@
             (ignore-errors (close (uiop:process-info-input process)))
             (ignore-errors (close (uiop:process-info-output process))))))))
   nil)
+
+(-> test-run-job-inline-prompt-launchers () null)
+(defun test-run-job-inline-prompt-launchers ()
+  "Exercise stdin deadlines, events, and failure exit statuses through both launchers."
+  (with-test-fixture (':posix-shell "headless prompt launcher roundtrips")
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let* ((source-root (asdf:system-source-directory :autolith))
+             (commands
+               (list (list (namestring (merge-pathnames "bin/autolith" source-root)))
+                     (list (lisp-worker-sbcl-command)
+                           "--noinform" "--no-sysinit" "--no-userinit" "--script"
+                           (namestring (merge-pathnames "script/launcher.lisp" source-root)))))
+             (environment
+               (append
+                (list "env"
+                      (format nil "XDG_CONFIG_HOME=~A" (merge-pathnames "config/" root))
+                      (format nil "XDG_STATE_HOME=~A" (merge-pathnames "state/" root))
+                      (format nil "XDG_CACHE_HOME=~A" (merge-pathnames "cache/" root)))
+                (test-active-core-environment))))
+        (loop for command in commands
+              for index from 0
+              do (let* ((output (merge-pathnames (format nil "prompt-~D.sexp" index) root))
+                        (events (merge-pathnames (format nil "events-~D.sexp" index) root))
+                        (errors (merge-pathnames (format nil "errors-~D.log" index) root))
+                        (process
+                          (uiop:launch-program
+                           (append environment command
+                                   (list "--permissions" "auto" "run-job" "--prompt" "-"
+                                         "--role" "task" "--timeout-seconds" "1"
+                                         "--id" "launcher-stdin" "--events" "sexp"
+                                         "--output" (namestring output)))
+                           :directory root :input ':stream :output events :error-output errors)))
+                   (unwind-protect
+                        (progn
+                          (test-assert
+                           (task-tests--wait-until
+                            (lambda () (not (uiop:process-alive-p process))) 15)
+                           "the launcher exits while the prompt's input pipe is still open")
+                          (unless (uiop:process-alive-p process)
+                            (test-assert (= 1 (uiop:wait-process process))
+                                         "the launcher returns the published timeout's failure status"))
+                          (test-assert (probe-file output) "the timeout artifact is published")
+                          (when (probe-file output)
+                            (let* ((result   (rest (run-job-read-file output)))
+                                   (records  (run-job-event-tests--records
+                                              (uiop:read-file-string events)))
+                                   (terminal (getf (rest (first (last records))) :data)))
+                              (test-assert
+                               (and (equal (getf result :id) "launcher-stdin")
+                                    (eq (getf result :status) ':timed-out)
+                                    (eq (getf (getf result :failure) :category) ':timeout))
+                               "stdin timeout options reach the boundary and its result artifact")
+                              (test-assert
+                               (and (equal (run-job-streaming-tests--kinds records)
+                                           '(:run-started :run-finished))
+                                    (eq (getf terminal :status) ':timed-out)
+                                    (getf terminal :published-p))
+                               "launcher stdout contains only the published timeout's events"))))
+                     (ignore-errors (close (uiop:process-info-input process)))
+                     (when (uiop:process-alive-p process)
+                       (uiop:terminate-process process :urgent t))
+                     (uiop:wait-process process)))))))
+  nil)
