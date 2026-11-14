@@ -18,6 +18,25 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Measured context across prompt changes
+
+- Problem: a changed prompt fingerprint discarded valid measured history after
+  restart, inflating estimates for serialized encrypted reasoning.
+- Behavior: validate retained history and provider/model/reasoning/endpoint
+  identity, then charge changed prompt and tool components separately. Store
+  fingerprint-only format-two evidence; require exact headers for legacy samples.
+- Scope and location: tracked provider admission, agent context and conversation
+  storage in =e8a8b625= and =73babdcc=. Nine functions and their declarations
+  were installed live and persisted in private image commit
+  =b1620f5e-2077-4652-9d9e-c5f8aefb446e=, private Git =f56a6ae9=;
+  papercut =Q3TfMSy=.
+- Verification: 24 focused cases with 248 checks passed. Real active traffic
+  produced valid format-two evidence. Active checks covered persistence reload,
+  history and policy validation, component charging, admission and tamper
+  rejection. Clean-process private replay passed.
+- Removal condition: discard the private accounting definitions after booting
+  the equivalent tracked implementation.
+
 ** Serialized stream and transcript presentation
 
 - Problem: durable replay could render a reply before its live stream finished;
@@ -25,16 +44,16 @@ a user-local init.lisp change, or a private image commit.
 - Behavior: hold per-application display ownership under the render lock until
   atomic flush/reconciliation; release it on unwind and compare raw concatenated
   parts alongside the existing separator representation.
-- Scope and location: tracked =src/application/runtime.lisp= in =edac4fee= and
-  nine narrow live definitions in private image commit
+- Scope and location: tracked =src/application/runtime.lisp= in =edac4fee=.
+  Nine narrow definitions were installed live in private image commit
   =f3bb0e2f-689e-41b2-aee0-a8d154e9e81e=, private Git =617b3506=;
   papercut =s7SetcC=.
 - Verification: source checks and 11 focused cases with 204 checks passed.
   Five synthetic active-image cases verified interleaved replay, multi-item and
   whitespace reconciliation, authoritative changes, unstreamed text and finish
   unwind without provider calls. Clean-process private replay passed.
-- Removal condition: discard the private display overrides after booting the
-  equivalent tracked implementation.
+- Retirement: the selected =b1620f5e= private replay omits redundant display
+  definitions and passed its clean-process check against the tracked source.
 
 ** Sender-relative parent channel targets
 
