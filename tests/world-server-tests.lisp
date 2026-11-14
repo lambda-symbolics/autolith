@@ -24,24 +24,74 @@
        (funcall function server configuration root))))
   nil)
 
+(-> world-server-tests--transport-cause-chain (condition) list)
+(defun world-server-tests--transport-cause-chain (condition)
+  "Return at most four transport causes with bounded reports and join target identity."
+  (let ((*print-level*  3)
+        (*print-length* 8)
+        (*print-circle* t)
+        (*print-pretty* nil))
+    (flet ((bounded (value)
+             "Return no more than 512 characters describing VALUE."
+             (let ((text (princ-to-string value)))
+               (subseq text 0 (min 512 (length text))))))
+      (loop for current = condition then (when (typep current 'image-daemon:daemon-error)
+                                          (image-daemon:daemon-error-cause current))
+            repeat 4
+            while current
+            collect
+            (append (list :type (type-of current) :report (bounded current))
+                    (when (typep current 'image-daemon:daemon-error)
+                      (list :operation (image-daemon:daemon-error-operation current)))
+                    (when (typep current 'sb-thread:join-thread-error)
+                      (let ((target (sb-thread:thread-error-thread current)))
+                        (list :problem        (sb-thread:join-thread-problem current)
+                              :thread-name    (bounded (sb-thread:thread-name target))
+                              :thread-alive-p (sb-thread:thread-alive-p target)))))))))
+
+(-> world-server-tests--call-with-transport-diagnostics (function) t)
+(defun world-server-tests--call-with-transport-diagnostics (function)
+  "Call FUNCTION, reporting at most eight daemon failures without handling them."
+  (let ((remaining 8)
+        (busy-p    nil))
+    (handler-bind
+        ((image-daemon:daemon-error
+           (lambda (condition)
+             (when (and (plusp remaining) (not busy-p))
+               (decf remaining)
+               (setf busy-p t)
+               (unwind-protect
+                    (handler-case
+                        (let ((*print-level*  nil)
+                              (*print-length* nil)
+                              (*print-circle* t)
+                              (*print-pretty* nil))
+                          (format *error-output* "~&WORLD-TRANSPORT-DIAGNOSTIC ~S~%"
+                                  (world-server-tests--transport-cause-chain condition)))
+                      (error () nil))
+                 (setf busy-p nil))))))
+      (funcall function))))
+
 (-> world-server-tests--call-with-server (configuration function &key (:permission-mode keyword)) null)
 (defun world-server-tests--call-with-server (configuration function &key (permission-mode ':auto))
   "Call FUNCTION with a world server served for CONFIGURATION in this process, then stop it."
   (configuration-ensure-directories configuration)
-  (test-call-with-function-replacements
-   (world-server-tests--stubs)
+  (world-server-tests--call-with-transport-diagnostics
    (lambda ()
-     (let* ((server (world-server-create configuration :permission-mode permission-mode))
-            (main   (make-thread (lambda () (world-server-serve server))
-                                 :name "Autolith world server test main")))
-       (unwind-protect
-            (funcall function server)
-         (world-server-stop server)
-         (test-assert (task-tests--wait-until
-                       (lambda () (not (thread-alive-p main))) 30)
-                      "a stopped world server ends once its channels ended")
-         (image-daemon:daemon-stop-thread main)
-         (world-server--shutdown server)))))
+     (test-call-with-function-replacements
+      (world-server-tests--stubs)
+      (lambda ()
+        (let* ((server (world-server-create configuration :permission-mode permission-mode))
+               (main   (make-thread (lambda () (world-server-serve server))
+                                    :name "Autolith world server test main")))
+          (unwind-protect
+               (funcall function server)
+            (world-server-stop server)
+            (test-assert (task-tests--wait-until
+                          (lambda () (not (thread-alive-p main))) 30)
+                         "a stopped world server ends once its channels ended")
+            (image-daemon:daemon-stop-thread main)
+            (world-server--shutdown server)))))))
   nil)
 
 (-> world-server-tests--open (cons string &rest t) list)
