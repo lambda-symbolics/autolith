@@ -1287,6 +1287,31 @@
                                 "the speculative tail uses the current pane width")))))
   nil)
 
+(-> test-terminal-fullscreen-compaction-reflow () null)
+(defun test-terminal-fullscreen-compaction-reflow ()
+  "Resize an existing compaction divider to the full transcript pane width."
+  (with-test-configuration (configuration)
+    (let* ((terminal    (make-instance 'recording-terminal :columns 170 :rows 12))
+           (ui          (fullscreen-test--ui terminal))
+           (application (make-instance 'application :configuration configuration
+                                                    :conversation  (conversation-create configuration)
+                                                    :ui            ui))
+           (record      (list :summary :seq 1 :time 0 :through-seq 0 :summary "older work")))
+      (with-terminal-ui (active ui)
+        (terminal-ui-present-records
+         active (list (application--record-presentation application record)))
+        (dolist (columns '(170 40 100 12 1 170))
+          (terminal-ui-resize active columns :rows 12)
+          (let* ((viewport (fullscreen-terminal-ui-viewport active))
+                 (text     (string-right-trim
+                            '(#\Newline)
+                            (clinedi:transcript-viewport-chunk-text viewport 0))))
+            (test-assert (= (length text) (clinedi:transcript-viewport-width viewport))
+                         (format nil "the resident divider fills the pane at ~D columns" columns))
+            (test-assert (string= text (fullscreen-test--row-text active 0))
+                         "the complete divider fits in one rendered row"))))))
+  nil)
+
 (-> test-terminal-fullscreen-markdown-reflow () null)
 (defun test-terminal-fullscreen-markdown-reflow ()
   "Reflow application Markdown, preserving structure, widgets and viewport identity."

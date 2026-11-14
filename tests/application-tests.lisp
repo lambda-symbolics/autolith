@@ -3053,7 +3053,7 @@
       (test-assert (and (search "1,204 files balanced" text)
                         (not (find #\Newline text)))
                    "a clean paren check is one line"))
-    (loop for (columns width) in '((40 37) (170 64))
+    (loop for (columns width) in '((40 40) (170 170))
           for rule = (conversation-record-entry
                       (application-tests--ui-application :columns columns)
                       (list :summary :seq 10 :time 0 :through-seq 9 :summary "older work"))

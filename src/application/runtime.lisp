@@ -2835,21 +2835,12 @@ A channel message shows its sender and channel instead of an operation."
 (defparameter *application-compaction-label* " CONTEXT COMPACTED "
   "The label centered in the transcript rule marking a context compaction.")
 
-(defparameter *application-compaction-rule-width* 64
-  "The widest compaction rule, narrower than the transcript beside the channel sidebar.")
-
 (-> application--compaction-rule (application &key (:recovery list)) terminal-styled-text)
 (defun application--compaction-rule (application &key recovery)
-  "Return a cut line announcing that earlier context was compacted.
-
-The rule is laid out once, like other transcript rows, and the transcript
-narrows when the sidebar appears beside it. So the rule spans the
-transcript's text width, but never more than the narrowest transcript the
-sidebar leaves, and it never wraps."
-  (let* ((label *application-compaction-label*)
-         (width (max (+ (length label) 2)
-                     (min *application-compaction-rule-width*
-                          (application--transcript-width application))))
+  "Return a compaction divider spanning the current transcript layout width."
+  (let* ((width (application--transcript-columns application))
+         (label (subseq *application-compaction-label*
+                        0 (min width (length *application-compaction-label*))))
          (left  (floor (- width (length label)) 2))
          (right (- width (length label) left)))
     (append
