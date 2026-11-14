@@ -2367,9 +2367,11 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
 (-> application--permission-mode-entry (keyword string) list)
 (defun application--permission-mode-entry (mode description)
   "Return a permission MODE receipt, emphasizing full user authority as a warning."
-  (list (terminal-span (if (eq mode ':full-access) ':notice ':success) "Permissions ")
+  (list (terminal-span (if (eq mode ':full-access) ':notice ':success) "# permissions ")
         (terminal-span ':code (string-downcase (symbol-name mode)))
-        (terminal-span ':dim (format nil "~%  ~A" description))))
+        (terminal-span ':dim
+                       (format nil "~%  ~A"
+                               (string-right-trim "." (string-downcase description :end (min 1 (length description))))))))
 
 (-> application-permissions-command (application t) null)
 (defun application-permissions-command (application argument)
