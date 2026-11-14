@@ -2326,6 +2326,9 @@ may execute immediately; other Lisp waits for the idle boundary."
         ((eq event ':detach)
          (application-command
           (application-input-controller-application controller) "/detach"))
+        ((and (typep event '(cons (eql :application-command) (cons string null)))
+              (member (second event) '("(new)" "(delete)") :test #'equal))
+         (application-input-controller--handle-submission controller (second event) :steer-p nil))
         ((eq event ':channel-picker)
          (application-input-controller--handle-submission controller "(open)" :steer-p nil))
         ((eq event ':detach)

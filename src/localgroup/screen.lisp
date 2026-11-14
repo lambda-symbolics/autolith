@@ -47,10 +47,11 @@
 
 Return :REDRAW to repaint, :DISMISS to return to the channel, :CHANNEL-PICKER
 to open the switch picker, (:SWITCH :SESSION-ID ID) to move to channel ID,
+(:APPLICATION-COMMAND TEXT) to submit a command in the attached application,
 or NIL."))
 
 (defgeneric screen-panel-event (panel event)
-  (:documentation "Handle a keyboard EVENT while PANEL has the whole screen; return a click-style action."))
+  (:documentation "Handle a keyboard or wheel EVENT while PANEL has the whole screen; return a click-style action."))
 
 (defmethod screen-panel-event ((panel t) event)
   "Ignore keys for panels without keyboard navigation."

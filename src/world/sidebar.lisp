@@ -71,7 +71,22 @@
     :initform      0
     :accessor      world-sidebar-selected-row
     :type          (integer 0)
-    :documentation "The zero-based selected action row for keyboard navigation in the drawer.")
+    :documentation "The selected logical entry or footer action, independent of scrolling.")
+   (scroll-offset
+    :initform      0
+    :accessor      world-sidebar-scroll-offset
+    :type          (integer 0)
+    :documentation "The first entry in the tree viewport.")
+   (viewport-height
+    :initform      0
+    :accessor      world-sidebar-viewport-height
+    :type          (integer 0)
+    :documentation "The number of tree rows in the last rendering.")
+   (footer-count
+    :initform      0
+    :accessor      world-sidebar-footer-count
+    :type          (integer 0 2)
+    :documentation "The number of command buttons in the last rendering.")
    (seen
     :initform      (make-hash-table :test #'equal)
     :reader        world-sidebar-seen
@@ -164,36 +179,46 @@ a refresh is due."
               (world-sidebar--take panel (world-sidebar--gather panel)))))))
 
 (defmethod screen-panel-rows ((panel world-sidebar) terminal &key height width)
-  "Render the sidebar's entries as HEIGHT rows WIDTH cells wide for TERMINAL, remembering what a click on each does."
+  "Render the tree viewport and fixed actions, retaining logical keyboard selection."
+  (setf (world-sidebar-viewport-height panel) (max 0 (- height 5))
+        (world-sidebar-footer-count panel) (min 2 height))
+  (world-sidebar--reveal-selection panel)
   (multiple-value-bind (rows actions)
       (world-sidebar--rows (world-sidebar-entries panel) height
+                           :offset   (world-sidebar-scroll-offset panel)
                            :drawer-p (= width (terminal-columns terminal)))
     (setf (world-sidebar-actions panel) (coerce actions 'vector))
-    (unless (nth (world-sidebar-selected-row panel) actions)
-      (setf (world-sidebar-selected-row panel) (or (position-if #'identity actions) 0)))
     (loop for spans in rows
-          for index from 0
+          for action in actions
           collect (let ((padded (terminal--pad-spans spans width)))
                     (terminal--render-spans
                      terminal
                      (if (and (= width (terminal-columns terminal))
-                              (= index (world-sidebar-selected-row panel)))
+                              (eql (getf action :index) (world-sidebar-selected-row panel)))
                          (list (terminal-span ':selected (terminal-ui--raw-spans-text padded)))
                          padded))))))
 
 (defmethod screen-panel-click ((panel world-sidebar) column row)
-  "Open or close the tree node at ROW, or ask to switch to its channel.
-
-The first columns of a channel row hold its marker: a click there opens or
-closes the channel's nested channels. Anywhere else the click switches to
-the channel, unless the terminal shows it already."
+  "Dispatch a fixed command button or the visible tree row's open/toggle action."
   (let* ((actions (world-sidebar-actions panel))
-         (action  (and (<= 1 row (length actions)) (aref actions (1- row))))
-         (open    (getf action :open))
-         (toggle  (getf action :toggle)))
+         (action  (and (<= 1 row (length actions)) (aref actions (1- row)))))
     (cond
-      ((getf action :picker-p)
-       ':channel-picker)
+      ((getf action :scroll-controls-p)
+       (when (>= column 12)
+         (screen-panel-event panel (if (<= column 12) '(:scroll -1) '(:scroll 1)))))
+      (action
+       (setf (world-sidebar-selected-row panel) (getf action :index))
+       (world-sidebar--activate panel action column)))))
+
+(-> world-sidebar--activate (world-sidebar list integer) t)
+(defun world-sidebar--activate (panel action column)
+  "Apply ACTION from a tree row or footer button at COLUMN."
+  (let ((open    (getf action :open))
+        (toggle  (getf action :toggle))
+        (command (getf action :command)))
+    (cond
+      (command
+       (list ':application-command command))
       ((and toggle (or (null open) (<= column *world-sidebar-marker-columns*)))
        (world-sidebar--toggle panel toggle)
        ':redraw)
@@ -204,33 +229,86 @@ the channel, unless the terminal shows it already."
       (t
        nil))))
 
+(-> world-sidebar--reveal-selection (world-sidebar) null)
+(defun world-sidebar--reveal-selection (panel)
+  "Clamp PANEL's selection and viewport, revealing a selected tree entry."
+  (let* ((count     (length (world-sidebar-entries panel)))
+         (height    (world-sidebar-viewport-height panel))
+         (first-row (if (zerop height) count 0))
+         (end-row   (+ count (world-sidebar-footer-count panel)))
+         (selected  (if (< first-row end-row)
+                        (max first-row (min (world-sidebar-selected-row panel) (1- end-row)))
+                        0))
+         (offset    (min (world-sidebar-scroll-offset panel) (max 0 (- count height)))))
+    (when (and (plusp height) (< selected count))
+      (setf offset (cond
+                     ((< selected offset)
+                      selected)
+                     ((>= selected (+ offset height))
+                      (1+ (- selected height)))
+                     (t
+                      offset))))
+    (setf (world-sidebar-selected-row panel) selected
+          (world-sidebar-scroll-offset panel) offset))
+  nil)
+
 (defmethod screen-panel-event ((panel world-sidebar) event)
-  "Navigate the drawer's actionable rows; Enter opens and arrows expand trees."
-  (let* ((actions (world-sidebar-actions panel))
-         (rows    (loop for action across actions
-                        for index from 0 when action collect index))
-         (current (world-sidebar-selected-row panel)))
-    (case event
-      ((:up :down)
-       (when rows
+  "Navigate all entries and fixed actions, scrolling selection into view."
+  (when (typep event '(cons (eql :scroll) (cons integer null)))
+    (setf event (if (minusp (second event)) ':scroll-up ':scroll-down)))
+  (when (member event '(:scroll-top :scroll-bottom))
+    (setf event (if (eq event ':scroll-top) ':home ':end)))
+  (world-sidebar--reveal-selection panel)
+  (let* ((entries   (world-sidebar-entries panel))
+         (count     (length entries))
+         (current   (world-sidebar-selected-row panel))
+         (height    (world-sidebar-viewport-height panel))
+         (first-row (if (plusp height) 0 count))
+         (end-row   (+ count (world-sidebar-footer-count panel))))
+    (when (< first-row end-row)
+      (case event
+        ((:scroll-up :scroll-down)
+         (let ((offset (max 0 (min (max 0 (- count height))
+                                  (+ (world-sidebar-scroll-offset panel)
+                                     (if (eq event ':scroll-up) -3 3))))))
+           (setf (world-sidebar-scroll-offset panel) offset)
+           (when (and (plusp height) (< current count))
+             (setf (world-sidebar-selected-row panel)
+                   (max offset (min current (1- (+ offset height)))))))
+         ':redraw)
+        ((:up :down :page-up :page-down :home :end)
          (setf (world-sidebar-selected-row panel)
-               (nth (mod (+ (or (position current rows) 0) (if (eq event ':up) -1 1))
-                         (length rows))
-                    rows)))
-       ':redraw)
-      (:submit
-       (screen-panel-click panel (1+ *world-sidebar-marker-columns*) (1+ current)))
-      ((:left :right)
-       (let* ((action (and (< current (length actions)) (aref actions current)))
-              (key    (getf action :toggle))
-              (entry  (and key (find key (world-sidebar-entries panel)
-                                      :key  (lambda (entry) (or (getf entry :key) (getf entry :id)))
-                                      :test #'equal))))
-         (when (and entry (not (eq (not (null (getf entry :open-p))) (eq event ':right))))
-           (world-sidebar--toggle panel key))
-         ':redraw))
-      (otherwise
-       nil))))
+               (case event
+                 (:home
+                  first-row)
+                 (:end
+                  (1- end-row))
+                 ((:up :down)
+                  (+ first-row
+                     (mod (+ (- current first-row) (if (eq event ':up) -1 1))
+                          (- end-row first-row))))
+                 (otherwise
+                  (max first-row (min (1- end-row)
+                                      (+ current (* (if (eq event ':page-up) -1 1)
+                                                    (max 1 height))))))))
+         (world-sidebar--reveal-selection panel)
+         ':redraw)
+        (:submit
+         (world-sidebar--activate
+          panel
+          (if (< current count)
+              (world-sidebar--entry-action (nth current entries))
+              (list :command (if (= current count) "(new)" "(delete)")))
+          (1+ *world-sidebar-marker-columns*)))
+        ((:left :right)
+         (let* ((entry  (nth current entries))
+                (action (and entry (world-sidebar--entry-action entry)))
+                (key    (getf action :toggle)))
+           (when (and key (not (eq (not (null (getf entry :open-p))) (eq event ':right))))
+             (world-sidebar--toggle panel key))
+           ':redraw))
+        (otherwise
+         nil)))))
 
 
 ;;;; -- Gathering --
@@ -279,13 +357,36 @@ A failed gather keeps the entries shown before; the next one tries again."
           (return)))))
   nil)
 
+(-> world-sidebar--entry-key (list) list)
+(defun world-sidebar--entry-key (entry)
+  "Identify ENTRY independently of its position, title and tree state."
+  (if (eq (getf entry :kind) ':workspace)
+      (list ':workspace (getf entry :key))
+      (list ':channel (getf entry :id))))
+
 (-> world-sidebar--take (world-sidebar list) boolean)
 (defun world-sidebar--take (sidebar inputs)
-  "Show the entries of the world INPUTS describe in SIDEBAR and return whether they differ from those shown before."
-  (let ((entries (apply #'world-sidebar--entries sidebar inputs)))
+  "Refresh SIDEBAR from INPUTS, preserving selection identity; return whether entries differ.
+
+When a selected entry disappears, select the first available row, never the
+command that happens to occupy the old entry's index."
+  (let* ((previous      (world-sidebar-entries sidebar))
+         (selected      (world-sidebar-selected-row sidebar))
+         (entry-key     (when (< selected (length previous))
+                          (world-sidebar--entry-key (nth selected previous))))
+         (command-index (when (<= (length previous) selected
+                                  (1- (+ (length previous) (world-sidebar-footer-count sidebar))))
+                          (- selected (length previous))))
+         (entries       (apply #'world-sidebar--entries sidebar inputs)))
     (setf (world-sidebar-inputs sidebar) inputs)
-    (prog1 (not (equal entries (world-sidebar-entries sidebar)))
-      (setf (world-sidebar-entries sidebar) entries))))
+    (prog1 (not (equal entries previous))
+      (setf (world-sidebar-entries sidebar) entries
+            (world-sidebar-selected-row sidebar)
+            (or (when entry-key
+                  (position entry-key entries :test #'equal :key #'world-sidebar--entry-key))
+                (when command-index (+ (length entries) command-index))
+                0))
+      (world-sidebar--reveal-selection sidebar))))
 
 (-> world-sidebar--toggle (world-sidebar string) null)
 (defun world-sidebar--toggle (sidebar key)
@@ -511,35 +612,39 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
 
 ;;;; -- Rows --
 
-(-> world-sidebar--rows (list (integer 0) &key (:drawer-p boolean)) (values list list))
-(defun world-sidebar--rows (entries height &key drawer-p)
-  "Return HEIGHT rows of styled spans showing ENTRIES under a heading, with the legend last, and what a click on each row does.
-
-Entries past the rows available are counted on the last row they would take.
-Each action is NIL or a plist of :OPEN, the channel a click switches to, and
-:TOGGLE, the tree node a click on the marker opens or closes."
-  (let* ((heading    (subseq (list (list (terminal-span ':brand " CHANNELS")) nil)
-                            0 (min 2 (max 0 (1- height)))))
-         (limit      (max 0 (- height (length heading) 1)))
-         (overflow-p (and (plusp limit) (> (length entries) limit)))
-         (kept       (if overflow-p (1- limit) (min limit (length entries))))
-         (shown      (subseq entries 0 kept))
-         (rows       (append heading
-                             (mapcar #'world-sidebar--entry-spans shown)
-                             (when overflow-p
-                              (list (list (terminal-span ':notice (format nil " … ~D more · open picker" (- (length entries) kept))))))))
-         (actions    (append (make-list (length heading) :initial-element nil)
-                             (mapcar #'world-sidebar--entry-action shown)
-                             (when overflow-p
-                              (list (list :picker-p t)))))
-         (filler     (max 0 (- height 1 (length rows))))
-         (legend     (if drawer-p
-                         (list (terminal-span ':legend-dim
-                                              " ↑↓ select · Enter opens · ←→ tree · Esc closes"))
-                         (list (terminal-span ':legend-accent " Ctrl-T")
-                               (terminal-span ':legend-dim " toggle")))))
-    (values (subseq (append rows (make-list filler :initial-element nil) (list legend)) 0 height)
-            (subseq (append actions (make-list filler :initial-element nil) (list nil)) 0 height))))
+(-> world-sidebar--rows
+    (list (integer 0) &key (:drawer-p boolean) (:offset (integer 0)))
+    (values list list))
+(defun world-sidebar--rows (entries height &key drawer-p (offset 0))
+  "Return HEIGHT rows and hit actions, with a scrolling tree above fixed command buttons."
+  (let* ((footer-count  (min 2 height))
+         (legend-count  (if (> height 2) 1 0))
+         (heading-count (min 2 (max 0 (- height footer-count legend-count))))
+         (limit         (max 0 (- height heading-count footer-count legend-count)))
+         (start         (min offset (max 0 (- (length entries) limit))))
+         (end           (min (length entries) (+ start limit)))
+         (shown         (subseq entries start end))
+         (heading       (subseq (list (list (terminal-span ':brand " CHANNELS  ↑ ↓")) nil) 0 heading-count))
+         (filler        (make-list (- limit (length shown)) :initial-element nil))
+         (commands      (subseq '("(new)" "(delete)") 0 footer-count))
+         (legend        (when (plusp legend-count)
+                          (list (if drawer-p
+                                    (list (terminal-span ':legend-dim " ↑↓ select · PgUp/PgDn scroll · Enter · Esc"))
+                                    (list (terminal-span ':legend-accent " Ctrl-T")
+                                          (terminal-span ':legend-dim " toggle")))))))
+    (values
+     (append heading (mapcar #'world-sidebar--entry-spans shown) filler
+             (mapcar (lambda (command) (list (terminal-span ':legend-accent (concatenate 'string " " command)))) commands)
+             legend)
+     (append (subseq (list (list :scroll-controls-p t) nil) 0 heading-count)
+             (loop for entry in shown
+                   for index from start
+                   collect (append (world-sidebar--entry-action entry) (list :index index)))
+             filler
+             (loop for command in commands
+                   for index from (length entries)
+                   collect (list :command command :index index))
+             (when legend (list nil))))))
 
 (-> world-sidebar--entry-action (list) (option list))
 (defun world-sidebar--entry-action (entry)
