@@ -746,7 +746,8 @@
   "Test delivery persistence validation, portable encoding and ownership."
   (let* ((record   (list :delivery :id "delivery" :time 1 :sender "sender"
                          :sender-name "Sender" :sender-kind ':agent :source "source"
-                         :target "target" :text "héλ" :mentions (list "mentioned") :kind ':post))
+                         :target "target" :text "héλ" :images (list "image.png")
+                         :mentions (list "mentioned") :kind ':post))
          (delivery (world-delivery--record->delivery record))
          (encoded  (world-delivery--record delivery)))
     (test-assert (and (world-delivery--record-p record) (equal record encoded))
