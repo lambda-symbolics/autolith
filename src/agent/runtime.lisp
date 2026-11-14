@@ -190,6 +190,10 @@ needs the few most recent calls to recognize an oscillation."
     :documentation "The provider request number within the user turn, if known."))
   (:documentation "A malformed response or invariant violation in the main agent loop."))
 
+(define-condition agent-compaction-summary-error (provider-protocol-error)
+  ()
+  (:documentation "An unusable compaction handoff with its parsed response for bug reports."))
+
 
 ;;;; -- Observer Protocol --
 
@@ -1593,6 +1597,25 @@ first label."
              unless (some #'alphanumericp (subseq text start end))
                return (format nil "~A has no content" label))))))
 
+(-> agent--compaction-response-report (provider-result) string)
+(defun agent--compaction-response-report (result)
+  "Serialize RESULT's ordered output and diagnostic metadata with credentials redacted."
+  (let ((metadata (provider-result-metadata result)))
+    (json-encode
+     (provider--sanitize-wire-value
+      (json-object
+       "response_id" (provider-result-response-id result)
+       "output_items" (coerce (provider-result-output-items result) 'vector)
+       "tool_calls" (coerce (provider-result-tool-calls result) 'vector)
+       "usage" (provider-result-usage result)
+       "turn_completion" (string-downcase (symbol-name (provider-result-turn-completion result)))
+       "metadata" (when metadata
+                    (json-object
+                     "model" (provider-response-metadata-model metadata)
+                     "finish_reason" (provider-response-metadata-finish-reason metadata)
+                     "reasoning_context" (provider-response-metadata-reasoning-context metadata)
+                     "cache_write_tokens" (provider-response-metadata-cache-write-tokens metadata))))))))
+
 (-> agent--compaction-summary-problem (provider-result) (option string))
 (defun agent--compaction-summary-problem (result)
   "Return why RESULT is not a completed, structured, tool-free handoff, or NIL.
@@ -1932,14 +1955,14 @@ publication. Return issued request count and optional next-request details."
                    (return))
                  (unless (and (< attempt *agent-compaction-maximum-summary-requests*)
                               (agent--compaction-follow-up-p result))
-                   (error 'provider-protocol-error
-                          :message     (format nil "Compaction produced no usable summary handoff: ~A."
-                                               problem)
-                          :status      nil
-                          :code        nil
-                          :request-id  nil
-                          :response-id (provider-result-response-id result)
-                          :response    nil))
+                    (error 'agent-compaction-summary-error
+                           :message     (format nil "Compaction produced no usable summary handoff: ~A."
+                                                problem)
+                           :status      nil
+                           :code        nil
+                           :request-id  nil
+                           :response-id (provider--sanitize-wire-string (provider-result-response-id result))
+                           :response    (agent--compaction-response-report result)))
                  (agent--advance-compaction-summary-view
                   summary-conversation result problem)))
       (let* ((next-output-tokens

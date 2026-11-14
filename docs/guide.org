@@ -2323,6 +2323,10 @@ again, up to four summary requests in all.
 The last request publishes any finished text answer, so a loosely shaped handoff
 never stops the agent. An empty or refused summary fails at once.
 
+For an unusable summary, click =(copy bug report to clipboard)= below the error
+to copy the runtime version, error, and parsed provider response, including
+ordered output items and usage. Provider credentials are redacted.
+
 Before either request, Autolith captures a fixed history cutoff. The checkpoint
 includes unresolved calls with correlated actual or interrupted/unknown outputs,
 plus results and steering received during summarization. Running jobs and

@@ -1675,6 +1675,7 @@
   test-presentation-configuration-isolation
   test-operation-request-turn
   test-application-transcript-actions
+  test-application-compaction-bug-report
   test-application-mermaid-transcript
   test-application-mermaid-streaming
   test-application-command-tips

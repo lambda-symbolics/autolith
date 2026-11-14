@@ -9705,6 +9705,47 @@
                    "finalized markdown bodies carry copy widgets")))
   nil)
 
+(-> test-application-compaction-bug-report () null)
+(defun test-application-compaction-bug-report ()
+  "Test a failed response's ordered items survive redaction and clipboard activation."
+  (let* ((terminal    (make-instance 'recording-terminal :columns 100 :rows 16))
+         (ui          (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (backend     (make-instance 'application-tests--clipboard))
+         (items       (list (json-object "type" "reasoning" "id" "reasoning-1"
+                                         "encrypted_content" "opaque reasoning payload"
+                                         "summary" (vector (json-object "text" "fixture-secret")))
+                            (json-object "type" "message" "role" "assistant" "content" #())))
+         (response
+           (let ((cl-llm-provider-api::*provider-active-credential-values* '("fixture-secret")))
+             (agent--compaction-response-report
+              (agent-test-result "compact-reasoning" items :turn-completion ':end))))
+         (condition   (make-condition 'agent-compaction-summary-error
+                                      :message     "Compaction produced no usable summary handoff."
+                                      :response-id "compact-reasoning"
+                                      :response    response))
+         (entry       (application--expected-error-entry application condition))
+         (widget      (find-if #'termdown:widget-p entry)))
+    (test-assert (and widget (eq ':copy (first (termdown:widget-action widget))))
+                 "a compaction failure exposes a copy action")
+    (let* ((decoded (json-decode response))
+           (output  (json-get decoded "output_items")))
+      (test-assert (and (= 2 (length output))
+                        (equal "reasoning-1" (json-get (elt output 0) "id"))
+                        (equal "opaque reasoning payload"
+                               (json-get (elt output 0) "encrypted_content"))
+                        (equal "message" (json-get (elt output 1) "type"))
+                        (not (search "fixture-secret" response)))
+                   "the report preserves ordered non-visible output with credentials redacted"))
+    (with-terminal-ui (active ui)
+      (let ((*clipboard-backend* backend))
+        (funcall (terminal-ui-action-function active) (termdown:widget-action widget))))
+    (test-assert (and (= 1 (length (application-tests--clipboard-texts backend)))
+                      (search response (first (application-tests--clipboard-texts backend)))
+                      (search *autolith-version* (first (application-tests--clipboard-texts backend))))
+                 "activating the widget copies the complete response and runtime version"))
+  nil)
+
 (-> test-operation-request-turn () null)
 (defun test-operation-request-turn ()
   "Test an operation's generated request reaches the model but shows as its notice."
