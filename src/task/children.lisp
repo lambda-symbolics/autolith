@@ -153,7 +153,7 @@
                        (string-equal key (participant-name agent))))
           (return-from task-child--find (values identifier agent)))))
     (error 'task-error
-           :message   (format nil "~A names none of your children; channel:current lists them. A child appears there once its first run ends."
+           :message   (format nil "Could not find a child agent named ~S. Read channel:current to see your child agents. If you just started this agent, wait until its first run finishes, then check again."
                               designator)
            :tool-name tool-name)))
 
