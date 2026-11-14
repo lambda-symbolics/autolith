@@ -191,13 +191,39 @@
                  "Return whether this call belongs to the prepared checkpoint thread."
                  (and armed-p (eq requester sb-thread:*current-thread*)))
 
+               (make-itimer-candidate (thread-symbol handle-symbol close-timer)
+                 "Build the test-only candidate: terminate locked, join unlocked, then close locked."
+                 (lambda ()
+                   (let ((thread (sb-int:with-system-mutex (sb-impl::*scheduler-lock*)
+                                   (let ((thread (symbol-value thread-symbol)))
+                                     (when thread (sb-thread:terminate-thread thread))
+                                     thread))))
+                     (when thread (sb-thread:join-thread thread :default nil))
+                     (sb-int:with-system-mutex (sb-impl::*scheduler-lock*)
+                       (when (symbol-value handle-symbol)
+                         (funcall close-timer (symbol-value handle-symbol))
+                         (setf (symbol-value handle-symbol) nil))))))
+
                (install-step (symbol phase)
                  "Bracket one implementation call after the original save hooks finish."
                  (when (and symbol (fboundp symbol))
-                   (let ((original (symbol-function symbol))
-                         (enter    (intern (concatenate 'string (symbol-name phase) "-ENTER") "KEYWORD"))
-                         (exit     (intern (concatenate 'string (symbol-name phase) "-EXIT") "KEYWORD"))
-                         (unwind   (intern (concatenate 'string (symbol-name phase) "-UNWIND") "KEYWORD")))
+                    (let* ((original (symbol-function symbol))
+                           (delegate
+                             (if (eq phase ':itimer)
+                                 (let* ((thread-symbol (find-symbol "*TIMER-THREAD*" "SB-IMPL"))
+                                        (handle-symbol (find-symbol "*WAITABLE-TIMER-HANDLE*" "SB-IMPL"))
+                                        (package       (find-package "SB-WIN32"))
+                                        (close-symbol  (and package (find-symbol "OS-CLOSE-WTIMER" package))))
+                                   (unless (and thread-symbol (boundp thread-symbol)
+                                                handle-symbol (boundp handle-symbol)
+                                                close-symbol (fboundp close-symbol))
+                                     (error 'platform-error :operation ':phase-probe
+                                            :message                   "Windows timer candidate bindings are unavailable."))
+                                   (make-itimer-candidate thread-symbol handle-symbol (symbol-function close-symbol)))
+                                 original))
+                           (enter    (intern (concatenate 'string (symbol-name phase) "-ENTER") "KEYWORD"))
+                           (exit     (intern (concatenate 'string (symbol-name phase) "-EXIT") "KEYWORD"))
+                           (unwind   (intern (concatenate 'string (symbol-name phase) "-UNWIND") "KEYWORD")))
                      (push (cons symbol original) definitions)
                      (setf (symbol-function symbol)
                            (lambda (&rest arguments)
@@ -209,7 +235,7 @@
                                    (if (eq phase ':stream-deinit)
                                        (progn (restore-probe) (apply original arguments))
                                        (unwind-protect
-                                            (multiple-value-prog1 (apply original arguments)
+                                             (multiple-value-prog1 (apply delegate arguments)
                                               (setf returned-p t)
                                               (record-phase exit target))
                                          (unless returned-p (record-phase unwind target)))))
@@ -270,7 +296,7 @@
                               (when (requester-p)
                                 (record-phase ':save-hooks-exit)
                                 (setf deinit-p t))))))
-        (values #'restore-probe (copy-list definitions))))
+        (values #'restore-probe (copy-list definitions) #'make-itimer-candidate)))
    :stream stream :readably t)
   (terpri stream)
   nil)
@@ -612,12 +638,76 @@
         (setf sb-ext:*save-hooks* old-hooks))))
   nil)
 
+(-> world-restart-tests--check-itimer-candidate () null)
+(defun world-restart-tests--check-itimer-candidate ()
+  "Check the generated timer candidate's lock scope, close ordering and failure propagation."
+  (with-test-configuration (configuration)
+    (configuration-ensure-directories configuration)
+    (let* ((source      (with-output-to-string (stream)
+                          (world-restart-tests--write-phase-probe
+                           stream (world-restart-tests--phase-pathname configuration))))
+           (*read-eval* nil))
+      (multiple-value-bind (restore definitions make-candidate) (eval (read-from-string source))
+        (declare (ignore definitions))
+        (unwind-protect
+             (dolist (scenario '(:normal :join-failure :no-thread :no-handle))
+               (let* ((thread-symbol (gensym "TIMER-THREAD-"))
+                      (handle-symbol (gensym "TIMER-HANDLE-"))
+                      (thread        (unless (eq scenario ':no-thread) sb-thread:*current-thread*))
+                      (handle        (unless (eq scenario ':no-handle) (list ':handle)))
+                      (events        nil)
+                      (failure       (make-condition 'platform-error :operation ':phase-probe
+                                                     :message                   "Injected timer join failure.")))
+                 (labels ((scheduler-owned-p ()
+                            "Return whether this requester owns the timer scheduler lock."
+                            (eq (sb-thread:mutex-owner sb-impl::*scheduler-lock*) sb-thread:*current-thread*)))
+                   (progv (list thread-symbol handle-symbol) (list thread handle)
+                     (sb-ext:without-package-locks
+                       (test-call-with-function-replacements
+                        (list (list 'sb-thread:terminate-thread
+                                    (lambda (target)
+                                      (push (list ':terminate (eq target thread) (scheduler-owned-p)) events)))
+                              (list 'sb-thread:join-thread
+                                    (lambda (target &key (default nil default-p))
+                                      (push (list ':join (eq target thread) (scheduler-owned-p)
+                                                  default-p default (eq (symbol-value handle-symbol) handle))
+                                            events)
+                                      (when (eq scenario ':join-failure) (error failure))
+                                      (values nil ':abort))))
+                        (lambda ()
+                          (let* ((candidate
+                                   (funcall make-candidate thread-symbol handle-symbol
+                                            (lambda (target)
+                                              (push (list ':close (eq target handle) (scheduler-owned-p)) events))))
+                                 (result (handler-case (multiple-value-list (funcall candidate))
+                                           (platform-error (condition) condition))))
+                            (test-assert
+                             (and (if (eq scenario ':join-failure) (eq result failure) (equal result '(nil)))
+                                  (eq (symbol-value thread-symbol) thread)
+                                  (eq (symbol-value handle-symbol) (when (eq scenario ':join-failure) handle)))
+                             (format nil "Timer candidate ~S preserves result/error and timer/handle state." scenario))))))
+                     (test-assert
+                      (equal (reverse events)
+                             (case scenario
+                               (:normal
+                                '((:terminate t t) (:join t nil t nil t) (:close t t)))
+                               (:join-failure
+                                '((:terminate t t) (:join t nil t nil t)))
+                               (:no-thread
+                                '((:close t t)))
+                               (:no-handle
+                                '((:terminate t t) (:join t nil t nil t)))))
+                      (format nil "Timer candidate ~S terminates locked, joins unlocked with DEFAULT NIL, and closes locked after join." scenario))))))
+          (funcall restore)))))
+  nil)
+
 (-> test-world-server-restart-diagnostics () null)
 (defun test-world-server-restart-diagnostics ()
   "Test timeout evidence for missing, saved and unreadable checkpoint stages."
   (world-restart-tests--check-phase-probe)
   (world-restart-tests--check-phase-emission-failures)
   (world-restart-tests--check-deinit-probe)
+  (world-restart-tests--check-itimer-candidate)
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let* ((pid     (current-process-id))
