@@ -92,30 +92,84 @@
 
 (-> world-restart-tests--write-phase-probe (stream pathname) null)
 (defun world-restart-tests--write-phase-probe (stream pathname)
-  "Write synchronous test-only checkpoint instrumentation into executable init."
+  "Write bounded synchronous checkpoint and SBCL teardown instrumentation."
   (write
-   `(let ((prepare (symbol-function 'checkpoint--prepare-saver))
-          (gc (symbol-function 'sb-ext:gc))
-          (save (symbol-function 'sb-ext:save-lisp-and-die))
-          (checkpoint (symbol-function 'sbcl-generations:checkpoint-restart-save-and-exit))
-          (save-hooks sb-ext:*save-hooks*)
-          (records 0) (armed-p nil) (ordinal 0) (busy-p nil) (failed-p nil)
-          (requester nil) (worker-kind "") (active-p nil))
+   `(let* ((prepare (symbol-function 'checkpoint--prepare-saver))
+           (gc (symbol-function 'sb-ext:gc))
+           (save (symbol-function 'sb-ext:save-lisp-and-die))
+           (checkpoint (symbol-function 'sbcl-generations:checkpoint-restart-save-and-exit))
+           (deinit (symbol-function 'sb-impl::deinit))
+           (save-hooks sb-ext:*save-hooks*)
+           (definitions (list (cons 'checkpoint--prepare-saver prepare)
+                              (cons 'sb-ext:gc gc) (cons 'sb-ext:save-lisp-and-die save)
+                              (cons 'sbcl-generations:checkpoint-restart-save-and-exit checkpoint)
+                              (cons 'sb-impl::deinit deinit)))
+           (records 0) (bytes 0) (armed-p nil) (deinit-p nil) (ordinal 0)
+           (busy-p nil) (failed-p nil) (truncated-p nil)
+           (requester nil) (worker-kind "") (active-p nil))
       (declare (notinline write close))
-      (labels ((record-phase (phase)
-                 "Append one bounded record, stopping after I/O failure and reporting its type."
-                 (when (and (not busy-p) (not failed-p) (< records 64))
+      (labels ((thread-state (thread)
+                 "Return a bounded name and liveness pair, never a raw thread."
+                 (when (typep thread 'sb-thread:thread)
+                   (let ((name (or (sb-thread:thread-name thread) "")))
+                     (list (subseq name 0 (min 64 (length name)))
+                           (not (null (sb-thread:thread-alive-p thread)))))))
+
+               (system-thread (name)
+                 "Read an optional implementation thread without interning a symbol."
+                 (let ((symbol (find-symbol name "SB-IMPL")))
+                   (when (and symbol (boundp symbol)
+                              (typep (symbol-value symbol) 'sb-thread:thread))
+                     (symbol-value symbol))))
+
+               (waiting-lock (thread)
+                 "Normalize plain and deadline-paired thread wait identities."
+                 (when (typep thread 'sb-thread:thread)
+                   (let ((waiting (sb-thread::thread-waiting-for thread)))
+                     (if (consp waiting) (rest waiting) waiting))))
+
+               (record-phase (phase &optional target)
+                 "Append at most 64 records and 32 KiB, explicitly marking budget exhaustion."
+                 (when (and (not busy-p) (not failed-p) (not truncated-p))
                    (setf busy-p t)
                    (unwind-protect
                         (handler-case
-                            (let* ((name   (or (sb-thread:thread-name sb-thread:*current-thread*) ""))
-                                   (thread (subseq name 0 (min 128 (length name)))))
+                            (let* ((*print-pretty* nil)
+                                   (*print-level*  nil)
+                                   (*print-length* nil)
+                                   (waiting        (waiting-lock target))
+                                   (scheduler      sb-impl::*scheduler-lock*)
+                                   (make-thread    sb-thread::*make-thread-lock*)
+                                   (record
+                                     (list :phase phase :pid (current-process-id) :gc ordinal
+                                           :thread                  (first (thread-state sb-thread:*current-thread*))
+                                           :worker-kind worker-kind :active-p active-p
+                                           :target                  (thread-state target)
+                                           :scheduler-owned-p       (eq (sb-thread:mutex-owner scheduler) requester)
+                                           :target-scheduler-wait-p (eq waiting scheduler)
+                                           :make-owned-p            (eq (sb-thread:mutex-owner make-thread) requester)
+                                           :target-make-wait-p      (eq waiting make-thread)
+                                           :timer                   (thread-state (system-thread "*TIMER-THREAD*"))
+                                           :finalizer               (thread-state (system-thread "*FINALIZER-THREAD*"))))
+                                   (size           (+ 2 (length (sb-ext:string-to-octets
+                                                                 (write-to-string record :readably t :pretty nil)
+                                                                 :external-format ':utf-8)))))
+                              ;; Reserve one record and 512 bytes for a visible terminal marker.
+                              (when (or (>= records 63) (> (+ bytes size) (- 32768 512)))
+                                (setf record (list :phase  ':probe-truncated
+                                                   :reason (if (>= records 63) ':record-limit ':byte-limit)
+                                                   :records records :bytes bytes)
+                                      size (+ 2 (length (sb-ext:string-to-octets
+                                                         (write-to-string record :readably t :pretty nil)
+                                                         :external-format ':utf-8)))
+                                      truncated-p t))
                               (incf records)
-                              (with-open-file (output ,pathname :direction ':output :if-exists ':append
-                                                               :if-does-not-exist ':create)
-                                (write (list :phase phase :pid (current-process-id) :gc ordinal
-                                             :thread thread :worker-kind worker-kind :active-p active-p)
-                                       :stream output :readably t)
+                              (incf bytes size)
+                              (with-open-file (output ,pathname :direction        ':output
+                                                               :if-exists         (if (= records 1) ':supersede ':append)
+                                                               :if-does-not-exist ':create
+                                                               :external-format   ':utf-8)
+                                (write record :stream output :readably t :pretty nil)
                                 (terpri output)))
                           (error (condition)
                             (setf failed-p t)
@@ -126,21 +180,61 @@
                      (setf busy-p nil))))
 
                (restore-probe ()
-                 "Restore captured definitions and hooks before saving or returning."
+                 "Restore all wrapped definitions and hooks before streams close or on unwind."
+                 (setf armed-p nil deinit-p nil)
                  (sb-ext:without-package-locks
-                   (setf (symbol-function 'checkpoint--prepare-saver) prepare
-                         (symbol-function 'sb-ext:gc) gc
-                         (symbol-function 'sb-ext:save-lisp-and-die) save
-                         (symbol-function 'sbcl-generations:checkpoint-restart-save-and-exit) checkpoint
-                         sb-ext:*save-hooks* save-hooks)))
+                   (dolist (definition definitions)
+                     (setf (symbol-function (first definition)) (rest definition)))
+                   (setf sb-ext:*save-hooks* save-hooks)))
 
                (requester-p ()
                  "Return whether this call belongs to the prepared checkpoint thread."
-                 (and armed-p (eq requester sb-thread:*current-thread*))))
+                 (and armed-p (eq requester sb-thread:*current-thread*)))
+
+               (install-step (symbol phase)
+                 "Bracket one implementation call after the original save hooks finish."
+                 (when (and symbol (fboundp symbol))
+                   (let ((original (symbol-function symbol))
+                         (enter    (intern (concatenate 'string (symbol-name phase) "-ENTER") "KEYWORD"))
+                         (exit     (intern (concatenate 'string (symbol-name phase) "-EXIT") "KEYWORD"))
+                         (unwind   (intern (concatenate 'string (symbol-name phase) "-UNWIND") "KEYWORD")))
+                     (push (cons symbol original) definitions)
+                     (setf (symbol-function symbol)
+                           (lambda (&rest arguments)
+                             (if (and deinit-p (requester-p))
+                                 (let ((target     (when (member phase '(:join-thread :primitive-join))
+                                                     (first arguments)))
+                                       (returned-p nil))
+                                   (record-phase enter target)
+                                   (if (eq phase ':stream-deinit)
+                                       (progn (restore-probe) (apply original arguments))
+                                       (unwind-protect
+                                            (multiple-value-prog1 (apply original arguments)
+                                              (setf returned-p t)
+                                              (record-phase exit target))
+                                         (unless returned-p (record-phase unwind target)))))
+                                 (apply original arguments))))))))
         (sb-ext:without-package-locks
+          (dolist (step '(("ITIMER-EMULATION-DEINIT" "SB-IMPL" :itimer)
+                          ("JOIN-THREAD" "SB-THREAD" :join-thread)
+                          ("PRIMITIVE-JOIN" "SB-THREAD" :primitive-join)
+                          ("%DISPOSE-THREAD-STRUCTS" "SB-THREAD" :dispose)
+                          ("FINALIZER-THREAD-STOP" "SB-IMPL" :finalizer-stop)
+                          ("TUNE-IMAGE-FOR-DUMP" "SB-IMPL" :tune-image)
+                          ("FLOAT-DEINIT" "SB-IMPL" :float-deinit)
+                          ("PROFILE-DEINIT" "SB-IMPL" :profile-deinit)
+                          ("FOREIGN-DEINIT" "SB-IMPL" :foreign-deinit)
+                          ("REBUILD-CTYPE-HASHSETS" "SB-KERNEL" :ctype-rebuild)
+                          ("DROP-ALL-HASH-CACHES" "SB-IMPL" :cache-drop)
+                          ("OS-DEINIT" "SB-IMPL" :os-deinit)
+                          ("FINALIZERS-DEINIT" "SB-IMPL" :finalizers-deinit)
+                          ("REBUILD-PATHNAME-CACHE" "SB-IMPL" :pathname-rebuild)
+                          ("RESTORE-CPU-SPECIFIC-ROUTINES" "SB-VM" :cpu-restore)
+                          ("STREAM-DEINIT" "SB-IMPL" :stream-deinit)))
+            (install-step (find-symbol (first step) (second step)) (third step)))
           (setf (symbol-function 'checkpoint--prepare-saver)
                 (lambda (worker generation)
-                  (setf armed-p t ordinal 0 requester sb-thread:*current-thread*
+                  (setf armed-p t deinit-p nil ordinal 0 requester sb-thread:*current-thread*
                         worker-kind (symbol-name (type-of worker))
                         active-p (not (null *active-application*)))
                   (record-phase ':prepare-enter)
@@ -161,22 +255,22 @@
                 (symbol-function 'sb-ext:save-lisp-and-die)
                 (lambda (&rest arguments)
                   (when (requester-p) (record-phase ':save-call-enter))
-                  (unwind-protect (apply save arguments)
-                    (restore-probe)))
+                  (unwind-protect (apply save arguments) (restore-probe)))
+                (symbol-function 'sb-impl::deinit)
+                (lambda (&rest arguments)
+                  (unwind-protect (apply deinit arguments) (restore-probe)))
                 (symbol-function 'sbcl-generations:checkpoint-restart-save-and-exit)
                 (lambda (&rest arguments)
-                  (unwind-protect (apply checkpoint arguments)
-                    (restore-probe)))))
+                  (unwind-protect (apply checkpoint arguments) (restore-probe)))))
         (setf sb-ext:*save-hooks*
               (append (list (lambda ()
-                              (when (requester-p) (record-phase ':save-hooks-enter))
-                              (restore-probe)))
+                              (when (requester-p) (record-phase ':save-hooks-enter))))
                       save-hooks
                       (list (lambda ()
                               (when (requester-p)
                                 (record-phase ':save-hooks-exit)
-                               (setf armed-p nil))))))
-        #'restore-probe))
+                                (setf deinit-p t))))))
+        (values #'restore-probe (copy-list definitions))))
    :stream stream :readably t)
   (terpri stream)
   nil)
@@ -342,7 +436,6 @@
               (lambda ()
                 (let ((originals (mapcar #'symbol-function symbols)))
                   (dolist (scenario '(:normal :unwind :bounded))
-                    (when (probe-file pathname) (delete-file pathname))
                     (setf order nil fail-gc-p (eq scenario ':unwind)
                           sb-ext:*save-hooks* (list (lambda () (push ':first order))
                                                    (lambda () (push ':second order))))
@@ -387,8 +480,11 @@
                                "a synchronous GC nonlocal exit is distinct from return"))
                              (:bounded
                               (loop repeat 70 do (checkpoint--prepare-saver nil nil))
-                              (test-assert (= (length (world-restart-tests--phases configuration)) 64)
-                                           "probe emission is bounded across repeated preparations")))
+                              (let ((records (world-restart-tests--phases configuration)))
+                                (test-assert (and (= (length records) 64)
+                                                  (eq (getf (first (last records)) :phase) ':probe-truncated)
+                                                  (eq (getf (first (last records)) :reason) ':record-limit))
+                                             "record exhaustion ends with an explicit truncation marker"))))
                         (funcall restore)))
                     (test-assert (and (every #'eq originals (mapcar #'symbol-function symbols))
                                       (eq sb-ext:*after-gc-hooks* old-after-gc-hooks))
@@ -410,11 +506,118 @@
         (setf sb-ext:*save-hooks* old-save-hooks))))
   nil)
 
+(-> world-restart-tests--check-deinit-probe () null)
+(defun world-restart-tests--check-deinit-probe ()
+  "Test teardown identities, restoration before streams close, unwind and byte exhaustion."
+  (with-test-configuration (configuration)
+    (configuration-ensure-directories configuration)
+    (let* ((pathname          (world-restart-tests--phase-pathname configuration))
+           (old-hooks         sb-ext:*save-hooks*)
+           (old-name          (sb-thread:thread-name sb-thread:*current-thread*))
+           (definitions       nil)
+           (stream-restored-p nil)
+           (failure           (make-condition 'platform-error :operation ':phase-probe :message "Injected teardown failure."))
+           (fail-p            nil))
+      (unwind-protect
+           (sb-ext:without-package-locks
+             (test-call-with-function-replacements
+              (list (list 'checkpoint--prepare-saver
+                          (lambda (&rest arguments) (declare (ignore arguments)) nil))
+                    (list 'sb-ext:save-lisp-and-die
+                          (lambda (&rest arguments) (declare (ignore arguments)) (sb-impl::deinit)))
+                    (list 'sb-impl::deinit
+                          (lambda ()
+                            (mapc #'funcall sb-ext:*save-hooks*)
+                            (sb-thread:join-thread sb-thread:*current-thread*)
+                            (sb-thread::primitive-join sb-thread:*current-thread* nil)
+                            (sb-impl::finalizer-thread-stop)
+                            (sb-impl::tune-image-for-dump)
+                            (sb-impl::stream-deinit)))
+                    (list 'sb-thread:join-thread
+                          (lambda (&rest arguments) (declare (ignore arguments)) ':joined))
+                    (list 'sb-thread::primitive-join
+                          (lambda (&rest arguments) (declare (ignore arguments)) nil))
+                    (list 'sb-impl::finalizer-thread-stop (lambda () nil))
+                    (list 'sb-impl::tune-image-for-dump (lambda () (when fail-p (error failure))))
+                    (list 'sb-impl::stream-deinit
+                          (lambda ()
+                            (setf stream-restored-p
+                                  (every (lambda (definition)
+                                           (eq (symbol-function (first definition)) (rest definition)))
+                                         definitions)))))
+              (lambda ()
+                (dolist (scenario '(:normal :unwind :bytes))
+                  (when (probe-file pathname) (delete-file pathname))
+                  (setf sb-ext:*save-hooks* nil stream-restored-p nil fail-p (eq scenario ':unwind))
+                  (let* ((source      (with-output-to-string (stream)
+                                        (world-restart-tests--write-phase-probe stream pathname)))
+                         (*read-eval* nil))
+                    (multiple-value-bind (restore captured) (eval (read-from-string source))
+                      (setf definitions captured)
+                      (unwind-protect
+                           (progn
+                             (when (eq scenario ':bytes)
+                               (setf (sb-thread:thread-name sb-thread:*current-thread*)
+                                     (make-string 128 :initial-element (code-char #x1f600))))
+                             (checkpoint--prepare-saver nil nil)
+                             (case scenario
+                               (:normal
+                                (sb-ext:save-lisp-and-die "unused")
+                                (test-assert stream-restored-p "all definitions are restored before stream teardown")
+                                (let* ((records (world-restart-tests--phases configuration))
+                                       (phases  (mapcar (lambda (record) (getf record :phase)) records))
+                                       (join    (find ':join-thread-enter records
+                                                      :key (lambda (record) (getf record :phase)))))
+                                  (test-assert
+                                   (and (equal phases
+                                               '(:prepare-enter :prepare-exit :save-call-enter
+                                                 :save-hooks-enter :save-hooks-exit
+                                                 :join-thread-enter :join-thread-exit
+                                                 :primitive-join-enter :primitive-join-exit
+                                                 :finalizer-stop-enter :finalizer-stop-exit
+                                                 :tune-image-enter :tune-image-exit :stream-deinit-enter))
+                                        (stringp (first (getf join :target)))
+                                        (second (getf join :target))
+                                        (member (getf join :target-scheduler-wait-p) '(t nil))
+                                        (member (getf join :make-owned-p) '(t nil)))
+                                   "teardown phases stop at stream entry and expose bounded target identity")))
+                               (:unwind
+                                (test-assert
+                                 (eq failure (handler-case (sb-ext:save-lisp-and-die "unused")
+                                               (platform-error (condition) condition)))
+                                 "teardown wrappers propagate the original condition")
+                                (test-assert
+                                 (find ':tune-image-unwind (world-restart-tests--phases configuration)
+                                       :key (lambda (record) (getf record :phase)))
+                                 "an earlier teardown unwind is recorded before restoration"))
+                               (:bytes
+                                (mapc #'funcall sb-ext:*save-hooks*)
+                                (loop repeat 100 do (sb-thread:join-thread sb-thread:*current-thread*))
+                                (let* ((records (world-restart-tests--phases configuration))
+                                       (last    (first (last records))))
+                                  (test-assert
+                                   (and (< (length records) 64)
+                                        (eq (getf last :phase) ':probe-truncated)
+                                        (eq (getf last :reason) ':byte-limit)
+                                        (with-open-file (stream pathname) (<= (file-length stream) 32768)))
+                                   "UTF-8 byte exhaustion is marked within the file and record limits"))))
+                             (test-assert
+                              (or (eq scenario ':bytes)
+                                  (every (lambda (definition)
+                                           (eq (symbol-function (first definition)) (rest definition)))
+                                         captured))
+                              "returning and unwinding teardown paths restore every wrapped definition"))
+                        (funcall restore)
+                        (setf (sb-thread:thread-name sb-thread:*current-thread*) old-name))))))))
+        (setf sb-ext:*save-hooks* old-hooks))))
+  nil)
+
 (-> test-world-server-restart-diagnostics () null)
 (defun test-world-server-restart-diagnostics ()
   "Test timeout evidence for missing, saved and unreadable checkpoint stages."
   (world-restart-tests--check-phase-probe)
   (world-restart-tests--check-phase-emission-failures)
+  (world-restart-tests--check-deinit-probe)
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let* ((pid     (current-process-id))
