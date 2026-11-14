@@ -79,6 +79,7 @@
          (entry       (if entry-p entry
                           (if layout (funcall layout width) (getf record :entry))))
          (body-layout (getf record :body-layout))
+         (transform   (getf record :entry-transform))
          (body        (when (and (eq (getf record :kind) ':call) (getf record :retain-output-p))
                         (if (and body-layout (not entry-p))
                             (funcall body-layout width)
@@ -87,7 +88,9 @@
     (multiple-value-bind (text display regions)
         (terminal-ui--finalized-content
          ui (if (eq (getf record :kind) ':call)
-                (terminal-ui-fullscreen--record-entry entry (getf record :state) body)
+                (if transform
+                    (funcall transform entry (getf record :state) body)
+                    (terminal-ui-fullscreen--record-entry entry (getf record :state) body))
                 entry)
          :group (getf record :group))
       (values (concatenate 'string prefix text) (concatenate 'string prefix display)
@@ -160,7 +163,7 @@
   (let ((next (copy-list record)))
     (setf (getf next :identifiers) (cons identifier (getf record :identifiers))
           (getf next :job-key) (or (getf metadata :job-key) (getf record :job-key)))
-    (dolist (key '(:state :retain-output-p :body :body-layout :body-source-characters))
+    (dolist (key '(:state :retain-output-p :body :body-layout :body-source-characters :entry-transform))
       (setf (getf next key) (getf metadata key)))
     (multiple-value-bind (text display regions)
         (terminal-ui-fullscreen--record-content

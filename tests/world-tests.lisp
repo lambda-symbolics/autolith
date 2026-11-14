@@ -1051,8 +1051,8 @@
                                            :conversation  first
                                            :ui            (terminal-ui-create :terminal terminal)))
                (other       (participant-name second-agent)))
-          (let ((entries (world-mention-completion-entries (world-load configuration)
-                                                           (subseq other 0 (min 3 (length other))))))
+          (let ((entries (funcall (application-world-mention-function configuration)
+                                  (subseq other 0 (min 3 (length other))))))
             (test-assert (and (find (format nil "@~A" other) entries
                                     :key (lambda (entry) (getf entry :name)) :test #'string=)
                               (every (lambda (entry) (search " in b-" (getf entry :description)))

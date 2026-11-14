@@ -1017,6 +1017,66 @@ structural discriminator as a readable heading instead."
                   (application--tool-section-row
                    "arguments unavailable"))))))
 
+(-> application--resource-failure-spans (string) list)
+(defun application--resource-failure-spans (text)
+  "Color failure TEXT red, preserving neutral numbers and revision identifiers."
+  (let ((spans nil)
+        (start 0)
+        (index 0)
+        (size  (length text)))
+    (loop while (< index size)
+          for end = (cond
+                      ((digit-char-p (char text index))
+                       (or (position-if-not #'digit-char-p text :start index) size))
+                      ((and (char= (char text index) #\R)
+                            (<= (+ index 17) size)
+                            (every (lambda (character) (digit-char-p character 16))
+                                   (subseq text (1+ index) (+ index 17))))
+                       (+ index 17)))
+          do (if end
+                 (progn
+                   (when (< start index)
+                     (push (terminal-span ':failure (subseq text start index)) spans))
+                   (push (terminal-span ':plain (subseq text index end)) spans)
+                   (setf start end index end))
+                 (incf index)))
+    (when (< start size)
+      (push (terminal-span ':failure (subseq text start)) spans))
+    (nreverse spans)))
+
+(-> application--resource-edit-failure-summary (string) string)
+(defun application--resource-edit-failure-summary (output)
+  "Return a short lowercase-leading cause without the agent's retry instructions."
+  (let* ((prefix   "resource.edit failed: ")
+         (text     (if (uiop:string-prefix-p prefix output) (subseq output (length prefix)) output))
+         (revision (search "Resource revision " text :test #'char-equal)))
+    (if (and revision (search " is stale" text :start2 revision :test #'char-equal))
+        (let* ((start (+ revision (length "Resource revision ")))
+               (end   (or (position #\Space text :start start) (length text))))
+          (format nil "resource revision ~A is stale" (subseq text start end)))
+        (let* ((end   (min (or (search ". " text) (length text))
+                           (or (position #\Newline text) (length text))))
+               (cause (string-right-trim "." (subseq text 0 end))))
+          (string-downcase (if (> (length cause) 160)
+                               (concatenate 'string (subseq cause 0 159) "…")
+                               cause)
+                           :end (min 1 (length cause)))))))
+
+(-> application--resource-edit-failure-entry (list keyword list) list)
+(defun application--resource-edit-failure-entry (entry state body)
+  "Insert the failed outcome beneath each operation heading, ahead of its diff."
+  (let ((found-p nil))
+    (let ((updated
+            (loop for span in entry
+                  for text = (terminal-span-text span)
+                  append (if (and (eq (terminal-span-style span) ':dim)
+                                  (uiop:string-prefix-p "operation " text))
+                             (progn
+                               (setf found-p t)
+                               (append (application--resource-failure-spans text) body))
+                             (list span)))))
+      (terminal-ui-fullscreen--record-entry updated state (unless found-p body)))))
+
 (-> application--resource-operation-heading (json-object integer) string)
 (defun application--resource-operation-heading (operation index)
   "Return a readable verb phrase for resource edit OPERATION at INDEX."
@@ -2289,7 +2349,12 @@ that follow are the model's next observation, not something the user reads."
                                               ':failure
                                               *application-tool-output-lines*
                                               :gutter "│ "))))
-      (call-next-method)))
+      (application--tool-result-entry
+       application record
+       :rows (list (cons (terminal-span ':failure "│ ")
+                         (application--resource-failure-spans
+                          (application--resource-edit-failure-summary
+                           (or (getf (rest record) :output) ""))))))))
 
 (defmethod application-tool-result-entry
     ((tool lisp-paren-check-tool) (application application) record)

@@ -32,10 +32,12 @@ between the delimiters. Type the closing delimiter to move past it, or press
 Backspace between an empty pair to delete both.
 
 Press =Tab= to complete operation names, finite options, and workspace paths.
-Use =Shift-Tab= to step back through the suggestions. With nothing to complete,
-press =Tab= to send the input like Enter, or queue it as a follow-up while a turn
-runs. If you press =Tab= while typing an unfinished form such as
-=(job.continuity :=, nothing happens. Finish the form before submitting it.
+For =@= mentions, the first Tab inserts the selected agent or path followed by a
+space; further Tabs cycle through complete candidates. Use =Shift-Tab= to cycle
+backwards. Path suggestions load in the background as you type.
+With nothing to complete, press =Tab= to send the input like Enter, or queue it
+as a follow-up while a turn runs. If you press =Tab= while typing an unfinished
+form such as =(job.continuity :=, nothing happens. Finish the form before submitting it.
 
 The work indicator displays =REPL= with one letter highlighted in sequence.
 Use =(settings :transcript-style :repl)= to show messages as a Lisp REPL

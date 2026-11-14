@@ -256,9 +256,11 @@ well, since the steer persists first and the queued turn then skips."
 
 (-> application-world-mention-function (configuration) function)
 (defun application-world-mention-function (configuration)
-  "Return a function completing @ participant names from CONFIGURATION's world as it is."
+  "Return a participant completer using the local world, without channel-status RPC."
   (lambda (token)
-    (world-mention-completion-entries (world-presented configuration) token)))
+    (handler-case
+        (world-mention-completion-entries (world-load configuration) token)
+      (autolith-error () nil))))
 
 (-> world-presented (configuration) world)
 (defun world-presented (configuration)

@@ -58,6 +58,49 @@
   "Present RECORDS through the application batch presentation path."
   (application--present-conversation-records application records))
 
+(-> test-application-resource-edit-failure-placement () null)
+(defun test-application-resource-edit-failure-placement ()
+  "Present a short failed operation before its proposed diff, including after resize."
+  (with-test-configuration (configuration)
+    (let* ((application (application-tool-outcome-tests--application configuration))
+           (revision    "RE081CDEE7B09FDB2")
+           (call        (list :provider-item :seq 1 :time 0
+                              :wire-json
+                              (json-encode
+                               (json-object
+                                "type" "function_call" "namespace" "resource" "name" "edit"
+                                "call_id" "edit"
+                                "arguments"
+                                (json-encode
+                                 (json-object "uri" "workspace:example.lisp" "base-revision" revision
+                                              "operations" (json-array
+                                                            (json-object "op" "insert-after" "line" 197
+                                                                         "content" "requested-change"))))))))
+           (output      (format nil "resource.edit failed: Resource revision ~A is stale, expired, or was not observed in this conversation. Reread workspace:example.lisp with resource.read and retry against the returned revision." revision))
+           (result      (list :tool-result :seq 2 :time 0 :tool "resource.edit" :call-id "edit"
+                              :status ':error :output output)))
+      (application-tool-outcome-tests--present application call result)
+      (dolist (columns '(100 40 100))
+        (terminal-ui-resize (application-ui application) columns :rows 24)
+        (let* ((text    (application-tool-outcome-tests--text application))
+               (heading (search "operation 1" text))
+               (error   (search "resource revision" text))
+               (change  (search "requested-change" text)))
+          (test-assert (and heading error change (< heading error change))
+                       "the failure appears between its operation heading and proposed change")
+          (test-assert (and (null (search "Reread" text))
+                            (search "Reread" (getf (rest result) :output)))
+                       "the transcript omits retry advice retained in the agent's result")))
+      (let* ((spans   (application--resource-failure-spans
+                       (format nil "operation 1 · insert after line 197 · resource revision ~A is stale" revision)))
+             (neutral (remove-if-not (lambda (span) (eq (terminal-span-style span) ':plain)) spans)))
+        (test-assert (equal (mapcar #'terminal-span-text neutral) (list "1" "197" revision))
+                     "only operation numbers, line numbers and revision identifiers are neutral")
+        (test-assert (every (lambda (span)
+                              (member (terminal-span-style span) '(:plain :failure))) spans)
+                     "the rest of the failed operation and summary use the failure color"))))
+  nil)
+
 (-> test-application-tool-outcomes-interleaved () null)
 (defun test-application-tool-outcomes-interleaved ()
   "Associate same-name calls by ID, preserving arguments and railed failure output."

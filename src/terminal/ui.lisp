@@ -884,7 +884,7 @@ recalled drafts. An @ path token still offers file completion."
 
 (-> terminal-ui--accept-token-completion (terminal-ui list) null)
 (defun terminal-ui--accept-token-completion (ui entry)
-  "Replace ENTRY's original @ token in UI's input with its completed name."
+  "Replace ENTRY's @ token, leaving one space after a completed mention or path."
   (let* ((editor   (terminal-ui-editor ui))
          (original (or (terminal-ui-completion-prefix ui)
                        (line-editor-text editor)))
@@ -895,14 +895,19 @@ recalled drafts. An @ path token still offers file completion."
                (integerp end)
                (<= 0 start end (length original))
                (stringp insert))
-      (line-editor-set-text
-       editor
-       (sanitize-text
-        (concatenate 'string
-                     (subseq original 0 start)
-                     insert
-                     (subseq original end)))
-       :cursor (+ start (length insert)))))
+      (let* ((tail    (subseq original end))
+             (space-p (or (zerop (length tail))
+                          (not (find (char tail 0) '(#\" #\' #\( #\))))))
+             (skip    (if (and space-p (plusp (length tail))
+                              (char= (char tail 0) #\Space))
+                          1
+                          0)))
+        (line-editor-set-text
+         editor
+         (sanitize-text
+          (concatenate 'string (subseq original 0 start) insert
+                       (if space-p " " "") (subseq tail skip)))
+         :cursor (+ start (length insert) (if space-p 1 0))))))
   nil)
 
 (-> terminal-ui--accept-completion (terminal-ui list) null)
@@ -944,6 +949,7 @@ its parenthesis open, and are dropped once the name closes it itself."
 (defun terminal-ui--end-completion (ui)
   "Leave UI's active command completion selection without changing input."
   (setf (terminal-ui-completion-active-p ui) nil
+        (terminal-ui-completion-filled-p ui) nil
         (terminal-ui-completion-prefix ui) nil
         (terminal-ui-completion-history-state ui) nil)
   nil)
@@ -975,8 +981,8 @@ its parenthesis open, and are dropped once the name closes it itself."
       (return (values nil nil)))
     (terminal-ui--reconcile-completions ui)
     (let ((selector (terminal-ui-completion-selector ui)))
-      (unless (selector-items selector)
-        (return (values nil nil)))
+        (unless (selector-items selector)
+          (return (values nil nil)))
       (unless (or (terminal-ui-completion-active-p ui)
                   (member event
                           '(:up :down :complete :complete-previous
@@ -987,38 +993,47 @@ its parenthesis open, and are dropped once the name closes it itself."
                  (terminal-ui--editor-history-navigating-p
                   (terminal-ui-editor ui)))
         (return (values nil nil)))
-      (when (member event '(:up :down :complete :complete-previous))
-        (terminal-ui--begin-completion ui))
-      (multiple-value-bind (selector-action entry)
-          (selector-handle-event selector event)
-        (case selector-action
-          (:changed
-           (terminal-ui--accept-completion ui entry)
-           (terminal-ui--repaint-live ui)
-           (values :changed nil))
-          (:accept
-           (terminal-ui--accept-completion ui entry)
-           (terminal-ui--end-completion ui)
-           (cond
-             ((or (getf entry :argument)
-                  (member (getf entry :kind) '(:path :mention))
-                  (not (getf entry :submit-p t)))
-              (terminal-ui--repaint-live ui)
-              (values :changed nil))
-             (t
-              (multiple-value-bind (action payload)
-                  (line-editor-handle-event (terminal-ui-editor ui) :submit)
-                (terminal-ui--repaint-live ui)
-                (values action payload)))))
-          (:cancel
-           (terminal-ui--cancel-completion ui)
-           (terminal-ui--repaint-live ui)
-           (values :changed nil))
-          (:dismiss
-           (terminal-ui--end-completion ui)
-           (values nil nil))
-          (t
-           (values nil nil)))))))
+      (let ((fill-token-p
+              (and (eq event ':complete)
+                   (not (terminal-ui-completion-filled-p ui))
+                   (member (getf (clinedi:selector-selected-item selector) :kind)
+                           '(:path :mention)))))
+        (when (member event '(:up :down :complete :complete-previous))
+          (terminal-ui--begin-completion ui))
+        (multiple-value-bind (selector-action entry)
+            (if fill-token-p
+                (values ':changed (clinedi:selector-selected-item selector))
+                (selector-handle-event selector event))
+         (case selector-action
+           (:changed
+            (terminal-ui--accept-completion ui entry)
+            (when (member event '(:complete :complete-previous))
+              (setf (terminal-ui-completion-filled-p ui) t))
+            (terminal-ui--repaint-live ui)
+            (values :changed nil))
+           (:accept
+            (terminal-ui--accept-completion ui entry)
+            (terminal-ui--end-completion ui)
+            (cond
+              ((or (getf entry :argument)
+                   (member (getf entry :kind) '(:path :mention))
+                   (not (getf entry :submit-p t)))
+               (terminal-ui--repaint-live ui)
+               (values :changed nil))
+              (t
+               (multiple-value-bind (action payload)
+                   (line-editor-handle-event (terminal-ui-editor ui) :submit)
+                 (terminal-ui--repaint-live ui)
+                 (values action payload)))))
+           (:cancel
+            (terminal-ui--cancel-completion ui)
+            (terminal-ui--repaint-live ui)
+            (values :changed nil))
+           (:dismiss
+            (terminal-ui--end-completion ui)
+            (values nil nil))
+           (t
+             (values nil nil))))))))
 
 (-> terminal-ui--pending-input-rows
     (string list &key (:count integer) (:row-width integer))
@@ -3808,6 +3823,10 @@ NIL after delivering any other action."
                   (terminal-ui--reconcile-completions ui)))
            (effective-event
              (cond
+               ((and (member event '(:complete :complete-previous))
+                     (null completion-items)
+                     (terminal-ui--path-token-present-p ui))
+                ':complete-unavailable)
                ((and (eq event :complete-previous)
                      queue-editing-p
                      (not (terminal-ui-completion-active-p ui)))

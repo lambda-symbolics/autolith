@@ -1593,6 +1593,7 @@
   test-terminal-path-completion
   test-terminal-path-completion-history
   test-terminal-mention-completion
+  test-terminal-path-completion-background
   test-terminal-modal-selection
   test-terminal-fullscreen-picker-capacity
   test-terminal-picker-detail-column
@@ -1771,6 +1772,7 @@
 
 (define-test-suite application-tool-outcomes
   test-application-tool-outcomes-interleaved
+  test-application-resource-edit-failure-placement
   test-application-tool-outcomes-scoped-identities
   test-application-tool-outcomes-compact-and-prominent
   test-application-tool-outcomes-background-lifecycle

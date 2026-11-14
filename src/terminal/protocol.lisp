@@ -321,6 +321,11 @@ panels while such frames show, as during the boot screen."))
     :accessor      terminal-ui-completion-active-p
     :type          boolean
     :documentation "Whether arrows and Tab are choosing among completion candidates.")
+   (completion-filled-p
+    :initform      nil
+    :accessor      terminal-ui-completion-filled-p
+    :type          boolean
+    :documentation "Whether Tab has accepted a token before cycling its alternatives.")
    (completion-prefix
     :initform      nil
     :accessor      terminal-ui-completion-prefix

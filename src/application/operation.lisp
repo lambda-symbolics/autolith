@@ -460,6 +460,48 @@ paths that do not contain QUERY as a contiguous substring."
       (error ()
         '()))))
 
+(-> application-path--completion-provider (function &key (:on-ready (option function))) function)
+(defun application-path--completion-provider (search-function &key on-ready)
+  "Return cached paths immediately, coalescing searches onto one background worker.
+
+Only the latest requested query is searched next. Results for another query are
+never returned. Refresh an unchanged query after two seconds without blocking input."
+  (let ((lock         (make-lock "path completion"))
+        (requested    nil)
+        (completed    nil)
+        (completed-at 0)
+        (paths        nil)
+        (running-p    nil))
+    (labels ((gather ()
+               (loop
+                 (let* ((query  (with-lock-held (lock) requested))
+                        (result (handler-case (funcall search-function query)
+                                  (error () nil))))
+                   (when (with-lock-held (lock)
+                           (setf completed query
+                                 completed-at (get-internal-real-time)
+                                 paths result)
+                           (when (equal requested query)
+                             (setf running-p nil)
+                             t))
+                     (when on-ready
+                       (handler-case (funcall on-ready)
+                         (error () nil)))
+                     (return))))))
+      (lambda (query)
+        (with-lock-held (lock)
+          (setf requested (copy-seq query))
+          (unless (or running-p
+                      (and (equal query completed)
+                           (< (- (get-internal-real-time) completed-at)
+                              (* 2 internal-time-units-per-second))))
+            (setf running-p t)
+            (handler-case (make-thread #'gather :name "Autolith path completion")
+              (error ()
+                (setf running-p nil))))
+          (when (equal query completed)
+            paths))))))
+
 (-> application-operation-connect-ui (application) application)
 (defun application-operation-connect-ui (application)
   "Connect APPLICATION's UI to its dynamic per-session operation
@@ -471,8 +513,12 @@ paths that do not contain QUERY as a contiguous substring."
             (lambda ()
               (application-operation-completion-entries application))
             (terminal-ui-path-search-function ui)
-            (lambda (query)
-              (application-path-search-files application query)))
+            (application-path--completion-provider
+             (lambda (query) (application-path-search-files application query))
+             :on-ready (lambda ()
+                         (with-terminal-ui-locked (ui)
+                           (when (terminal-ui-started-p ui)
+                             (terminal-ui--repaint-live ui))))))
       (when (slot-boundp application 'configuration)
         (setf (terminal-ui-completion-root ui)
               (config :working-directory

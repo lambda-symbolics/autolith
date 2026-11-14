@@ -56,6 +56,9 @@
             :job-key         (application--tool-outcome-key application ':job (getf job :id))
             :state           state
             :retain-output-p (not (null entry))
+            :entry-transform (when (and (eq state ':failure)
+                                        (equal (getf properties :tool) "resource.edit"))
+                               #'application--resource-edit-failure-entry)
             :body            (cond
                                (handoff
                                 (cons (terminal-span ':plain (string #\Newline)) entry))
