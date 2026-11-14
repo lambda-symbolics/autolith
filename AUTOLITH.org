@@ -18,6 +18,24 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Serialized stream and transcript presentation
+
+- Problem: durable replay could render a reply before its live stream finished;
+  separate message/text parts also failed exact stream reconciliation.
+- Behavior: hold per-application display ownership under the render lock until
+  atomic flush/reconciliation; release it on unwind and compare raw concatenated
+  parts alongside the existing separator representation.
+- Scope and location: tracked =src/application/runtime.lisp= in =edac4fee= and
+  nine narrow live definitions in private image commit
+  =f3bb0e2f-689e-41b2-aee0-a8d154e9e81e=, private Git =617b3506=;
+  papercut =s7SetcC=.
+- Verification: source checks and 11 focused cases with 204 checks passed.
+  Five synthetic active-image cases verified interleaved replay, multi-item and
+  whitespace reconciliation, authoritative changes, unstreamed text and finish
+  unwind without provider calls. Clean-process private replay passed.
+- Removal condition: discard the private display overrides after booting the
+  equivalent tracked implementation.
+
 ** Sender-relative parent channel targets
 
 - Problem: channel tools resolved the reserved parent target as an ordinary
