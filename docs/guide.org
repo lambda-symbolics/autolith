@@ -1793,7 +1793,7 @@ a child too, may create child agents. A child agent resides in a channel
 nested under its parent's channel and belongs to its parent agent, so
 =channel:id/<execution id>= reads a child's transcript and a message to that
 channel steers it. How deep the tree grows is capped:
-=AUTOLITH_TASK_MAX_DEPTH=, default 2, counts the levels of child agents below
+=AUTOLITH_TASK_MAX_DEPTH=, default 3, counts the levels of child agents below
 a top-level agent, and the limits on running and queued jobs cap how many
 run at once.
 
@@ -3294,7 +3294,7 @@ rather than proceeding without isolation.
 
 The default pool admits eight concurrent children.
 =AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. =AUTOLITH_TASK_MAX_DEPTH=,
-default 2, is how many levels of child agents may sit below a top-level
+default 3, is how many levels of child agents may sit below a top-level
 agent; a child at the last level cannot create children. Child jobs have no
 deadline unless =AUTOLITH_TASK_MAX_RUNTIME_MS= is set positive.
 

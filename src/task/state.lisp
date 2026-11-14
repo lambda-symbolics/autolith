@@ -53,7 +53,7 @@
 (defparameter *task-shutdown-timeout-seconds* 10
   "The maximum time allowed for task worker shutdown.")
 
-(defparameter *task-default-maximum-depth* 2
+(defparameter *task-default-maximum-depth* 3
   "The default maximum child-agent depth below the primary agent.")
 
 (defparameter *task-inherited-reference-maximum-bytes* 32768
