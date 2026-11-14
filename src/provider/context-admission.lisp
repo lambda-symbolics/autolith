@@ -72,13 +72,15 @@ may use provider token counts when available; the default is not a tokenizer."))
 (-> provider-context--header-components (model-provider vector) list)
 (defun provider-context--header-components (provider tools)
   "Separate stable accounting policy from replaceable prompt and tool fingerprints."
-  (let ((configuration (provider-configuration provider)))
-    (list :policy      (provider-cache-prefix--entry
-                        (vector (symbol-name (class-name (class-of provider)))
-                                (config :model configuration) (config :model-provider configuration)
-                                (config :reasoning-effort configuration) (config :provider-endpoint configuration)))
-          :prompt      (provider-cache-prefix--entry (system-prompt configuration))
-          :tool-header (provider-cache-prefix--entry tools))))
+  (let ((configuration (and (compute-applicable-methods #'provider-configuration (list provider))
+                            (provider-configuration provider))))
+    (when configuration
+      (list :policy      (provider-cache-prefix--entry
+                          (vector (symbol-name (class-name (class-of provider)))
+                                  (config :model configuration) (config :model-provider configuration)
+                                  (config :reasoning-effort configuration) (config :provider-endpoint configuration)))
+            :prompt      (provider-cache-prefix--entry (system-prompt configuration))
+            :tool-header (provider-cache-prefix--entry tools)))))
 
 (-> provider-context--header-charge (list list) (integer 0))
 (defun provider-context--header-charge (sample components)

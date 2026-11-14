@@ -1036,8 +1036,17 @@
        (context-admission-test--measure agent :envelope-length 64)
        (let* ((unconfigured (make-instance 'model-provider))
               (context      (provider-context-request-create unconfigured conversation #())))
-         (test-assert (null (getf context :eligible-p))
-                      "providers without a configuration method use unmeasured admission"))
+          (test-assert (null (getf context :eligible-p))
+                       "providers without a configuration method use unmeasured admission")
+          (multiple-value-bind (tokens known-p)
+              (context-estimate-known-tokens (agent-configuration agent) conversation
+                                             :family   (provider-family provider)
+                                             :provider unconfigured)
+            (test-assert (and (plusp tokens) (not known-p)
+                              (= tokens (context-estimate-known-tokens
+                                         (agent-configuration agent) conversation
+                                         :family (provider-family provider))))
+                         "providers without a configuration method also use unmeasured metering")))
        (dolist (field '("instructions" "model" "tools" "input"))
          (let* ((*provider-context-request* (provider-context-request-create provider conversation #()))
                 (request                    (provider-request-object provider conversation #())))
