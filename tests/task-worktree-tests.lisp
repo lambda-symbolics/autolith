@@ -630,9 +630,15 @@
                         (multiple-value-prog1 (apply runner program arguments options)
                           (when (and (member "worktree" arguments :test #'equal)
                                      (member "add" arguments :test #'equal))
-                            (sb-thread:signal-semaphore entered)
                             (handler-case
-                                (loop (sleep 0.01))
+                                (progn
+                                  (sb-thread:signal-semaphore entered)
+                                  ;; Exercise cancellation at readiness without a scheduling race.
+                                  (when (eq mode ':native)
+                                    (error 'job-aborted :identifier (job-identifier job)
+                                                       :reason      ':test-cancel
+                                                       :message     "Cancel Git setup at readiness."))
+                                  (loop (sleep 0.01)))
                               (job-aborted () (error condition)))))))
                 (setf setup
                       (make-thread
@@ -643,10 +649,11 @@
                        :name "cancelled Git setup"))
                 (test-assert (sb-thread:wait-on-semaphore entered :timeout 30)
                              "Git add completed while its native cleanup owner is held.")
-                (sb-thread:interrupt-thread
-                 setup (lambda ()
-                         (error 'job-aborted :identifier (job-identifier job)
-                                            :reason ':test-cancel :message "Cancel Git setup.")))
+                (unless (eq mode ':native)
+                  (sb-thread:interrupt-thread
+                   setup (lambda ()
+                           (error 'job-aborted :identifier (job-identifier job)
+                                              :reason ':test-cancel :message "Cancel Git setup."))))
                 (sb-thread:join-thread setup :timeout 2 :default nil)
                 (test-assert (typep outcome 'cl-worktree:worktree-error)
                              "The setup caller unwinds promptly through the Git library boundary.")
