@@ -630,8 +630,15 @@
             (dolist (id ids)
               (multiple-value-bind (resolved status)
                   (memory-resolve configuration id)
-                (test-assert (and (search id notice) resolved (eq status ':found))
-                             "each reference in the notice resolves to a recalled memory"))))))))
+                (test-assert (and (search id (terminal--spans-text notice)) resolved (eq status ':found))
+                             "each reference in the notice resolves to a recalled memory")
+                (test-assert
+                 (find (list ':insert (format nil "(memory ~S)" id)) notice
+                       :test #'equal
+                       :key  (lambda (span)
+                               (when (termdown:widget-p span)
+                                 (termdown:widget-action span))))
+                 "each recalled memory has an executable click-to-insert lookup"))))))))
   nil)
 
 (-> memory-source-tests--text ((or string list)) string)

@@ -1312,6 +1312,40 @@
                          "the complete divider fits in one rendered row"))))))
   nil)
 
+(-> test-terminal-fullscreen-memory-lookups () null)
+(defun test-terminal-fullscreen-memory-lookups ()
+  "Insert complete memory lookups by clicking their rendered tokens after reflow."
+  (with-test-configuration (configuration)
+    (let* ((terminal    (make-instance 'recording-terminal :columns 120 :rows 16))
+           (ui          (fullscreen-test--ui terminal))
+           (application (make-instance 'application :configuration configuration
+                                                   :conversation   (conversation-create configuration)
+                                                   :ui             ui))
+           (ids         '("m-12345" "m-67890")))
+      (with-terminal-ui (active ui)
+        (setf (terminal-ui-action-function active)
+              (lambda (action)
+                (when (eq (first action) ':insert)
+                  (terminal-ui-set-input active (second action)))))
+        (application-present application (application--related-memories-notice 2 :ids ids))
+        (dolist (columns '(120 40 120))
+          (terminal-ui-resize active columns :rows 16)
+          (dolist (id ids)
+            (terminal-ui-set-input active "draft")
+            (terminal-ui--paint-live active)
+            (let* ((frame (map 'list #'clinedi:ansi-strip (fullscreen-test--frame active)))
+                   (row   (position-if (lambda (text) (search id text)) frame))
+                   (text  (and row (nth row frame)))
+                   (start (and text (search id text))))
+              (test-assert start "each memory lookup exposes a clickable identifier")
+              (when start
+                (fullscreen-test--click active (1+ start) (1+ row))
+                (test-assert
+                 (string= (line-editor-text (terminal-ui-editor active))
+                          (format nil "(memory ~S)" id))
+                 "clicking a highlighted identifier inserts the complete quoted lookup"))))))))
+  nil)
+
 (-> test-terminal-fullscreen-markdown-reflow () null)
 (defun test-terminal-fullscreen-markdown-reflow ()
   "Reflow application Markdown, preserving structure, widgets and viewport identity."

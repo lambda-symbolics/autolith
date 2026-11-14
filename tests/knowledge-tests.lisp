@@ -1311,7 +1311,7 @@
                             (not (search "persistent memor" (context-contribution-instruction advice)))
                             (null (knowledge-tests--contribution contributions "knowledge-changes")))
                        "recall offers the derived departure as a complete current fact")
-          (test-assert (equal (application--related-memories-notice 0 :facts 3)
+          (test-assert (equal (terminal--spans-text (application--related-memories-notice 0 :facts 3))
                               "@ 3 relevant facts")
                        "the notice counts offered facts"))
         (knowledge-tests--schedule-review configuration workspace "14:00")

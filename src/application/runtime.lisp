@@ -4013,25 +4013,38 @@ does turning the activity line setting off."
 (-> application--related-memories-notice
     ((integer 0) &key (:stale (integer 0)) (:unverified (integer 0))
                   (:facts (integer 0)) (:ids list))
-    string)
+    list)
 (defun application--related-memories-notice
     (count &key (stale 0) (unverified 0) (facts 0) (ids nil))
-  "Return the notice for COUNT offered memories and FACTS offered facts.
+  "Return the recall notice with highlighted, click-to-insert memory lookups.
 
-STALE and UNVERIFIED count memories whose evidence changed or could not be
-checked."
-  (format nil "@ ~{~A~^ · ~}"
-          (remove nil
-                  (list (when (plusp count)
-                          (format nil "~D relevant memor~:@P exist~:[~;s~]~@[ (~{~A~^, ~})~]"
-                                  count (= count 1) ids))
-                        (when (plusp stale)
-                          (format nil "~D stale" stale))
-                        (when (plusp unverified)
-                          (format nil "~D unverified" unverified))
-                        (when (plusp facts)
-                          (format nil "~D ~:[~;relevant ~]fact~P"
-                                  facts (zerop count) facts))))))
+STALE and UNVERIFIED count memories whose evidence changed or could not be checked."
+  (let* ((style (if (or (plusp stale) (plusp unverified)) ':notice ':dim))
+         (text  (format nil "@ ~{~A~^ · ~}"
+                        (remove nil
+                                (list (when (plusp count)
+                                        (format nil "~D relevant memor~:@P exist~:[~;s~]"
+                                                count (= count 1)))
+                                      (when (plusp stale)
+                                        (format nil "~D stale" stale))
+                                      (when (plusp unverified)
+                                        (format nil "~D unverified" unverified))
+                                      (when (plusp facts)
+                                        (format nil "~D ~:[~;relevant ~]fact~P"
+                                                facts (zerop count) facts)))))))
+    (append
+     (list (terminal-span style text))
+     (loop for id in ids
+           for call = (format nil "(memory ~S)" id)
+           for action = (list ':insert call)
+           append (cons (terminal-span style " · ")
+                        (mapcar (lambda (token)
+                                  (termdown:make-widget (terminal-span-style token)
+                                                       (terminal-span-text token)
+                                                       action))
+                                (or (syntax--highlight-spans
+                                     call :language *application-common-lisp-language*)
+                                    (list (terminal-span ':code call)))))))))
 
 (-> application--knowledge-changes-notice ((integer 1)) string)
 (defun application--knowledge-changes-notice (count)
@@ -4275,17 +4288,12 @@ clients as :TEXT, :REASONING and :STATUS events."
             (unless related-memories-shown-p
               (application-present
                application
-               (list (terminal-span
-                      (if (or (plusp (getf details :stale 0))
-                              (plusp (getf details :unverified 0)))
-                          ':notice
-                          ':dim)
-                      (application--related-memories-notice
-                       (getf details :count)
-                       :stale      (getf details :stale 0)
-                       :unverified (getf details :unverified 0)
-                       :facts      (getf details :facts 0)
-                       :ids        (getf details :ids)))))
+               (application--related-memories-notice
+                (getf details :count)
+                :stale      (getf details :stale 0)
+                :unverified (getf details :unverified 0)
+                :facts      (getf details :facts 0)
+                :ids        (getf details :ids)))
               (setf related-memories-shown-p t)))
            (:knowledge-changes
             (application-present
