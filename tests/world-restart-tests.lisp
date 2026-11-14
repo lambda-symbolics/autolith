@@ -249,24 +249,50 @@ skips the repository check."
      (world-client-open configuration :directory (namestring root))))
   nil)
 
+(define-condition world-restart-test-cleanup-error (error)
+  ((failures :initarg       :failures
+             :reader        world-restart-test-cleanup-failures
+             :documentation "Cleanup conditions, in operation order."))
+  (:documentation "One or more fixture cleanup operations failed after every launch was attempted.")
+  (:report (lambda (condition stream)
+             (format stream "Restart fixture cleanup encountered ~D failures:~{~%~A~}"
+                     (length (world-restart-test-cleanup-failures condition))
+                     (world-restart-test-cleanup-failures condition)))))
+
 (-> world-restart-tests--stop (configuration list) null)
 (defun world-restart-tests--stop (configuration processes)
-  "Stop a reachable server and reclaim every retained launch, including its owned tree."
-  (unwind-protect
-       (let ((world (world-client-entry configuration)))
-         (when world
-           ; mallet:suppress no-ignore-errors -- the endpoint may close during cleanup
-           (ignore-errors (localgroup-query-record world ':stop))))
-    (dolist (process processes)
-      (unwind-protect
-           (progn
-             (when (platform-process-object-alive-p *platform* process)
-               (platform-terminate-process-object *platform* process :force t))
-             (if (task-tests--wait-until
-                  (lambda () (not (platform-process-object-alive-p *platform* process))) 10)
-                 (platform-wait-process *platform* process)
-                 (test-assert nil "the retained launcher tree ended during cleanup")))
-        (platform-release-process *platform* process))))
+  "Attempt cleanup of every retained launch before reporting accumulated failures."
+  (let ((failures nil))
+    (labels ((attempt (function)
+               "Return FUNCTION's result and success flag, recording any error."
+               (handler-case
+                   (values (funcall function) t)
+                 (error (condition)
+                   (push condition failures)
+                   (values nil nil)))))
+      (attempt (lambda ()
+                 (let ((world (world-client-entry configuration)))
+                   (when world
+                     ; mallet:suppress no-ignore-errors -- stopping an endpoint that may already be closed is advisory
+                     (ignore-errors (localgroup-query-record world ':stop))))))
+      (dolist (process processes)
+        (multiple-value-bind (alive-p known-p)
+            (attempt (lambda () (platform-process-object-alive-p *platform* process)))
+          (when (or alive-p (not known-p))
+            (attempt (lambda () (platform-terminate-process-object *platform* process :force t)))))
+        (multiple-value-bind (ended-p checked-p)
+            (attempt (lambda ()
+                       (task-tests--wait-until
+                        (lambda () (not (platform-process-object-alive-p *platform* process))) 10)))
+          (when checked-p
+            (if ended-p
+                (attempt (lambda () (platform-wait-process *platform* process)))
+                (push (make-condition 'platform-error :operation ':terminate
+                                      :message                   "The retained launcher tree did not end during cleanup.")
+                      failures))))
+        (attempt (lambda () (platform-release-process *platform* process)))))
+    (when failures
+      (error 'world-restart-test-cleanup-error :failures (nreverse failures))))
   nil)
 
 (-> world-restart-tests--call-with-owned-launch (configuration function) t)
@@ -346,6 +372,82 @@ skips the repository check."
                             (list (list ':release other) (list ':terminate owned)
                                   (list ':wait owned) (list ':release owned)))
                      "cleanup terminates, waits and releases the owned launch without an endpoint"))))
+  nil)
+
+(-> test-world-server-restart-cleanup-failures () null)
+(defun test-world-server-restart-cleanup-failures ()
+  "Test all retained launches are attempted despite cleanup errors, preserving body failures."
+  (with-test-configuration (configuration)
+    (dolist (stage '(:lookup :probe :terminate :wait :release))
+      (dolist (body-fails-p '(nil t))
+        (let* ((first-launch   (list ':first))
+               (faulty-launch  (list ':faulty))
+               (pending        (list first-launch faulty-launch))
+               (alive          (copy-list pending))
+               (events         nil)
+               (cleanup-error  (make-condition 'platform-error :operation stage
+                                                :message                  "Injected cleanup failure."))
+               (body-error     (make-condition 'platform-error :operation ':fixture-body
+                                                :message                  "Injected body failure."))
+               (*error-output* (make-string-output-stream))
+               (*localgroup-fresh-launch-function*
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   (pop pending))))
+          (labels ((record (operation process)
+                     "Record an attempted cleanup operation and inject its selected failure."
+                     (push (list operation process) events)
+                     (when (and (eq process faulty-launch) (eq operation stage))
+                       (error cleanup-error))))
+            (test-call-with-function-replacements
+             (list (list 'world-client-entry
+                         (lambda (configuration)
+                           (declare (ignore configuration))
+                           (when (eq stage ':lookup)
+                             (error cleanup-error))
+                           nil))
+                   (list 'platform-process-object-alive-p
+                         (lambda (platform process)
+                           (declare (ignore platform))
+                           (record ':probe process)
+                           (not (null (member process alive :test #'eq)))))
+                   (list 'platform-terminate-process-object
+                         (lambda (platform process &key force)
+                           (declare (ignore platform force))
+                           (setf alive (remove process alive :test #'eq))
+                           (record ':terminate process)))
+                   (list 'platform-wait-process
+                         (lambda (platform process)
+                           (declare (ignore platform))
+                           (record ':wait process)))
+                   (list 'platform-release-process
+                         (lambda (platform process)
+                           (declare (ignore platform))
+                           (record ':release process))))
+             (lambda ()
+               (let ((observed
+                       (handler-case
+                           (world-restart-tests--call-with-owned-launch
+                            configuration
+                            (lambda (launch-process)
+                              (declare (ignore launch-process))
+                              (funcall *localgroup-fresh-launch-function*)
+                              (funcall *localgroup-fresh-launch-function*)
+                              (when body-fails-p
+                                (error body-error))))
+                         (error (condition) condition))))
+                 (test-assert (if body-fails-p
+                                  (eq observed body-error)
+                                  (and (typep observed 'world-restart-test-cleanup-error)
+                                       (member cleanup-error
+                                               (world-restart-test-cleanup-failures observed)
+                                               :test #'eq)))
+                              "cleanup reports its failures only after preserving any original body error")
+                 (test-assert (and (find (list ':release faulty-launch) events :test #'equal)
+                                   (find (list ':terminate first-launch) events :test #'equal)
+                                   (find (list ':wait first-launch) events :test #'equal)
+                                   (find (list ':release first-launch) events :test #'equal))
+                              "a cleanup error cannot abandon the remaining retained launch")))))))))
   nil)
 
 (-> test-world-server-restart-checkpoint () null)
