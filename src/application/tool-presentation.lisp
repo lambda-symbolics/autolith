@@ -1462,10 +1462,14 @@ OPERATION's own declared target line so they stay numbered."
 
 (-> application--shell-command-rows (string) list)
 (defun application--shell-command-rows (command)
-  "Return bounded syntax-highlighted shell source with a green ruler."
-  (application--source-preview-rows command
-                                    :language *application-shell-language*
-                                    :prompt   "$ "))
+  "Return bounded shell source with a subdued first-line rail."
+  (let ((rows (application--source-preview-rows command
+                                              :language *application-shell-language*
+                                              :prompt   "$ ")))
+    (when rows
+      (setf (first (first rows))
+            (terminal-span ':dim (terminal-span-text (first (first rows))))))
+    rows))
 
 (defmethod application-tool-call-entry
     ((tool shell-run-tool) (application application) (call hash-table))

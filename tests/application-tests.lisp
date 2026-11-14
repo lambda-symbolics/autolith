@@ -2935,7 +2935,10 @@
          (and (string= (first lines)
                        "▸ (shell.run :directory \"/tmp/work\" :timeout-seconds 30)")
               (search "$ printf" (second lines)))
-         "shell source begins immediately after the inline arguments")))
+         "shell source begins immediately after the inline arguments"))
+      (let ((rail (find-if (lambda (span) (search "│" (terminal-span-text span))) entry)))
+        (test-assert (and rail (eq (terminal-span-style rail) ':dim))
+                     "the first shell command rail uses dim styling")))
     (dolist (columns '(24 40 100))
       (dolist (case (list (list "shell" "run"
                                (json-object "command" "printf hello" "directory" "work"))
