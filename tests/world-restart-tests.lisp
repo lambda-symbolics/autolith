@@ -62,9 +62,121 @@
              (events))
         (localgroup-client-close connection)))))
 
-(-> world-restart-tests--checkpoint (configuration cons) list)
-(defun world-restart-tests--checkpoint (configuration entry)
-  "Ask ENTRY's channel for a checkpoint, and return the world and channel entries of the server that restarts from it, or two NILs, then the events the channel sent."
+(-> world-restart-tests--record-state (pathname list) list)
+(defun world-restart-tests--record-state (pathname keys)
+  "Read only small stage records and return their whitelisted scalar fields."
+  (if (probe-file pathname)
+      (with-open-file (stream pathname :element-type '(unsigned-byte 8))
+        (if (> (file-length stream) 16384)
+            (list :file (file-namestring pathname) :status ':oversized)
+            (let ((record (snapshot-read pathname)))
+              (list :file (file-namestring pathname)
+                    :fields
+                    (loop for key in keys
+                          for value = (getf (rest record) key)
+                          when (or (integerp value)
+                                   (and (stringp value) (<= (length value) 128)))
+                            append (list key value))))))
+      (list :file (file-namestring pathname) :status ':absent)))
+
+(-> world-restart-tests--file-state (pathname) list)
+(defun world-restart-tests--file-state (pathname)
+  "Return a stage file's name and byte length without reading its contents."
+  (with-open-file (stream pathname :element-type '(unsigned-byte 8))
+    (list :file (file-namestring pathname) :bytes (file-length stream))))
+
+(-> world-restart-tests--diagnostics (configuration (integer 1) t) list)
+(defun world-restart-tests--diagnostics (configuration old-pid process)
+  "Collect bounded stage metadata without changing restart or lease state."
+  (labels ((probe (function)
+             "Keep an unavailable probe from hiding the checkpoint failure."
+             (handler-case (funcall function)
+               (error (condition)
+                 (list :unavailable (type-of condition)))))
+
+           (limited (pathnames)
+             "Keep at most eight entries from a fixture-owned directory."
+             (subseq pathnames 0 (min 8 (length pathnames)))))
+    (list :original-pid       old-pid
+          :original-alive-p   (probe (lambda () (platform-process-alive-p *platform* old-pid)))
+          :owned-launch-pid   (probe (lambda () (when process
+                                                 (platform-process-object-pid *platform* process))))
+          :owned-tree-alive-p (probe (lambda () (when process
+                                                 (platform-process-object-alive-p *platform* process))))
+          :world-lease        (probe (lambda ()
+                                       (multiple-value-list
+                                        (platform-file-lock-owner *platform*
+                                                                  (world-server-lock-pathname configuration)))))
+          :restart-marker
+          (probe (lambda ()
+                   (let* ((marker (world-restart-tests--record-state
+                                   (world-server-restart-pathname configuration)
+                                   '(:version :launcher-pid :created-at :generation-id)))
+                          (pid    (getf (getf marker :fields) :launcher-pid)))
+                     (append marker (list :launcher-alive-p
+                                          (and (typep pid '(integer 1))
+                                               (platform-process-alive-p *platform* pid)))))))
+          :restart-envelopes
+          (probe (lambda ()
+                   (mapcar (lambda (pathname)
+                             (world-restart-tests--record-state pathname '(:version :identifier :created-at)))
+                           (limited (directory (merge-pathnames "restart-pointers/*.sexp"
+                                                                (config :state-root configuration)))))))
+          :generation-files
+          (probe (lambda ()
+                   (mapcar (lambda (directory)
+                             (list :generation (first (last (pathname-directory directory)))
+                                   :files      (mapcar #'world-restart-tests--file-state
+                                                       (limited (uiop:directory-files directory)))))
+                           (limited (uiop:subdirectories
+                                     (merge-pathnames "generations/" (config :data-root configuration))))))))))
+
+(-> test-world-server-restart-diagnostics () null)
+(defun test-world-server-restart-diagnostics ()
+  "Test timeout evidence for missing, saved and unreadable checkpoint stages."
+  (with-test-configuration (configuration)
+    (configuration-ensure-directories configuration)
+    (let* ((pid     (current-process-id))
+           (pointer (merge-pathnames "restart-pointers/launcher-test.sexp"
+                                     (config :state-root configuration)))
+           (core    (merge-pathnames "generations/test-generation/autolith.core"
+                                     (config :data-root configuration)))
+           (missing (world-restart-tests--diagnostics configuration pid nil)))
+      (test-assert (and (eql (getf missing :original-pid) pid)
+                        (getf missing :original-alive-p)
+                        (eq (getf (getf missing :restart-marker) :status) ':absent))
+                   "missing stages report absence alongside original process liveness")
+      (world-server--restart-mark configuration :launcher-pid pid :generation-id "test-generation")
+      (ensure-directories-exist pointer)
+      (snapshot-write pointer '(:autolith-restart :version 1 :identifier "test-generation"
+                                :created-at 123 :metadata (:private "omitted")))
+      (ensure-directories-exist core)
+      (with-open-file (stream core :direction ':output :element-type '(unsigned-byte 8))
+        (write-sequence #(1 2 3) stream))
+      (let* ((saved      (world-restart-tests--diagnostics configuration pid nil))
+             (envelope   (first (getf saved :restart-envelopes)))
+             (generation (first (getf saved :generation-files))))
+        (test-assert (and (equal (getf (getf envelope :fields) :identifier) "test-generation")
+                          (not (member :metadata (getf envelope :fields)))
+                          (equal (getf generation :generation) "test-generation")
+                          (= (getf (first (getf generation :files)) :bytes) 3))
+                     "saved-stage evidence contains identity and sizes, not envelope metadata"))
+      (with-open-file (stream pointer :direction ':output :if-exists ':supersede)
+        (write-string "(" stream))
+      (test-assert (getf (getf (world-restart-tests--diagnostics configuration pid nil)
+                               :restart-envelopes)
+                         :unavailable)
+                   "an unreadable envelope does not abort timeout evidence collection")
+      (with-open-file (stream pointer :direction ':output :if-exists ':supersede)
+        (write-string (make-string 16385 :initial-element #\Space) stream))
+      (test-assert (eq (getf (world-restart-tests--record-state pointer '(:identifier)) :status)
+                       ':oversized)
+                   "oversized stage records are not parsed")))
+  nil)
+
+(-> world-restart-tests--checkpoint (configuration cons &key (:process t)) list)
+(defun world-restart-tests--checkpoint (configuration entry &key process)
+  "Return the resumed world and channel entries, events, and timeout diagnostics when unavailable."
   (let* ((channel (getf (rest (rest entry)) :session-id))
          (old-pid (getf (rest (rest (world-client-entry configuration))) :pid))
          (events  (world-restart-tests--submit
@@ -81,7 +193,8 @@
                 (eql (getf (rest (rest resumed)) :pid) (getf (rest (rest world)) :pid))))
          180)
         (list world resumed events)
-        (list nil nil events))))
+        (list nil nil events
+              (world-restart-tests--diagnostics configuration old-pid process)))))
 
 (-> world-restart-tests--logs (configuration) string)
 (defun world-restart-tests--logs (configuration)
@@ -136,17 +249,103 @@ skips the repository check."
      (world-client-open configuration :directory (namestring root))))
   nil)
 
-(-> world-restart-tests--stop (configuration) null)
-(defun world-restart-tests--stop (configuration)
-  "Stop CONFIGURATION's world server, ending its process if it does not stop."
-  (let ((world (world-client-entry configuration)))
-    (when world
-      (let ((pid (getf (rest (rest world)) :pid)))
-        ; mallet:suppress no-ignore-errors -- cleanup a server which may have exited already
-        (ignore-errors (localgroup-query-record world ':stop))
-        (unless (task-tests--wait-until
-                 (lambda () (not (platform-process-alive-p *platform* pid))) 10)
-          (platform-terminate-process *platform* pid :force t)))))
+(-> world-restart-tests--stop (configuration list) null)
+(defun world-restart-tests--stop (configuration processes)
+  "Stop a reachable server and reclaim every retained launch, including its owned tree."
+  (unwind-protect
+       (let ((world (world-client-entry configuration)))
+         (when world
+           ; mallet:suppress no-ignore-errors -- the endpoint may close during cleanup
+           (ignore-errors (localgroup-query-record world ':stop))))
+    (dolist (process processes)
+      (unwind-protect
+           (progn
+             (when (platform-process-object-alive-p *platform* process)
+               (platform-terminate-process-object *platform* process :force t))
+             (if (task-tests--wait-until
+                  (lambda () (not (platform-process-object-alive-p *platform* process))) 10)
+                 (platform-wait-process *platform* process)
+                 (test-assert nil "the retained launcher tree ended during cleanup")))
+        (platform-release-process *platform* process))))
+  nil)
+
+(-> world-restart-tests--call-with-owned-launch (configuration function) t)
+(defun world-restart-tests--call-with-owned-launch (configuration function)
+  "Call FUNCTION with a launch lookup function, retaining its fresh launches until cleanup."
+  (let ((launch     *localgroup-fresh-launch-function*)
+        (release    (symbol-function 'platform-release-process))
+        (processes  nil)
+        (finished-p nil))
+    (unwind-protect
+         (multiple-value-prog1
+             (let ((*localgroup-fresh-launch-function*
+                     (lambda (&rest arguments)
+                       (let ((process (apply launch arguments)))
+                         (push process processes)
+                         process))))
+               (test-call-with-function-replacements
+                (list (list 'platform-release-process
+                            (lambda (platform process)
+                              (unless (member process processes :test #'eq)
+                                (funcall release platform process)))))
+                (lambda () (funcall function (lambda () (first processes))))))
+           (setf finished-p t))
+      (handler-case
+          (world-restart-tests--stop configuration processes)
+        (error (condition)
+          (if finished-p
+              (error condition)
+              (format *error-output* "~&Restart fixture cleanup failed: ~A~%" condition)))))))
+
+(-> test-world-server-restart-owned-cleanup () null)
+(defun test-world-server-restart-owned-cleanup ()
+  "Test owned-launch cleanup without an endpoint, on normal return and nonlocal exit."
+  (with-test-configuration (configuration)
+    (dolist (exit-p '(nil t))
+      (let* ((owned                              (list ':owned))
+             (other                              (list ':other))
+             (alive-p                            t)
+             (events                             nil)
+             (*localgroup-fresh-launch-function* (lambda (&rest arguments)
+                                                  (declare (ignore arguments))
+                                                  owned)))
+        (test-call-with-function-replacements
+         (list (list 'world-client-entry (lambda (configuration)
+                                          (declare (ignore configuration))
+                                          nil))
+               (list 'platform-terminate-process-object
+                     (lambda (platform process &key force)
+                       (declare (ignore platform force))
+                       (push (list ':terminate process) events)
+                       (setf alive-p nil)))
+               (list 'platform-process-object-alive-p
+                     (lambda (platform process)
+                       (declare (ignore platform process))
+                       alive-p))
+               (list 'platform-wait-process
+                     (lambda (platform process)
+                       (declare (ignore platform))
+                       (push (list ':wait process) events)))
+               (list 'platform-release-process
+                     (lambda (platform process)
+                       (declare (ignore platform))
+                       (push (list ':release process) events))))
+         (lambda ()
+           (catch 'fixture-exit
+             (world-restart-tests--call-with-owned-launch
+              configuration
+              (lambda (launch-process)
+                (declare (ignore launch-process))
+                (let ((process (funcall *localgroup-fresh-launch-function*)))
+                  (platform-release-process *platform* process)
+                  (test-assert (null events) "handoff does not release the retained launch")
+                  (platform-release-process *platform* other)
+                  (when exit-p
+                    (throw 'fixture-exit nil))))))))
+        (test-assert (equal (reverse events)
+                            (list (list ':release other) (list ':terminate owned)
+                                  (list ':wait owned) (list ':release owned)))
+                     "cleanup terminates, waits and releases the owned launch without an endpoint"))))
   nil)
 
 (-> test-world-server-restart-checkpoint () null)
@@ -159,44 +358,46 @@ skips the repository check."
        root
        (lambda ()
          (let ((configuration (configuration-create :defer-provider-validation-p t)))
-           (unwind-protect
-                (progn
-                  (world-restart-tests--start configuration root)
-                  (let* ((entry   (first (localgroup-endpoint-records configuration)))
-                         (channel (getf (rest (rest entry)) :session-id))
-                         (token   (getf (rest (rest entry)) :token)))
-                    (destructuring-bind (world resumed events)
-                        (world-restart-tests--checkpoint configuration entry)
-                      (test-assert (and world resumed)
-                                   (format nil "a new process serves the world and the channel after the checkpoint~%~S~%~A"
-                                           events (world-restart-tests--logs configuration)))
-                      (when (and world resumed)
-                        (test-assert (equal (getf (rest (rest resumed)) :token) token)
-                                     "the channel keeps the token its clients hold")
-                        (test-assert (directory (merge-pathnames "generations/*/autolith.core"
-                                                                 (config :data-root configuration)))
-                                     "the launcher published the saved heap as a generation")
-                        (test-assert (and (not (probe-file (world-server-restart-pathname configuration)))
-                                          (world-server-running-p configuration)
-                                          (world-restart-tests--conversation-held-p configuration channel))
-                                     "the restarted server holds the world and the conversation, and removed its marker")
-                        ;; The heap was saved holding locks of a thread that
-                        ;; is gone; a second checkpoint needs them again.
-                        (destructuring-bind (again again-resumed again-events)
-                            (world-restart-tests--checkpoint configuration resumed)
-                          (test-assert (and again again-resumed)
-                                       (format nil "the restarted server checkpoints and restarts again~%~S~%~A"
-                                               again-events (world-restart-tests--logs configuration)))
-                          (when again-resumed
-                            (let ((evaluated (world-restart-tests--submit
-                                              again-resumed "(+ 40 2)"
-                                              :until (lambda (events)
-                                                       (find ':work-finished events :key #'first)))))
-                              (test-assert (find-if (lambda (event)
-                                                      (and (eq (first event) ':present)
-                                                           (search "42" (getf (rest event) :text))))
-                                                    evaluated)
-                                           (format nil "the channel evaluates input after two restarts: ~S"
-                                                   evaluated)))))))))
-             (world-restart-tests--stop configuration)))))))
+           (world-restart-tests--call-with-owned-launch
+            configuration
+            (lambda (launch-process)
+              (world-restart-tests--start configuration root)
+              (let* ((entry   (first (localgroup-endpoint-records configuration)))
+                     (channel (getf (rest (rest entry)) :session-id))
+                     (token   (getf (rest (rest entry)) :token)))
+                (destructuring-bind (world resumed events &optional diagnostics)
+                    (world-restart-tests--checkpoint configuration entry
+                                                     :process (funcall launch-process))
+                  (test-assert (and world resumed)
+                               (format nil "a new process serves the world and the channel after the checkpoint~%~S~%~S~%~A"
+                                       events diagnostics (world-restart-tests--logs configuration)))
+                  (when (and world resumed)
+                    (test-assert (equal (getf (rest (rest resumed)) :token) token)
+                                 "the channel keeps the token its clients hold")
+                    (test-assert (directory (merge-pathnames "generations/*/autolith.core"
+                                                             (config :data-root configuration)))
+                                 "the launcher published the saved heap as a generation")
+                    (test-assert (and (not (probe-file (world-server-restart-pathname configuration)))
+                                      (world-server-running-p configuration)
+                                      (world-restart-tests--conversation-held-p configuration channel))
+                                 "the restarted server holds the world and the conversation, and removed its marker")
+                    ;; The heap was saved holding locks of a thread that
+                    ;; is gone; a second checkpoint needs them again.
+                    (destructuring-bind (again again-resumed again-events &optional diagnostics)
+                        (world-restart-tests--checkpoint configuration resumed
+                                                         :process (funcall launch-process))
+                      (test-assert (and again again-resumed)
+                                   (format nil "the restarted server checkpoints and restarts again~%~S~%~S~%~A"
+                                           again-events diagnostics (world-restart-tests--logs configuration)))
+                      (when again-resumed
+                        (let ((evaluated (world-restart-tests--submit
+                                          again-resumed "(+ 40 2)"
+                                          :until (lambda (events)
+                                                   (find ':work-finished events :key #'first)))))
+                          (test-assert (find-if (lambda (event)
+                                                  (and (eq (first event) ':present)
+                                                       (search "42" (getf (rest event) :text))))
+                                                evaluated)
+                                       (format nil "the channel evaluates input after two restarts: ~S"
+                                               evaluated)))))))))))))))
   nil)

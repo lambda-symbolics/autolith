@@ -724,6 +724,8 @@
   test-world-server-checkpoint-quiescence
   test-world-server-checkpoint-cancel
   test-world-server-restart-marker
+  test-world-server-restart-owned-cleanup
+  test-world-server-restart-diagnostics
   test-world-server-restart-checkpoint
   test-world-server-stop
   test-world-server-switch
