@@ -76,7 +76,7 @@
           (test-assert (string= disabled-instructions (instructions))
                        "toggling relax leaves the cached instructions unchanged"))
         (conversation-append-user-message conversation "earlier request")
-        (conversation-append-summary conversation "compacted earlier request")
+        (conversation-append-summary conversation (make-continuation :intent "compacted earlier request"))
         (test-assert (= 1 (relax-tests--marker-count (request-text) marker))
                      "the next outgoing request includes the reminder after compaction")
         (test-assert (not (test-object-contains-string-p

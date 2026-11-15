@@ -76,6 +76,7 @@
      conversation
      (json-object "type" "function_call_output" "call_id" "call-1"
                   "output" "{\"text\":\"ok\"}"))
+    (test-compaction-request provider conversation)
     (multiple-value-bind (request delivery)
         (provider-request-object provider conversation tools
                                  :goal-context "keep the active goal")

@@ -67,7 +67,7 @@
                                          :tool-name "test.inspect"
                                          :output "late output" :success-p t)
         (conversation-append-user-message conversation "late steering")
-        (conversation-append-summary conversation "portable checkpoint" :compaction capture)
+        (conversation-append-summary conversation (make-continuation :intent "portable checkpoint") :compaction capture)
         (dolist (projection (list conversation
                                   (conversation-load (conversation-pathname conversation))))
           (let ((items (compaction-tail-tests--items projection)))
@@ -85,16 +85,25 @@
     (declare (ignore root))
     (let ((conversation (conversation-create configuration :identifier "tail-repeat")))
       (conversation-append-user-message conversation "first request")
-      (conversation-append-summary conversation "first checkpoint")
+      (conversation-append-summary conversation (make-continuation :intent "first checkpoint"))
       (conversation-append-user-message conversation "second request")
-      (conversation-append-summary conversation "second checkpoint")
+      (conversation-append-summary conversation (make-continuation :intent "second checkpoint"))
       (let ((items (compaction-tail-tests--items conversation)))
         (test-assert (= 1 (length items))
                      "repeated compactions retain one projected handoff")
         (test-assert (test-object-contains-string-p items "second checkpoint")
                      "the latest portable summary is authoritative")
         (test-assert (not (test-object-contains-string-p items "first checkpoint"))
-                     "a prior portable summary is not accumulated")))))
+                     "a prior portable summary is not accumulated"))
+      (let ((loaded (conversation-load (conversation-pathname conversation))))
+        (conversation-append-user-message loaded "third request")
+        (conversation-append-summary
+         loaded (make-continuation :intent "third checkpoint")
+         :compaction (conversation-compaction-portable-capture
+                      (conversation-compaction-capture loaded)))
+        (test-assert (not (test-object-contains-string-p
+                           (compaction-tail-tests--items loaded) "second checkpoint"))
+                     "a checkpoint restored from disk is not carried into the next tail")))))
 
 (-> test-compaction-tail-summarizes-displaced-evidence () null)
 (defun test-compaction-tail-summarizes-displaced-evidence ()

@@ -688,6 +688,15 @@
                             (getf copy :files)
                             (remove identifier (getf copy :files)
                                     :key (lambda (file) (getf file :owner)) :test #'equal))))
+                  (lambda (copy)
+                    (let* ((segment (first (last (getf (first (getf copy :sessions)) :segments))))
+                           (final   (rest (first (last (getf segment :records))))))
+                      (nconc (getf segment :records)
+                             (list (list :summary
+                                         :seq          (1+ (getf final :seq))
+                                         :time         (getf final :time)
+                                         :content      ""
+                                         :continuation '(:format 0))))))
                   (lambda (copy) (setf (getf (first (getf copy :files)) :path) '(".." "escape")))
                   (lambda (copy) (setf (getf copy :workspaces) '("/unrelated/")))
                   (lambda (copy) (setf (getf copy :files)

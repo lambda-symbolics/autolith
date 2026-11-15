@@ -131,7 +131,7 @@
                    "a real user message with the same text retains user attribution")))
               (test-assert (null (task-completion-deliver fresh))
                            "repeated wakeups do not append duplicate messages")
-              (conversation-append-summary (agent-conversation fresh) "Completed the asynchronous work.")
+              (conversation-append-summary (agent-conversation fresh) (make-continuation :intent "Completed the asynchronous work."))
               (let ((again (job-completion-tests--fresh-agent fresh configuration)))
                 (unwind-protect
                      (progn
@@ -316,7 +316,7 @@
                       "late duplicate watches exclude already receipted executions")
          (test-assert (= 40 (length (conversation-pending-input-identifiers (agent-conversation parent))))
                       "every execution retains its durable deduplication proof")
-         (conversation-append-summary (agent-conversation parent) "Forty jobs completed.")
+         (conversation-append-summary (agent-conversation parent) (make-continuation :intent "Forty jobs completed."))
          (let ((fresh (job-completion-tests--fresh-agent parent configuration)))
            (unwind-protect
                 (progn

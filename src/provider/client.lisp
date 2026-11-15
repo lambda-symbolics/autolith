@@ -390,15 +390,23 @@ credentials and model metadata independently of their cached wire routes."
   (:documentation
    "POST REQUEST to PROVIDER's native compaction endpoint and return its body."))
 
-(defparameter *compaction-summary-maximum-characters* 12000
-  "The most characters a portable compaction handoff may contain.")
-
-;; Modeled on the Codex context checkpoint compaction instructions at
-;; reference commit 6219b7c40f, restated for Autolith.
 (defparameter *compaction-instructions*
-  (format nil "You are performing a context checkpoint compaction. Return only visible assistant text with exactly these labeled sections, in this order: [Progress], [Decisions], [Context], [Constraints], [Next steps], and [References]. Begin with [Progress] and write each label once, at the start of its own line. Put useful content in every section. Include current progress and key decisions, important context, constraints and user preferences, clear next steps, and critical data or references needed for continuation. Reference completed rlm.infer and rlm.map frames by their trace identifiers as inference:<trace-id> resources instead of restating frame content; the traces stay readable through resource.read. Do not call tools, wait for jobs, or perform additional work. Keep the whole handoff under ~:D characters. Be concise, structured, and complete enough that no earlier context is required."
-          *compaction-summary-maximum-characters*)
-  "The developer instructions driving one compaction request.")
+  (format nil "You are writing the checkpoint that replaces this conversation so far. Call compaction.submit once and write nothing else. Do not call other tools, wait for jobs, or do more work.
+
+intent: what the user wants done, in at most ~:D characters.
+notes: at most ~D notes of at most ~:D characters, each holding one fact. Give every note a kind: decision for a choice that was made and why, constraint for a rule or user preference to keep following, completed for finished work, open for unfinished work, and uncertainty for something not yet known.
+next: the next step, in at most ~:D characters.
+refs: the handles from the reference catalog below that show where a note or the next step comes from, at most ~D each. Cite what supports a completed note whenever the catalog lists it. Leave refs empty when the catalog lists nothing that fits, and never write a handle the catalog does not list.
+
+The latest user message is quoted below when there is one, and the next step must agree with it. When the conversation starts with an earlier checkpoint, carry over what still holds from it. Name completed rlm.infer and rlm.map frames by their trace identifiers as inference:<trace-id> resources instead of restating their content; the traces stay readable through resource.read."
+          *continuation-intent-maximum-characters*
+          *continuation-maximum-notes*
+          *continuation-note-maximum-characters*
+          *continuation-next-maximum-characters*
+          *continuation-row-maximum-references*)
+  "The developer instructions of a compaction request.
+
+The request binds this to the instructions followed by its reference catalog.")
 
 (defparameter *provider-hosted-tools-enabled-p* t
   "Whether the current provider request may advertise hosted provider tools.")
@@ -407,7 +415,8 @@ credentials and model metadata independently of their cached wire routes."
   "Whether the current provider request lets the model call its tools.
 
 ':NONE still sends the tool definitions, so the cached prefix they start
-survives a request that must answer without calling one.")
+survives a request that must answer without calling one. A list of a
+namespace and a tool name makes the model call that tool.")
 
 (defparameter *provider-shared-item-count* 0
   "How many leading durable history items sibling requests repeat.

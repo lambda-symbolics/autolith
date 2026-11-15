@@ -111,7 +111,7 @@
            (conversation-append-user-message conversation needle)
           (dotimes (turn 2)
             (when (plusp turn)
-              (conversation-append-summary conversation "Continue in a new segment.")
+              (conversation-append-summary conversation (make-continuation :intent "Continue in a new segment."))
               (conversation-append-user-message conversation "automatic continuation" :automatic-p t))
             (conversation-append-record
              conversation

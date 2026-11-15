@@ -417,7 +417,7 @@
            (let ((with-state (context-estimate-known-tokens configuration conversation)))
              (test-assert (> with-state base) "mutable session state contributes to the estimate")
              (conversation-append-user-message
-              conversation (make-string 400 :initial-element #\u))
+              conversation (make-string 4000 :initial-element #\u))
              (let ((with-history (context-estimate-known-tokens configuration conversation)))
                (test-assert (> with-history with-state)
                             "retained conversation input contributes to the estimate")
@@ -425,7 +425,7 @@
                                 configuration conversation :tool-registry registry)
                               with-history)
                             "known tool schemas contribute to the estimate")
-               (conversation-append-summary conversation "short handoff")
+               (conversation-append-summary conversation (make-continuation :intent "short handoff"))
                (test-assert (< (context-estimate-known-tokens configuration conversation)
                                with-history)
                             "compaction estimates the replacement input rather than old history"))))))))
@@ -527,7 +527,7 @@
 
 (-> test-context-estimate-provider-family () null)
 (defun test-context-estimate-provider-family ()
-  "Estimate only the checkpoint or portable handoff usable by the active provider."
+  "Estimate the native window only for the provider family that can use it."
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
            (application  (make-instance 'application
@@ -538,7 +538,7 @@
                                       "encrypted_content"
                                       (make-string 4000 :initial-element #\c))))
         (conversation-append-native-compaction
-         conversation (list checkpoint) :family ':codex :summary "Portable handoff.")
+         conversation (list checkpoint) :family ':codex :continuation (make-continuation :intent "Portable handoff."))
       (test-call-with-function-replacements
        (list (list 'system-prompt
                    (lambda (configuration)
@@ -553,11 +553,11 @@
          (let ((codex (application-context-usage application)))
            (test-assert
              (> codex 1000)
-            "the producing family counts its opaque checkpoint without the portable handoff")
+            "the producing family counts its opaque window")
            (setf (application-provider application) nil)
            (let ((grok (application-context-usage application)))
              (test-assert
-               (< grok 100)
+               (< grok 250)
               "a family switch counts only compatible portable history")
              (test-assert (< grok codex)
                           "foreign encrypted checkpoint contents do not inflate the estimate")))))))

@@ -113,7 +113,7 @@
                                                   :decision ':reject :reason "Primary retained counter-evidence")
                (let* ((conversation (application-conversation application))
                       (identifier   (conversation-identifier conversation)))
-                 (conversation-append-summary conversation "Compacted unrelated discussion")
+                 (conversation-append-summary conversation (make-continuation :intent "Compacted unrelated discussion"))
                  (setf (application-conversation application) (conversation-load-by-id configuration identifier))
                  (application--load-goal application)
                  (let* ((restored (first (getf (application-goal application) :reviews)))

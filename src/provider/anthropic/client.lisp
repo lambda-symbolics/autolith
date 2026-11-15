@@ -110,9 +110,7 @@ A cache write costs 1.25 times input for five minutes and twice input for one ho
 Return the encoded request and its unconsumed context delivery."
   (let* ((configuration   (provider-configuration provider))
          (request-namespaces
-           (if compaction-p
-               #()
-               (provider-request-tool-namespaces configuration tool-namespaces)))
+           (provider-request-tool-namespaces configuration tool-namespaces))
          (effective-tools (provider-wire-tools provider request-namespaces))
          (delivery
            (unless compaction-p

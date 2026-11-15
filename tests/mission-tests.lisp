@@ -905,7 +905,7 @@
       (test-assert (eq ':verified (getf (application-goal application) :status)) "user commands complete verification")
       (let* ((conversation (application-conversation application))
              (identifier   (conversation-identifier conversation)))
-        (conversation-append-summary conversation "Unrelated compacted transcript")
+        (conversation-append-summary conversation (make-continuation :intent "Unrelated compacted transcript"))
         (setf (application-conversation application) (conversation-load-by-id configuration identifier))
         (application--load-goal application)
         (test-assert (eq ':verified (getf (application-goal application) :status)) "verification survives compaction and disk replay")

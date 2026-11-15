@@ -13,9 +13,7 @@
 Return the encoded request and its context delivery."
   (let* ((configuration (provider-configuration provider))
          (effective-tools
-           (if compaction-p
-               #()
-               (provider-request-tool-namespaces configuration tool-namespaces)))
+           (provider-request-tool-namespaces configuration tool-namespaces))
          (delivery
            (unless compaction-p
              (context-resolve-request configuration conversation effective-tools

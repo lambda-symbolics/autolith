@@ -757,7 +757,7 @@
                     :configuration (test-configuration)
                     :results       (list (agent-test-result
                                           "manual-summary"
-                                          (list (agent-test-compaction-message))
+                                          (list (agent-test-checkpoint-call))
                                           :turn-completion ':end))
                     (when native-p (list :native-items (list native-item))))))
       (application-operation-tests--call-with-compaction-provider
@@ -777,8 +777,8 @@
                           "the registered Lisp command compacts below the automatic threshold")
              (test-assert
               (and (equal (scripted-provider-compaction-flags provider) '(t))
-                   (equal (scripted-provider-tool-schema-counts provider) '(0)))
-              "manual compaction makes one tool-free summary request")
+                   (equal (scripted-provider-tool-schema-counts provider) '(1)))
+              "manual compaction makes one request that offers only the submit tool")
              (test-assert
               (= (conversation-next-sequence conversation)
                  (+ sequence-before (if native-p 3 2)))
@@ -909,10 +909,10 @@
 
 (-> test-compact-operation-failures () null)
 (defun test-compact-operation-failures ()
-  "Test failed summary requests preserve context and release command progress."
+  "Test a refused or unreachable compaction request preserves context and releases command progress."
   (dolist (result
-            (list (agent-test-result "empty-summary" nil)
-                  (make-condition 'provider-protocol-error
+            (list (agent-test-result "refusal" (list (agent-test-refusal)))
+                  (make-condition 'provider-retryable-error
                                   :message "The compaction request failed."
                                   :status 503 :code nil :request-id nil
                                   :response-id nil :response nil)))
@@ -933,7 +933,7 @@
                    (failure
                      (handler-case
                          (progn (application-command application "/compact") nil)
-                       (provider-protocol-error (condition)
+                       (provider-error (condition)
                          condition))))
               (test-assert failure "compaction failures use the existing typed provider boundary")
               (test-assert
@@ -942,7 +942,7 @@
                     (notany (lambda (record)
                               (member (first record) '(:summary :native-compaction)))
                             (conversation--read-records (conversation-pathname conversation))))
-               "a failed summary preserves its projection and publishes no checkpoint")
+               "a failed request preserves its projection and publishes no checkpoint")
               (test-assert
                (and (not (terminal-ui-compacting-p (application-ui application)))
                     (null (terminal-ui-status (application-ui application))))

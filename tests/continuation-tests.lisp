@@ -66,3 +66,57 @@
                                   (read-from-string (prin1-to-string checkpoint)))))
                  "a stored checkpoint renders the same text again"))
   nil)
+
+(-> test-continuation-replay () null)
+(defun test-continuation-replay ()
+  "Restore a typed checkpoint from disk and refuse one that disagrees with its record."
+  (with-test-configuration (configuration)
+    (let ((conversation (conversation-create configuration))
+          (checkpoint   (continuation-tests--checkpoint)))
+      (conversation-append-user-message conversation "earlier work")
+      (conversation-append-summary conversation checkpoint)
+      (dolist (current (list conversation (conversation-load (conversation-pathname conversation))))
+        (test-assert (equal checkpoint (conversation-continuation current))
+                     "the provider context holds the typed checkpoint, live and after reload"))))
+  (loop for (content checkpoint)
+          in (list (list "Other text." (continuation-tests--checkpoint))
+                   (list nil (continuation-tests--checkpoint :format 0))
+                   (list nil (continuation-tests--checkpoint
+                              :references (list (list :handle "r1" :kind ':tool-result
+                                                      :label "A later result."
+                                                      :conversation "replayed" :sequence 99)))))
+        do (with-test-configuration (configuration)
+             (let* ((conversation (conversation-create configuration :identifier "replayed"))
+                    (through      (progn
+                                    (conversation-append-user-message conversation "earlier work")
+                                    (1- (conversation-next-sequence conversation)))))
+               (conversation-append-record
+                conversation
+                (list :summary
+                      :content      (or content (continuation-render checkpoint))
+                      :continuation checkpoint
+                      :cutoff-seq   through
+                      :through-seq  through))
+               (test-assert (handler-case
+                                (progn (conversation-load (conversation-pathname conversation)) nil)
+                              (conversation-invariant-error ()
+                                t))
+                            "a checkpoint that disagrees with its text, format or cutoff does not load"))))
+  nil)
+
+(-> test-continuation-adoption () null)
+(defun test-continuation-adoption ()
+  "Carry a typed checkpoint, with the origin of its references, into the conversation that adopts it."
+  (with-test-configuration (configuration)
+    (let ((origin      (conversation-create configuration))
+          (destination (conversation-create configuration))
+          (checkpoint  (continuation-tests--checkpoint)))
+      (conversation-append-user-message origin "earlier work")
+      (conversation-append-summary origin checkpoint)
+      (conversation-append-context-adoption destination (conversation-context-rows origin)
+                                            :participant "agent")
+      (dolist (current (list destination
+                             (conversation-load (conversation-pathname destination))))
+        (test-assert (equal checkpoint (conversation-continuation current))
+                     "the adopted context keeps the checkpoint and its references unchanged"))))
+  nil)

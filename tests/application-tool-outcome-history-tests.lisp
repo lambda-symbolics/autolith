@@ -162,7 +162,7 @@
               (setf (getf (rest handoff) :details)
                     (list :tool-execution :handed-off-p t :job (list :id "rotated-job")))
               (application-tool-outcome-history-tests--append conversation handoff)))
-          (conversation-append-summary conversation "rotation checkpoint")
+          (conversation-append-summary conversation (make-continuation :intent "rotation checkpoint"))
           (application-tool-outcome-history-tests--append
            conversation
            (if job-p
@@ -211,7 +211,7 @@
                   (list :tool-execution :handed-off-p t :job (list :id job-id)))
             (application-tool-outcome-history-tests--append conversation handoff)))
         (when startup-p
-          (conversation-append-summary conversation "rotation checkpoint"))
+          (conversation-append-summary conversation (make-continuation :intent "rotation checkpoint")))
         (let ((obsolete (application-tool-outcome-history-tests--append
                          conversation (application-tool-outcome-tests--completion
                                        0 "old" :outcome ':failure))))
