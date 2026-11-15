@@ -303,7 +303,7 @@
 
 (-> test-cli-detached-process () null)
 (defun test-cli-detached-process ()
-  "Launch real detached channels in a saved-core world server and verify readiness, PID, persistence, and reuse."
+  "Launch a real detached channel and reject detached opens without changing its owner."
   (with-platform-capability (':detached-sessions "explicit detached CLI process lifecycle")
     (with-test-configuration (unused root)
       (declare (ignore unused))
@@ -349,28 +349,28 @@
                          "an unattended session survives its first-attach deadline")
                         (multiple-value-bind (resumed errors resume-status)
                             (run (list "open" (conversation-identifier-display id) "--detached"))
+                          (declare (ignore resumed))
                           (test-assert
-                           (and (zerop resume-status) (search (princ-to-string pid) resumed)
+                           (and (= resume-status 64) (search "--detached" errors)
+                                (platform-process-alive-p *platform* pid)
                                 (= (length (localgroup-endpoint-records configuration)) 1))
-                           (format nil "live resume reuses the actual PID: ~A ~A" resumed errors)))
+                           "a detached open rejects the flag without replacing the live owner"))
                         (multiple-value-bind (ignored errors missing-status)
                             (run '("open" "--detached"))
                           (declare (ignore ignored))
-                          (test-assert (and (= missing-status 64) (search "needs a channel" errors))
-                                       "a detached open without an ID fails at the process boundary"))
+                          (test-assert (and (= missing-status 64) (search "--detached" errors))
+                                       "a detached open without an ID rejects the flag at the process boundary"))
                        (let ((saved (conversation-create configuration :identifier "b6uouHJ")))
                          (conversation-append-user-message saved "Saved resume fixture")
                          (multiple-value-bind (resumed errors resume-status)
                              (run '("open" "b-6uouHJ" "--detached"))
+                           (declare (ignore resumed))
                            (setf records (localgroup-endpoint-records configuration))
-                           (let* ((entry (main--live-conversation-record configuration "b6uouHJ"))
-                                  (pid   (and entry (getf (rest (rest entry)) :pid))))
-                             (test-assert
-                              (and (zerop resume-status) entry (= (length records) 2)
-                                   (search "b-6uouHJ" resumed)
-                                   (search (princ-to-string pid) resumed))
-                              (format nil "saved detached resume publishes its original ID and actual PID: ~A ~A"
-                                      resumed errors))))))))
+                           (test-assert
+                            (and (= resume-status 64) (search "--detached" errors)
+                                 (null (main--live-conversation-record configuration "b6uouHJ"))
+                                 (= (length records) 1))
+                            "a detached open of saved history does not start another channel"))))))
                ;; The channels live in the world server the first start launched.
                (let ((world (world-client-entry configuration)))
                  (when world

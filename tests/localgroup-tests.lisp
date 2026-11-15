@@ -803,6 +803,11 @@
            (world-tests--persisted-conversation configuration "c6uouHJ" 2000)
            (world-tests--persisted-conversation configuration "e6uouHJ" 3000)
            (world-tests--persisted-conversation configuration "fpark11" 4000)
+           (let ((inbox (conversation-create configuration
+                                             :identifier "h777777" :inbox-p t)))
+             (conversation-append-record inbox
+                                         (list :title  :value *world-inbox-designator*
+                                               :source ':initial)))
            (world-reconcile-sessions configuration)
            (world-participant-rename configuration "al-b6uouHJ" "builder")
            (world-participant-rename configuration "al-e6uouHJ" "cold-agent")
