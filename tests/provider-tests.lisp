@@ -1001,8 +1001,7 @@
                           (json-get compaction-request "tools")
                           :key (lambda (tool) (json-get tool "name")) :test #'equal)))
              (test-assert
-              (and (json-false-p (gethash "parallel_tool_calls" compaction-request))
-                   (json-string= (json-get submit "type") "function")
+              (and (json-string= (json-get submit "type") "function")
                    (eq t (json-get submit "strict"))
                    (test-object-contains-string-p (aref input (1- (length input)))
                                                   "Call compaction.submit once"))

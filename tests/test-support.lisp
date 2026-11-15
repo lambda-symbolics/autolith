@@ -60,8 +60,9 @@
   "Return the request PROVIDER makes to compact CONVERSATION, checked against an ordinary one.
 
 FORCED-P checks whether the tool's wire name appears again in the forced
-choice. The request repeats the ordinary instructions, tool declarations
-and history, which lets the provider read them from its cache."
+choice. The request repeats the ordinary instructions, tool declarations,
+parallel call setting and history, which lets the provider read them from its
+cache. A service renders the parallel call setting into the tool section."
   (let* ((tools      (concatenate
                       'vector
                       (json-array
@@ -87,10 +88,11 @@ and history, which lets the provider read them from its cache."
                             count t))
                    "a compaction request declares the submit tool and uses the expected tool choice")
       (test-assert (every (lambda (field)
-                           (string= (json-encode (json-get (body ordinary) field))
-                                    (json-encode (json-get (body compaction) field))))
-                         '("instructions" "system" "systemInstruction" "tools"))
-                   "a compaction request repeats the ordinary instructions and tool declarations")
+                           (string= (json-encode (gethash field (body ordinary)))
+                                    (json-encode (gethash field (body compaction)))))
+                         '("instructions" "system" "systemInstruction" "tools"
+                           "parallel_tool_calls"))
+                   "a compaction request repeats the ordinary instructions, tool declarations and parallel call setting")
       (let ((shared (1- (length (test-request-history compaction)))))
         (test-assert (equal (subseq (test-request-history ordinary) 0 shared)
                             (subseq (test-request-history compaction) 0 shared))

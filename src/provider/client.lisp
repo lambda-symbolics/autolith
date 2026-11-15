@@ -468,15 +468,16 @@ root's key, as the Codex reference does at commit 6f51c65958."
 ;; for Fast mode, only when the current model advertises support. This follows
 ;; Codex reference commit 287587c32c9cbc1e78edbf2aaae6a6d84f5b0c56.
 
-(-> provider--codex-responses-request-fields
-    (codex-subscription-provider conversation &key (:compaction-p boolean))
-    list)
-(defun provider--codex-responses-request-fields
-    (provider conversation &key compaction-p)
-  "Return Codex fields shared by the concrete and generic Responses views."
+(-> provider--codex-responses-request-fields (codex-subscription-provider conversation) list)
+(defun provider--codex-responses-request-fields (provider conversation)
+  "Return Codex fields shared by the concrete and generic Responses views.
+
+Every request allows parallel calls, a compaction request too: the service
+renders that setting into the tool section, where the cached prompt begins.
+With another value there, a live compaction request read nothing from the cache."
   (let ((configuration (provider-configuration provider)))
     (append
-     (list "parallel_tool_calls" (if compaction-p (json-false) t)
+     (list "parallel_tool_calls" t
            "include" (json-array "reasoning.encrypted_content")
            "prompt_cache_key" (provider--codex-prompt-cache-key
                                provider conversation)
