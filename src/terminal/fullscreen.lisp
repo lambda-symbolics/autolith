@@ -559,14 +559,19 @@ that direction the viewport does not move."
 
 (-> terminal-ui-fullscreen--click (fullscreen-terminal-ui integer integer) boolean)
 (defun terminal-ui-fullscreen--click (ui column row)
-  "Queue the transcript action under COLUMN and ROW, reporting whether one exists.
+  "Expand resident input or queue the transcript action under COLUMN and ROW.
 
-The action runs after TERMINAL-UI-PROCESS-EVENT releases the presentation
+External actions run after TERMINAL-UI-PROCESS-EVENT releases the presentation
 lock, because copying and browser launches present notices of their own."
   (let ((action (terminal-ui-fullscreen--click-action ui column row)))
-    (when action
-      (setf (terminal-ui-pending-action ui) action))
-    (not (null action))))
+    (cond
+      ((eq (first action) ':toggle-tool-input)
+       (terminal-ui-fullscreen--toggle-tool-input ui (second action)))
+      (action
+       (setf (terminal-ui-pending-action ui) action)
+       t)
+      (t
+       nil))))
 
 (-> terminal-ui-fullscreen--autoscroll-direction (fullscreen-terminal-ui integer) (option (member -1 1)))
 (defun terminal-ui-fullscreen--autoscroll-direction (ui row)

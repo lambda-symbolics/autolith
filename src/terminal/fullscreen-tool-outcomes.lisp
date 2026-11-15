@@ -67,6 +67,30 @@
             (terminal-ui-fullscreen--index-record ui next))))))
   nil)
 
+(-> terminal-ui-fullscreen--toggle-tool-input (fullscreen-terminal-ui t) boolean)
+(defun terminal-ui-fullscreen--toggle-tool-input (ui key)
+  "Toggle the resident input at KEY under UI's presentation lock and repaint."
+  (let* ((index  (fullscreen-terminal-ui-presentation-records ui))
+         (record (gethash key index)))
+    (when (and record (getf record :expanded-entry-layout))
+      (let ((next (copy-list record)))
+        (setf (getf next :input-expanded-p) (not (getf record :input-expanded-p)))
+        (multiple-value-bind (text display regions)
+            (terminal-ui-fullscreen--record-content
+             ui next (clinedi:transcript-viewport-width (fullscreen-terminal-ui-viewport ui)))
+          (terminal-ui-fullscreen--index-record ui next)
+          (if (clinedi:transcript-viewport-replace
+               (fullscreen-terminal-ui-viewport ui) (getf record :tag)
+               :text text :display display :regions regions
+               :layout-function   (terminal-ui-fullscreen--record-layout-function ui next)
+               :source-characters (terminal-ui-fullscreen--record-source-characters next))
+              (progn
+                (terminal-ui--paint-live ui)
+                t)
+              (progn
+                (terminal-ui-fullscreen--forget-evicted ui (list (getf record :identifier)))
+                nil)))))))
+
 (-> terminal-ui-fullscreen--record-content
     (fullscreen-terminal-ui list integer &key (:entry (or string list)))
     (values string string list list))
@@ -75,7 +99,9 @@
   (when (getf record :markdown)
     (return-from terminal-ui-fullscreen--record-content
       (terminal-ui-fullscreen--markdown-content ui record width)))
-  (let* ((layout      (getf record :entry-layout))
+  (let* ((layout      (or (and (getf record :input-expanded-p)
+                               (getf record :expanded-entry-layout))
+                          (getf record :entry-layout)))
          (entry       (if entry-p entry
                           (if layout (funcall layout width) (getf record :entry))))
          (body-layout (getf record :body-layout))

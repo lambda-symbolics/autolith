@@ -68,6 +68,9 @@ Shell output is not assumed to be shell source."
                         ':dim
                         (format nil "… +~D more line~:P" omitted))))))))))
 
+(defvar *application-tool-input-expanded-p* nil
+  "Whether a resident tool input is being laid out in its expanded view.")
+
 (defvar *application-provider-call-presentation* nil
   "The provider function call currently being rendered as one transcript entry.")
 
@@ -150,11 +153,12 @@ letters but no lowercase letters."
 
 (-> application--tool-row-spans (application list) list)
 (defun application--tool-row-spans (application row)
-  "Return one indented, sanitized, width-bounded tool transcript ROW."
+  "Indent tool ROW, retaining complete expanded input for viewport wrapping."
   (let* ((columns       (application--transcript-columns application))
          (maximum-width (max 1 (1- columns)))
          (indented      (append (list (terminal-span ':plain "  ")) row)))
-    (if (<= (terminal--spans-width indented) maximum-width)
+    (if (or *application-tool-input-expanded-p*
+            (<= (terminal--spans-width indented) maximum-width))
         indented
         (append (terminal--clip-spans indented (max 0 (1- maximum-width)))
                 (list (terminal-span ':dim "…"))))))
@@ -631,7 +635,7 @@ structural discriminator as a readable heading instead."
 
 (-> application--lisp-call-entry (application json-object string) list)
 (defun application--lisp-call-entry (application call argument-name)
-  "Return a syntax-highlighted Lisp source preview for CALL's ARGUMENT-NAME."
+  "Return syntax-highlighted Lisp input, with fullscreen eval inputs expandable."
   (let* ((arguments (application--function-call-arguments call))
          (value     (and arguments (json-get arguments argument-name)))
          (source
@@ -639,7 +643,16 @@ structural discriminator as a readable heading instead."
                     (not (stringp value))
                     (every #'stringp value))
                (format nil "~{~A~^~%~}" (coerce value 'list))
-               (application--presentation-value (or value "")))))
+               (application--presentation-value (or value ""))))
+         (input-key
+           (when (and (terminal-ui-fullscreen-p (application-ui application))
+                      (equal (function-call-canonical-name call) "lisp.eval"))
+             (application--tool-outcome-key application ':call (json-get call "call_id"))))
+         (rows      (application--source-preview-rows
+                     source :language *application-common-lisp-language*
+                            :limit    (if *application-tool-input-expanded-p*
+                                          (1+ (count #\Newline source))
+                                          *application-tool-call-lines*))))
     (application--tool-entry
      application
      :style  ':tool
@@ -647,8 +660,14 @@ structural discriminator as a readable heading instead."
      :rows   (append
               (application--generic-argument-rows
                application arguments :excluded-keys (list argument-name "restart-value"))
-              (application--source-preview-rows
-               source :language *application-common-lisp-language*)
+              (if input-key
+                  (loop for row in rows
+                        collect (loop for span in row
+                                      collect (termdown:make-widget
+                                               (terminal-span-style span)
+                                               (terminal-span-text span)
+                                               (list ':toggle-tool-input input-key))))
+                  rows)
               (application--restart-value-rows arguments)))))
 
 ;; Codex PlanUpdateCell reference: 5c19155cbd93bfa099016e7487259f61669823ff.

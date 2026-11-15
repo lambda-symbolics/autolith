@@ -1641,6 +1641,66 @@
                         "folded outcome source reflows with its original call and lifecycle state"))))))))
   nil)
 
+(-> test-terminal-fullscreen-lisp-input-expansion () null)
+(defun test-terminal-fullscreen-lisp-input-expansion ()
+  "Expand Lisp input by clicking its source, then reflow, fold an outcome and collapse."
+  (with-test-configuration (configuration)
+    (let* ((terminal    (make-instance 'recording-terminal :columns 100 :rows 48))
+           (ui          (fullscreen-test--ui terminal))
+           (application (make-instance 'application :configuration configuration
+                                       :tool-registry              (make-default-tool-registry)
+                                       :conversation (conversation-create configuration) :ui ui))
+           (forms       (concatenate 'vector
+                                     (loop for index below 12
+                                           collect (format nil "(let ((value ~D))~%  (list :value value))" index))
+                                     #("(list :expanded-final #.(error \"display only\") absent-package:item)")))
+           (call        (list :provider-item :seq 1 :wire-json
+                              (json-encode
+                               (agent-test-call :call-id "expand-call" :namespace "lisp" :name "eval"
+                                                :arguments (json-encode (json-object "forms" forms))))))
+           (result      (list :tool-result :seq 2 :call-id "expand-call" :tool "lisp.eval"
+                              :status ':error :output "Failure detail")))
+      (with-terminal-ui (active ui)
+        (terminal-ui-set-input active "draft")
+        (terminal-ui-present-records active (list (application--record-presentation application call)))
+        (let* ((viewport (fullscreen-terminal-ui-viewport active))
+               (tag      (clinedi:transcript-viewport-last-tag viewport))
+               (key      (application--tool-outcome-key application ':call "expand-call"))
+               (preview  (clinedi:transcript-viewport-chunk-text viewport 0)))
+          (labels ((toggle-input ()
+                     (terminal-ui-process-event active ':scroll-top)
+                     (let* ((frame (map 'list #'clinedi:ansi-strip (fullscreen-test--frame active)))
+                            (row   (position-if (lambda (text) (find #\│ text)) frame)))
+                       (test-assert row "the input rail is visible and clickable")
+                       (when row
+                        (fullscreen-test--click active (1+ (position #\│ (nth row frame))) (1+ row))))))
+            (test-assert (not (search ":expanded-final" preview))
+                         "the initial input uses the bounded preview")
+            (toggle-input)
+            (test-assert (search ":expanded-final" (clinedi:transcript-viewport-chunk-text viewport 0))
+                         "clicking input exposes every form, including unreadable display-only source")
+            (let* ((record (gethash key (fullscreen-terminal-ui-presentation-records active)))
+                   (entry  (funcall (getf record :expanded-entry-layout) 100)))
+              (test-assert (find ':syntax-keyword entry :key #'terminal-span-style)
+                           "expanded input uses the existing Lisp syntax renderer"))
+            (dolist (width '(32 100))
+              (terminal-ui-resize active width :rows 48)
+              (test-assert (and (search ":expanded-final" (clinedi:transcript-viewport-chunk-text viewport 0))
+                                (search "absent-package:item" (clinedi:transcript-viewport-chunk-text viewport 0))
+                                (equal tag (clinedi:transcript-viewport-last-tag viewport)))
+                           "the expanded source wraps without clipping in its original chunk"))
+            (terminal-ui-present-records active (list (application--record-presentation application result)))
+            (test-assert (and (= 1 (fullscreen-test--chunk-count active))
+                              (search ":expanded-final" (clinedi:transcript-viewport-chunk-text viewport 0))
+                              (search "Failure detail" (clinedi:transcript-viewport-chunk-text viewport 0)))
+                         "a folded outcome preserves the expanded input and its result")
+            (toggle-input)
+            (test-assert (and (not (search ":expanded-final" (clinedi:transcript-viewport-chunk-text viewport 0)))
+                              (search "Failure detail" (clinedi:transcript-viewport-chunk-text viewport 0))
+                              (string= "draft" (line-editor-text (terminal-ui-editor active))))
+                         "clicking expanded input collapses it without changing the result or composer"))))))
+  nil)
+
 (-> test-terminal-fullscreen-source-prose-reflow () null)
 (defun test-terminal-fullscreen-source-prose-reflow ()
   "Restore user prose wrapping from source rather than from a width-baked span list."

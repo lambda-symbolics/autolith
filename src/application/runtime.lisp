@@ -3079,11 +3079,12 @@ The channel's structured clients receive its text as a :PRESENT event."
          (setf kind ':job-completion))))
     (list :entry-kind kind :group group)))
 
-(-> application--record-layout (application list) function)
-(defun application--record-layout (application record)
-  "Retain RECORD's logical source, rendering fresh spans only for a new layout."
+(-> application--record-layout (application list &key (:expanded-input-p boolean)) function)
+(defun application--record-layout (application record &key expanded-input-p)
+  "Retain RECORD's source for a fresh layout, optionally expanding its input."
   (lambda (columns)
-    (let ((*application-transcript-layout-columns* columns))
+    (let ((*application-transcript-layout-columns* columns)
+          (*application-tool-input-expanded-p*     expanded-input-p))
       (conversation-record-entry application record))))
 
 (-> application--record-source-characters (list) (integer 0))
@@ -3119,7 +3120,10 @@ The channel's structured clients receive its text as a :PRESENT event."
     (when (and entry (terminal-ui-fullscreen-p (application-ui application))
                (not (getf metadata :markdown)))
       (setf (getf metadata :entry-layout) (application--record-layout application record)
-            (getf metadata :source-characters) (application--record-source-characters record)))
+            (getf metadata :source-characters) (application--record-source-characters record))
+      (when (getf metadata :expandable-input-p)
+        (setf (getf metadata :expanded-entry-layout)
+              (application--record-layout application record :expanded-input-p t))))
     (when resolved
       (dolist (key '(:state :job-key :retain-output-p :body :body-layout :body-source-characters))
         (setf (getf metadata key) (getf resolved key))))

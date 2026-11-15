@@ -111,7 +111,8 @@
                          (application--tool-outcome-key
                           application ':call (json-get item "call_id")))))
        (when call-key
-         (list :kind ':call :call-key call-key :state ':pending))))
+         (list :kind ':call :call-key call-key :state ':pending
+               :expandable-input-p (equal (function-call-canonical-name item) "lisp.eval")))))
     (:tool-result
      (application--tool-result-outcome application record entry))
     (:message
