@@ -2352,12 +2352,13 @@ request repeats the instructions, tools and history of the ordinary requests
 around it, so the provider reads them from its prompt cache. Only the
 compaction instructions at the end are new, and the request requires that one
 call. Every request that offers tools therefore declares =compaction.submit=,
-with the note never to call it unasked. A provider that keys its cache on the
-required call, as GLM does through OpenRouter, still charges the history in
-full. The call gives an intent, up to 16 notes and a next step. A note is a
-decision, a constraint, completed work, open work or an uncertainty. Autolith
-checks the arguments against a strict schema and size bounds, and stores the
-checkpoint in typed form beside its text.
+with the note never to call it unasked. Inference frames never compact and
+leave it out. A provider that keys its cache on the required call, as GLM does
+through OpenRouter, still charges the history in full. The call gives an
+intent, up to 16 notes and a next step. A note is a decision, a constraint,
+completed work, open work or an uncertainty. Autolith checks the arguments
+against a strict schema and size bounds, and stores the checkpoint in typed
+form beside its text.
 
 Before the request, Autolith lists what the checkpoint may cite: the user
 messages and tool results the request shows, plan steps, mission gates, facts

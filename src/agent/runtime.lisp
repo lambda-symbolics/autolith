@@ -1524,6 +1524,14 @@ tool registry reaches the very next provider request."
   (:documentation
    "Return true when AGENT's conversation should compact before continuing."))
 
+(defgeneric agent-compaction-tool-p (agent)
+  (:documentation
+   "Return true when AGENT's requests that offer tools also declare compaction.submit."))
+
+(defmethod agent-compaction-tool-p ((agent agent))
+  "Declare it, so a compaction request repeats the tools of the requests around it."
+  t)
+
 (defmethod agent-should-compact-p ((agent agent))
   "Compare current matched input accounting with the soft compaction threshold."
   (>= (context-estimate-known-tokens
@@ -1656,8 +1664,8 @@ repair either, and a checkpoint without notes would only lose history."
   "Ask the model for a checkpoint of VIEW; return it and the number of requests issued.
 
 Each request declares TOOL-NAMESPACES, the tools of the ordinary requests
-around it, and forces the compaction.submit call among them. A conversation
-without tools declares that one tool. The instructions follow the history.
+around it with compaction.submit among them, and forces that call. The
+instructions follow the history.
 They quote LATEST-REQUEST, the user message that stays after the checkpoint,
 and list REFERENCES. A rejected submission is shown back to the
 model with what to correct. The checkpoint is NIL when
@@ -1665,9 +1673,6 @@ model with what to correct. The checkpoint is NIL when
 layer regenerates nothing by itself here, so every generation counts against
 that maximum. A refusal and a terminal failure are signaled."
   (let ((provider                             (agent-provider agent))
-        (tools                                (if (plusp (length tool-namespaces))
-                                                  tool-namespaces
-                                                  (continuation-tool-namespaces)))
         (issued                               0)
         (*compaction-instructions*
           (format nil "~A~2%~@[The latest user message, which stays after the checkpoint:~%~A~2%~]~A"
@@ -1690,7 +1695,7 @@ that maximum. A refusal and a terminal failure are signaled."
                          request-context candidate
                          (lambda ()
                            (provider-stream-turn
-                            provider candidate :tool-namespaces tools
+                            provider candidate :tool-namespaces tool-namespaces
                             :event-callback
                             (lambda (event)
                               (declare (ignore event))
@@ -1699,7 +1704,7 @@ that maximum. A refusal and a terminal failure are signaled."
                       :preflight (lambda (candidate)
                                   (provider-check-request-context
                                    provider
-                                   (provider-request-object provider candidate tools
+                                   (provider-request-object provider candidate tool-namespaces
                                                             :compaction-p t))))
                    (provider-error (condition)
                      (when (agent--compaction-failure-terminal-p condition)
@@ -1814,15 +1819,18 @@ names the records shown as unsummarized."
     (and (integerp value) (plusp value) value)))
 
 (-> agent--tool-namespaces
-    (agent &key (:tools-p boolean) (:tool-restriction-p boolean) (:tool-allowlist (option list)))
+    (agent &key (:tools-p boolean) (:tool-restriction-p boolean) (:tool-allowlist (option list))
+                (:compaction-p boolean))
     vector)
-(defun agent--tool-namespaces (agent &key tools-p tool-restriction-p tool-allowlist)
+(defun agent--tool-namespaces
+    (agent &key tools-p tool-restriction-p tool-allowlist compaction-p)
   "Return the tool namespaces AGENT's requests declare.
 
-A request that offers tools also declares compaction.submit. A compaction
-request then repeats the declarations of the ordinary requests around it and
-only forces that call, so it reads the prompt prefix they cached instead of
-paying for the whole history again."
+A request that offers tools also declares compaction.submit, unless AGENT
+never compacts in the ordinary course. A compaction request then repeats the
+declarations of the ordinary requests around it and only forces that call, so
+it reads the prompt prefix they cached instead of paying for the whole history
+again. A COMPACTION-P request declares compaction.submit in any case."
   (let ((offered (cond
                    ((not tools-p)
                     #())
@@ -1831,7 +1839,8 @@ paying for the whole history again."
                                                     :canonical-names tool-allowlist))
                    (t
                     (tool-registry-provider-schemas (agent-tool-registry agent))))))
-    (if (plusp (length offered))
+    (if (or compaction-p
+            (and (plusp (length offered)) (agent-compaction-tool-p agent)))
         (concatenate 'vector offered (continuation-tool-namespaces))
         offered)))
 
@@ -1972,7 +1981,11 @@ publication. Return issued request count and optional next-request details."
                              (conversation-input-items-for-family
                               captured-view family :include-ephemeral-p nil)
                              family)
-           :tool-namespaces tool-namespaces
+           :tool-namespaces (agent--tool-namespaces agent
+                                                    :tools-p            tools-p
+                                                    :tool-restriction-p tool-restriction-p
+                                                    :tool-allowlist     tool-allowlist
+                                                    :compaction-p       t)
            :recovery        recovery
            :request-context request-context
            :unfinished-work unfinished-work
