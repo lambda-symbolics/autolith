@@ -1750,27 +1750,26 @@ that maximum. A refusal and a terminal failure are signaled."
   "Return the checkpoint for COMPACTION and the number of requests it took.
 
 The model writes the checkpoint from VIEW, the history before the retained
-tail. It may cite the covered records, plan steps, mission gates, the jobs of
-UNFINISHED-WORK and what the previous checkpoint cited. When it submits none,
-the checkpoint keeps the previous one's notes and names the covered records
-as unsummarized."
-  (let ((prior (conversation-continuation (agent-conversation agent))))
-    (multiple-value-bind (records range)
-        (conversation-compaction-evidence-records compaction)
-      (multiple-value-bind (submitted requests)
-          (agent--request-checkpoint
-           agent observer view
-           :tool-namespaces tool-namespaces
-           :recovery        recovery
-           :request-context request-context
-           :latest-request  (getf (rest (assoc ':message records)) :content)
-           :references      (continuation-references agent records
-                                                     :prior           prior
-                                                     :unfinished-work unfinished-work)
-           :unsummarized    (getf prior :unsummarized)
-           :request-number  request-number)
-        (values (or submitted (continuation-without-summary prior range))
-                requests)))))
+tail. It may cite the user messages and tool results shown there, plan steps,
+mission gates, the jobs of UNFINISHED-WORK and what the previous checkpoint
+cited. When it submits none, the checkpoint keeps the previous one's notes and
+names the records shown as unsummarized."
+  (let ((prior    (conversation-continuation (agent-conversation agent)))
+        (evidence (conversation-compaction-evidence compaction)))
+    (multiple-value-bind (submitted requests)
+        (agent--request-checkpoint
+         agent observer view
+         :tool-namespaces tool-namespaces
+         :recovery        recovery
+         :request-context request-context
+         :latest-request  (conversation-compaction-latest-request compaction)
+         :references      (continuation-references agent evidence
+                                                   :prior           prior
+                                                   :unfinished-work unfinished-work)
+         :unsummarized    (getf prior :unsummarized)
+         :request-number  request-number)
+      (values (or submitted (continuation-without-summary prior evidence))
+              requests))))
 
 (-> agent--result-reasoning-context (provider-result) (option string))
 (defun agent--result-reasoning-context (result)

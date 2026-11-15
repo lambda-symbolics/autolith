@@ -82,15 +82,15 @@ active view the fact is taken to stand as it did at capture."
 
 (-> continuation-references
     (agent list &key (:prior (option list)) (:unfinished-work list)) list)
-(defun continuation-references (agent records &key prior unfinished-work)
+(defun continuation-references (agent evidence &key prior unfinished-work)
   "Return the references a checkpoint of AGENT's conversation may cite.
 
 Plan steps, mission gates, facts the conversation was given and the jobs of
 the UNFINISHED-WORK snapshot come first, then the references the PRIOR
-checkpoint kept, then RECORDS, the covered user messages and tool results, up
-to *CONTINUATION-MAXIMUM-REFERENCES*. A thing named twice keeps its first
-reference, so a plan step, gate or fact the prior checkpoint cited shows its
-state now."
+checkpoint kept, then EVIDENCE, the user messages and tool results the model
+is shown, up to *CONTINUATION-MAXIMUM-REFERENCES*. A thing named twice keeps
+its first reference, so a plan step, gate or fact the prior checkpoint cited
+shows its state now."
   (let ((configuration (agent-configuration agent))
         (conversation  (agent-conversation agent)))
     (take *continuation-maximum-references*
@@ -100,9 +100,7 @@ state now."
                     (continuation--authorities configuration conversation))
                    (mapcar #'continuation--job-reference (getf unfinished-work :jobs))
                    (getf prior :references)
-                   (mapcar (lambda (record)
-                             (continuation--record-reference conversation record))
-                           records))
+                   (mapcar #'continuation--evidence-reference evidence))
            :key (lambda (reference) (getf reference :handle)) :test #'string= :from-end t))))
 
 (define-context-contributor continuation-changes (request)
@@ -225,24 +223,22 @@ view. A fact's label gives the address the memory resource reads it at."
    (format nil "job ~A, ~(~A~) at the checkpoint" (getf job :job-id) (getf job :status))
    (list :execution-id (getf job :execution-id))))
 
-(-> continuation--record-reference (conversation list) list)
-(defun continuation--record-reference (conversation record)
-  "Return a reference to RECORD, a user message or a tool result of CONVERSATION.
+(-> continuation--evidence-reference (list) list)
+(defun continuation--evidence-reference (evidence)
+  "Return a reference to the user message or tool result EVIDENCE describes.
 
 Its label gives the address the conversation resource reads the record at, so
 the record stays reachable from a conversation that adopts the checkpoint."
-  (destructuring-bind (kind &key seq tool call-id status content output &allow-other-keys)
-      record
-    (let* ((identifier (conversation-identifier conversation))
-           (identity   (list :conversation identifier :sequence seq))
-           (address    (format nil "conversation:id/~A sequence ~D" identifier seq)))
-      (if (eq kind ':message)
-          (continuation--reference
-           ':message
-           (format nil "user message at ~A: ~A" address (continuation--excerpt content))
-           identity)
+  (destructuring-bind (&key conversation sequence text call-id tool status) evidence
+    (let ((identity (list :conversation conversation :sequence sequence))
+          (address  (format nil "conversation:id/~A sequence ~D" conversation sequence)))
+      (if call-id
           (continuation--reference
            ':tool-result
-           (format nil "~A result at ~A, call ~A, ~(~A~): ~A"
-                   tool address call-id status (continuation--excerpt output))
-           (append identity (list :call-id call-id)))))))
+           (format nil "~A result at ~A, call ~A~@[, ~(~A~)~]: ~A"
+                   (or tool "tool") address call-id status (continuation--excerpt text))
+           (append identity (list :call-id call-id)))
+          (continuation--reference
+           ':message
+           (format nil "user message at ~A: ~A" address (continuation--excerpt text))
+           identity)))))

@@ -72,34 +72,35 @@ original calls so actual arrivals take precedence when publishing."
                      :plan            plan
                      :cutoff-sequence (1- (conversation-next-sequence conversation))))))
 
-(-> conversation-compaction-evidence-records (conversation-compaction) (values list list))
-(defun conversation-compaction-evidence-records (compaction)
-  "Return the user message and tool result records COMPACTION covers, newest first.
+(-> conversation-compaction-evidence (conversation-compaction) list)
+(defun conversation-compaction-evidence (compaction)
+  "Return the user messages and tool results COMPACTION shows the model, newest first.
 
-Those are the records the provider context was built from: the ones after the
-latest checkpoint or adopted context, up to COMPACTION's cutoff. The second
-value names that range as the conversation identifier with its first and last
-sequence, or is NIL when the range is empty."
-  (let ((conversation (conversation-compaction--conversation compaction))
-        (cutoff       (conversation-compaction-cutoff-sequence compaction))
-        (records      nil)
-        (start        1))
-    (when (conversation-persisted-p conversation)
-      (conversation--map-picker-records
-       (conversation-pathname conversation)
-       (lambda (record)
-         (destructuring-bind (kind &key seq role &allow-other-keys) record
-           (case kind
-             ((:summary :native-compaction :context-adoption)
-              (setf records nil
-                    start   (1+ seq)))
-             ((:message :tool-result)
-              (when (and (<= seq cutoff)
-                         (or (eq kind ':tool-result) (eq role ':user)))
-                (push record records))))))))
-    (values records
-            (and (<= start cutoff)
-                 (list (conversation-identifier conversation) start cutoff)))))
+Each is the property list that names the item's durable record, extended by
+the item's :TEXT and a tool result's :CALL-ID. Records a previous checkpoint
+carried forward are among them, and so are those an adopted context brought
+from another conversation."
+  (let* ((view    (conversation-compaction-view compaction))
+         (records (conversation-item-records view)))
+    (loop for item in (reverse (conversation-input-items view))
+          for record = (gethash item records)
+          when record
+            collect (list* :text (conversation-item-text item)
+                           (append (and (json-get item "call_id")
+                                        (list :call-id (json-get item "call_id")))
+                                   record)))))
+
+(-> conversation-compaction-latest-request (conversation-compaction) (option string))
+(defun conversation-compaction-latest-request (compaction)
+  "Return the text of the latest user message COMPACTION captured, or NIL."
+  (let* ((conversation (conversation-compaction--conversation compaction))
+         (records      (conversation-item-records conversation))
+         (item         (find-if (lambda (item)
+                                  (and (gethash item records)
+                                       (json-string= (json-get item "role") "user")))
+                                (conversation-compaction--source-items compaction)
+                                :from-end t)))
+    (and item (conversation-item-text item))))
 
 (-> conversation-compaction--arrivals (conversation conversation-compaction) list)
 (defun conversation-compaction--arrivals (conversation compaction)
@@ -119,7 +120,7 @@ sequence, or is NIL when the range is empty."
     (nthcdr (length source) current)))
 
 (defparameter *conversation-compaction-row-metadata*
-  '(:family :handoff-family :checkpoint-summary :continuation)
+  '(:family :handoff-family :checkpoint-summary :continuation :record)
   "The projection metadata a carried context row keeps for its item.")
 
 (-> conversation-compaction--serialize-item
@@ -308,6 +309,19 @@ readers that do not know the typed form."
         (conversation-last-total-tokens conversation) 0)
   nil)
 
+(-> conversation-compaction--row-metadata-p (keyword t) boolean)
+(defun conversation-compaction--row-metadata-p (key value)
+  "Return true when VALUE is well formed as a carried row's metadata KEY."
+  (case key
+    (:checkpoint-summary
+     t)
+    (:continuation
+     (continuation-p value))
+    (:record
+     (conversation-item-record-p value))
+    (otherwise
+     (typep value '(or null keyword)))))
+
 (-> conversation-compaction--append-rows
     (conversation list clinker-transcript:projection &key (:rows list)) null)
 (defun conversation-compaction--append-rows (conversation properties projection &key rows)
@@ -336,16 +350,16 @@ it was carried from, named by *CONVERSATION-COMPACTION-ROW-METADATA*."
           (dolist (key *conversation-compaction-row-metadata*)
             (when (member key row)
               (let ((value (getf row key)))
-                (unless (or (member key '(:checkpoint-summary :continuation))
-                            (typep value '(or null keyword)))
-                  (conversation--record-error
-                   conversation properties "A carried context row has invalid metadata."))
-                ;; The item's text is what the model reads, so a typed
-                ;; checkpoint of another format is left out.
-                (when (or (not (eq key ':continuation)) (continuation-p value))
-                  (setf (gethash item
-                                 (clinker-transcript:projection-metadata-table projection key))
-                        value)))))))
+                (cond
+                  ((conversation-compaction--row-metadata-p key value)
+                   (setf (gethash item
+                                  (clinker-transcript:projection-metadata-table projection key))
+                         value))
+                  ;; The item is what the model reads, so a typed checkpoint
+                  ;; or a record name this version cannot read is left out.
+                  ((not (member key '(:continuation :record)))
+                   (conversation--record-error
+                    conversation properties "A carried context row has invalid metadata."))))))))
     (conversation-error (condition)
       (error condition))
     (error ()
