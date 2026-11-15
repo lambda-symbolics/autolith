@@ -9,6 +9,7 @@
 [[https://autolith.rocks][https://img.shields.io/badge/web-autolith.rocks-42b28a.svg]]
 [[https://lambda-symbolics.com/autolith/docs][https://img.shields.io/badge/docs-guide-42b28a.svg]]
 [[https://zulip.lambda-symbolics.com][https://img.shields.io/badge/chat-Zulip-42b28a.svg]]
+[[https://fossil.lambda-symbolics.com][https://img.shields.io/badge/bugs-Fossil-42b28a.svg]]
 
 Autolith, or AL, is a terminal agent inside a live Common Lisp image. It can
 observe, self-modify, discover, introspect its own code, its live state and what
@@ -32,8 +33,9 @@ Autolith supports the following platforms
 
 Adding more platform support is always welcome!
 
-Autolith questions and issues can be discussed on the
-[[https://zulip.lambda-symbolics.com][Lambda Symbolics Zulip]].
+Discuss Autolith questions on the
+[[https://zulip.lambda-symbolics.com][Lambda Symbolics Zulip]], and report bugs in the
+[[https://fossil.lambda-symbolics.com][Fossil bug tracker]].
 
 * Sections
 
