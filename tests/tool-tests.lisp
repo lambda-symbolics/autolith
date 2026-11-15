@@ -737,6 +737,7 @@
                          (json-object
                             "path"    (tool-string-property "Path")
                             "count"   (tool-integer-property "Count")
+                            "flag"    (tool-boolean-property "Flag")
                           "options" (tool-object-schema
                                       (json-object "deep-name" (tool-string-property "Deep name"))
                                       '("deep-name"))
@@ -790,6 +791,24 @@
                         "a non-integer spelling still reaches dispatch")
            (test-assert (equal (json-get received "count") "7.5")
                         "only exact decimal text becomes an integer"))
+         (let ((result (tool-registry-execute-call
+                        registry
+                        (json-object "namespace" "probe" "name" "contract"
+                                     "arguments" "{\"path\":\"workspace:probe\",\"flag\":\"true\"}")
+                        context)))
+           (test-assert (tool-result-success-p result)
+                        "a declared boolean accepts its JSON spelling")
+           (test-assert (json-true-p (json-get received "flag"))
+                        "the true spelling becomes a JSON boolean"))
+         (let ((result (tool-registry-execute-call
+                        registry
+                        (json-object "namespace" "probe" "name" "contract"
+                                     "arguments" "{\"path\":\"workspace:probe\",\"flag\":\"maybe\"}")
+                        context)))
+           (test-assert (tool-result-success-p result)
+                        "a non-boolean spelling still reaches dispatch")
+           (test-assert (equal (json-get received "flag") "maybe")
+                        "only exact JSON spellings become booleans"))
        (let ((result (tool-registry-execute-call
                       registry
                       (json-object "namespace" "probe" "name" "contract"
