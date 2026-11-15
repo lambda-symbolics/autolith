@@ -39,11 +39,12 @@ AUTHORITIES is the result of CONTINUATION--AUTHORITIES.")
                     :note)))))
 
 (defmethod continuation-reference-state ((kind (eql :gate)) reference authorities)
-  "Return a mission gate's status."
-  (let* ((goal (getf authorities :goal))
-         (gate (and (equal (getf reference :mission) (getf goal :created-at))
-                    (find (getf reference :gate) (getf goal :gates)
-                          :key (lambda (gate) (getf gate :id)) :test #'equal))))
+  "Return the status of a gate of the conversation's own mission."
+  (let* ((mission (getf authorities :mission))
+         (gate    (and mission
+                       (equal (getf reference :mission) (mission-knowledge--identity mission))
+                       (find (getf reference :gate) (getf (mission-context-goal mission) :gates)
+                             :key (lambda (gate) (getf gate :id)) :test #'equal))))
     (when gate
       (string-downcase (getf gate :status)))))
 
@@ -128,18 +129,17 @@ one thing keeps one handle from checkpoint to checkpoint."
 
 (-> continuation--authorities (configuration conversation) list)
 (defun continuation--authorities (configuration conversation)
-  "Return the workspace plan, how its steps read, and CONVERSATION's mission goal.
+  "Return the workspace plan, how its steps read, and CONVERSATION's mission.
 
 Each is read once for all references of a request. The steps are read against
 current facts only while knowledge is active."
-  (let ((plan    (plan-load configuration))
-        (mission (mission-context-find conversation)))
+  (let ((plan (plan-load configuration)))
     (list :workspace  (workspace-directory-identifier (config :working-directory configuration))
           :plan       plan
           :step-notes (and plan
                            (knowledge-active-p configuration)
                            (plan-step-snapshot plan (knowledge-view-current configuration)))
-          :goal       (and mission (mission-context-goal mission)))))
+          :mission    (mission-context-find conversation))))
 
 (-> continuation--authority-references (list) list)
 (defun continuation--authority-references (authorities)
@@ -150,8 +150,8 @@ current facts only while knowledge is active."
              (append reference
                      (list :observed
                            (continuation-reference-state kind reference authorities))))))
-    (let ((plan (getf authorities :plan))
-          (goal (getf authorities :goal)))
+    (let ((plan    (getf authorities :plan))
+          (mission (getf authorities :mission)))
       (append
        (loop for step in (and plan (workspace-plan-steps plan))
              collect (observe ':plan-step
@@ -159,10 +159,10 @@ current facts only while knowledge is active."
                                       (continuation--excerpt (plan-step-text step)))
                               (list :workspace (getf authorities :workspace)
                                     :step      (continuation--plan-step-key step))))
-       (loop for gate in (getf goal :gates)
+       (loop for gate in (and mission (getf (mission-context-goal mission) :gates))
              collect (observe ':gate
                               (format nil "mission gate ~A" (getf gate :id))
-                              (list :mission (getf goal :created-at)
+                              (list :mission (mission-knowledge--identity mission)
                                     :gate    (getf gate :id))))))))
 
 (-> continuation--job-reference (list) list)

@@ -202,13 +202,33 @@
           (plan-update configuration (rest steps))
           (test-assert (search "was doing, is gone" (changes))
                        "a cited plan step that no longer exists is reported")))))
-  (loop for (reference state)
-          in '(((:mission 5 :gate "unit") "passed")
-               ((:mission 5 :gate "lint") nil)
-               ((:mission 6 :gate "unit") nil))
-        do (test-assert (equal state
-                               (continuation-reference-state
-                                ':gate reference
-                                '(:goal (:created-at 5 :gates ((:id "unit" :status :passed))))))
-                        "a gate reports its status only within the mission that owns it"))
+  nil)
+
+(-> test-continuation-gate-references () null)
+(defun test-continuation-gate-references ()
+  "Offer the gates of a conversation's mission and resolve them only within that mission."
+  (with-test-configuration (configuration root)
+    (setf configuration (configuration-copy configuration :working-directory root))
+    (let* ((application  (mission-test--application configuration))
+           (conversation (application-conversation application)))
+      (mission-test--write-file (merge-pathnames "gate-input" root) "first state")
+      (application-mission-start
+       application
+       (mission-test--specification
+        :gates '((:id "unit" :kind :artifact :path "unit" :inputs ("gate-input") :deterministic-p t))))
+      (flet ((gate ()
+               "Return the reference a checkpoint taken now holds for the gate."
+               (find ':gate (continuation-references (application-agent application) nil)
+                     :key (lambda (reference) (getf reference :kind))))
+
+             (state (reference)
+               "Return the state REFERENCE resolves to now."
+               (continuation-reference-state
+                ':gate reference (continuation--authorities configuration conversation))))
+        (let ((reference (gate)))
+          (test-assert (and (search (conversation-identifier conversation) (getf reference :mission))
+                            (equal "pending" (getf reference :observed)))
+                       "a gate reference names its mission by conversation and holds the gate's status")
+          (test-assert (null (state (list* :mission "mission/elsewhere/0" reference)))
+                       "a gate of another conversation's mission does not resolve here")))))
   nil)
