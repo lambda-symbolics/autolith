@@ -742,7 +742,7 @@ SCREEN the caller lends stays the caller's to release."
         (progn
          (unless (terminal--terminal-mode-or-nil terminal)
            (error 'localgroup-error :message
-                  "localgroup attach requires an interactive terminal." :operation
+                   "Opening a channel requires an interactive terminal." :operation
                   ':attach :session-id (localgroup--record-session-id record)))
          (multiple-value-setq (socket socket-stream)
            (daemon-connect (localgroup--record-port record)))
@@ -921,48 +921,6 @@ the message without publishing the capsule or exiting."
      (localgroup--run-status
       :sexp-p (not (null (getopt command ':sexp)))))))
 
-(-> localgroup--attach-command () clingon:command)
-(defun localgroup--attach-command ()
-  "Return the localgroup attach sub-command definition."
-  (make-command
-   :name        "attach"
-   :description "attach this terminal to a hosted channel"
-   :usage       "[TARGET]"
-   :options     (list (make-option ':flag
-                                   :long-name   "read-only"
-                                   :key         ':read-only
-                                   :description "observe without control")
-                      (make-option ':flag
-                                   :long-name   "take-over"
-                                   :key         ':take-over
-                                   :description "take exclusive control"))
-   :handler
-   (lambda (command)
-     (let ((arguments (command-arguments command)))
-       (unless (member (length arguments) '(0 1))
-         (error 'localgroup-error
-                :message   "localgroup attach accepts at most one channel or agent designator."
-                :operation ':arguments))
-       (let ((read-only-p (not (null (getopt command ':read-only))))
-             (take-over-p (not (null (getopt command ':take-over)))))
-         (when (and read-only-p take-over-p)
-           (error 'localgroup-error
-                  :message   "Choose at most one of --read-only and --take-over."
-                  :operation ':arguments))
-         (let* ((configuration (localgroup--client-configuration))
-                (session-id    (first arguments))
-                (mode          (cond (read-only-p
-                                      ':read-only)
-                                     (take-over-p
-                                      ':take-over)
-                                     (t
-                                      ':control)))
-                (entry         (localgroup--session-record configuration session-id)))
-           (localgroup-relay-exit
-            configuration
-            (localgroup-attach-record configuration entry mode)
-            mode)))))))
-
 (defparameter *localgroup-kill-exit-timeout* 2
   "Seconds to observe the selected PID after a successful localgroup kill response.")
 
@@ -1061,7 +1019,6 @@ going away."
    :sub-commands
    (list (localgroup--status-command)
          (world-client--tell-command)
-         (localgroup--attach-command)
          (localgroup--operation-command
           "detach" "detach a hosted channel from its terminal" ':detach)
          (localgroup--operation-command

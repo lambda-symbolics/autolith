@@ -25,12 +25,20 @@
 
 (-> main-resolve-conversation (configuration string) string)
 (defun main-resolve-conversation (configuration fragment)
-  "Resolve FRAGMENT against saved and live conversations, preferring exact IDs.
+  "Resolve a resident's name or an ID fragment against saved and live channels.
 
-An exact identifier in canonical or display form wins; otherwise the one
-conversation whose identifier contains FRAGMENT, compared without regard to
-case. Report every ambiguous match with its full displayed ID and available
-metadata."
+Exact channel identifiers take priority over bare participant names. Use
+@NAME for a participant's residence. Ambiguous ID fragments report their
+full displayed IDs and available metadata."
+  (let ((world (world-load configuration)))
+    (when (or (uiop:string-prefix-p "@" fragment)
+              (string-equal fragment *world-inbox-designator*)
+              (world-message-participant world fragment))
+      (return-from main-resolve-conversation
+        (handler-case
+            (channel-identifier (world-channel-designated world configuration fragment))
+          (world-error (condition)
+            (error 'configuration-error :message (autolith-error-message condition)))))))
   (let* ((pathnames (conversation-list configuration))
          (statuses  (mapcar #'rest (localgroup-statuses configuration)))
          (identifiers

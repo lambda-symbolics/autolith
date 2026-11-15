@@ -460,7 +460,7 @@ Add =--detached= with an ID to open it without attaching a terminal.
 * Detached sessions
 :PROPERTIES:
 :ID: detached-sessions
-:VERSION: 6
+:VERSION: 7
 :END:
 Use =(detach)= to leave your channel working in the background.
 Return with =autolith open ID=.
@@ -469,8 +469,7 @@ Closing the terminal also leaves the channel working.
 *From another terminal:*
 =autolith lg status=                  list the server and its channels
 =autolith lg tell ID "message"=       send a message
-=autolith lg attach ID --read-only=   watch a channel
-Use =--take-over= instead of =--read-only= to take control.
+=autolith open ID --read-only=       watch a channel
 
 Use =(close)= to close your current channel.
 Use =autolith lg stop= to stop the server and every channel it hosts.

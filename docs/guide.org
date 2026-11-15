@@ -1674,13 +1674,16 @@ Start an unattended session, or resume one by conversation ID or a part of it:
 #+BEGIN_SRC sh
 autolith --detached
 autolith open b-6
+autolith open researcher --read-only
 autolith open
 #+END_SRC
 
 Use =autolith --detached= to start a new unattended channel and print its full
 conversation ID and session PID. This works with closed stdin. Open an existing
-channel in this terminal with =autolith open ID=, or omit the ID for the =(open)=
-channel picker. An exact canonical or displayed ID wins; otherwise any part of an
+channel in this terminal with =autolith open TARGET=, using its ID or its agent's
+name with or without =@=. Omit the target for the =(open)= channel picker. Use
+=--read-only= to observe without taking control, including after switching
+channels. An exact canonical or displayed ID wins; otherwise any part of an
 ID selects the one conversation containing it, without regard to case. An
 ambiguous part reports every matching ID with its available title, workspace,
 time, and preview. Running conversations, including empty new sessions, are
@@ -1697,9 +1700,6 @@ Control a session with the following commands:
 #+BEGIN_SRC sh
 autolith lg tell   TARGET "message"
 autolith lg pause  [TARGET]
-autolith lg attach [TARGET]
-autolith lg attach [TARGET] --read-only
-autolith lg attach [TARGET] --take-over
 autolith lg detach [TARGET]
 autolith lg kill   [TARGET]
 #+END_SRC
@@ -1712,8 +1712,8 @@ explicitly. For example, =autolith lg tell researcher "review this"= sends a
 message to researcher wherever that agent resides. Ambiguous IDs report their
 matches and select nothing.
 
-When exactly one endpoint is reachable, omit =TARGET= from =pause=, =attach=,
-=detach= or =kill= to select it. These commands require a hosted channel;
+When exactly one endpoint is reachable, omit =TARGET= from =pause=, =detach= or
+=kill= to select it. These commands require a hosted channel;
 =tell= also accepts cold channels. A message sent there, including a mention
 from another channel, starts its resident agent without attaching a terminal.
 A parked agent has no channel to receive it. Run =autolith lg start= to start

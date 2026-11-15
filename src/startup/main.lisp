@@ -949,6 +949,8 @@ state, including an empty list after successful or pristine startup."
   (main--validate-detached-options command :open-requested-p open-requested-p)
   (let* ((detached-p               (not (null (getopt* command ':detached))))
          (pristine-p               (not (null (getopt* command ':pristine))))
+         (read-only-p              (and open-requested-p (getopt command ':read-only)))
+         (attachment-mode          (if read-only-p ':read-only ':control))
          (immutable-p              (or pristine-p
                                        (not (null (getopt* command ':immutable)))))
          (explicit-permission-mode (getopt* command ':permissions))
@@ -1040,14 +1042,19 @@ state, including an empty list after successful or pristine startup."
         (when status
           (uiop:quit status)))
       (return-from main--start-session nil))
+    (when read-only-p
+      (unless (main--interactive-input-p)
+        (error 'configuration-error :message "Read-only opening requires an interactive terminal."))
+      (when image-values
+        (error 'configuration-error :message "--read-only cannot be combined with --image.")))
     (unless handoff-record
       (let ((record (and effective-open-id
                          (main--live-conversation-record configuration effective-open-id))))
         (when record
           (main--validate-live-options command)
           (localgroup-relay-exit configuration
-                                 (localgroup-attach-record configuration record ':control)
-                                 ':control)
+                                 (localgroup-attach-record configuration record attachment-mode)
+                                 attachment-mode)
           (return-from main--start-session nil))))
     (when detached-p
       (main--start-detached configuration
@@ -1073,6 +1080,7 @@ state, including an empty list after successful or pristine startup."
                     :permission-mode    permission-mode
                     :immutable-p        immutable-p
                     :conversation-id    (or effective-open-id recovery-conversation-id)
+                    :attachment-mode    attachment-mode
                     :pick-channel-p     (and effective-open-requested-p
                                                (null effective-open-id))
                     :recovery-diagnosis recovery-diagnosis
@@ -1088,6 +1096,9 @@ state, including an empty list after successful or pristine startup."
                       :launch          (main--launch-options command :permission-mode permission-mode))
                      t)))
       (return-from main--start-session nil))
+    (when read-only-p
+      (error 'configuration-error
+             :message "Read-only opening requires a hosted channel; direct startup is unavailable."))
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*
             (apply #'main--connect-application
@@ -1257,6 +1268,7 @@ request it conflicts with from one that says nothing."
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
+                        (:attachment-mode (member :control :read-only))
                         (:pick-channel-p boolean)
                         (:recovery-diagnosis (option string))
                         (:launch list)
@@ -1264,10 +1276,12 @@ request it conflicts with from one that says nothing."
     boolean)
 (defun main--run-world-client
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
+                        (attachment-mode ':control)
                         pick-channel-p recovery-diagnosis launch images)
   "Serve this terminal as a client of the world server until its channel lets it go.
 
 IMAGES, absolute image namestrings, become the channel's composer draft.
+ATTACHMENT-MODE selects a controlling or read-only terminal for each channel.
 Return T once the terminal's channel lets it go. A channel that asks the
 terminal to switch is left running, and the terminal attaches to the channel
 it named, opening it in the server first without this start's launch
@@ -1321,11 +1335,11 @@ gives the terminal back in between."
                          (handler-case
                              (progn
                                (setf (world-sidebar-current panel) session-id)
-                               (localgroup-attach-record configuration record ':control
-                                                         :panel           panel
-                                                         :screen          screen
-                                                          :notice         (shiftf notice nil)
-                                                          :client-version (shiftf client-version nil)))
+                               (localgroup-attach-record configuration record attachment-mode
+                                                        :panel           panel
+                                                        :screen          screen
+                                                         :notice         (shiftf notice nil)
+                                                         :client-version (shiftf client-version nil)))
                            (localgroup-error (condition)
                              (close-started)
                              ;; A switch whose channel refuses this terminal, as
@@ -1374,7 +1388,7 @@ gives the terminal back in between."
                    ;; The terminal comes back before the session's last word,
                    ;; so the word lands on it rather than on the screen it left.
                    (localgroup-client-screen-release screen)
-                   (localgroup-relay-exit configuration exit ':control)
+                   (localgroup-relay-exit configuration exit attachment-mode)
                    (return t)))))))
       (localgroup-client-screen-release screen)
       (world-sidebar-stop panel))))
@@ -1481,14 +1495,18 @@ gives the terminal back in between."
   (make-command
    :name        "open"
    :description "open a channel in this terminal, or pick one"
-   :usage       "[ID]"
+   :usage       "[TARGET] [--read-only]"
+   :options     (list (make-option ':flag
+                                   :long-name   "read-only"
+                                   :key         ':read-only
+                                   :description "observe without control"))
    :handler
    (lambda (command)
      (main--start-session
       command
       :open-requested-p t
        :open-id         (progn
-                            (main--single-selection command "conversation ID")
+                            (main--single-selection command "channel or agent designator")
                             (first (command-arguments command)))))))
 
 (-> main--replay-command () clingon:command)
