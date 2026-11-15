@@ -68,6 +68,10 @@
   test-native-compaction-window-validation
   test-native-compaction-window-replay)
 
+(define-test-suite continuation
+  test-continuation-validity
+  test-continuation-rendering)
+
 (define-test-suite compaction-tail
   test-compaction-tail-bounds-recent-user-and-expands-groups
   test-compaction-tail-carries-arrivals-through-reload
