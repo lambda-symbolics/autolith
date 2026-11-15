@@ -265,6 +265,13 @@ The test fails for that version and every later version.
   repairs before publishing a self-contained checkpoint, then installs the
   replacement projection. =:cutoff-seq= identifies the request snapshot;
   =:through-seq= covers every record before checkpoint publication.
+- =src/conversation/continuation.lisp= defines the typed checkpoint: the
+  =compaction.submit= schema, its validation and the rendering stored beside
+  it. The checkpoint record keeps both, and replay rejects a record whose typed
+  form and text disagree. Carried context rows keep the typed form, so an agent
+  that moves channels brings it along.
+- =src/agent/continuation-context.lisp= builds the references a checkpoint may
+  cite and reports cited plan steps and mission gates that changed afterwards.
 - =src/conversation/input-history.lisp= maintains complete editable input recall
   in the CACHE namespace above. Missing or invalid indexes rebuild from
   authoritative records, including retired segments. Each new input appends one

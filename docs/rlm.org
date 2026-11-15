@@ -252,8 +252,8 @@ inference conclude that" after the fact: task, views with digests,
 model parameters, raw exchanges, and usage are all in the file.
 
 Read bounded trace logs with =resource.read= at =inference:<trace-id>= URIs.
-The compaction instructions call for trace identifiers in summaries instead
-of inline frame content, so the evidence can be read after compaction.
+The compaction instructions call for trace identifiers in checkpoint notes
+instead of inline frame content, so the evidence can be read after compaction.
 
 * Recursion surfaces
 

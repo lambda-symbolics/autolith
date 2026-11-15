@@ -1064,7 +1064,7 @@ Conversation history uses read-only resource URIs:
   letters match in either case and other characters match exactly.
   =max-results= defaults to 20 and is capped at 50. Messages, assistant
   replies, reasoning summaries, tool call arguments and outputs, web searches,
-  and compaction summaries are searched.
+  and compaction checkpoints are searched.
 - =conversation:id/<id>= reads or searches another conversation by its
   identifier. Searches never span several conversations.
 
@@ -2308,50 +2308,63 @@ Before provider usage is available, the count uses four characters per token
 from the known system prompt, request-local guidance, retained conversation,
 and tool schemas. After compaction it estimates the replacement context until
 next provider report. Compaction request usage is recorded separately as work
-spent on the checkpoint and summary.
+spent on the checkpoint.
 
 At narrow widths, the meter keeps the used and window counts and drops the bar.
 
 Use =(compact)= to compact the current conversation immediately,
 regardless of the meter. Immediate and automatic compaction use the same
-provider-native checkpoint and portable summary path. During an active turn,
+path: a provider-native window where the provider has one, and a typed
+checkpoint that every provider can read. During an active turn,
 compaction waits in the idle queue. An empty conversation needs no provider
 request. Compaction adds a durable checkpoint without adding a user message
 or starting a model turn.
 
-The native checkpoint and its portable handoff normally require two provider
-requests. Completed requests are recorded with their usage before output
-validation, including rejected summaries and native responses that require
-portable fallback. A native checkpoint includes the full returned item window,
-in provider order.
+A native window and the checkpoint normally take two provider requests. Each
+completed request is recorded with its usage before its output is checked,
+including rejected submissions and native responses that fall back to the
+portable path. A native window includes the full returned item window, in
+provider order.
 
-A summary must complete normally and contain bounded, nonempty progress,
-decisions, context, constraints, next-steps and reference sections before
-checkpoint publication. Markdown heading marks may decorate the labels. If a
-finished summary lacks this structure, Autolith names the problem and asks
-again, up to four summary requests in all.
+The model writes the checkpoint by calling =compaction.submit=. A compaction
+request offers no other tool and requires that call. The call gives an intent,
+up to 16 notes and a next step. A note is a decision, a constraint, completed
+work, open work or an uncertainty. Autolith checks the arguments against a
+strict schema and size bounds, and stores the checkpoint in typed form beside
+its text.
 
-The last request publishes any finished text answer, so a loosely shaped handoff
-never stops the agent. An empty or refused summary fails at once.
+Before the request, Autolith lists what the checkpoint may cite: the user
+messages and tool results it covers, plan steps, mission gates and unfinished
+jobs, at most 64 in all. Each has a short handle. A note cites the handles that
+support it and the checkpoint keeps the cited references. A completed note that
+cites nothing reads =(unsubstantiated)=. A record reference names its
+conversation and sequence, so the record can be read again through the
+=conversation:= resource. When a cited plan step or mission gate changes after
+the checkpoint, later requests say which one changed and what its state is now.
 
-For an unusable summary, click =(copy bug report to clipboard)= below the error
-to copy the runtime version, error, and parsed provider response, including
-ordered output items and usage. Provider credentials are redacted.
+If a submission is rejected, Autolith tells the model what to correct and asks
+again, for at most four generations in all. If none of them is usable,
+compaction still publishes a checkpoint. It keeps the previous checkpoint's
+notes and the recent tail, and it names the record range that nobody
+summarized. A refusal, a permission failure or an unreachable provider ends
+compaction with an error and leaves the conversation unchanged.
 
 Before either request, Autolith captures a fixed history cutoff. The checkpoint
 includes unresolved calls with correlated actual or interrupted/unknown outputs,
-plus results and steering received during summarization. Running jobs and
-undelivered outcomes are recorded separately from the model-written summary.
+plus results and steering received during compaction. Running jobs and
+undelivered outcomes are recorded separately from the model-written checkpoint.
 Ordinary requests include bounded authoritative job references and an omitted
 count; inspect =job.continuity=, =job.*= and their resources for full details.
-Provider-family changes use the portable handoff and exclude foreign private
-context.
+Every provider family reads the checkpoint. Only the family that made a native
+window reads that window.
 
-Portable compaction summarizes older history and retains a verbatim recent tail,
+Portable compaction checkpoints older history and retains a verbatim recent tail,
 normally at most two user turns and 32,768 characters. The latest actual user
-request and protocol-required tool/reasoning groups can exceed that bound. Current
-mission policy and the authoritative active plan are rebuilt from their stores
-for each ordinary request, independently of the summary.
+request and protocol-required tool/reasoning groups can exceed that bound. The
+compaction request quotes the latest user message, so the checkpoint's next
+step agrees with it. Current mission policy and the authoritative active plan
+are rebuilt from their stores for each ordinary request, independently of the
+checkpoint.
 
 Set =(settings :max-output-tokens 4096)= to cap ordinary model replies, or set
 =AUTOLITH_MAX_OUTPUT_TOKENS=. The positive-integer setting persists across
@@ -2440,9 +2453,9 @@ dollars; zero disables the limit. Unpriced requests do not count toward it.
 Cache retention depends on the provider, model, routing and account policy.
 The [[https://developers.openai.com/api/docs/guides/prompt-caching][OpenAI API cache documentation]] describes a thirty-minute default for
 GPT-5.6 and later; it does not establish a retention contract for the ChatGPT
-subscription route. Idle compaction uses the ordinary paid checkpoint and
-summary path. It can reduce the context sent after a long pause, but neither a
-cache hit nor a net saving is guaranteed.
+subscription route. Idle compaction uses the ordinary paid checkpoint path. It
+can reduce the context sent after a long pause, but neither a cache hit nor a
+net saving is guaranteed.
 
 Use =(cache-misses t)= to enable notices when cached reads fall by at least
 128 tokens, including accumulated smaller losses. Notices also appear when
