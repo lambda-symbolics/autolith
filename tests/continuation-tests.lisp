@@ -69,7 +69,7 @@
 
 (-> test-continuation-replay () null)
 (defun test-continuation-replay ()
-  "Restore a typed checkpoint from disk and refuse one that disagrees with its record."
+  "Restore a typed checkpoint from disk, and keep only the text of one that cannot be used."
   (with-test-configuration (configuration)
     (let ((conversation (conversation-create configuration))
           (checkpoint   (continuation-tests--checkpoint)))
@@ -78,13 +78,14 @@
       (dolist (current (list conversation (conversation-load (conversation-pathname conversation))))
         (test-assert (equal checkpoint (conversation-continuation current))
                      "the provider context holds the typed checkpoint, live and after reload"))))
-  (loop for (content checkpoint)
-          in (list (list "Other text." (continuation-tests--checkpoint))
-                   (list nil (continuation-tests--checkpoint :format 0))
-                   (list nil (continuation-tests--checkpoint
-                              :references (list (list :handle "r1" :kind ':tool-result
-                                                      :label "A later result."
-                                                      :conversation "replayed" :sequence 99)))))
+  (loop for (checkpoint family-reads-p)
+          in (list (list (continuation-tests--checkpoint :format 0) t)
+                   (list (continuation-tests--checkpoint
+                          :references (list (list :handle "r1" :kind ':tool-result
+                                                  :label "A later result."
+                                                  :conversation "replayed" :sequence 99)))
+                         t)
+                   (list nil nil))
         do (with-test-configuration (configuration)
              (let* ((conversation (conversation-create configuration :identifier "replayed"))
                     (through      (progn
@@ -92,16 +93,22 @@
                                     (1- (conversation-next-sequence conversation)))))
                (conversation-append-record
                 conversation
-                (list :summary
-                      :content      (or content (continuation-render checkpoint))
-                      :continuation checkpoint
-                      :cutoff-seq   through
-                      :through-seq  through))
-               (test-assert (handler-case
-                                (progn (conversation-load (conversation-pathname conversation)) nil)
-                              (conversation-invariant-error ()
-                                t))
-                            "a checkpoint that disagrees with its text, format or cutoff does not load"))))
+                (append (list :native-compaction
+                              :family      ':codex
+                              :wire-json   (json-encode (json-object "type" "context_compaction"
+                                                                     "encrypted_content" "opaque"))
+                              :summary     "The stored text."
+                              :cutoff-seq  through
+                              :through-seq through)
+                        (and checkpoint (list :continuation checkpoint))))
+               (let ((loaded (conversation-load (conversation-pathname conversation))))
+                 (test-assert (null (conversation-continuation loaded))
+                              "a typed form of another format, or one that cites past the cutoff, is left out")
+                 (test-assert (= (if family-reads-p 2 1)
+                                 (length (conversation-input-items-for-family loaded ':codex)))
+                              "the family of the native window reads the text, unless it was written before checkpoints were typed")
+                 (test-assert (= 1 (length (conversation-input-items-for-family loaded ':grok)))
+                              "another family reads the text alone")))))
   nil)
 
 (-> test-continuation-adoption () null)
@@ -118,7 +125,18 @@
       (dolist (current (list destination
                              (conversation-load (conversation-pathname destination))))
         (test-assert (equal checkpoint (conversation-continuation current))
-                     "the adopted context keeps the checkpoint and its references unchanged"))))
+                     "the adopted context keeps the checkpoint and its references unchanged"))
+      (let ((other (conversation-create configuration))
+            (rows  (mapcar (lambda (row)
+                             (let ((row (copy-list row)))
+                               (when (getf row :continuation)
+                                 (setf (getf row :continuation) '(:format 0)))
+                               row))
+                           (conversation-context-rows origin))))
+        (conversation-append-context-adoption other rows :participant "agent")
+        (test-assert (and (null (conversation-continuation other))
+                          (= (length rows) (length (conversation-input-items other))))
+                     "a carried typed form of another format is left out and its text stays"))))
   nil)
 
 (-> test-continuation-references () null)

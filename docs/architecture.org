@@ -267,9 +267,10 @@ The test fails for that version and every later version.
   =:through-seq= covers every record before checkpoint publication.
 - =src/conversation/continuation.lisp= defines the typed checkpoint: the
   =compaction.submit= schema, its validation and the rendering stored beside
-  it. The checkpoint record keeps both, and replay rejects a record whose typed
-  form and text disagree. Carried context rows keep the typed form, so an agent
-  that moves channels brings it along.
+  it. The checkpoint record keeps both. The text is what the model reads, so a
+  record always loads; replay leaves out a typed form of another format or one
+  that cites a record after its cutoff. Carried context rows keep the typed
+  form, so an agent that moves channels brings it along.
 - =src/agent/continuation-context.lisp= builds the references a checkpoint may
   cite and reports cited plan steps, mission gates and facts that changed
   afterwards. It resolves them through the plan, the mission's own gate

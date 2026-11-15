@@ -335,18 +335,17 @@ it was carried from, named by *CONVERSATION-COMPACTION-ROW-METADATA*."
           (clinker-transcript:projection-append projection item)
           (dolist (key *conversation-compaction-row-metadata*)
             (when (member key row)
-              (unless (case key
-                        (:checkpoint-summary
-                         t)
-                        (:continuation
-                         (continuation-p (getf row key)))
-                        (otherwise
-                         (typep (getf row key) '(or null keyword))))
-                (conversation--record-error
-                 conversation properties "A carried context row has invalid metadata."))
-              (setf (gethash item
-                             (clinker-transcript:projection-metadata-table projection key))
-                    (getf row key))))))
+              (let ((value (getf row key)))
+                (unless (or (member key '(:checkpoint-summary :continuation))
+                            (typep value '(or null keyword)))
+                  (conversation--record-error
+                   conversation properties "A carried context row has invalid metadata."))
+                ;; The item's text is what the model reads, so a typed
+                ;; checkpoint of another format is left out.
+                (when (or (not (eq key ':continuation)) (continuation-p value))
+                  (setf (gethash item
+                                 (clinker-transcript:projection-metadata-table projection key))
+                        value)))))))
     (conversation-error (condition)
       (error condition))
     (error ()
@@ -371,27 +370,24 @@ it was carried from, named by *CONVERSATION-COMPACTION-ROW-METADATA*."
        conversation properties "A restored context has invalid correlations.")))
   nil)
 
-(-> conversation-compaction--continuation (conversation list t) (option list))
-(defun conversation-compaction--continuation (conversation properties content)
-  "Return the typed checkpoint of the record with PROPERTIES, checked against its CONTENT.
+(-> conversation-compaction--continuation (conversation list) (option list))
+(defun conversation-compaction--continuation (conversation properties)
+  "Return the typed checkpoint of the record with PROPERTIES, or NIL when it cannot be used.
 
-CONTENT is the checkpoint's stored text. A typed checkpoint must be well
-formed, render to that text, and cite no record of CONVERSATION after its
-cutoff. A record written before checkpoints were typed has none."
+The record's text is what the model reads, so the record loads either way. A
+typed checkpoint of another format, or one that cites a record of CONVERSATION
+after the cutoff, is left out."
   (let ((continuation (getf properties :continuation))
         (cutoff       (getf properties :cutoff-seq)))
-    (unless (or (null continuation)
-                (and (continuation-p continuation)
-                     (equal content (continuation-render continuation))
-                     (every (lambda (reference)
-                              (or (not (equal (getf reference :conversation)
-                                              (conversation-identifier conversation)))
-                                  (and (integerp cutoff)
-                                       (<= (getf reference :sequence) cutoff))))
-                            (getf continuation :references))))
-      (conversation--record-error
-       conversation properties "A persisted checkpoint is invalid or disagrees with its text."))
-    continuation))
+    (and (continuation-p continuation)
+         (every (lambda (reference)
+                  (or (not (equal (getf reference :conversation)
+                                  (conversation-identifier conversation)))
+                      (and (integerp cutoff)
+                           (integerp (getf reference :sequence))
+                           (<= (getf reference :sequence) cutoff))))
+                (getf continuation :references))
+         continuation)))
 
 (defmethod conversation--project-record
     ((kind (eql :summary)) conversation properties)
@@ -403,7 +399,7 @@ cutoff. A record written before checkpoints were typed has none."
     (let* ((item       (conversation-summary-item content))
            (projection (clinker-transcript:make-projection :items (list item))))
       (conversation-compaction--mark-checkpoint
-       projection item (conversation-compaction--continuation conversation properties content))
+       projection item (conversation-compaction--continuation conversation properties))
       (conversation-compaction--restore conversation properties projection))))
 
 (defmethod conversation--project-record
@@ -435,13 +431,12 @@ the family that owns the native window does not read."
         (let* ((summary-item (conversation-summary-item summary))
                (projection   (clinker-transcript:make-projection
                               :items (append window (list summary-item))))
-               (continuation (conversation-compaction--continuation
-                              conversation properties summary)))
+               (continuation (conversation-compaction--continuation conversation properties)))
           (dolist (item window)
             (setf (gethash item
                            (clinker-transcript:projection-metadata-table projection ':family))
                   family))
-          (unless continuation
+          (unless (member :continuation properties)
             (setf (gethash summary-item
                            (clinker-transcript:projection-metadata-table projection ':handoff-family))
                   family))
