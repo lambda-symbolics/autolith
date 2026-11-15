@@ -2335,17 +2335,15 @@ At narrow widths, the meter keeps the used and window counts and drops the bar.
 
 Use =(compact)= to compact the current conversation immediately,
 regardless of the meter. Immediate and automatic compaction use the same
-path: a provider-native window where the provider has one, and a typed
-checkpoint that every provider can read. During an active turn,
+path: a typed checkpoint that every provider can read. During an active turn,
 compaction waits in the idle queue. An empty conversation needs no provider
 request. Compaction adds a durable checkpoint without adding a user message
 or starting a model turn.
 
-A native window and the checkpoint normally take two provider requests. Each
-completed request is recorded with its usage before its output is checked,
-including rejected submissions and native responses that fall back to the
-portable path. A native window includes the full returned item window, in
-provider order.
+The checkpoint normally takes one provider request. Each completed request is
+recorded with its usage before its output is checked, including rejected
+submissions. A conversation that holds a provider-native window from an
+earlier version still loads, and its provider keeps reading that window.
 
 The model writes the checkpoint by calling =compaction.submit=. A compaction
 request repeats the instructions, tools and history of the ordinary requests
@@ -2750,9 +2748,8 @@ and description words, then appends the =tool_search_output= as a durable
 provider item.
 
 The expansion replays intact in every later request. This keeps those tools
-loaded and the prompt prefix cacheable. The expansion is replayed empty only
-in native compaction requests. Other models and providers receive the complete
-eager tool array.
+loaded and the prompt prefix cacheable. Other models and providers receive the
+complete eager tool array.
 
 Authenticate Gemini with =autolith auth gemini= or
 =(auth "gemini")=. Autolith stores its Google OAuth credentials separately at
