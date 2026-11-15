@@ -11,6 +11,9 @@ Clicking the rendered call's header inserts it into the composer.")
 (defparameter *application-transcript-layout-columns* nil
   "Dynamic column count when replaying a resident transcript source.")
 
+(defparameter *application-tool-input-expanded-p* nil
+  "Whether a resident tool input is being laid out in its expanded view.")
+
 ;;;; -- Active Application --
 
 (defclass application ()

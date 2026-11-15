@@ -68,9 +68,6 @@ Shell output is not assumed to be shell source."
                         ':dim
                         (format nil "… +~D more line~:P" omitted))))))))))
 
-(defvar *application-tool-input-expanded-p* nil
-  "Whether a resident tool input is being laid out in its expanded view.")
-
 (defvar *application-provider-call-presentation* nil
   "The provider function call currently being rendered as one transcript entry.")
 
