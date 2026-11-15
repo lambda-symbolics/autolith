@@ -283,7 +283,11 @@ The test fails for that version and every later version.
   request that offers tools declares =compaction.submit=, except in an
   inference frame, which never compacts. The compaction request repeats the
   same instructions, tools and history, puts its own instructions after the
-  history and forces that call.
+  history and forces that call. It also keeps the request settings a service
+  renders into that prefix: OpenAI writes =parallel_tool_calls= into the tool
+  section, and a compaction request that sent another value there read nothing
+  from the cache. The forced call and the reasoning summary do not change the
+  prefix.
 - =src/conversation/input-history.lisp= maintains complete editable input recall
   in the CACHE namespace above. Missing or invalid indexes rebuild from
   authoritative records, including retired segments. Each new input appends one
