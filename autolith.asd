@@ -314,6 +314,7 @@
                                           (:file "application/mission")
                                           (:file "application/mission-inference")
                                           (:file "application/mission-gates")
+                                          (:file "agent/continuation-context")
                                           (:file "application/mission-knowledge")
                                           (:file "application/mission-tools")
                                           (:file "application/mission-review")

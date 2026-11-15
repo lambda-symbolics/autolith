@@ -120,3 +120,82 @@
         (test-assert (equal checkpoint (conversation-continuation current))
                      "the adopted context keeps the checkpoint and its references unchanged"))))
   nil)
+
+(-> test-continuation-references () null)
+(defun test-continuation-references ()
+  "Offer records and plan steps to a checkpoint, keep what it cites, and report a cited step that changes."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (agent        (agent-tests--compaction-agent configuration conversation nil))
+           (steps        '((:text "Write the parser" :status :doing :id "parser")
+                           (:text "Tag the release" :status :pending))))
+      (plan-update configuration steps)
+      (conversation-append-user-message conversation "Fix the parser.")
+      (conversation-append-provider-item
+       conversation (agent-test-call :call-id "call-1" :namespace "shell" :name "run"))
+      (conversation-append-tool-result conversation "call-1" :tool-name "shell.run"
+                                                             :output    "12 tests passed"
+                                                             :success-p t)
+      (flet ((references (&rest arguments)
+               "Return the references a checkpoint taken now may cite."
+               (apply #'continuation-references
+                      agent
+                      (conversation-compaction-evidence-records
+                       (conversation-compaction-capture conversation))
+                      arguments))
+
+             (changes ()
+               "Return what an ordinary request is told about changed references."
+               (let ((contribution
+                       (continuation-changes
+                        (make-instance 'request-context :configuration   configuration
+                                                        :conversation    conversation
+                                                        :tool-namespaces #()))))
+                 (and contribution (context-contribution-instruction contribution)))))
+        (let* ((offered (references))
+               (result  (find ':tool-result offered :key (lambda (reference) (getf reference :kind))))
+               (step    (find "parser" offered
+                              :key (lambda (reference) (getf reference :step)) :test #'equal)))
+          (test-assert (equal '(:plan-step :plan-step :tool-result :message)
+                              (mapcar (lambda (reference) (getf reference :kind)) offered))
+                       "plan steps come first, then the covered records, newest first")
+          (test-assert (and (equal "call-1" (getf result :call-id))
+                            (equal (conversation-identifier conversation) (getf result :conversation))
+                            (= (getf result :sequence) (1- (conversation-next-sequence conversation))))
+                       "a tool result is named by its conversation, sequence and call")
+          (test-assert (equal "doing" (getf step :observed))
+                       "a plan step holds the state it had at capture")
+          (let ((*continuation-maximum-references* 2))
+            (test-assert (equal (subseq offered 0 2) (references))
+                         "a full catalog keeps its first references"))
+          (setf (scripted-provider-results (agent-provider agent))
+                (list (agent-test-result
+                       "cited"
+                       (list (agent-test-checkpoint-call
+                              (format nil "{\"intent\":\"Fix the parser.\",\"notes\":[{\"kind\":\"completed\",\"text\":\"The tests pass.\",\"refs\":[~S]}],\"next\":{\"text\":\"Finish the parser.\",\"refs\":[~S]}}"
+                                      (getf result :handle) (getf step :handle)))))))
+          (agent-compact-conversation agent (make-instance 'agent-observer))
+          (let ((checkpoint (conversation-continuation conversation)))
+            (test-assert (equal (list step result) (getf checkpoint :references))
+                         "the checkpoint keeps exactly the references it cites")
+            (test-assert (member result (references :prior checkpoint) :test #'equal)
+                         "a later catalog still offers what the previous checkpoint cited"))
+          (test-assert (null (changes))
+                       "unchanged references add nothing to a request")
+          (plan-update configuration (cons '(:text "Write the parser" :status :done :id "parser")
+                                           (rest steps)))
+          (test-assert (search "was doing, now done" (changes))
+                       "a cited plan step that changed is reported with its state now")
+          (plan-update configuration (rest steps))
+          (test-assert (search "was doing, is gone" (changes))
+                       "a cited plan step that no longer exists is reported")))))
+  (loop for (reference state)
+          in '(((:mission 5 :gate "unit") "passed")
+               ((:mission 5 :gate "lint") nil)
+               ((:mission 6 :gate "unit") nil))
+        do (test-assert (equal state
+                               (continuation-reference-state
+                                ':gate reference
+                                '(:goal (:created-at 5 :gates ((:id "unit" :status :passed))))))
+                        "a gate reports its status only within the mission that owns it"))
+  nil)
