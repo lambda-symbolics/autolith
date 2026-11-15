@@ -68,11 +68,12 @@ This is the registry of a child's own channel, which serves it outside any
 spawned run: it lacks yield, and the role decides whether it spawns.
 Runtimes in RETAIN belong to another registry."
   (let* ((definition (task-role-definition configuration (config :child-role configuration)))
-         (spawn-p    (not (null (task-agent-definition-spawns definition)))))
-    (tool-registry-restrict registry
-                            (lambda (tool)
-                              (task--role-tool-p definition tool :spawn-p spawn-p))
-                            :retain retain)))
+         (spawn-p    (not (null (task-agent-definition-spawns definition))))
+         (permitted
+           (lambda (tool)
+             (task--role-tool-p definition tool :spawn-p spawn-p))))
+    (mcp-tool-registry-restrict-discovered-tools registry permitted)
+    (tool-registry-restrict registry permitted :retain retain)))
 
 (-> task-agent-definition-validate-tools-available
     (task-agent-definition tool-registry)
@@ -87,7 +88,8 @@ Runtimes in RETAIN belong to another registry."
                 (some (lambda (tool)
                         (and (tool-child-safe-p tool)
                              (task--tool-spec-matches-p specification tool)))
-                      (tool-registry-tools registry)))
+                      (append (tool-registry-tools registry)
+                              (mcp-tool-registry-discovered-tools registry))))
           (task-agent-definition--error
            :pathname        (task-agent-definition-pathname definition)
            :source          (task-agent-definition-source definition)
@@ -167,13 +169,14 @@ Runtimes in RETAIN belong to another registry."
                    (and
                     (typep tool 'mcp-provider-tool)
                     (task--definition-allows-tool-p definition tool)))
-                 (tool-registry-tools parent-registry))))
+                 (mcp-tool-registry-discovered-tools parent-registry))))
         (mcp-tool-registry-bind-manager
          registry
          manager
          (lambda (tool)
            (task--definition-allows-tool-p definition tool)))
-        (mcp-tool-registry-refresh registry :only-dirty-p t)))
+        (mcp-tool-registry-refresh registry :only-dirty-p t)
+        (mcp-tool-registry-activate-discovered-tools registry)))
     registry))
 
 (-> task--model-alias (string (option string)) (option string))
