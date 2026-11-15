@@ -5,31 +5,17 @@
 
 (-> provider-effective-context-window (model-provider) (integer 1))
 (defun provider-effective-context-window (provider)
-  "Return the larger of the configured window and any eligible recovery window."
+  "Return the window PROVIDER's requests are checked against.
+
+That is the configured window. A compaction request is checked against the
+window the model takes when that one is larger: compacting is how a
+conversation gets back under the configured window."
   (let ((configured (config :context-window (provider-configuration provider)))
-        (permit     *provider-compaction-recovery-permit*))
-    (if (and permit (eq provider (first permit))
-             (member (third permit) '(:ready :portable-ready)))
-        (max configured (second permit))
+        (model      (and (eq provider *compaction-provider*)
+                         (provider-compaction-recovery-window provider))))
+    (if (integerp model)
+        (max configured model)
         configured)))
-
-(-> provider-consume-compaction-recovery-permit (model-provider &key (:native-p boolean)) null)
-(defun provider-consume-compaction-recovery-permit (provider &key native-p)
-  "Consume the allowance, allowing portable fallback if native compaction is unsupported."
-  (when (and *provider-compaction-recovery-permit*
-             (eq provider (first *provider-compaction-recovery-permit*))
-             (member (third *provider-compaction-recovery-permit*)
-                     (if native-p '(:ready) '(:ready :portable-ready))))
-    (setf (third *provider-compaction-recovery-permit*) (if native-p :native-spent :spent)))
-  nil)
-
-(-> provider-handoff-unsupported-native-permit (model-provider) null)
-(defun provider-handoff-unsupported-native-permit (provider)
-  "Transfer only a just-consumed native allowance to one portable summary."
-  (let ((permit *provider-compaction-recovery-permit*))
-    (when (and permit (eq provider (first permit)) (eq :native-spent (third permit)))
-      (setf (third permit) :portable-ready)))
-  nil)
 
 (defparameter *provider-context-admission-state* nil
   "Request-local admission state shared with mission accounting.
@@ -443,7 +429,6 @@ messages that later change fail closed."
           (getf *provider-context-request* :wire) (provider-context--wire-plan request)
           (getf *provider-context-request* :wire-characters)
           (provider-context--request-characters (provider-context--request-items request))))
-  (provider-consume-compaction-recovery-permit provider)
   (when *provider-context-admission-state*
     (setf (first *provider-context-admission-state*) :entered
           (rest *provider-context-admission-state*) nil)))
@@ -452,12 +437,7 @@ messages that later change fail closed."
     ((provider model-provider) (request hash-table) &key credentials conversation)
   "Check native compaction requests against the context budget."
   (declare (ignore credentials conversation))
-  ;; Portable fallback allowance cannot be reused for native compaction.
-  (let ((*provider-compaction-recovery-permit*
-          (unless (eq :portable-ready (third *provider-compaction-recovery-permit*))
-            *provider-compaction-recovery-permit*)))
-    (provider-context--admit-request provider request)
-    (provider-consume-compaction-recovery-permit provider :native-p t))
+  (provider-context--admit-request provider request)
   (when *provider-context-admission-state*
     (setf (first *provider-context-admission-state*) :entered
           (rest *provider-context-admission-state*) nil)))

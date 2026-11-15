@@ -1042,30 +1042,25 @@ original condition or weakening the streaming safety limit."
                   (lambda (condition)
                     (error (provider--authentication-condition
                             provider condition :refreshable-p refreshable-p)))))))
-      (if *provider-compaction-recovery-permit*
-          ;; A recovery permit authorizes one dispatch, never an authentication or
-          ;; streaming retry. Preserve the original unrelated failure for the caller.
-          (provider--call-with-transport-normalization
-           (lambda () (funcall attempt-function nil event-callback)))
-          (handler-case
-              (call-with-streaming-retries #'attempt-with-authentication #'observe
-                                          :maximum-retries maximum-retries)
-            (provider-retryable-error (condition)
-              ;; The same final attempt must escape the ladder. A callback failure,
-              ;; cancellation, or streaming safety stop is not transient exhaustion.
-              (when (and last-failure
-                         (eq condition (provider-attempt-failed-event-condition last-failure))
-                         (> retryable-failures maximum-retries))
-                (funcall event-callback
-                         (make-instance 'provider-retries-exhausted-event
-                                        :attempt     (provider-attempt-failed-event-attempt last-failure)
-                                        :elapsed-seconds
-                                        (provider-attempt-failed-event-elapsed-seconds last-failure)
-                                        :output-received-p
-                                        (provider-attempt-failed-event-output-received-p last-failure)
-                                        :retryable-p t
-                                        :condition   condition)))
-              (error condition)))))))
+      (handler-case
+          (call-with-streaming-retries #'attempt-with-authentication #'observe
+                                      :maximum-retries maximum-retries)
+        (provider-retryable-error (condition)
+          ;; The same final attempt must escape the ladder. A callback failure,
+          ;; cancellation, or streaming safety stop is not transient exhaustion.
+          (when (and last-failure
+                     (eq condition (provider-attempt-failed-event-condition last-failure))
+                     (> retryable-failures maximum-retries))
+            (funcall event-callback
+                     (make-instance 'provider-retries-exhausted-event
+                                    :attempt     (provider-attempt-failed-event-attempt last-failure)
+                                    :elapsed-seconds
+                                    (provider-attempt-failed-event-elapsed-seconds last-failure)
+                                    :output-received-p
+                                    (provider-attempt-failed-event-output-received-p last-failure)
+                                    :retryable-p t
+                                    :condition   condition)))
+          (error condition))))))
 
 (defmethod provider-stream-turn
     ((provider subscription-provider)
@@ -1261,10 +1256,7 @@ success body cannot be decoded. Unknown usage and response IDs remain NIL."
            (*provider-active-credential-redaction-marker*
              (safe-redaction-marker
               *provider-credential-redaction-marker*
-              *provider-active-credential-values*))
-           (native-recovery-permit
-             (and (eq :ready (third *provider-compaction-recovery-permit*))
-                  *provider-compaction-recovery-permit*)))
+              *provider-active-credential-values*)))
       (handler-case
           (handler-case
               (let ((request
@@ -1289,10 +1281,7 @@ success body cannot be decoded. Unknown usage and response IDs remain NIL."
         (provider-error (condition)
           ;; Classify inside the attempt, before mission supervision wraps failures.
           (if (provider--native-compaction-unavailable-p condition)
-              (progn
-                (when native-recovery-permit
-                  (provider-handoff-unsupported-native-permit provider))
-                (values nil (json-object "input_tokens" 0 "output_tokens" 0)))
+              (values nil (json-object "input_tokens" 0 "output_tokens" 0))
               (error condition)))))))
 
 (-> provider--native-compaction-unavailable-p (provider-error) boolean)
