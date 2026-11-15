@@ -1544,7 +1544,8 @@ run once the wake has."
   (with-test-configuration (configuration)
     (let ((polls   0)
           (winner  (cons "world" (list :session-id "world")))
-          (running nil))
+          (running nil)
+          (events  nil))
       (test-call-with-function-replacements
        (list (list 'world-client-entry
                    (lambda (candidate)
@@ -1558,31 +1559,39 @@ run once the wake has."
              (list 'world-client-start-server
                    (lambda (candidate &rest arguments)
                      (declare (ignore candidate arguments))
+                     (push ':spawn events)
                      (setf running t)
                      (error 'localgroup-error
                             :message   "The detached world server did not start within 1 seconds."
                             :operation ':spawn))))
        (lambda ()
-         (test-assert (eq (world-client--entry configuration
-                                               :deadline (+ (get-internal-real-time)
-                                                            (* 10 internal-time-units-per-second)))
-                          winner)
-                      "a lost launch race ends at the winning server's endpoint, not in an error")
-         (setf polls 0 running nil)
-         (test-assert (handler-case
-                          (progn
-                            (test-call-with-function-replacements
-                             (list (list 'world-server-running-p
-                                         (lambda (candidate)
-                                           (declare (ignore candidate))
-                                           nil)))
-                             (lambda ()
-                               (world-client--entry configuration
-                                                    :deadline (+ (get-internal-real-time)
-                                                                 internal-time-units-per-second))))
-                            nil)
-                        (localgroup-error () t))
-                      "a launch that fails while nobody holds the world still fails")))))
+         (handler-bind ((channel-loading-progress
+                          (lambda (progress)
+                            (push (channel-loading-progress-step progress) events))))
+           (test-assert (eq (world-client--entry configuration
+                                                 :deadline (+ (get-internal-real-time)
+                                                              (* 10 internal-time-units-per-second)))
+                            winner)
+                        "a lost launch race ends at the winning server's endpoint, not in an error")
+           (test-assert (equal (reverse events) '(1 :spawn))
+                        "cold startup reports preparation before waiting for the world process")
+           (setf polls 0 running nil events nil)
+           (test-assert (handler-case
+                            (progn
+                              (test-call-with-function-replacements
+                               (list (list 'world-server-running-p
+                                           (lambda (candidate)
+                                             (declare (ignore candidate))
+                                             nil)))
+                               (lambda ()
+                                 (world-client--entry configuration
+                                                      :deadline (+ (get-internal-real-time)
+                                                                   internal-time-units-per-second))))
+                              nil)
+                          (localgroup-error () t))
+                        "a launch that fails while nobody holds the world still fails")
+           (test-assert (equal (reverse events) '(1 :spawn))
+                        "a failed cold launch reports preparation before spawning"))))))
   nil)
 
 (-> test-world-client-switch-navigates () null)

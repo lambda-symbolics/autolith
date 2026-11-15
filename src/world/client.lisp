@@ -63,6 +63,7 @@ other."
         (entry
          (return entry))
         ((not (world-server-running-p configuration))
+         (channel-loading-report 1 "Starting world server and checking saved conversations")
          (handler-case
              (return (world-client-start-server configuration
                                                 :permission-mode permission-mode
