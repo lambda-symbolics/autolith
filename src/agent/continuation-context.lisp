@@ -3,16 +3,19 @@
 ;;;; -- Checkpoint References --
 
 ;;; Before a compaction request the harness lists what a checkpoint note may
-;;; cite: durable records of the conversation, plan steps, mission gates and
-;;; unfinished jobs. A plan step or a gate can change after the checkpoint, so
-;;; its reference keeps the state seen at capture, and later requests report
-;;; the cited ones whose state differs.
+;;; cite: durable records of the conversation, plan steps, mission gates, facts
+;;; the conversation was given and unfinished jobs. A plan step, a gate or a
+;;; fact can change after the checkpoint, so its reference keeps the state seen
+;;; at capture, and later requests report the cited ones whose state differs.
 
 (defparameter *continuation-label-characters* 120
   "Maximum characters of the text a reference's label quotes.")
 
 (defparameter *continuation-context-maximum-changes* 16
   "Maximum changed references one request reports.")
+
+(defparameter *continuation-maximum-claims* 16
+  "Maximum facts given to the conversation that one catalog offers.")
 
 (defgeneric continuation-reference-state (kind reference authorities)
   (:documentation
@@ -59,6 +62,21 @@ run nor changed. Inputs that cannot be read leave the status as it is."
                      (error ()
                        nil)))))))
 
+(defmethod continuation-reference-state ((kind (eql :claim)) reference authorities)
+  "Return a fact's logical status, whether it applies now, and the bases it rests on.
+
+The current knowledge view evaluates the fact from its evidence and rules, so
+a retracted premise changes the state of what was derived from it. Without an
+active view the fact is taken to stand as it did at capture."
+  (let ((view (getf authorities :view)))
+    (if view
+        (destructuring-bind (&key text status applicability bases &allow-other-keys)
+            (first (knowledge-explain view (getf reference :claim) :limit 1))
+          (and text
+               (format nil "~(~A, ~A~@[, on ~{~{~A~^ and ~}~^ or ~}~]~)"
+                       status applicability bases)))
+        (getf reference :observed))))
+
 
 ;;;; -- Public Functions --
 
@@ -67,17 +85,19 @@ run nor changed. Inputs that cannot be read leave the status as it is."
 (defun continuation-references (agent records &key prior unfinished-work)
   "Return the references a checkpoint of AGENT's conversation may cite.
 
-Plan steps, mission gates and the jobs of the UNFINISHED-WORK snapshot come
-first, then the references the PRIOR checkpoint kept, then RECORDS, the
-covered user messages and tool results, up to
-*CONTINUATION-MAXIMUM-REFERENCES*. A thing named twice keeps its first
-reference, so a plan step or gate the prior checkpoint cited shows its state
-now."
-  (let ((conversation (agent-conversation agent)))
+Plan steps, mission gates, facts the conversation was given and the jobs of
+the UNFINISHED-WORK snapshot come first, then the references the PRIOR
+checkpoint kept, then RECORDS, the covered user messages and tool results, up
+to *CONTINUATION-MAXIMUM-REFERENCES*. A thing named twice keeps its first
+reference, so a plan step, gate or fact the prior checkpoint cited shows its
+state now."
+  (let ((configuration (agent-configuration agent))
+        (conversation  (agent-conversation agent)))
     (take *continuation-maximum-references*
           (remove-duplicates
            (append (continuation--authority-references
-                    (continuation--authorities (agent-configuration agent) conversation))
+                    configuration conversation
+                    (continuation--authorities configuration conversation))
                    (mapcar #'continuation--job-reference (getf unfinished-work :jobs))
                    (getf prior :references)
                    (mapcar (lambda (record)
@@ -100,7 +120,7 @@ now."
                  for state = (continuation-reference-state
                               (getf reference :kind) reference authorities)
                  unless (equal state (getf reference :observed))
-                   collect (format nil "~A, ~A: was ~A, ~:[is gone~;now ~:*~A~]"
+                   collect (format nil "~A, ~A: was ~A, ~:[can no longer be found~;now ~:*~A~]"
                                    (getf reference :handle) (getf reference :label)
                                    (getf reference :observed) state))))
     (when changes
@@ -140,46 +160,62 @@ one thing keeps one handle from checkpoint to checkpoint."
 
 (-> continuation--authorities (configuration conversation) list)
 (defun continuation--authorities (configuration conversation)
-  "Return the workspace plan, how its steps read, and CONVERSATION's mission.
+  "Return what the references of one request are resolved against, each read once.
 
-Each is read once for all references of a request. The steps are read against
-current facts only while knowledge is active. The tool context fingerprints
-gate inputs. It asks nobody for authorization, so it reads no input outside
-the workspace."
-  (let ((plan (plan-load configuration)))
+That is the workspace plan and how its steps read, the current knowledge view,
+and CONVERSATION's mission. The view exists only while knowledge is active,
+and only then are plan steps read against current facts. The tool context
+fingerprints gate inputs. It asks nobody for authorization, so it reads no
+input outside the workspace."
+  (let ((plan (plan-load configuration))
+        (view (and (knowledge-active-p configuration)
+                   (knowledge-view-current configuration))))
     (list :workspace    (workspace-directory-identifier (config :working-directory configuration))
           :plan         plan
-          :step-notes   (and plan
-                             (knowledge-active-p configuration)
-                             (plan-step-snapshot plan (knowledge-view-current configuration)))
+          :step-notes   (and plan view (plan-step-snapshot plan view))
+          :view         view
           :mission      (mission-context-find conversation)
           :tool-context (make-instance 'tool-context :configuration configuration
                                                      :conversation  conversation
                                                      :worker        nil))))
 
-(-> continuation--authority-references (list) list)
-(defun continuation--authority-references (authorities)
-  "Return a reference to each plan step and mission gate of AUTHORITIES, with its state now."
-  (flet ((observe (kind label identity)
-           "Return a reference that also holds the state of its thing now."
-           (let ((reference (continuation--reference kind label identity)))
-             (append reference
-                     (list :observed
-                           (continuation-reference-state kind reference authorities))))))
-    (let ((plan    (getf authorities :plan))
-          (mission (getf authorities :mission)))
+(-> continuation--authority-references (configuration conversation list) list)
+(defun continuation--authority-references (configuration conversation authorities)
+  "Return a reference to each plan step, mission gate and given fact, with its state now.
+
+The facts are those CONVERSATION was given, at most
+*CONTINUATION-MAXIMUM-CLAIMS*, and only while AUTHORITIES holds a knowledge
+view. A fact's label gives the address the memory resource reads it at."
+  (destructuring-bind (&key workspace plan view mission &allow-other-keys) authorities
+    (flet ((observe (kind label identity)
+             "Return a reference that also holds the state of its thing now."
+             (let ((reference (continuation--reference kind label identity)))
+               (append reference
+                       (list :observed
+                             (continuation-reference-state kind reference authorities))))))
       (append
        (loop for step in (and plan (workspace-plan-steps plan))
              collect (observe ':plan-step
                               (format nil "plan step ~S"
                                       (continuation--excerpt (plan-step-text step)))
-                              (list :workspace (getf authorities :workspace)
+                              (list :workspace workspace
                                     :step      (continuation--plan-step-key step))))
        (loop for gate in (and mission (getf (mission-context-goal mission) :gates))
              collect (observe ':gate
                               (format nil "mission gate ~A" (getf gate :id))
                               (list :mission (mission-knowledge--identity mission)
-                                    :gate    (getf gate :id))))))))
+                                    :gate    (getf gate :id))))
+       (loop for entry in (and view
+                               (take *continuation-maximum-claims*
+                                     (knowledge-viewer-snapshot
+                                      configuration
+                                      (memory-context-recall-viewer conversation)
+                                      (knowledge-view-workspace view))))
+             collect (observe ':claim
+                              (format nil "fact memory:claim/~A: ~A"
+                                      (getf entry :claim)
+                                      (continuation--excerpt (getf entry :text)))
+                              (list :claim (getf entry :claim))))))))
 
 (-> continuation--job-reference (list) list)
 (defun continuation--job-reference (job)

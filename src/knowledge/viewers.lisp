@@ -85,6 +85,14 @@ result."
                            result
                            t)))))))))))
 
+(-> knowledge-viewer-snapshot (configuration string string) list)
+(defun knowledge-viewer-snapshot (configuration viewer workspace)
+  "Return what VIEWER last saw from WORKSPACE, without recording a look."
+  (knowledge-viewer-update configuration viewer workspace
+                           :function (lambda (previous time first-p)
+                                       (declare (ignore time first-p))
+                                       (values ':keep previous))))
+
 (-> knowledge-viewer-changes
     (configuration string knowledge-view &key (:record boolean))
     (values list (option timestamp) boolean))

@@ -74,7 +74,8 @@
   test-continuation-replay
   test-continuation-adoption
   test-continuation-references
-  test-continuation-gate-references)
+  test-continuation-gate-references
+  test-continuation-claim-references)
 
 (define-test-suite compaction-tail
   test-compaction-tail-bounds-recent-user-and-expands-groups
