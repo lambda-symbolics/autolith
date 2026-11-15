@@ -22,13 +22,6 @@
     (push (json-get request "tool_choice") (compaction-admission-test-encoded-choices provider))
     (values request delivery)))
 
-(defmethod provider-native-compact-conversation
-    ((provider compaction-admission-test-provider) (conversation conversation)
-     &key tool-namespaces event-callback)
-  "Use the portable path without credentials or transport."
-  (declare (ignore provider conversation tool-namespaces event-callback))
-  (values nil nil))
-
 (defmethod provider-stream-turn :before
     ((provider compaction-admission-test-provider) (conversation conversation)
      &key tool-namespaces event-callback goal-context compaction-p)
@@ -126,39 +119,6 @@ it submits a checkpoint."
         (test-assert (equal (list (first references))
                             (getf (submission (list citing) ':end) :references))
                      "a checkpoint keeps the references it cites and no others"))))
-  nil)
-
-(-> test-compaction-native-paid-rejection () null)
-(defun test-compaction-native-paid-rejection ()
-  "Meter paid native completion even with no opaque output or rejected content."
-  (dolist (invalid-p '(nil t))
-    (with-test-configuration (configuration)
-      (let* ((conversation (conversation-create configuration))
-             (provider     (make-instance 'scripted-provider :configuration configuration
-                                          :results                          (list (agent-test-result "summary"
-                                                                                                    (list (agent-test-checkpoint-call))
-                                                                                                    :turn-completion ':end))))
-             (agent        (agent-create :configuration configuration :conversation conversation
-                                         :provider provider :tool-registry (agent-test-registry) :worker nil)))
-        (conversation-append-user-message conversation "native source")
-        (test-call-with-function-replacements
-         (list (list 'provider-native-compact-conversation
-                     (lambda (provider view &key tool-namespaces event-callback)
-                       (declare (ignore provider view tool-namespaces))
-                       (funcall event-callback
-                                (make-instance 'native-compaction-completed-event
-                                               :usage nil :response-id "native-paid"))
-                       (when invalid-p
-                         (error 'provider-protocol-error :message "Rejected paid native output."
-                                                        :status nil :code nil :request-id nil
-                                                        :response-id "native-paid" :response nil))
-                       (values nil nil))))
-         (lambda ()
-           (handler-case (agent-compact-conversation agent (make-instance 'agent-observer))
-             (provider-protocol-error () nil))))
-        (test-assert (equal (if invalid-p '((1 :native)) '((1 :native) (2 :summary)))
-                            (agent-tests--request-numbers conversation))
-                     "paid native completion is recorded once, before interpretation"))))
   nil)
 
 (-> test-compaction-next-request-admission () null)
@@ -479,9 +439,7 @@ it submits a checkpoint."
                  :reader        compaction-ownership-test-summary-mode
                  :documentation "Known, unknown, failed or locally refused summary requests.")
    (views :initform nil :accessor compaction-ownership-test-views
-          :documentation "Request views and exact mission identity during dispatch.")
-   (native-p :initarg :native-p :initform nil :reader compaction-ownership-test-native-p
-             :documentation "Whether to enter an actual native request attempt."))
+          :documentation "Request views and exact mission identity during dispatch."))
   (:documentation "Observe detached request ownership without credentials or network access."))
 
 (defmethod provider-stream-turn
@@ -502,40 +460,9 @@ it submits a checkpoint."
         :conversation conversation))))
   (call-next-method))
 
-(defmethod provider-native-compact-conversation
-    ((provider compaction-ownership-test-provider) (conversation conversation)
-     &key tool-namespaces event-callback)
-  "Enter the native-attempt boundary only when this fixture supports native requests."
-  (if (compaction-ownership-test-native-p provider)
-      (provider-attempt-native-compaction provider conversation
-                                          :tool-namespaces tool-namespaces
-                                          :force-refresh nil :event-callback event-callback)
-      (values nil nil)))
-
-(defmethod provider-attempt-native-compaction
-    ((provider compaction-ownership-test-provider) (conversation conversation)
-     &key tool-namespaces force-refresh event-callback)
-  "Report separately paid native usage without an opaque checkpoint."
-  (declare (ignore tool-namespaces force-refresh event-callback))
-  (push (list conversation (mission-context-find conversation))
-        (compaction-ownership-test-views provider))
-  (case (compaction-ownership-test-summary-mode provider)
-    (:native-error
-     (error 'provider-protocol-error :message "Scripted native failure."
-            :status nil :code nil :request-id nil :response-id nil :response nil))
-    (:native-refuse
-     (provider-open-response-stream
-      provider (json-object "input" "short" "max_output_tokens" 6000)
-      :conversation conversation)))
-  (values nil (if (eq (compaction-ownership-test-summary-mode provider) :native-unknown)
-                  (json-object)
-                  (json-object "input_tokens" 2 "output_tokens" 3))))
-
 (-> compaction-ownership-test--run
-    (&key (:mission-p boolean) (:mode keyword) (:native-p boolean)
-          (:turns (integer 1)) (:continued-p boolean)) null)
-(defun compaction-ownership-test--run
-    (&key (mission-p t) (mode ':known) native-p (turns 8) continued-p)
+    (&key (:mission-p boolean) (:mode keyword) (:turns (integer 1)) (:continued-p boolean)) null)
+(defun compaction-ownership-test--run (&key (mission-p t) (mode ':known) (turns 8) continued-p)
   "Verify actual usage, refusal, budget and cleanup on a private mission."
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
                           ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
@@ -544,7 +471,7 @@ it submits a checkpoint."
                               (json-object "input_tokens" 1 "output_tokens" 1)))
              (provider     (make-instance
                             'compaction-ownership-test-provider
-                            :configuration configuration :summary-mode mode :native-p native-p
+                            :configuration configuration :summary-mode mode
                             :results (append
                                       (when continued-p
                                         (list (agent-test-result "unfinished" nil :turn-completion ':continue)))
@@ -582,7 +509,7 @@ it submits a checkpoint."
                  (test-assert (null (mission-context-find (first entry))) "fresh ownership ends on every unwind"))
                (when application
                  (let* ((ledger      (mission-context-goal context))
-                        (blocked-p   (member mode '(:unknown :error :native-unknown :native-error)))
+                        (blocked-p   (member mode '(:unknown :error)))
                         (exhausted-p (= turns 1))
                         (expected-tokens
                           (cond
@@ -592,12 +519,12 @@ it submits a checkpoint."
                              0)
                             ((eq mode :refuse)
                              0)
-                            ((eq mode :native-refuse)
-                             2)
+                            (continued-p
+                             4)
                             (t
-                             (+ (if native-p 5 0) (if continued-p 4 2))))))
-                   (format t "~&OWNERSHIP-WITNESS mode=~S native=~S turns=~D error=~S ledger=~S~%"
-                           mode native-p turns (and failure (type-of failure)) ledger)
+                             2))))
+                   (format t "~&OWNERSHIP-WITNESS mode=~S turns=~D error=~S ledger=~S~%"
+                           mode turns (and failure (type-of failure)) ledger)
                    (test-assert (= expected-tokens (getf ledger :tokens-used)) "only actual reported usage is charged")
                    (test-assert (= (if blocked-p 1 0) (getf ledger :unknown-usage 0)) "unknown follows ordinary mission policy")
                    (test-assert (zerop (getf ledger :requests-outstanding)) "all request reservations settle")
@@ -611,19 +538,16 @@ it submits a checkpoint."
                      ((eq mode :refuse)
                       (test-assert (typep failure 'provider-context-budget-error) "a local refusal retains its type")
                       (test-assert (eq ':active (getf ledger :status)) "a local compaction refusal has known zero usage"))
-                     ((eq mode :native-refuse)
-                      (test-assert (null failure) "exhausted native admission falls back to the admitted portable summary")
-                      (test-assert (eq ':active (getf ledger :status)) "known-zero native refusals do not invent token usage"))
                      (t
                       (test-assert (null failure) "owned compaction succeeds")
-                      (test-assert (= (+ (if native-p 1 0) (if continued-p 2 1)) (getf ledger :turns-used))
-                                   "each actual native or continued summary request reserves one turn"))))))
+                      (test-assert (= (if continued-p 2 1) (getf ledger :turns-used))
+                                   "each summary request reserves one turn"))))))
           (when application (mission-detach application))))))
   nil)
 
 (-> test-compaction-summary-mission-ownership () null)
 (defun test-compaction-summary-mission-ownership ()
-  "Charge known summaries and bound view ownership, including unsupported native probes."
+  "Charge known summaries and bound view ownership."
   (compaction-ownership-test--run)
   (compaction-ownership-test--run :continued-p t)
   (compaction-ownership-test--run :mission-p nil))
@@ -634,14 +558,6 @@ it submits a checkpoint."
   (dolist (mode '(:unknown :error :refuse))
     (compaction-ownership-test--run :mode mode))
   (compaction-ownership-test--run :turns 1))
-
-(-> test-compaction-native-view-mission-ownership () null)
-(defun test-compaction-native-view-mission-ownership ()
-  "Charge the detached native request and summary exactly once each."
-  (compaction-ownership-test--run :native-p t)
-  (dolist (mode '(:native-unknown :native-error :native-refuse))
-    (compaction-ownership-test--run :native-p t :mode mode))
-  (compaction-ownership-test--run :native-p t :turns 1))
 
 (-> test-compaction-request-view-isolation () null)
 (defun test-compaction-request-view-isolation ()

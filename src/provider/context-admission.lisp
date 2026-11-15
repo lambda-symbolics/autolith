@@ -433,15 +433,6 @@ messages that later change fail closed."
     (setf (first *provider-context-admission-state*) :entered
           (rest *provider-context-admission-state*) nil)))
 
-(defmethod provider-open-native-compaction :before
-    ((provider model-provider) (request hash-table) &key credentials conversation)
-  "Check native compaction requests against the context budget."
-  (declare (ignore credentials conversation))
-  (provider-context--admit-request provider request)
-  (when *provider-context-admission-state*
-    (setf (first *provider-context-admission-state*) :entered
-          (rest *provider-context-admission-state*) nil)))
-
 (define-condition provider-context-budget-error (autolith-error)
   ((estimated-input-tokens
     :initarg       :estimated-input-tokens
@@ -508,12 +499,3 @@ encoded request."
               ;; No positive output envelope exists for this encoded candidate.
               (let ((*provider-maximum-output-tokens* ceiling))
                 (provider-context--admit-request provider candidate)))))))
-
-(defmethod provider-open-native-compaction :around
-    ((provider model-provider) (request hash-table) &key credentials conversation)
-  "Finalize mission output headroom before native compaction admission."
-  (provider-call-with-mission-output-allowance
-   provider request
-   (lambda (final-request)
-     (call-next-method provider final-request :credentials credentials
-                                            :conversation  conversation))))

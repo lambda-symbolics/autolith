@@ -746,57 +746,49 @@
 
 (-> test-compact-operation () null)
 (defun test-compact-operation ()
-  "Test forced portable and native compaction through the canonical Lisp command."
-  (dolist (native-p '(nil t))
-    (let* ((native-item
-             (json-object "type" "context_compaction"
-                          "encrypted_content" "command-checkpoint"))
-           (provider
-             (apply #'make-instance
-                    (if native-p 'native-scripted-provider 'scripted-provider)
-                    :configuration (test-configuration)
-                    :results       (list (agent-test-result
-                                          "manual-summary"
-                                          (list (agent-test-checkpoint-call))
-                                          :turn-completion ':end))
-                    (when native-p (list :native-items (list native-item))))))
-      (application-operation-tests--call-with-compaction-provider
-       provider
-       (lambda (application)
-         (let* ((conversation  (application-conversation application))
-                (configuration (application-configuration application)))
-           (conversation-append-user-message conversation "Earlier work.")
-           (let* ((sequence-before (conversation-next-sequence conversation))
-                  (evaluation      (application-lisp-evaluate
-                                    "(compact)" :application application))
-                  (records-after   (conversation--read-records
-                                    (conversation-pathname conversation)))
-                  (reloaded        (conversation-load-by-id
-                                    configuration (conversation-identifier conversation))))
-             (test-assert (eq (application-lisp-evaluation-status evaluation) ':ok)
-                          "the registered Lisp command compacts below the automatic threshold")
-             (test-assert
-              (and (equal (scripted-provider-compaction-flags provider) '(t))
-                   (equal (scripted-provider-tool-schema-counts provider)
-                          (list (length (agent--tool-namespaces (application-agent application)
-                                                                :tools-p t)))))
-              "manual compaction makes one request that declares the tools of ordinary requests")
-             (test-assert
-              (= (conversation-next-sequence conversation)
-                 (+ sequence-before (if native-p 3 2)))
-              "manual compaction appends its metered requests and one checkpoint without starting a user turn")
-             (test-assert
-              (eq (first (first (last records-after)))
-                  (if native-p ':native-compaction ':summary))
-              "the command uses the provider's existing compaction strategy")
-             (test-assert
-              (string= (json-encode (coerce (conversation-input-items conversation) 'vector))
-                       (json-encode (coerce (conversation-input-items reloaded) 'vector)))
-              "the compacted projection is reproducible from durable history")
-             (test-assert
-              (and (not (terminal-ui-compacting-p (application-ui application)))
-                   (null (terminal-ui-status (application-ui application))))
-              "manual compaction clears its progress indicators")))))))
+  "Test forced compaction through the canonical Lisp command."
+  (let ((provider
+          (make-instance 'scripted-provider
+                         :configuration (test-configuration)
+                         :results       (list (agent-test-result
+                                               "manual-summary"
+                                               (list (agent-test-checkpoint-call))
+                                               :turn-completion ':end)))))
+    (application-operation-tests--call-with-compaction-provider
+     provider
+     (lambda (application)
+       (let* ((conversation  (application-conversation application))
+              (configuration (application-configuration application)))
+         (conversation-append-user-message conversation "Earlier work.")
+         (let* ((sequence-before (conversation-next-sequence conversation))
+                (evaluation      (application-lisp-evaluate
+                                  "(compact)" :application application))
+                (records-after   (conversation--read-records
+                                  (conversation-pathname conversation)))
+                (reloaded        (conversation-load-by-id
+                                  configuration (conversation-identifier conversation))))
+           (test-assert (eq (application-lisp-evaluation-status evaluation) ':ok)
+                        "the registered Lisp command compacts below the automatic threshold")
+           (test-assert
+            (and (equal (scripted-provider-compaction-flags provider) '(t))
+                 (equal (scripted-provider-tool-schema-counts provider)
+                        (list (length (agent--tool-namespaces (application-agent application)
+                                                              :tools-p t)))))
+            "manual compaction makes one request that declares the tools of ordinary requests")
+           (test-assert
+            (= (conversation-next-sequence conversation) (+ sequence-before 2))
+            "manual compaction appends its metered request and one checkpoint without starting a user turn")
+           (test-assert
+            (eq (first (first (last records-after))) ':summary)
+            "the command publishes a checkpoint")
+           (test-assert
+            (string= (json-encode (coerce (conversation-input-items conversation) 'vector))
+                     (json-encode (coerce (conversation-input-items reloaded) 'vector)))
+            "the compacted projection is reproducible from durable history")
+           (test-assert
+            (and (not (terminal-ui-compacting-p (application-ui application)))
+                 (null (terminal-ui-status (application-ui application))))
+            "manual compaction clears its progress indicators"))))))
   nil)
 
 (-> test-fix-skipped-definitions-operation () null)
@@ -919,12 +911,9 @@
                                   :status 503 :code nil :request-id nil
                                   :response-id nil :response nil)))
       (let ((provider
-              (make-instance
-               'native-scripted-provider
-               :configuration (test-configuration)
-               :native-items  (list (json-object "type" "context_compaction"
-                                                "encrypted_content" "uncommitted-checkpoint"))
-               :results       (list result))))
+              (make-instance 'scripted-provider
+                             :configuration (test-configuration)
+                             :results       (list result))))
        (application-operation-tests--call-with-compaction-provider
         provider
         (lambda (application)
@@ -941,9 +930,9 @@
               (test-assert
                (and (string= input-before
                             (json-encode (coerce (conversation-input-items conversation) 'vector)))
-                    (notany (lambda (record)
-                              (member (first record) '(:summary :native-compaction)))
-                            (conversation--read-records (conversation-pathname conversation))))
+                    (not (find :summary
+                               (conversation--read-records (conversation-pathname conversation))
+                               :key #'first)))
                "a failed request preserves its projection and publishes no checkpoint")
               (test-assert
                (and (not (terminal-ui-compacting-p (application-ui application)))

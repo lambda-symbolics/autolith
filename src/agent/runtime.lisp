@@ -1544,22 +1544,20 @@ tool registry reaches the very next provider request."
 
 (-> agent--note-compaction-request
     (agent agent-observer &key (:request-number (integer 1))
-                               (:kind (member :native :summary))
                                (:usage t)
                                (:response-id (option string))
                                (:problem (option string)))
     null)
 (defun agent--note-compaction-request
-    (agent observer &key request-number kind usage response-id problem)
+    (agent observer &key request-number usage response-id problem)
   "Persist and report one compaction request's USAGE under REQUEST-NUMBER.
 
-The native checkpoint request re-reads the whole prompt and the summary
-request generates output under the configured effort, so both stay visible
-to usage accounting instead of hiding behind the compaction record. PROBLEM
-says why the request gave no usable checkpoint."
+The request re-reads the prompt and generates output under the configured
+effort, so it stays visible to usage accounting instead of hiding behind the
+compaction record. PROBLEM says why the request gave no usable checkpoint."
   (let ((details
           (append (list :request-number request-number
-                        :compaction     kind
+                        :compaction     ':summary
                         :response-id    response-id
                         :usage          (agent--portable-value
                                          (provider-usage-normalize usage)))
@@ -1568,25 +1566,6 @@ says why the request gave no usable checkpoint."
     (conversation-append-provider-metadata (agent-conversation agent) details)
     (agent-observer-status observer :compaction-request-completed details))
   nil)
-
-(-> agent--native-compaction-window (t) list)
-(defun agent--native-compaction-window (value)
-  "Normalize a native checkpoint VALUE to its complete ordered output window."
-  (cond
-    ((null value)
-     nil)
-    ((json-object-p value)
-     (list value))
-    ((listp value)
-     value)
-    (t
-     (error 'provider-protocol-error
-            :message     "Native compaction returned a malformed window."
-            :status      nil
-            :code        nil
-            :request-id  nil
-            :response-id nil
-            :response    nil))))
 
 (-> agent--compaction-submission
     (provider-result list list) (values list (option string)))
@@ -1719,11 +1698,10 @@ that maximum. A refusal and a terminal failure are signaled."
                      (agent--note-compaction-request
                       agent observer
                       :request-number (+ request-number issued)
-                      :kind           ':summary
                       :usage          (provider-result-usage result)
                       :response-id    (provider-result-response-id result)
                       :problem        problem)
-                     (when (some #'provider--native-compaction-refusal-p
+                     (when (some #'provider--output-refusal-p
                                  (provider-result-output-items result))
                        (error 'provider-protocol-error
                               :message     "The provider refused to write the compaction checkpoint."
@@ -1740,7 +1718,6 @@ that maximum. A refusal and a terminal failure are signaled."
                    (agent--note-compaction-request
                     agent observer
                     :request-number (+ request-number issued)
-                    :kind           ':summary
                     :problem        (princ-to-string result))))
           finally (return (values nil issued)))))
 
@@ -1888,21 +1865,20 @@ again. A COMPACTION-P request declares compaction.submit in any case."
     (agent observer &key tool-allowlist (tool-restriction-p nil) (tools-p t)
                            goal-context (request-number 0)
                            (next-request-status-details nil) (next-request-tool-rounds 0))
-  "Compact AGENT's conversation into a typed checkpoint, with native state when the provider supports it.
+  "Compact AGENT's conversation into a typed checkpoint.
 
-The model submits the checkpoint over the readable captured history whether
-or not a native window exists, so the checkpoint never rests on opaque
-provider state and every provider family can read it. When no usable
-submission arrives, the checkpoint keeps the previous one's notes and names
-the records nobody summarized.
+The model submits the checkpoint over the readable captured history, so every
+provider family can read it. When no usable submission arrives, the checkpoint
+keeps the previous one's notes and names the records nobody summarized.
 
 Each completed provider request is metered before response validation. Capture
-the durable cutoff before native or portable requests and retain arrivals at
-publication. Return issued request count and optional next-request details."
+the durable cutoff before the requests and retain arrivals at publication.
+Return issued request count and optional next-request details."
   (agent--check-request-budget agent request-number)
   (agent--prepare-provider-request agent)
   (let* ((conversation                 (agent-conversation agent))
-         (compaction                   (conversation-compaction-capture conversation))
+         (compaction                   (conversation-compaction-portable-capture
+                                        (conversation-compaction-capture conversation)))
          (captured-view                (conversation-compaction-view compaction))
          (request-context              (mission-request-view-context conversation))
          (recovery
@@ -1912,70 +1888,16 @@ publication. Return issued request count and optional next-request details."
                conversation (list :compaction-recovery details))
               (agent-observer-status observer :compaction-recovery details))))
          (unfinished-work              nil)
-         (*request-context-hurry-up-p* (agent-hurry-up-p agent))
-         (issued                       0)
-         (native-usage                 nil)
-         (native-request-accounted-p   nil))
+         (*request-context-hurry-up-p* (agent-hurry-up-p agent)))
     ;; Announce compaction before reading job storage, which can take a while.
     (agent-observer-status
      observer
      :compaction-started
      (list :total-tokens (conversation-last-total-tokens conversation)))
     (setf unfinished-work (task-unfinished-work-snapshot agent))
-    (let* ((*provider-hosted-tools-enabled-p* (not tool-restriction-p))
-           (provider                          (agent-provider agent))
-           (tool-namespaces
-             (agent--tool-namespaces agent
-                                     :tools-p            tools-p
-                                     :tool-restriction-p tool-restriction-p
-                                     :tool-allowlist     tool-allowlist))
-           (native-window
-             (multiple-value-bind (window usage)
-                  (values-list
-                   (compaction-recovery-call
-                    recovery provider captured-view :dispatch
-                    (lambda (candidate)
-                      (agent--check-request-budget agent (+ request-number issued))
-                      (multiple-value-list
-                       (mission-call-with-native-compaction-view
-                        request-context candidate
-                        (lambda ()
-                          (provider-native-compact-conversation
-                           provider candidate :tool-namespaces tool-namespaces
-                           :event-callback
-                           (lambda (event)
-                             (if (typep event 'native-compaction-completed-event)
-                                 (progn
-                                   (setf native-request-accounted-p t
-                                         native-usage (native-compaction-completed-event-usage event))
-                                   (incf issued)
-                                   (agent--note-compaction-request
-                                    agent observer :request-number (+ request-number issued)
-                                    :kind ':native :usage native-usage
-                                    :response-id                   (native-compaction-completed-event-response-id event)))
-                                 (agent-observer-status observer :provider-progress nil))))))))
-                    :preflight (lambda (candidate)
-                                (provider-check-request-context
-                                 provider (provider-native-compaction-request-object provider candidate tool-namespaces)))
-                    :native-p  t))
-                 (unless native-request-accounted-p
-                   (setf native-usage usage))
-                 (agent--native-compaction-window window)))
-           (compaction                        (if native-window
-                                                  compaction
-                                                  (conversation-compaction-portable-capture compaction)))
-           (captured-view                     (conversation-compaction-view compaction))
-           (family                            (provider-family provider)))
-        ;; Native providers that cannot emit the completion event still return
-        ;; usage as their second value.  Account that fallback exactly once.
-        (when (and (not native-request-accounted-p) (or native-window native-usage))
-          (incf issued)
-          (agent--note-compaction-request
-           agent observer
-           :request-number (+ request-number issued)
-           :kind           ':native
-           :usage          native-usage))
-      (multiple-value-bind (continuation requests)
+    (let ((*provider-hosted-tools-enabled-p* (not tool-restriction-p))
+          (family                            (provider-family (agent-provider agent))))
+      (multiple-value-bind (continuation issued)
           (agent--compaction-checkpoint
            agent observer compaction
            :view            (conversation-compaction-summary-view
@@ -1991,8 +1913,7 @@ publication. Return issued request count and optional next-request details."
            :recovery        recovery
            :request-context request-context
            :unfinished-work unfinished-work
-           :request-number  (+ request-number issued))
-        (incf issued requests)
+           :request-number  request-number)
         (let* ((next-output-tokens
                  (if next-request-status-details
                      (let ((value
@@ -2023,22 +1944,12 @@ publication. Return issued request count and optional next-request details."
                           :tool-allowlist        tool-allowlist)))))
           (with-recursive-lock-held ((conversation-append-lock conversation))
             (setf unfinished-work (task-unfinished-work-snapshot agent))
-            (if native-window
-                (apply #'conversation-append-native-compaction
-                       conversation native-window
-                       :family          family
-                       :continuation    continuation
-                       :unfinished-work unfinished-work
-                       publication)
-                (apply #'conversation-append-summary
-                       conversation continuation
-                       :unfinished-work unfinished-work
-                       publication)))
+            (apply #'conversation-append-summary
+                   conversation continuation
+                   :unfinished-work unfinished-work
+                   publication))
           (agent-observer-status
-           observer
-           :compaction-completed
-           (list :native-p          (not (null native-window))
-                 :provider-requests issued))
+           observer :compaction-completed (list :provider-requests issued))
           (values issued next-request-details))))))
 
 (-> agent--run-provider-loop

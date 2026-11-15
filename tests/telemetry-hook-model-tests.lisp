@@ -283,14 +283,12 @@
 
 (-> test-telemetry-compaction-roles () null)
 (defun test-telemetry-compaction-roles ()
-  "Classify native checkpoint and summary requests at the actual compaction entry point."
+  "Classify the checkpoint request at the actual compaction entry point."
   (test-telemetry--call
    (lambda (configuration)
      (let* ((conversation (conversation-create configuration))
-            (provider     (make-instance 'native-scripted-provider
+            (provider     (make-instance 'scripted-provider
                                          :configuration configuration
-                                         :native-items  (list (json-object "type" "compaction"
-                                                                          "encrypted_content" "fixture"))
                                          :results       (list (agent-test-result
                                                                "summary" (list (agent-test-checkpoint-call))
                                                                :turn-completion ':end))))
@@ -304,10 +302,10 @@
                           configuration
                           (lambda () (agent-compact-conversation agent (make-instance 'agent-observer)))))))
               (models (test-telemetry-hooks--kind (first bodies) "model")))
-         (test-assert (= (length models) 2) "Native checkpoint and summary each export an attempt.")
-         (dolist (model models)
-           (test-assert (equal (test-telemetry--attribute model "autolith.request.role") "compaction")
-                        "Both compaction requests have the compaction purpose."))
+         (test-assert (= (length models) 1) "The checkpoint request exports one attempt.")
+         (test-assert (equal (test-telemetry--attribute (first models) "autolith.request.role")
+                             "compaction")
+                      "The checkpoint request has the compaction purpose.")
          (test-telemetry--collector-fixture "native-compaction.json" (json-decode (first bodies)))))))
   nil)
 

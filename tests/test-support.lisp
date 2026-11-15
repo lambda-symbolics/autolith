@@ -97,6 +97,22 @@ and history, which lets the provider read them from its cache."
                      "a compaction request repeats the ordinary history before its own instructions")))
     compaction))
 
+(-> test-conversation-with-native-window
+    (configuration conversation list &key (:family keyword) (:continuation list)) conversation)
+(defun test-conversation-with-native-window
+    (configuration conversation window &key family continuation)
+  "Store native WINDOW in CONVERSATION as an earlier version did and return it reloaded.
+
+No request produces a native window any more. A test of a conversation that
+still holds one writes the stored record and reads the conversation back."
+  (conversation-append-record
+   conversation (list :native-compaction :family family
+                      :through-seq       (1- (conversation-next-sequence conversation))
+                      :wire-json         (json-encode (coerce window 'vector))
+                      :summary           (continuation-render continuation)
+                      :continuation      continuation))
+  (conversation-load-by-id configuration (conversation-identifier conversation)))
+
 (-> test-object-contains-string-p (t string) boolean)
 (defun test-object-contains-string-p (root needle)
   "Return true when an ordinary object reachable from ROOT contains NEEDLE."

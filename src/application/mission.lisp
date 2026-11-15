@@ -340,17 +340,6 @@ preserving the calling thread's provider bindings and authorization callbacks."
                                  :usage-function (lambda (results) (provider-result-usage (first results))))
         (call-next-method))))
 
-(defmethod provider-native-compact-conversation :around
-    ((provider model-provider) (conversation conversation)
-     &key tool-namespaces event-callback)
-  "Include native compaction inference and its separately reported usage."
-  (declare (ignore tool-namespaces event-callback))
-  (let ((context (mission--conversation-context conversation)))
-    (if (and context (mission--request-owned-p context conversation))
-        (mission-review--account context conversation
-                                 :function #'call-next-method :usage-function #'second)
-        (call-next-method))))
-
 (-> mission--unknown-usage-blocks-p (list) boolean)
 (defun mission--unknown-usage-blocks-p (goal)
   "Require a new budget for unknown usage unless GOAL's unknown-usage policy is :record."
@@ -638,9 +627,6 @@ Report whether the guarded goal is current or replaced; omit arbitrary goal evid
       (setf (gethash identity *mission-contexts*) context)))
   nil)
 
-(defparameter *mission-native-compaction-view* nil
-  "Exact detached native request view and owning context during compaction dispatch.")
-
 (-> mission-call-with-request-view ((option mission-context) conversation function) t)
 (defun mission-call-with-request-view (context view function)
   "Bind a fresh VIEW to CONTEXT during FUNCTION without replacing an existing owner."
@@ -663,29 +649,6 @@ Report whether the guarded goal is current or replaced; omit arbitrary goal evid
   "Return CONVERSATION's exact context only when its current request is mission work."
   (let ((context (mission--conversation-context conversation)))
     (and context (mission--request-owned-p context conversation) context)))
-
-(-> mission-call-with-native-compaction-view ((option mission-context) conversation function) t)
-(defun mission-call-with-native-compaction-view (context view function)
-  "Capture VIEW's owner for actual native attempts, leaving unsupported probes unowned."
-  (let ((*mission-native-compaction-view* (cons view context)))
-    (funcall function)))
-
-;; Specialize the native backend so the telemetry MODEL-PROVIDER wrapper composes.
-(defmethod provider-attempt-native-compaction :around
-    ((provider codex-subscription-provider) (conversation conversation)
-     &key tool-namespaces force-refresh event-callback)
-  "Account for detached native views when native compaction is attempted, not during unsupported capability probes."
-  (declare (ignore tool-namespaces force-refresh event-callback))
-  (let ((context (and (eq conversation (first *mission-native-compaction-view*))
-                      (rest *mission-native-compaction-view*))))
-    ;; Already bound conversations are accounted for by the outer native generic.
-    (if (and context (not (mission-context-find conversation)))
-        (mission-call-with-request-view
-         context conversation
-         (lambda ()
-           (mission-review--account context conversation
-                                    :function #'call-next-method :usage-function #'second)))
-        (call-next-method))))
 
 (-> mission--agent-context (agent) (option mission-context))
 (defun mission--agent-context (agent)

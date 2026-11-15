@@ -186,13 +186,6 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
                      (conversation-ephemeral-input-entries conversation))))
         (conversation-compaction--copy-metadata
          (conversation-projection conversation) projection items)
-        ;; Only the native window belongs to one provider family. Every
-        ;; family reads the checkpoint that follows it.
-        (when (eq (first record) :native-compaction)
-          (dolist (item (butlast replacement-items))
-            (setf (gethash item
-                           (clinker-transcript:projection-metadata-table projection ':family))
-                  (getf (rest record) :family))))
         (conversation-compaction--mark-checkpoint
          projection (first (last replacement-items)) (getf (rest record) :continuation))
         (setf (getf (rest record) :through-seq)
@@ -236,37 +229,6 @@ readers that do not know the typed form."
      :replacement-items   (list (conversation-summary-item content))
      :record              (list :summary :content content :continuation continuation
                                 :recovery recovery)
-     :unfinished-work     unfinished-work
-     :validate-projection validate-projection)))
-
-(-> conversation-append-native-compaction
-    (conversation (or list json-object) &key (:family keyword) (:continuation list)
-                             (:compaction (option conversation-compaction))
-                             (:unfinished-work list) (:validate-projection (option function)) (:recovery list))
-    list)
-(defun conversation-append-native-compaction
-    (conversation window &key family continuation compaction unfinished-work validate-projection recovery)
-  "Persist native WINDOW, CONTINUATION, and carry-forward state atomically."
-  (when (json-object-p window)
-    (setf window (list window)))
-  (dolist (item window)
-    (native-compaction-item-canonicalize item))
-  (unless (and (keywordp family) (listp window) (not (null window))
-               (every #'json-object-p window)
-               (some #'native-compaction-item-p window))
-    (error 'conversation-invariant-error
-           :message  "A native compaction window is invalid."
-           :pathname (conversation-pathname conversation)
-           :sequence (conversation-next-sequence conversation)))
-  (let ((content (continuation-render continuation)))
-    (conversation-compaction--publish
-     conversation
-     :compaction          (or compaction (conversation-compaction-capture conversation))
-     :replacement-items   (append window (list (conversation-summary-item content)))
-     :record              (list :native-compaction :family family
-                                :wire-json         (json-encode (coerce window 'vector))
-                                :summary           content :continuation continuation
-                                :recovery          recovery)
      :unfinished-work     unfinished-work
      :validate-projection validate-projection)))
 
@@ -413,8 +375,9 @@ after the cutoff, is left out."
     ((kind (eql :native-compaction)) conversation properties)
   "Restore native family privacy, the checkpoint, and carry-forward context.
 
-A record written before checkpoints were typed holds a text handoff, which
-the family that owns the native window does not read."
+No request produces a native window any more: this reads the ones earlier
+versions stored. A record written before checkpoints were typed holds a text
+handoff, which the family that owns the native window does not read."
   (let ((family    (getf properties :family))
         (wire-json (getf properties :wire-json))
         (summary   (getf properties :summary)))

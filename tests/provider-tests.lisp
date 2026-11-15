@@ -738,9 +738,7 @@
                                          "output_schema" nil))))))
                   (replayed           (provider-wire-input-item provider search-output))
                   (replayed-namespace (aref (json-get replayed "tools") 0))
-                  (replayed-child     (aref (json-get replayed-namespace "tools") 0))
-                  (trimmed            (let ((*provider-history-trimming-p* t))
-                                        (provider-wire-input-item provider search-output))))
+                  (replayed-child     (aref (json-get replayed-namespace "tools") 0)))
              (test-assert
               (and (json-string= (json-get replayed "type") "tool_search_output")
                    (= (length (json-get replayed "tools")) 1)
@@ -751,11 +749,6 @@
                    (nth-value 1 (json-get-present replayed-child "strict"))
                    (json-object-p (json-get replayed-child "parameters")))
               "tool search expansions replay intact in the deferred wire shape")
-             (test-assert
-              (and (json-string= (json-get trimmed "type") "tool_search_output")
-                   (zerop (length (json-get trimmed "tools")))
-                   (= (length (json-get search-output "tools")) 1))
-              "history trimming replays tool search expansions empty")
              (test-assert
               (and (family-private-item-p search-output)
                    (family-private-item-p
@@ -1032,233 +1025,6 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-(-> test-provider-native-compaction () null)
-(defun test-provider-native-compaction ()
-  "Test the Codex native checkpoint request, transport, and fallback boundary."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (conversation
-           (conversation-create configuration :identifier "native-request"))
-         (provider      (provider-create configuration))
-         (credentials   (provider-tests--credentials configuration))
-         (schemas
-           (json-array
-            (json-object "type" "namespace"
-                         "name" "test"
-                         "description" "Test tools."
-                         "tools" (json-array)))))
-    (unwind-protect
-         (progn
-           (conversation-append-user-message conversation "retain this work")
-           (conversation-append-provider-item
-            conversation
-            (json-object "type" "reasoning"
-                         "encrypted_content" "retained-reasoning"
-                         "summary" (json-array)))
-           (conversation-append-provider-item
-            conversation
-            (json-object "type" "function_call"
-                         "call_id" "ephemeral-call"
-                         "name" "test"
-                         "arguments" "{}")
-            :persistence ':next-response)
-           (let* ((request
-                    (provider-native-compaction-request-object
-                     provider conversation schemas))
-                  (input (json-get request "input")))
-             (test-assert
-              (and (= (length input) 2)
-                   (string= (json-get (aref input 0) "role") "user"))
-              "native compaction carries durable standard Responses input")
-             (test-assert
-              (and (reasoning-item-p (aref input 1))
-                   (string= (json-get (aref input 1) "encrypted_content")
-                            "retained-reasoning"))
-              "native compaction carries retained encrypted reasoning")
-             (test-assert
-              (non-empty-string-p (json-get request "instructions"))
-              "native compaction uses top-level instructions")
-             (test-assert
-              (string= (json-get request "prompt_cache_key")
-                       (conversation-prompt-cache-key conversation))
-              "native compaction shares the root conversation cache key")
-             (test-assert (null (json-get request "service_tier"))
-                          "standard native compaction omits a service tier")
-             (let* ((fast-configuration
-                      (configuration-copy configuration :codex-fast-mode-p t))
-                    (fast-provider (provider-create fast-configuration))
-                    (fast-request
-                      (provider-native-compaction-request-object
-                       fast-provider conversation schemas)))
-               (test-assert
-                (string= (json-get fast-request "service_tier") "priority")
-                "Codex Fast mode applies to native compaction"))
-             (let* ((unknown-configuration
-                      (configuration-copy configuration
-                                          :model                 "gpt-future-unknown"
-                                          :codex-fast-mode-p     t
-                                          :provider-validation-p nil))
-                    (unknown-provider (provider-create unknown-configuration))
-                    (unknown-request
-                      (provider-native-compaction-request-object
-                       unknown-provider conversation schemas)))
-               (test-assert
-                (null (json-get unknown-request "service_tier"))
-                "unknown Codex models omit Fast mode during compaction"))
-             (dolist (name '("stream" "store" "include" "tool_choice"
-                             "parallel_tool_calls" "reasoning" "text" "tools"))
-               (multiple-value-bind (value present-p) (gethash name request)
-                 (declare (ignore value))
-                 (test-assert (not present-p)
-                              (format nil "native compaction omits ~A" name)))))
-           (let ((captured-url     nil)
-                 (captured-headers nil)
-                 (captured-content nil))
-             (test-call-with-function-replacements
-              (list
-               (list
-                'dexador:post
-                (lambda (url &key headers content &allow-other-keys)
-                  (setf captured-url url
-                        captured-headers headers
-                        captured-content content)
-                  (values "{\"output\":[]}" 200 nil))))
-              (lambda ()
-                (provider-open-native-compaction
-                 provider
-                 (json-object "model" *default-model*)
-                 :credentials  credentials
-                 :conversation conversation)))
-             (flet ((header (name)
-                      (rest (assoc name captured-headers :test #'string-equal))))
-               (test-assert
-                (string= captured-url
-                         "https://chatgpt.com/backend-api/codex/responses/compact")
-                "native compaction derives the Responses compact endpoint")
-               (test-assert (string= (header "Accept") "application/json")
-                            "native compaction requests one JSON response")
-               (test-assert
-                (typep captured-content '(array (unsigned-byte 8) (*)))
-                "native compaction sends JSON as direct UTF-8 octets")
-               (test-assert
-                (string=
-                 (json-get
-                  (json-decode
-                   (sb-ext:octets-to-string
-                    captured-content :external-format ':utf-8))
-                  "model")
-                 *default-model*)
-                "direct UTF-8 request content retains its JSON payload")
-               (test-assert
-                (string= (header "Authorization")
-                         "Bearer provider-test-access-7f386d")
-                "native compaction uses the ordinary subscription credentials")))
-           (credential-source-save
-            (credential-manager-primary-source
-             (provider-credential-manager provider))
-            credentials)
-           (let ((result nil))
-             (test-call-with-function-replacements
-              (list
-               (list
-                'dexador:post
-                (lambda (&rest arguments)
-                  (declare (ignore arguments))
-                  (values
-                   (json-encode
-                    (json-object
-                     "output"
-                       (json-array
-                        (json-object "type" "message"
-                                     "role" "user"
-                                     "content"
-                                     (json-array
-                                      (json-object "type" "input_text"
-                                                   "text" "retained user")))
-                        (json-object "id" "cmp_123"
-                                     "type" "compaction"
-                                     "encrypted_content" "opaque-checkpoint")
-                        (json-object "type" "message"
-                                     "role" "assistant"
-                                     "content"
-                                     (json-array
-                                      (json-object "type" "output_text"
-                                                   "text" "retained assistant"))))))
-                   200
-                   '(("x-request-id" . "native-success"))))))
-              (lambda ()
-                (setf result
-                      (provider-native-compact-conversation
-                       provider conversation
-                       :tool-namespaces schemas
-                       :event-callback  #'identity))))
-             (test-assert
-              (and (listp result)
-                   (= (length result) 3)
-                   (string= (json-get (first result) "role") "user")
-                   (native-compaction-item-p (second result))
-                   (string= (json-get (third result) "role") "assistant"))
-              "native compaction returns the complete ordered output window")
-             (multiple-value-bind (value present-p) (gethash "id" (second result))
-               (declare (ignore value))
-               (test-assert (not present-p)
-                            "native compaction drops transient server item identifiers")))
-           (let ((result
-                   (provider--decode-native-compaction-response
-                    provider
-                    (json-encode
-                     (json-object
-                      "output"
-                      (json-array
-                       (json-object "type" "compaction_summary"
-                                    "encrypted_content" "legacy-checkpoint")
-                       (json-object "type" "context_compaction"
-                                    "encrypted_content" "current-checkpoint")))))))
-              (test-assert
-               (and (listp result)
-                    (= (length result) 2)
-                    (native-compaction-item-p (second result))
-                    (string= (json-get (second result) "type") "context_compaction")
-                    (string= (json-get (second result) "encrypted_content")
-                             "current-checkpoint"))
-               "native compaction keeps the complete window and newest checkpoint encoding"))
-           (let ((result
-                   (provider--decode-native-compaction-response
-                    provider
-                    (json-encode
-                     (json-object
-                      "output"
-                      (json-array
-                       (json-object "type" "compaction_summary"
-                                    "encrypted_content" "legacy-checkpoint")))))))
-               (test-assert
-                (and (listp result)
-                     (= (length result) 1)
-                     (string= (json-get (first result) "type") "compaction"))
-                "native compaction canonicalizes Codex's legacy checkpoint alias"))
-           (test-assert
-            (null
-             (provider--decode-native-compaction-response
-              provider (json-encode (json-object "output" (json-array)))))
-            "an opaque-free compact transcript falls back to the portable summary")
-           (test-call-with-function-replacements
-            (list
-             (list
-              'dexador:post
-              (lambda (&rest arguments)
-                (declare (ignore arguments))
-                (values "not found" 404 nil))))
-            (lambda ()
-              (test-assert
-               (null
-                (provider-native-compact-conversation
-                 provider conversation
-                 :tool-namespaces schemas
-                 :event-callback  #'identity))
-               "an unavailable native endpoint falls back without failing compaction"))))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
 (-> test-sse-event-string (json-object) string)
 (defun test-sse-event-string (event)
   "Encode EVENT as one complete server-sent event."
@@ -1376,30 +1142,6 @@
       (t
        (values outcome 200 nil)))))
 
-(defmethod provider-open-native-compaction
-    ((provider test-transport-provider)
-     (request hash-table)
-     &key credentials conversation)
-  "Signal the next scripted transport outcome for native compaction."
-  (declare (ignore request credentials conversation))
-  (incf (test-transport-provider-attempt-count provider))
-  (let ((outcome (pop (test-transport-provider-outcomes provider))))
-    (cond
-      ((typep outcome 'condition)
-       (error outcome))
-      ((eq outcome ':name-service)
-       (error 'sb-bsd-sockets:name-service-error
-              :errno   1
-              :symbol  'getaddrinfo
-              :syscall 'getaddrinfo))
-      ((eq outcome ':tls)
-       (error 'test-provider-tls-error
-              :detail "compaction certificate verification failed"))
-      ((and (consp outcome) (eq (first outcome) ':tls))
-       (error 'test-provider-tls-error :detail (second outcome)))
-      (t
-       (values outcome 200 nil)))))
-
 (-> provider-tests--tls-eof-condition () cl+ssl::ssl-error-ssl)
 (defun provider-tests--tls-eof-condition ()
   "Return the pinned cl+ssl condition for an OpenSSL 3+ unclean peer EOF."
@@ -1481,7 +1223,7 @@
 
 (-> test-provider-tls-eof-recovery () null)
 (defun test-provider-tls-eof-recovery ()
-  "Reconnect on TLS EOF across authenticated opens, SSE reads, and native compaction."
+  "Reconnect on TLS EOF across authenticated opens and SSE reads."
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
            (credentials  (provider-tests--credentials configuration))
@@ -1489,11 +1231,10 @@
              (lambda (seconds)
                (declare (ignore seconds)))))
       (conversation-append-user-message conversation "continue after reconnecting")
-      (dolist (boundary '(:open :stream-before-output :stream-after-output :native))
-        (let* ((native-p (eq boundary ':native))
-               (output-p (eq boundary ':stream-after-output))
+      (dolist (boundary '(:open :stream-before-output :stream-after-output))
+        (let* ((output-p (eq boundary ':stream-after-output))
                (first-outcome
-                 (if (member boundary '(:open :native))
+                 (if (eq boundary ':open)
                      (provider-tests--tls-eof-condition)
                      (make-instance
                       'test-tls-eof-stream
@@ -1508,15 +1249,9 @@
                             (json-object "type" "response.output_text.delta" "delta" "partial"))
                            "")))))
                (success-outcome
-                 (if native-p
-                     (json-encode
-                      (json-object "output"
-                                   (json-array
-                                    (json-object "type" "compaction"
-                                                 "encrypted_content" "tls-checkpoint"))))
-                     (make-instance
-                      'test-character-input-stream
-                      :source (provider-tests--completed-sse-source "tls-reconnected"))))
+                 (make-instance
+                  'test-character-input-stream
+                  :source (provider-tests--completed-sse-source "tls-reconnected")))
                (provider
                  (provider-tests--transport-provider
                   configuration (list first-outcome success-outcome)))
@@ -1525,22 +1260,13 @@
            (credential-manager-primary-source (provider-credential-manager provider))
            credentials)
           (let ((result
-                  (if native-p
-                      (provider-native-compact-conversation
-                       provider conversation
-                       :tool-namespaces #()
-                       :event-callback  (lambda (event) (push event events)))
-                      (provider-stream-turn
-                       provider conversation
-                       :tool-namespaces #()
-                       :event-callback  (lambda (event) (push event events))))))
+                  (provider-stream-turn
+                   provider conversation
+                   :tool-namespaces #()
+                   :event-callback  (lambda (event) (push event events)))))
             (test-assert
              (and (= (test-transport-provider-attempt-count provider) 2)
-                  (if native-p
-                      (and (= 1 (length result))
-                           (native-compaction-item-p (first result))
-                           (string= (json-get (first result) "encrypted_content") "tls-checkpoint"))
-                      (string= (provider-result-response-id result) "tls-reconnected")))
+                  (string= (provider-result-response-id result) "tls-reconnected"))
              "each TLS EOF boundary reconnects and returns the next successful response"))
           (let ((failures
                   (remove-if-not
@@ -1650,40 +1376,6 @@
                     (autolith-error-message condition)
                     "The provider TLS connection could not be established: certificate rejected [redacted]"))))
               "TLS failures append useful credential-redacted condition detail"))
-           (let ((provider
-                   (provider-tests--transport-provider
-                    configuration
-                    (list '(:tls "compaction certificate expired")))))
-             (test-assert
-              (handler-case
-                  (progn
-                    (provider--open-native-compaction
-                     provider
-                     (json-object)
-                     :credentials  credentials
-                     :conversation conversation)
-                    nil)
-                (provider-error (condition)
-                  (string=
-                   (autolith-error-message condition)
-                   "The provider TLS connection could not be established: compaction certificate expired")))
-              "native compaction preserves TLS condition detail"))
-           (let ((provider
-                   (provider-tests--transport-provider
-                    configuration
-                    (list ':name-service))))
-             (test-assert
-              (handler-case
-                  (progn
-                    (provider--open-native-compaction
-                     provider
-                     (json-object)
-                     :credentials  credentials
-                     :conversation conversation)
-                    nil)
-                (provider-transport-error ()
-                  t))
-              "native compaction normalizes an SBCL name-service error"))
            (let ((provider
                    (provider-tests--transport-provider
                     configuration
@@ -2783,8 +2475,6 @@
             (lambda ()
               (provider-open-response-stream
                codex (json-object) :credentials credentials :conversation conversation)
-              (provider-open-native-compaction
-               codex (json-object) :credentials credentials :conversation conversation)
               (openai-compatible--fetch-models
                configuration
                :provider-name      "deadline-models"
@@ -2802,7 +2492,7 @@
               (provider-open-response-stream
                gemini (json-object) :credentials credentials :conversation conversation)))
            (test-assert
-            (equal (nreverse deadlines) '(300 300 30 300 300 300 300 300))
+            (equal (nreverse deadlines) '(300 30 300 300 300 300 300))
             "every provider response and stream-open path uses its response deadline"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

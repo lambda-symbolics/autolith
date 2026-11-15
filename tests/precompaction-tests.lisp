@@ -225,62 +225,56 @@
 
 (-> test-precompaction-before-compaction () null)
 (defun test-precompaction-before-compaction ()
-  "Compact a served, warm prefix under threshold pressure with native or portable summaries."
-  (dolist (native-p '(nil t))
-    (with-test-configuration (configuration)
-      (let* ((original (conversation-create configuration :identifier "precompaction-full"))
-             (provider (make-instance
-                        (if native-p 'native-scripted-provider 'scripted-provider)
-                        :configuration configuration
-                        :results       (list (agent-test-result "summary" (list (agent-test-checkpoint-call))
-                                                                :turn-completion ':end)
-                                            (mission-test--result "Done.")))))
-        (when native-p
-          (setf (native-scripted-provider-native-items provider)
-                (list (json-object "type" "compaction" "encrypted_content" "checkpoint"))))
-        (conversation-append-user-message original "start")
-        (precompaction-tests--large-exchange original "failed-earlier" nil)
-        (precompaction-tests--large-exchange original "succeeded" t)
-        (conversation-append-user-message original "continue")
-        (precompaction-tests--exchange original "failed-current")
-        (conversation-append-provider-metadata
-         original (list :request-number   1
-                        :request-identity (list (provider-family provider) (config :model configuration))))
-        ;; Force threshold pressure independently of token estimation.
-        (let* ((conversation (conversation-load-by-id configuration "precompaction-full"))
-               (agent        (agent-create :configuration configuration
-                                           :provider      provider
-                                           :conversation  conversation
-                                           :tool-registry (agent-test-registry)
-                                           :worker        nil)))
-          (test-assert (zerop (agent--prepare-provider-request agent))
-                       "a served unknown-lifetime prefix stays unbounded before threshold compaction")
-          (test-call-with-function-replacements
-           (list (list 'agent-should-compact-p
-                       (lambda (agent)
-                         (declare (ignore agent))
-                         (null (scripted-provider-compaction-flags provider)))))
-           (lambda () (agent-run-user-turn agent "next question")))
-          (test-assert (equal '(t nil) (reverse (scripted-provider-compaction-flags provider)))
-                       "threshold compaction precedes the ordinary request")
-          (let* ((items (if native-p
-                            (first (native-scripted-provider-native-input-snapshots provider))
-                            (append (first (reverse (scripted-provider-input-snapshots provider)))
-                                    (conversation-input-items conversation))))
-                 (calls (loop for item in items
-                              when (clinker-transcript:function-call-item-p item)
-                                collect (json-get item "call_id"))))
-            (test-assert (equal '("failed-earlier" "succeeded" "failed-current") calls)
-                         "compaction receives every failed and successful exchange")
-            (test-assert (find-if (lambda (item)
-                                    (let ((output (json-get item "output")))
-                                      (and (stringp output) (= 10000 (length output)))))
-                                  items)
-                         "threshold compaction receives the intact served oversized evidence")
-            (test-assert (find (if native-p :native-compaction :summary)
-                               (conversation--read-records (conversation-pathname conversation))
-                               :key #'first)
-                         "threshold compaction publishes a durable native or portable checkpoint"))))))
+  "Compact a served, warm prefix under threshold pressure."
+  (with-test-configuration (configuration)
+    (let* ((original (conversation-create configuration :identifier "precompaction-full"))
+           (provider (make-instance
+                      'scripted-provider
+                      :configuration configuration
+                      :results       (list (agent-test-result "summary" (list (agent-test-checkpoint-call))
+                                                              :turn-completion ':end)
+                                          (mission-test--result "Done.")))))
+      (conversation-append-user-message original "start")
+      (precompaction-tests--large-exchange original "failed-earlier" nil)
+      (precompaction-tests--large-exchange original "succeeded" t)
+      (conversation-append-user-message original "continue")
+      (precompaction-tests--exchange original "failed-current")
+      (conversation-append-provider-metadata
+       original (list :request-number   1
+                      :request-identity (list (provider-family provider) (config :model configuration))))
+      ;; Force threshold pressure independently of token estimation.
+      (let* ((conversation (conversation-load-by-id configuration "precompaction-full"))
+             (agent        (agent-create :configuration configuration
+                                         :provider      provider
+                                         :conversation  conversation
+                                         :tool-registry (agent-test-registry)
+                                         :worker        nil)))
+        (test-assert (zerop (agent--prepare-provider-request agent))
+                     "a served unknown-lifetime prefix stays unbounded before threshold compaction")
+        (test-call-with-function-replacements
+         (list (list 'agent-should-compact-p
+                     (lambda (agent)
+                       (declare (ignore agent))
+                       (null (scripted-provider-compaction-flags provider)))))
+         (lambda () (agent-run-user-turn agent "next question")))
+        (test-assert (equal '(t nil) (reverse (scripted-provider-compaction-flags provider)))
+                     "threshold compaction precedes the ordinary request")
+        (let* ((items (append (first (reverse (scripted-provider-input-snapshots provider)))
+                              (conversation-input-items conversation)))
+               (calls (loop for item in items
+                            when (clinker-transcript:function-call-item-p item)
+                              collect (json-get item "call_id"))))
+          (test-assert (equal '("failed-earlier" "succeeded" "failed-current") calls)
+                       "compaction receives every failed and successful exchange")
+          (test-assert (find-if (lambda (item)
+                                  (let ((output (json-get item "output")))
+                                    (and (stringp output) (= 10000 (length output)))))
+                                items)
+                       "threshold compaction receives the intact served oversized evidence")
+          (test-assert (find :summary
+                             (conversation--read-records (conversation-pathname conversation))
+                             :key #'first)
+                       "threshold compaction publishes a durable checkpoint")))))
   nil)
 
 (-> test-precompaction-retention-policy () null)

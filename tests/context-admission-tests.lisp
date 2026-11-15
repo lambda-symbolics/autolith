@@ -183,54 +183,47 @@
 (-> test-context-admission-checkpoint-transaction () null)
 (defun test-context-admission-checkpoint-transaction ()
   "Reject oversized final checkpoints before changing durable or projected history."
-  (dolist (native-p '(nil t))
-    (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
-                            ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
-      (with-test-configuration (configuration)
-        (let* ((conversation (conversation-create configuration))
-               (provider     (make-instance 'context-admission-test-provider
-                                            :configuration configuration))
-               (window       (list (json-object "type" "compaction"
-                                                "encrypted_content" "private-checkpoint"))))
-          (conversation-append-user-message conversation "Original exact request.")
-          (let ((capture (conversation-compaction-capture conversation)))
-            (conversation-append-user-message conversation
-                                              (make-string 20000 :initial-element #\a))
-            (let ((before    (copy-list (conversation-input-items conversation)))
-                  (sequence  (conversation-next-sequence conversation))
-                  (checked-p nil))
-              (flet ((validate (candidate)
-                       "Admit the full candidate, including arrivals, before publication."
-                       (setf checked-p t)
-                       (test-assert (find (second before)
-                                          (conversation-input-items candidate) :test #'eq)
-                                    "the validator sees the exact chronological arrival")
-                       (provider-check-request-context
-                        provider (json-object "input"
-                                              (coerce (conversation-input-items candidate) 'vector)))))
-                (test-assert
-                 (handler-case
-                     (progn
-                       (if native-p
-                           (conversation-append-native-compaction
-                            conversation window :family ':responses :continuation (make-continuation :intent "Small handoff.")
-                            :compaction capture :validate-projection #'validate)
-                           (conversation-append-summary
-                            conversation (make-continuation :intent "Small handoff.") :compaction capture
-                            :validate-projection                                                  #'validate))
-                       nil)
-                   (provider-context-budget-error () t))
-                 "oversized candidate admission aborts publication"))
-              (test-assert checked-p "publication invoked the admission callback")
-              (test-assert (and (= sequence (conversation-next-sequence conversation))
-                                (equal before (conversation-input-items conversation)))
-                           "rejection preserves the full projection and durable sequence")
-              (let ((loaded (conversation-load-by-id
-                             configuration (conversation-identifier conversation))))
-                (test-assert
-                 (equal (mapcar #'json-encode before)
-                        (mapcar #'json-encode (conversation-input-items loaded)))
-                 "reload sees no rejected checkpoint"))))))))
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration))
+             (provider     (make-instance 'context-admission-test-provider
+                                          :configuration configuration)))
+        (conversation-append-user-message conversation "Original exact request.")
+        (let ((capture (conversation-compaction-capture conversation)))
+          (conversation-append-user-message conversation
+                                            (make-string 20000 :initial-element #\a))
+          (let ((before    (copy-list (conversation-input-items conversation)))
+                (sequence  (conversation-next-sequence conversation))
+                (checked-p nil))
+            (flet ((validate (candidate)
+                     "Admit the full candidate, including arrivals, before publication."
+                     (setf checked-p t)
+                     (test-assert (find (second before)
+                                        (conversation-input-items candidate) :test #'eq)
+                                  "the validator sees the exact chronological arrival")
+                     (provider-check-request-context
+                      provider (json-object "input"
+                                            (coerce (conversation-input-items candidate) 'vector)))))
+              (test-assert
+               (handler-case
+                   (progn
+                     (conversation-append-summary
+                      conversation (make-continuation :intent "Small handoff.") :compaction capture
+                      :validate-projection                                                  #'validate)
+                     nil)
+                 (provider-context-budget-error () t))
+               "oversized candidate admission aborts publication"))
+            (test-assert checked-p "publication invoked the admission callback")
+            (test-assert (and (= sequence (conversation-next-sequence conversation))
+                              (equal before (conversation-input-items conversation)))
+                         "rejection preserves the full projection and durable sequence")
+            (let ((loaded (conversation-load-by-id
+                           configuration (conversation-identifier conversation))))
+              (test-assert
+               (equal (mapcar #'json-encode before)
+                      (mapcar #'json-encode (conversation-input-items loaded)))
+               "reload sees no rejected checkpoint")))))))
   nil)
 
 (-> test-context-admission-mission-large-budget () null)
@@ -294,53 +287,40 @@
   (declare (ignore provider))
   t)
 
-(defmethod provider-open-native-compaction
-    ((provider context-admission-test-provider) (request hash-table)
-     &key credentials conversation)
-  "Capture admitted native compaction without opening a transport."
-  (declare (ignore credentials conversation))
-  (setf (context-admission-test-provider-last-request provider) request
-        (context-admission-test-provider-last-ceiling provider) *provider-maximum-output-tokens*)
-  (incf (context-admission-test-provider-network-calls provider))
-  (values nil 200 nil))
-
 (-> test-context-admission-mission-wire-ceiling () null)
 (defun test-context-admission-mission-wire-ceiling ()
   "Measure serialized cap overhead and finalize ordinary and compaction requests."
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
                           ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
     (with-test-configuration (configuration)
-      (dolist (native-p '(nil t))
-        (let* ((provider                            (make-instance 'context-admission-capped-test-provider
-                                                                   :configuration configuration))
-               (request                             (json-object "input" (make-string 1000 :initial-element #\x)))
-               (original                            (json-encode request))
-               (*provider-mission-output-allowance* most-positive-fixnum)
-               (observed                            nil)
-               (*provider-cache-request-prefix*     '(:fixture t))
-               (*provider-cache-prefix-function*
-                 (lambda (prefix) (setf observed prefix))))
-          (funcall (if native-p #'provider-open-native-compaction #'provider-open-response-stream)
-                   provider request)
-          (let* ((final-request (context-admission-test-provider-last-request provider))
-                 (ceiling       (context-admission-test-provider-last-ceiling provider))
-                 (wire          (json-get final-request "max_output_tokens"))
-                 (input         (provider-request-input-token-estimate provider final-request)))
-            (test-assert (= 1 (context-admission-test-provider-network-calls provider))
-                         "exactly one finalized request reaches the inert transport")
-            (test-assert (and (plusp ceiling) (= wire ceiling)
-                              (<= (+ input (max 256 ceiling)) 5000))
-                         "the actual wire ceiling fits including its own serialized overhead")
-            (test-assert (> input (provider-request-input-token-estimate provider request))
-                         "the cap field is included in the input estimate")
-            (test-assert (equal original (json-encode request))
-                         "the caller's original request is not changed")
-            (unless native-p
-              (test-assert (equal (getf observed :wire)
-                                  (provider-cache-wire-plan
-                                   final-request
-                                   :volatile-items (getf observed :volatile-items 0)))
-                           "cache observation fingerprints the finalized wire request")))))))
+      (let* ((provider                            (make-instance 'context-admission-capped-test-provider
+                                                                 :configuration configuration))
+             (request                             (json-object "input" (make-string 1000 :initial-element #\x)))
+             (original                            (json-encode request))
+             (*provider-mission-output-allowance* most-positive-fixnum)
+             (observed                            nil)
+             (*provider-cache-request-prefix*     '(:fixture t))
+             (*provider-cache-prefix-function*
+               (lambda (prefix) (setf observed prefix))))
+        (provider-open-response-stream provider request)
+        (let* ((final-request (context-admission-test-provider-last-request provider))
+               (ceiling       (context-admission-test-provider-last-ceiling provider))
+               (wire          (json-get final-request "max_output_tokens"))
+               (input         (provider-request-input-token-estimate provider final-request)))
+          (test-assert (= 1 (context-admission-test-provider-network-calls provider))
+                       "exactly one finalized request reaches the inert transport")
+          (test-assert (and (plusp ceiling) (= wire ceiling)
+                            (<= (+ input (max 256 ceiling)) 5000))
+                       "the actual wire ceiling fits including its own serialized overhead")
+          (test-assert (> input (provider-request-input-token-estimate provider request))
+                       "the cap field is included in the input estimate")
+          (test-assert (equal original (json-encode request))
+                       "the caller's original request is not changed")
+          (test-assert (equal (getf observed :wire)
+                              (provider-cache-wire-plan
+                               final-request
+                               :volatile-items (getf observed :volatile-items 0)))
+                       "cache observation fingerprints the finalized wire request")))))
   nil)
 
 (-> test-context-admission-mission-explicit-policy () null)
@@ -464,53 +444,51 @@
 
 (-> test-context-admission-mission-refusal-settlement () null)
 (defun test-context-admission-mission-refusal-settlement ()
-  "Settle locally refused stream, compaction and reviewer requests as known zero."
+  "Settle locally refused stream and reviewer requests as known zero."
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
                           ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
-    (dolist (native-p '(nil t))
-      (dolist (reviewer-p '(nil t))
-        (with-test-configuration (configuration)
-          (let* ((provider     (make-instance 'context-admission-test-provider :configuration configuration))
-                 (application  (mission-inference-test--application configuration provider))
-                 (conversation (application-conversation application))
-                 (reviewer     (when reviewer-p
-                                 (list :turn-limit 4 :token-limit 100 :turns-used 0 :tokens-used 0))))
-            (application-mission-start application (mission-test--specification :turns 4 :tokens 100))
-            (unwind-protect
-                 (let* ((context          (mission-context-find conversation))
-                        (goal             (mission-context-goal context))
-                        (original-refusal nil))
-                   (test-assert
-                    (handler-case
-                        (mission--account-inference
-                         context
-                         (lambda ()
-                           (handler-bind ((provider-context-budget-error
-                                            (lambda (condition) (setf original-refusal condition))))
-                             (funcall (if native-p #'provider-open-native-compaction #'provider-open-response-stream)
-                                      provider (json-object "max_output_tokens" 6000))))
-                         (lambda (results) (declare (ignore results)) nil)
-                         :allowance reviewer)
-                      (error (condition)
-                        (and (typep condition 'provider-context-budget-error)
-                             (eq condition original-refusal)
-                             (= 6000 (provider-context-budget-error-output-reserve condition))
-                             (= 5000 (provider-context-budget-error-context-window condition))
-                             (plusp (provider-context-budget-error-estimated-input-tokens condition)))))
-                    "the accounted request is refused by ordinary admission")
-                   (test-assert (zerop (context-admission-test-provider-network-calls provider))
-                                "local refusal never enters the transport")
-                   (dolist (limit (remove nil (list goal reviewer)))
-                     (test-assert (zerop (getf limit :unknown-usage 0))
-                                  "the local refusal has known zero usage")
-                     (test-assert (and (zerop (getf limit :tokens-used))
-                                       (= 1 (getf limit :turns-used))
-                                       (zerop (getf limit :tokens-reserved))
-                                       (zerop (getf limit :requests-outstanding)))
-                                  "settlement releases once without refunding the admitted turn"))
-                   (test-assert (eq ':active (getf goal :status))
-                                "known zero usage does not quarantine the mission"))
-              (mission-detach application)))))))
+    (dolist (reviewer-p '(nil t))
+      (with-test-configuration (configuration)
+        (let* ((provider     (make-instance 'context-admission-test-provider :configuration configuration))
+               (application  (mission-inference-test--application configuration provider))
+               (conversation (application-conversation application))
+               (reviewer     (when reviewer-p
+                               (list :turn-limit 4 :token-limit 100 :turns-used 0 :tokens-used 0))))
+          (application-mission-start application (mission-test--specification :turns 4 :tokens 100))
+          (unwind-protect
+               (let* ((context          (mission-context-find conversation))
+                      (goal             (mission-context-goal context))
+                      (original-refusal nil))
+                 (test-assert
+                  (handler-case
+                      (mission--account-inference
+                       context
+                       (lambda ()
+                         (handler-bind ((provider-context-budget-error
+                                          (lambda (condition) (setf original-refusal condition))))
+                           (provider-open-response-stream provider (json-object "max_output_tokens" 6000))))
+                       (lambda (results) (declare (ignore results)) nil)
+                       :allowance reviewer)
+                    (error (condition)
+                      (and (typep condition 'provider-context-budget-error)
+                           (eq condition original-refusal)
+                           (= 6000 (provider-context-budget-error-output-reserve condition))
+                           (= 5000 (provider-context-budget-error-context-window condition))
+                           (plusp (provider-context-budget-error-estimated-input-tokens condition)))))
+                  "the accounted request is refused by ordinary admission")
+                 (test-assert (zerop (context-admission-test-provider-network-calls provider))
+                              "local refusal never enters the transport")
+                 (dolist (limit (remove nil (list goal reviewer)))
+                   (test-assert (zerop (getf limit :unknown-usage 0))
+                                "the local refusal has known zero usage")
+                   (test-assert (and (zerop (getf limit :tokens-used))
+                                     (= 1 (getf limit :turns-used))
+                                     (zerop (getf limit :tokens-reserved))
+                                     (zerop (getf limit :requests-outstanding)))
+                                "settlement releases once without refunding the admitted turn"))
+                 (test-assert (eq ':active (getf goal :status))
+                              "known zero usage does not quarantine the mission"))
+            (mission-detach application))))))
   nil)
 
 (-> test-context-admission-mission-refusal-proof () null)
@@ -518,54 +496,53 @@
   "Require admission origin and no earlier admitted request before certifying zero."
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
                           ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
-    (dolist (native-p '(nil t))
-      (dolist (mode '(:synthetic :outside-boundary :after-admission :second-refusal :caught-refusal))
-        (with-test-configuration (configuration)
-          (let* ((provider     (make-instance 'context-admission-test-provider :configuration configuration))
-                 (application  (mission-inference-test--application configuration provider))
-                 (conversation (application-conversation application))
-                 (open         (if native-p #'provider-open-native-compaction #'provider-open-response-stream))
-                 (large        (json-object "max_output_tokens" 6000))
-                 (entered-p    (member mode '(:after-admission :second-refusal))))
-            (application-mission-start application (mission-test--specification :turns 4 :tokens 100))
-            (unwind-protect
-                 (let* ((context (mission-context-find conversation))
-                        (goal    (mission-context-goal context)))
-                   (test-assert
-                    (handler-case
-                        (mission--account-inference
-                         context
-                         (lambda ()
-                           (when entered-p (funcall open provider (json-object)))
-                           (case mode
-                             (:outside-boundary
-                              (provider-check-request-context provider large))
-                             (:second-refusal
-                              (funcall open provider large))
-                             (:caught-refusal
-                              (handler-case (funcall open provider large)
-                                (provider-context-budget-error () nil))
-                              (error "An unrelated later failure."))
-                             (t
-                              (error 'provider-context-budget-error
-                                     :message "Synthetic admission-like failure."
-                                     :estimated-input-tokens 6000 :output-reserve 256
-                                     :context-window 5000 :non-text-estimate-p nil))))
-                         (lambda (results) (declare (ignore results)) nil))
-                      (mission-error () t))
-                    "the supervised failure propagates")
-                   (test-assert (= (if entered-p 1 0)
-                                   (context-admission-test-provider-network-calls provider))
-                                "the negative control records its actual transport entries")
-                   (test-assert (and (= 1 (getf goal :unknown-usage))
-                                     (eq ':blocked (getf goal :status)))
-                                "a condition name or later local refusal cannot prove zero usage")
-                   (test-assert (and (zerop (getf goal :tokens-used))
-                                     (= 1 (getf goal :turns-used))
-                                     (zerop (getf goal :tokens-reserved))
-                                     (zerop (getf goal :requests-outstanding)))
-                                "uncertain settlement releases its reservation exactly once"))
-              (mission-detach application)))))))
+    (dolist (mode '(:synthetic :outside-boundary :after-admission :second-refusal :caught-refusal))
+      (with-test-configuration (configuration)
+        (let* ((provider     (make-instance 'context-admission-test-provider :configuration configuration))
+               (application  (mission-inference-test--application configuration provider))
+               (conversation (application-conversation application))
+               (open         #'provider-open-response-stream)
+               (large        (json-object "max_output_tokens" 6000))
+               (entered-p    (member mode '(:after-admission :second-refusal))))
+          (application-mission-start application (mission-test--specification :turns 4 :tokens 100))
+          (unwind-protect
+               (let* ((context (mission-context-find conversation))
+                      (goal    (mission-context-goal context)))
+                 (test-assert
+                  (handler-case
+                      (mission--account-inference
+                       context
+                       (lambda ()
+                         (when entered-p (funcall open provider (json-object)))
+                         (case mode
+                           (:outside-boundary
+                            (provider-check-request-context provider large))
+                           (:second-refusal
+                            (funcall open provider large))
+                           (:caught-refusal
+                            (handler-case (funcall open provider large)
+                              (provider-context-budget-error () nil))
+                            (error "An unrelated later failure."))
+                           (t
+                            (error 'provider-context-budget-error
+                                   :message "Synthetic admission-like failure."
+                                   :estimated-input-tokens 6000 :output-reserve 256
+                                   :context-window 5000 :non-text-estimate-p nil))))
+                       (lambda (results) (declare (ignore results)) nil))
+                    (mission-error () t))
+                  "the supervised failure propagates")
+                 (test-assert (= (if entered-p 1 0)
+                                 (context-admission-test-provider-network-calls provider))
+                              "the negative control records its actual transport entries")
+                 (test-assert (and (= 1 (getf goal :unknown-usage))
+                                   (eq ':blocked (getf goal :status)))
+                              "a condition name or later local refusal cannot prove zero usage")
+                 (test-assert (and (zerop (getf goal :tokens-used))
+                                   (= 1 (getf goal :turns-used))
+                                   (zerop (getf goal :tokens-reserved))
+                                   (zerop (getf goal :requests-outstanding)))
+                              "uncertain settlement releases its reservation exactly once"))
+            (mission-detach application))))))
   nil)
 
 (-> test-context-admission-mission-code-assist-envelope () null)
@@ -1085,30 +1062,19 @@
        (test-assert (conversation-context-usage-sample conversation)
                     "ordinary provider metadata does not discard the latest measured anchor")
        (let ((sample (copy-tree (conversation-context-usage-sample conversation))))
-         (loop for kind in '(:native :summary)
-               for request-number from 2
-               do (agent--note-compaction-request
-                   agent (make-instance 'agent-observer) :request-number request-number
-                   :kind kind :usage (json-object "input_tokens" 1200 "output_tokens" 200))
-                  (test-assert (equal sample (conversation-context-usage-sample conversation))
-                               "compaction request metering preserves the live ordinary anchor")
-                  (test-assert (equal sample (conversation-context-usage-sample
-                                              (conversation-load (conversation-pathname conversation))))
-                               "disk replay preserves the ordinary anchor after compaction metering")))
+         (agent--note-compaction-request
+          agent (make-instance 'agent-observer) :request-number 2
+          :usage                                                (json-object "input_tokens" 1200 "output_tokens" 200))
+         (test-assert (equal sample (conversation-context-usage-sample conversation))
+                      "compaction request metering preserves the live ordinary anchor")
+         (test-assert (equal sample (conversation-context-usage-sample
+                                     (conversation-load (conversation-pathname conversation))))
+                      "disk replay preserves the ordinary anchor after compaction metering"))
        (conversation-append-summary conversation (make-continuation :intent "A replacement context."))
        (test-assert (null (conversation-context-usage-sample conversation)) "summary publication invalidates the sample")
        (test-assert (null (conversation-context-usage-sample
                            (conversation-load (conversation-pathname conversation))))
                     "disk replay invalidates the sample at summary publication")
-       (context-admission-test--measure agent :envelope-length 64)
-       (conversation-append-native-compaction
-        conversation (list (json-object "type" "compaction" "encrypted_content" "checkpoint"))
-        :family (provider-family provider) :continuation (make-continuation :intent "A native replacement context."))
-       (test-assert (null (conversation-context-usage-sample conversation))
-                    "native checkpoint publication invalidates the live sample")
-       (test-assert (null (conversation-context-usage-sample
-                           (conversation-load (conversation-pathname conversation))))
-                    "disk replay invalidates the sample at native checkpoint publication")
        (context-admission-test--measure agent :envelope-length 64)
        (test-assert (conversation-context-usage-sample
                      (conversation-load (conversation-pathname conversation)))
