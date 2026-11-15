@@ -51,7 +51,7 @@
              (provider                                  (make-instance 'compaction-recovery-test-provider
                                                          :configuration configuration
                                                          :results       (list (agent-test-result
-                                                                               "summary" (list (agent-test-compaction-message))))))
+                                                                               "summary" (list (agent-test-checkpoint-call))))))
              (agent                                     (agent-create :configuration configuration :conversation conversation
                                                          :provider provider :tool-registry (make-instance 'tool-registry)))
              (*conversation-compaction-tail-characters* 256)
@@ -84,7 +84,7 @@
              (provider                                  (make-instance 'compaction-recovery-test-provider
                                                          :configuration configuration
                                                          :results       (list (agent-test-result
-                                                                               "summary" (list (agent-test-compaction-message))))))
+                                                                               "summary" (list (agent-test-checkpoint-call))))))
              (agent                                     (agent-create :configuration configuration :conversation conversation
                                                          :provider provider :tool-registry (make-instance 'tool-registry)))
              (*conversation-compaction-tail-characters* 256)
@@ -432,7 +432,7 @@
       (dolist (mode '(:known :unknown :budget))
         (let* ((provider                                  (make-instance 'compaction-recovery-accounting-test-provider
                                                            :configuration configuration :summary-mode mode :native-p t
-                                                           :results (list (agent-test-result "summary" (list (agent-test-compaction-message))
+                                                           :results (list (agent-test-result "summary" (list (agent-test-checkpoint-call))
                                                                                             :usage (json-object "input_tokens" 1 "output_tokens" 1)))))
                (application                               (mission-inference-test--application configuration provider))
                (conversation                              (application-conversation application))
@@ -499,7 +499,7 @@
              (provider     (make-instance 'compaction-recovery-test-provider
                                           :configuration configuration
                                           :results       (list (agent-test-result
-                                                                "summary" (list (agent-test-compaction-message))))))
+                                                                "summary" (list (agent-test-checkpoint-call))))))
              (agent        (agent-create :configuration configuration :conversation conversation
                                           :provider provider :tool-registry (make-instance 'tool-registry)))
              (state        (make-compaction-recovery))
@@ -635,7 +635,7 @@
                                                                        :credential-manager (provider-credential-manager (provider-create configuration))
                                                                        :window             (when permit-p 50000)
                                                                        :results            (list (agent-test-result
-                                                                                                  "summary" (list (agent-test-compaction-message))
+                                                                                                  "summary" (list (agent-test-checkpoint-call))
                                                                                                   :usage (json-object "input_tokens" 7 "output_tokens" 3))
                                                                                                  (agent-test-result
                                                                                                   "answer" (list (agent-test-message "OK"))
@@ -745,7 +745,7 @@
                                              :credential-manager (provider-credential-manager (provider-create configuration))
                                              :status             (if (eq status :local) 404 status)
                                              :results            (list (agent-test-result
-                                                                        "summary" (list (agent-test-compaction-message))
+                                                                        "summary" (list (agent-test-checkpoint-call))
                                                                         :usage (json-object "input_tokens" 7 "output_tokens" 3)))))
                (application   (mission-inference-test--application configuration provider))
                (source        (application-conversation application))
@@ -996,7 +996,7 @@
              (provider     (make-instance 'compaction-recovery-test-provider
                                           :configuration configuration
                                           :results       (list (agent-test-result
-                                                                "summary" (list (agent-test-compaction-message))
+                                                                "summary" (list (agent-test-checkpoint-call))
                                                                 :usage (json-object "input_tokens" 120 "output_tokens" 30)))))
              (items        (compaction-image-tests--items 100000))
              (source       (conversation-compaction-summary-view conversation items))
@@ -1155,7 +1155,7 @@
                                          :configuration      configuration
                                          :credential-manager (provider-credential-manager (provider-create configuration))
                                          :results            (list (agent-test-result
-                                                                    "summary" (list (agent-test-compaction-message))
+                                                                    "summary" (list (agent-test-checkpoint-call))
                                                                     :usage (json-object "input_tokens" 100 "output_tokens" 50))
                                                                    (agent-test-result
                                                                     "answer" (list (agent-test-message "Resumed answer."))
@@ -1703,7 +1703,7 @@
                                                :event-callback #'identity :compaction-p t)))
             (test-assert (equal "summary" (provider-result-response-id result)) "Production decoding returns the completed response identity.")
             (test-assert (equal (provider-result-assistant-text result)
-                                (provider-result-assistant-text (agent-test-result "expected" (list (agent-test-compaction-message)))))
+                                (provider-result-assistant-text (agent-test-result "expected" (list (agent-test-checkpoint-call)))))
                          "Production decoding reconstructs the complete structured summary.")
             (test-assert (= 100 (json-get (provider-result-usage result) "input_tokens")) "Production decoding retains metered input usage.")
             (test-assert (= 50 (json-get (provider-result-usage result) "output_tokens")) "Production decoding retains metered output usage."))))
@@ -1866,7 +1866,7 @@
                           :input-count         (count "Actual terminal user work." (conversation-input-history loaded) :test #'equal))))
             (when reuse-p
               (setf (expanded-native-results provider)
-                    (list (agent-test-result "reuse-summary" (list (agent-test-compaction-message))
+                    (list (agent-test-result "reuse-summary" (list (agent-test-checkpoint-call))
                                              :usage (json-object "input_tokens" 100 "output_tokens" 50))
                           (agent-test-result "reuse-answer" (list (agent-test-message "Later actual answer."))
                                              :usage (json-object "input_tokens" 20 "output_tokens" 10))))
@@ -2055,7 +2055,7 @@
               (*idle-compaction-clock-function* (lambda () 1180))
               (posts 0) (summaries 0) (events nil) (failure nil) (result nil) (completion-id nil))
          (setf (expanded-native-results provider)
-               (list (agent-test-result "matrix-summary" (list (agent-test-compaction-message))
+               (list (agent-test-result "matrix-summary" (list (agent-test-checkpoint-call))
                                         :usage (json-object "input_tokens" 100 "output_tokens" 50))
                      (agent-test-result "matrix-answer" (list (agent-test-message "Matrix ordinary answer."))
                                         :usage (json-object "input_tokens" 20 "output_tokens" 10))))

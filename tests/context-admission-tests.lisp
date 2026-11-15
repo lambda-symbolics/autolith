@@ -107,7 +107,7 @@
            (conversation-append-user-message conversation (make-string 20000 :initial-element #\u))
            (test-assert (agent-should-compact-p agent)
                         "new user input crosses the soft threshold before any usage response")
-           (conversation-append-summary conversation "small checkpoint")
+           (conversation-append-summary conversation (make-continuation :intent "small checkpoint"))
            (test-assert (not (agent-should-compact-p agent))
                         "the replacement is measured instead of trusting the reset usage counter")
            (conversation-append-provider-item
@@ -146,7 +146,11 @@
                      "admission rejection preserves the original conversation projection")
         (test-assert (zerop (conversation-last-total-tokens conversation))
                      "local estimates are not recorded as paid usage")
-        (conversation-append-summary conversation large)
+        (conversation-append-summary
+         conversation
+         (make-continuation :intent     "Continue."
+                            :next       (list :text "Read the record." :refs '("r"))
+                            :references (list (list :handle "r" :kind ':message :label large))))
         (test-assert
          (handler-case
              (progn
@@ -209,11 +213,11 @@
                      (progn
                        (if native-p
                            (conversation-append-native-compaction
-                            conversation window :family ':responses :summary "Small handoff."
+                            conversation window :family ':responses :continuation (make-continuation :intent "Small handoff.")
                             :compaction capture :validate-projection #'validate)
                            (conversation-append-summary
-                            conversation "Small handoff." :compaction capture
-                            :validate-projection                      #'validate))
+                            conversation (make-continuation :intent "Small handoff.") :compaction capture
+                            :validate-projection                                                  #'validate))
                        nil)
                    (provider-context-budget-error () t))
                  "oversized candidate admission aborts publication"))
@@ -779,7 +783,7 @@
                                      (equal summary (mission-task-job-accounting-summary job)))
                                 "duplicate completion observation makes no request or second charge")
                    (application--record-goal application)
-                   (conversation-append-summary conversation "Synthetic compaction after bounded failure.")
+                   (conversation-append-summary conversation (make-continuation :intent "Synthetic compaction after bounded failure."))
                    (let* ((loaded   (conversation-load (conversation-pathname conversation)))
                           (restored (progn (application--load-goal application)
                                            (application-goal application))))
@@ -1091,7 +1095,7 @@
                   (test-assert (equal sample (conversation-context-usage-sample
                                               (conversation-load (conversation-pathname conversation))))
                                "disk replay preserves the ordinary anchor after compaction metering")))
-       (conversation-append-summary conversation "A replacement context.")
+       (conversation-append-summary conversation (make-continuation :intent "A replacement context."))
        (test-assert (null (conversation-context-usage-sample conversation)) "summary publication invalidates the sample")
        (test-assert (null (conversation-context-usage-sample
                            (conversation-load (conversation-pathname conversation))))
@@ -1099,7 +1103,7 @@
        (context-admission-test--measure agent :envelope-length 64)
        (conversation-append-native-compaction
         conversation (list (json-object "type" "compaction" "encrypted_content" "checkpoint"))
-        :family (provider-family provider) :summary "A native replacement context.")
+        :family (provider-family provider) :continuation (make-continuation :intent "A native replacement context."))
        (test-assert (null (conversation-context-usage-sample conversation))
                     "native checkpoint publication invalidates the live sample")
        (test-assert (null (conversation-context-usage-sample

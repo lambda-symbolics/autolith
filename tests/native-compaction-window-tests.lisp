@@ -73,7 +73,7 @@
 
 (-> test-native-compaction-window-replay () null)
 (defun test-native-compaction-window-replay ()
-  "Replay full native windows and project portable handoffs across provider families."
+  "Replay full native windows and project checkpoints across provider families."
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
            (window       (list (native-compaction-tests--opaque "first")
@@ -82,7 +82,7 @@
                                (native-compaction-tests--opaque "last"))))
       (conversation-append-user-message conversation "original")
       (conversation-append-native-compaction conversation window
-                                             :family ':responses :summary "portable handoff")
+                                             :family ':responses :continuation (make-continuation :intent "portable handoff"))
       (let ((loaded (conversation-load-by-id configuration (conversation-identifier conversation))))
         (dolist (family '(:responses :messages))
           (let ((before (conversation-input-items-for-family conversation family))
@@ -90,11 +90,10 @@
             (test-assert (equal (mapcar #'json-encode before) (mapcar #'json-encode after))
                          "reload reproduces the exact family projection")
             (test-assert
-             (if (eq family ':responses)
-                 (equal (mapcar #'json-encode window) (mapcar #'json-encode after))
-                 (and (= 1 (length after))
-                      (test-object-contains-string-p after "portable handoff")))
-             "the source family receives the full ordered window and other families receive only the portable handoff")
+             (and (test-object-contains-string-p (last after) "portable handoff")
+                  (equal (mapcar #'json-encode (butlast after))
+                         (and (eq family ':responses) (mapcar #'json-encode window))))
+             "the source family receives the full ordered window before the checkpoint and other families only the checkpoint")
             (test-assert (= (if (eq family ':responses) 2 0)
                             (count-if #'native-compaction-item-p after))
                          "all opaque items belong exclusively to their originating family"))))
@@ -105,7 +104,18 @@
                       :wire-json         (json-encode (native-compaction-tests--opaque "legacy"))
                       :summary           "legacy handoff"))
         (let ((loaded (conversation-load-by-id configuration (conversation-identifier legacy))))
-          (test-assert (= 1 (count-if #'native-compaction-item-p
-                                      (conversation-input-items-for-family loaded ':responses)))
-                       "legacy one-object archives are readable")))))
+          (test-assert (equal '(1 0)
+                              (mapcar (lambda (family)
+                                        (count-if #'native-compaction-item-p
+                                                  (conversation-input-items-for-family
+                                                   loaded family)))
+                                      '(:responses :messages)))
+                       "legacy one-object archives are readable")
+          (test-assert (equal '(nil t)
+                              (mapcar (lambda (family)
+                                        (test-object-contains-string-p
+                                         (conversation-input-items-for-family loaded family)
+                                         "legacy handoff"))
+                                      '(:responses :messages)))
+                       "a legacy text handoff stays hidden from the family that owns the window")))))
   nil)

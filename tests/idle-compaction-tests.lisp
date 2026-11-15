@@ -5,7 +5,7 @@
 (-> idle-compaction-tests--fixture (function &key (:results list)) null)
 (defun idle-compaction-tests--fixture
     (function &key (results (list (agent-test-result
-                                   "idle-summary" (list (agent-test-compaction-message))
+                                   "idle-summary" (list (agent-test-checkpoint-call))
                                    :turn-completion ':end))))
   "Run FUNCTION with a real recorded application, controller, and scripted provider."
   (with-test-configuration (configuration)
@@ -202,7 +202,7 @@
 
 (-> test-idle-compaction-failure () null)
 (defun test-idle-compaction-failure ()
-  "Leave history intact after a failed provider response without retrying idle inference."
+  "Leave history intact after a refused request without retrying idle inference."
   (idle-compaction-tests--fixture
    (lambda (application controller configuration)
      (declare (ignore configuration))
@@ -215,10 +215,10 @@
        (test-assert (not (find :summary
                                (conversation-records-newest (application-conversation application) 20)
                                :key #'first))
-                    "a failed summary is not published")
+                    "a refused checkpoint is not published")
        (test-assert (null (application-idle-compaction-delay application))
                     "failure consumes the opportunity rather than busy-retrying")))
-   :results (list (mission-test--result "")))
+   :results (list (agent-test-result "refusal" (list (agent-test-refusal)))))
   nil)
 
 (-> test-idle-compaction-deadline-wakeup () null)

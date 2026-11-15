@@ -50,7 +50,7 @@
      (append-record
       (lambda ()
         (conversation-append-summary
-         conversation "The summary keeps the compaction-marker.")))
+         conversation (make-continuation :intent "The summary keeps the compaction-marker."))))
      :quoted
      (append-record
       (lambda ()

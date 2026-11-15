@@ -59,7 +59,7 @@
   test-compaction-final-admission-trigger
   test-compaction-mission-admission-trigger
   test-compaction-admission-recovery-bounds
-  test-compaction-summary-acceptance
+  test-compaction-submission-acceptance
   test-compaction-native-paid-rejection
   test-compaction-next-request-admission
   test-compaction-repeated-continuation-accounting)
@@ -70,7 +70,9 @@
 
 (define-test-suite continuation
   test-continuation-validity
-  test-continuation-rendering)
+  test-continuation-rendering
+  test-continuation-replay
+  test-continuation-adoption)
 
 (define-test-suite compaction-tail
   test-compaction-tail-bounds-recent-user-and-expands-groups
@@ -1399,9 +1401,9 @@
   test-agent-unbounded-tool-calls
   test-agent-default-turn-has-no-step-guillotine
   test-agent-skill-provider-barrier
-  test-agent-compaction-missing-summary
-  test-agent-compaction-tool-call-follow-up
-  test-agent-compaction-corrects-rejected-handoff
+  test-agent-compaction-rejected-submission
+  test-agent-compaction-failed-generation
+  test-agent-compaction-without-submission
   test-precompaction-before-compaction
   test-agent-compaction
   test-agent-native-compaction
@@ -1704,7 +1706,6 @@
   test-presentation-configuration-isolation
   test-operation-request-turn
   test-application-transcript-actions
-  test-application-compaction-bug-report
   test-application-mermaid-transcript
   test-application-mermaid-streaming
   test-application-command-tips

@@ -348,7 +348,7 @@ match a new library version is never the correct repair."
                 (second-target
                   (conversation-identifier-migration--conversation-path
                    configuration second-new)))
-           (conversation-append-summary first-conversation "migration checkpoint")
+           (conversation-append-summary first-conversation (make-continuation :intent "migration checkpoint"))
            (conversation-identifier-migration--publish-conversations
             configuration entries)
            (let* ((older-target
@@ -480,7 +480,7 @@ match a new library version is never the correct repair."
        (lambda ()
          (setf conversation (conversation-create configuration))
          (conversation-append-user-message conversation "archived input")
-         (conversation-append-summary conversation "checkpoint")
+         (conversation-append-summary conversation (make-continuation :intent "checkpoint"))
          (conversation-append-user-message conversation "active input")
          (conversation-append-user-operation
           conversation :kind ':lisp :source "(+ 1 2)" :status ':ok :result "3")
@@ -674,7 +674,7 @@ match a new library version is never the correct repair."
          (lambda ()
            (setf conversation (conversation-create configuration))
            (conversation-append-user-message conversation "archived")
-           (conversation-append-summary conversation "checkpoint")
+           (conversation-append-summary conversation (make-continuation :intent "checkpoint"))
            (conversation-append-user-message conversation "active")
            (conversation-picker-search-close conversation)))
         (let* ((identity (conversation-pathname conversation))
@@ -714,7 +714,7 @@ match a new library version is never the correct repair."
                     "cache fallback reads preserve every authoritative source byte"))
                  (let ((new (conversation-load identity)))
                    (conversation-append-user-message new "during outage")
-                   (conversation-append-summary new "outage checkpoint")
+                   (conversation-append-summary new (make-continuation :intent "outage checkpoint"))
                    (conversation-append-user-message new "after rotation")
                    (test-assert
                     (equal (conversation-input-history new)
@@ -815,7 +815,7 @@ match a new library version is never the correct repair."
                     nil)
                 (simple-error () t))
               "fallback history callbacks propagate their own errors")
-             (conversation-append-summary conversation "failure checkpoint")
+             (conversation-append-summary conversation (make-continuation :intent "failure checkpoint"))
              (conversation-append-user-message conversation "after rotation")
              (test-assert
               (equal (conversation-input-history (conversation-load identity))

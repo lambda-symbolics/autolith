@@ -430,9 +430,7 @@ The first SHARED-COUNT durable items also end at their own breakpoint."
   "Project product history and context into a Chat Completions request."
   (let* ((configuration   (provider-configuration provider))
          (request-namespaces
-          (if compaction-p
-              #()
-              (provider-request-tool-namespaces configuration tool-namespaces)))
+          (provider-request-tool-namespaces configuration tool-namespaces))
          (effective-tools (openai-compatible--wire-tools request-namespaces))
          (delivery
           (unless compaction-p

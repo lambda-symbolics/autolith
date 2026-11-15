@@ -341,10 +341,10 @@
                            "content" (vector (json-object "type" "output_text"
                                                           "text" "answer"))))
       (setf (conversation-title source) "Middle title")
-      (conversation-append-summary source "first checkpoint")
+      (conversation-append-summary source (make-continuation :intent "first checkpoint"))
       (conversation-append-user-message source "two")
       (setf (conversation-title source) "Latest title")
-      (conversation-append-summary source "second checkpoint")
+      (conversation-append-summary source (make-continuation :intent "second checkpoint"))
       (conversation-append-user-message source "three")
       (dolist (pathname (conversation-storage-pathnames (conversation-pathname source)))
         (let* ((forms  (conversation--read-records pathname))
@@ -397,7 +397,7 @@
       (let* ((identifier (format nil "tail-~(~A~)" mode))
              (source     (conversation-create configuration :identifier identifier)))
         (conversation-append-user-message source "one")
-        (conversation-append-summary source "checkpoint")
+        (conversation-append-summary source (make-continuation :intent "checkpoint"))
         (conversation-append-user-message source "two")
         (let ((active (conversation-log-pathname source)))
           (with-open-file (stream active :direction       ':output
@@ -432,7 +432,7 @@
            (source (conversation-create configuration :identifier "failure-source")))
       (conversation-append-user-message
        source (user-message-input-create :text "one" :image-pathnames (list image)))
-      (conversation-append-summary source "checkpoint")
+      (conversation-append-summary source (make-continuation :intent "checkpoint"))
       (conversation-append-user-message source "two")
       (dolist (failure '(:initial :append :attachment))
         (let* ((identifier (format nil "failed-~(~A~)" failure))

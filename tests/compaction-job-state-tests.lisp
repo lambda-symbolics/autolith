@@ -84,7 +84,7 @@
                       "configured agents inspect durable undelivered work without a live runtime")
          (test-assert (eq ':undelivered (getf (first (getf snapshot :jobs)) :delivery))
                       "durable ownership remains authoritative when the runtime is absent"))
-       (conversation-append-summary (agent-conversation parent) "No work remains according to this summary.")
+       (conversation-append-summary (agent-conversation parent) (make-continuation :intent "No work remains according to this summary."))
        (test-assert (= 1 (getf (task-unfinished-work-snapshot parent) :total))
                     "a model summary cannot erase authoritative outstanding work")
        (task-completion-deliver parent)
@@ -92,7 +92,7 @@
                     "fixture delivery records the exact execution receipt")
        (test-assert (zerop (getf (task-unfinished-work-snapshot parent) :total))
                     "receipt-backed results disappear from outstanding context")
-       (conversation-append-summary (agent-conversation parent) "Compacted delivered work.")
+       (conversation-append-summary (agent-conversation parent) (make-continuation :intent "Compacted delivered work."))
        (let ((fresh (job-completion-tests--fresh-agent parent configuration)))
          (unwind-protect
               (test-assert (zerop (getf (task-unfinished-work-snapshot fresh) :total))

@@ -3,7 +3,7 @@
 ;;;; -- Verbatim Portable Compaction Tail --
 
 (defparameter *conversation-compaction-tail-characters* 32768
-  "Maximum ordinary recent-tail characters retained beside a portable summary.
+  "Maximum ordinary recent-tail characters retained beside a portable checkpoint.
 
 The current user request and protocol-required call/reasoning groups are retained
 even when larger. Request admission checks the resulting projection before I/O.")
@@ -14,11 +14,9 @@ even when larger. Request admission checks the resulting projection before I/O."
 (-> conversation-compaction--checkpoint-summary-p
     (clinker-transcript:projection json-object) boolean)
 (defun conversation-compaction--checkpoint-summary-p (projection item)
-  "Identify checkpoint handoffs by projection metadata rather than their prose."
-  (not (null (or (gethash item (clinker-transcript:projection-metadata-table
-                                projection ':checkpoint-summary))
-                 (nth-value 1 (gethash item (clinker-transcript:projection-metadata-table
-                                             projection ':handoff-family)))))))
+  "Identify checkpoints by projection metadata rather than their prose."
+  (not (null (gethash item (clinker-transcript:projection-metadata-table
+                            projection ':checkpoint-summary)))))
 
 (-> conversation-compaction--tail-start (clinker-transcript:projection list) (integer 0))
 (defun conversation-compaction--tail-start (projection items)
@@ -43,7 +41,7 @@ even when larger. Request admission checks the resulting projection before I/O."
 
 (-> conversation-compaction-portable-capture (conversation-compaction) conversation-compaction)
 (defun conversation-compaction-portable-capture (capture)
-  "Summarize older history while retaining a verbatim, protocol-valid recent tail.
+  "Checkpoint older history while retaining a verbatim, protocol-valid recent tail.
 
 Keep the latest actual user message even when the ordinary tail starts later in
 its turn. The transcript plan expands the cut for correlated calls and private

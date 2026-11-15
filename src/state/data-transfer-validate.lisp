@@ -71,6 +71,11 @@
                        (= (getf (rest record) :seq) (1+ previous))
                        (typep (getf (rest record) :time) 'timestamp))
             (data-transfer--fail pathname ':invalid "Invalid session record sequence."))
+          (let ((continuation (getf (rest record) :continuation)))
+            (when (and continuation
+                       (conversation--compaction-record-p record)
+                       (not (continuation-p continuation)))
+              (data-transfer--fail pathname ':invalid "Invalid compaction checkpoint.")))
           (setf previous (getf (rest record) :seq)))
         (setf first-p nil))))
   nil)

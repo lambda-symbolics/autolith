@@ -72,6 +72,35 @@ original calls so actual arrivals take precedence when publishing."
                      :plan            plan
                      :cutoff-sequence (1- (conversation-next-sequence conversation))))))
 
+(-> conversation-compaction-evidence-records (conversation-compaction) (values list list))
+(defun conversation-compaction-evidence-records (compaction)
+  "Return the user message and tool result records COMPACTION covers, newest first.
+
+Those are the records the provider context was built from: the ones after the
+latest checkpoint or adopted context, up to COMPACTION's cutoff. The second
+value names that range as the conversation identifier with its first and last
+sequence, or is NIL when the range is empty."
+  (let ((conversation (conversation-compaction--conversation compaction))
+        (cutoff       (conversation-compaction-cutoff-sequence compaction))
+        (records      nil)
+        (start        1))
+    (when (conversation-persisted-p conversation)
+      (conversation--map-picker-records
+       (conversation-pathname conversation)
+       (lambda (record)
+         (destructuring-bind (kind &key seq role &allow-other-keys) record
+           (case kind
+             ((:summary :native-compaction :context-adoption)
+              (setf records nil
+                    start   (1+ seq)))
+             ((:message :tool-result)
+              (when (and (<= seq cutoff)
+                         (or (eq kind ':tool-result) (eq role ':user)))
+                (push record records))))))))
+    (values records
+            (and (<= start cutoff)
+                 (list (conversation-identifier conversation) start cutoff)))))
+
 (-> conversation-compaction--arrivals (conversation conversation-compaction) list)
 (defun conversation-compaction--arrivals (conversation compaction)
   "Return chronological durable arrivals, rejecting a replaced source projection."
@@ -89,17 +118,41 @@ original calls so actual arrivals take precedence when publishing."
              :sequence (conversation-next-sequence conversation)))
     (nthcdr (length source) current)))
 
+(defparameter *conversation-compaction-row-metadata*
+  '(:family :handoff-family :checkpoint-summary :continuation)
+  "The projection metadata a carried context row keeps for its item.")
+
 (-> conversation-compaction--serialize-item
     (clinker-transcript:projection json-object) list)
 (defun conversation-compaction--serialize-item (projection item)
-  "Encode ITEM and its family metadata as one portable carry-forward row."
+  "Encode ITEM and its projection metadata as one portable carry-forward row."
   (let ((row (list :wire-json (json-encode item))))
-    (dolist (key '(:family :handoff-family :checkpoint-summary))
+    (dolist (key *conversation-compaction-row-metadata*)
       (multiple-value-bind (value present-p)
           (gethash item (clinker-transcript:projection-metadata-table projection key))
         (when present-p
           (setf (getf row key) value))))
     row))
+
+(-> conversation-compaction--mark-checkpoint
+    (clinker-transcript:projection json-object (option list)) null)
+(defun conversation-compaction--mark-checkpoint (projection item continuation)
+  "Record in PROJECTION that ITEM is a checkpoint, with its typed CONTINUATION when it has one."
+  (flet ((table (key)
+           "Return PROJECTION's metadata table for KEY."
+           (clinker-transcript:projection-metadata-table projection key)))
+    (setf (gethash item (table ':checkpoint-summary)) t)
+    (when continuation
+      (setf (gethash item (table ':continuation)) continuation)))
+  nil)
+
+(-> conversation-continuation (conversation) (option list))
+(defun conversation-continuation (conversation)
+  "Return the typed checkpoint CONVERSATION's provider context holds, or NIL."
+  (let ((continuations (clinker-transcript:projection-metadata-table
+                        (conversation-projection conversation) ':continuation)))
+    (loop for item in (reverse (conversation-input-items conversation))
+          thereis (gethash item continuations))))
 
 (-> conversation-compaction--publish
     (conversation &key (:compaction conversation-compaction)
@@ -121,6 +174,11 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
              :message  "The compaction job snapshot is invalid or belongs to another conversation."
              :pathname (conversation-pathname conversation)
              :sequence (conversation-next-sequence conversation)))
+    (unless (continuation-p (getf (rest record) :continuation))
+      (error 'conversation-invariant-error
+             :message  "The compaction checkpoint is invalid."
+             :pathname (conversation-pathname conversation)
+             :sequence (conversation-next-sequence conversation)))
     (let* ((arrivals (conversation-compaction--arrivals conversation compaction))
            (projection
              (clinker-transcript:compaction-plan-projection
@@ -134,20 +192,15 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
                      (conversation-ephemeral-input-entries conversation))))
         (conversation-compaction--copy-metadata
          (conversation-projection conversation) projection items)
+        ;; Only the native window belongs to one provider family. Every
+        ;; family reads the checkpoint that follows it.
         (when (eq (first record) :native-compaction)
-          (let ((family  (getf (rest record) :family))
-                (handoff (first (last replacement-items))))
-            (dolist (item replacement-items)
-              (setf (gethash item
-                             (clinker-transcript:projection-metadata-table projection ':family))
-                    family))
-            (setf (gethash handoff
-                           (clinker-transcript:projection-metadata-table projection ':handoff-family))
-                  family)))
-        (when replacement-items
-          (setf (gethash (first (last replacement-items))
-                         (clinker-transcript:projection-metadata-table projection ':checkpoint-summary))
-                t))
+          (dolist (item (butlast replacement-items))
+            (setf (gethash item
+                           (clinker-transcript:projection-metadata-table projection ':family))
+                  (getf (rest record) :family))))
+        (conversation-compaction--mark-checkpoint
+         projection (first (last replacement-items)) (getf (rest record) :continuation))
         (setf (getf (rest record) :through-seq)
               (1- (conversation-next-sequence conversation))
               (getf (rest record) :cutoff-seq)
@@ -173,49 +226,55 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
           published)))))
 
 (-> conversation-append-summary
-    (conversation string &key (:compaction (option conversation-compaction))
-                              (:unfinished-work list) (:validate-projection (option function)) (:recovery list))
+    (conversation list &key (:compaction (option conversation-compaction))
+                            (:unfinished-work list) (:validate-projection (option function)) (:recovery list))
     list)
 (defun conversation-append-summary
-    (conversation content &key compaction unfinished-work validate-projection recovery)
-  "Persist CONTENT with captured protocol context and arrivals as one checkpoint."
-  (conversation-compaction--publish
-   conversation
-   :compaction          (or compaction (conversation-compaction-capture conversation))
-   :replacement-items   (list (conversation-summary-item content))
-   :record              (list :summary :content content :recovery recovery)
-   :unfinished-work     unfinished-work
-   :validate-projection validate-projection))
+    (conversation continuation &key compaction unfinished-work validate-projection recovery)
+  "Persist CONTINUATION with captured protocol context and arrivals as one checkpoint.
+
+The record also holds the checkpoint's rendered text, for search and for
+readers that do not know the typed form."
+  (let ((content (continuation-render continuation)))
+    (conversation-compaction--publish
+     conversation
+     :compaction          (or compaction (conversation-compaction-capture conversation))
+     :replacement-items   (list (conversation-summary-item content))
+     :record              (list :summary :content content :continuation continuation
+                                :recovery recovery)
+     :unfinished-work     unfinished-work
+     :validate-projection validate-projection)))
 
 (-> conversation-append-native-compaction
-    (conversation (or list json-object) &key (:family keyword) (:summary string)
+    (conversation (or list json-object) &key (:family keyword) (:continuation list)
                              (:compaction (option conversation-compaction))
                              (:unfinished-work list) (:validate-projection (option function)) (:recovery list))
     list)
 (defun conversation-append-native-compaction
-    (conversation window &key family summary compaction unfinished-work validate-projection recovery)
-  "Persist native WINDOW, portable SUMMARY, and carry-forward state atomically."
+    (conversation window &key family continuation compaction unfinished-work validate-projection recovery)
+  "Persist native WINDOW, CONTINUATION, and carry-forward state atomically."
   (when (json-object-p window)
     (setf window (list window)))
   (dolist (item window)
     (native-compaction-item-canonicalize item))
   (unless (and (keywordp family) (listp window) (not (null window))
                (every #'json-object-p window)
-               (some #'native-compaction-item-p window)
-               (non-empty-string-p summary))
+               (some #'native-compaction-item-p window))
     (error 'conversation-invariant-error
            :message  "A native compaction window is invalid."
            :pathname (conversation-pathname conversation)
            :sequence (conversation-next-sequence conversation)))
-  (conversation-compaction--publish
-   conversation
-   :compaction          (or compaction (conversation-compaction-capture conversation))
-   :replacement-items   (append window (list (conversation-summary-item summary)))
-   :record              (list :native-compaction :family family
-                              :wire-json         (json-encode (coerce window 'vector))
-                              :summary           summary :recovery recovery)
-   :unfinished-work     unfinished-work
-   :validate-projection validate-projection))
+  (let ((content (continuation-render continuation)))
+    (conversation-compaction--publish
+     conversation
+     :compaction          (or compaction (conversation-compaction-capture conversation))
+     :replacement-items   (append window (list (conversation-summary-item content)))
+     :record              (list :native-compaction :family family
+                                :wire-json         (json-encode (coerce window 'vector))
+                                :summary           content :continuation continuation
+                                :recovery          recovery)
+     :unfinished-work     unfinished-work
+     :validate-projection validate-projection)))
 
 
 ;;;; -- Checkpoint Replay --
@@ -254,8 +313,8 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
 (defun conversation-compaction--append-rows (conversation properties projection &key rows)
   "Decode carried ROWS of the record with PROPERTIES onto PROJECTION, with their family metadata.
 
-A row is a plist of its item's :WIRE-JSON and the :FAMILY, :HANDOFF-FAMILY
-and :CHECKPOINT-SUMMARY metadata the item had where it was carried from."
+A row is a plist of its item's :WIRE-JSON and the metadata the item had where
+it was carried from, named by *CONVERSATION-COMPACTION-ROW-METADATA*."
   (handler-case
       (dolist (row rows)
         (unless (and (listp row) (list-length row) (evenp (length row))
@@ -263,7 +322,8 @@ and :CHECKPOINT-SUMMARY metadata the item had where it was carried from."
                      (let ((keys (plist-keys row)))
                        (and (= (length keys) (length (remove-duplicates keys)))
                             (every (lambda (key)
-                                     (member key '(:wire-json :family :handoff-family :checkpoint-summary)))
+                                     (member key (cons :wire-json
+                                                       *conversation-compaction-row-metadata*)))
                                    keys))))
           (conversation--record-error
            conversation properties "A carried context row is invalid."))
@@ -273,11 +333,17 @@ and :CHECKPOINT-SUMMARY metadata the item had where it was carried from."
              conversation properties "A carried context item is not an object."))
           (native-compaction-item-canonicalize item)
           (clinker-transcript:projection-append projection item)
-          (dolist (key '(:family :handoff-family :checkpoint-summary))
+          (dolist (key *conversation-compaction-row-metadata*)
             (when (member key row)
-              (unless (or (eq key ':checkpoint-summary) (null (getf row key)) (keywordp (getf row key)))
+              (unless (case key
+                        (:checkpoint-summary
+                         t)
+                        (:continuation
+                         (continuation-p (getf row key)))
+                        (otherwise
+                         (typep (getf row key) '(or null keyword))))
                 (conversation--record-error
-                 conversation properties "A carried context family is invalid."))
+                 conversation properties "A carried context row has invalid metadata."))
               (setf (gethash item
                              (clinker-transcript:projection-metadata-table projection key))
                     (getf row key))))))
@@ -305,6 +371,28 @@ and :CHECKPOINT-SUMMARY metadata the item had where it was carried from."
        conversation properties "A restored context has invalid correlations.")))
   nil)
 
+(-> conversation-compaction--continuation (conversation list t) (option list))
+(defun conversation-compaction--continuation (conversation properties content)
+  "Return the typed checkpoint of the record with PROPERTIES, checked against its CONTENT.
+
+CONTENT is the checkpoint's stored text. A typed checkpoint must be well
+formed, render to that text, and cite no record of CONVERSATION after its
+cutoff. A record written before checkpoints were typed has none."
+  (let ((continuation (getf properties :continuation))
+        (cutoff       (getf properties :cutoff-seq)))
+    (unless (or (null continuation)
+                (and (continuation-p continuation)
+                     (equal content (continuation-render continuation))
+                     (every (lambda (reference)
+                              (or (not (equal (getf reference :conversation)
+                                              (conversation-identifier conversation)))
+                                  (and (integerp cutoff)
+                                       (<= (getf reference :sequence) cutoff))))
+                            (getf continuation :references))))
+      (conversation--record-error
+       conversation properties "A persisted checkpoint is invalid or disagrees with its text."))
+    continuation))
+
 (defmethod conversation--project-record
     ((kind (eql :summary)) conversation properties)
   "Restore a portable checkpoint and its validated chronological carry-forward."
@@ -312,13 +400,18 @@ and :CHECKPOINT-SUMMARY metadata the item had where it was carried from."
     (unless (stringp content)
       (conversation--record-error
        conversation properties "A persisted summary checkpoint has invalid content."))
-    (conversation-compaction--restore
-     conversation properties
-     (clinker-transcript:make-projection :items (list (conversation-summary-item content))))))
+    (let* ((item       (conversation-summary-item content))
+           (projection (clinker-transcript:make-projection :items (list item))))
+      (conversation-compaction--mark-checkpoint
+       projection item (conversation-compaction--continuation conversation properties content))
+      (conversation-compaction--restore conversation properties projection))))
 
 (defmethod conversation--project-record
     ((kind (eql :native-compaction)) conversation properties)
-  "Restore native family privacy, portable handoff, and carry-forward context."
+  "Restore native family privacy, the checkpoint, and carry-forward context.
+
+A record written before checkpoints were typed holds a text handoff, which
+the family that owns the native window does not read."
   (let ((family    (getf properties :family))
         (wire-json (getf properties :wire-json))
         (summary   (getf properties :summary)))
@@ -341,15 +434,16 @@ and :CHECKPOINT-SUMMARY metadata the item had where it was carried from."
            conversation properties "A persisted native compaction window is unsupported."))
         (let* ((summary-item (conversation-summary-item summary))
                (projection   (clinker-transcript:make-projection
-                              :items (append window (list summary-item)))))
+                              :items (append window (list summary-item))))
+               (continuation (conversation-compaction--continuation
+                              conversation properties summary)))
           (dolist (item window)
             (setf (gethash item
                            (clinker-transcript:projection-metadata-table projection ':family))
                   family))
-          (setf (gethash summary-item
-                         (clinker-transcript:projection-metadata-table projection ':handoff-family))
-                family
-                (gethash summary-item
-                         (clinker-transcript:projection-metadata-table projection ':checkpoint-summary))
-                t)
+          (unless continuation
+            (setf (gethash summary-item
+                           (clinker-transcript:projection-metadata-table projection ':handoff-family))
+                  family))
+          (conversation-compaction--mark-checkpoint projection summary-item continuation)
           (conversation-compaction--restore conversation properties projection))))))

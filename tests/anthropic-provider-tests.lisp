@@ -322,32 +322,24 @@
 
 (-> anthropic-provider-test--compaction-request () null)
 (defun anthropic-provider-test--compaction-request ()
-  "Test Anthropic's tool-free portable compaction request."
+  "Test Anthropic's compaction request."
   (let* ((configuration (anthropic-provider-test--configuration))
          (provider      (anthropic-provider-create configuration))
          (conversation  (conversation-create configuration)))
     (conversation-append-user-message conversation "Conversation to summarize.")
+    (test-compaction-request provider conversation)
     (multiple-value-bind (request delivery)
-        (provider-request-object
-         provider conversation
-         (json-array
-          (json-object "type" "namespace" "name" "fs"
-                       "tools" (json-array
-                                (json-object "name" "read"
-                                             "description" "Read a file."
-                                             "parameters"
-                                             (json-object "type" "object")))))
-         :goal-context "request-local goal"
-         :compaction-p t)
+        (provider-request-object provider conversation (continuation-tool-namespaces)
+                                 :goal-context "request-local goal"
+                                 :compaction-p t)
       (let* ((system   (json-get request "system"))
              (messages (json-get request "messages"))
              (texts    (loop for block across system
                              collect (json-get block "text"))))
         (test-assert (null delivery)
                      "compaction resolves no request-local context delivery")
-        (test-assert (and (null (json-get request "tools"))
-                          (null (json-get request "tool_choice")))
-                     "compaction requests expose no tools")
+        (test-assert (= 1 (length (json-get request "tools")))
+                     "compaction requests declare only the submit tool")
         (test-assert
          (and (loop for block across system
                     always (null (json-get block "cache_control")))
@@ -358,7 +350,7 @@
         (test-assert
          (and (find *compaction-instructions* texts :test #'string=)
               (not (find "request-local goal" texts :test #'string=)))
-         "compaction includes its handoff instruction but not goal context"))))
+         "compaction includes its instructions but not goal context"))))
   nil)
 
 (-> anthropic-provider-test--transport () null)

@@ -329,7 +329,7 @@
         (test-assert (search "earlier resident words"
                              (format nil "~S" (application-tests--conversation-records destination)))
                      "the channel's earlier history stays in its records")
-        (conversation-append-summary destination "summary of the adopted work")
+        (conversation-append-summary destination (make-continuation :intent "summary of the adopted work"))
         (let ((compacted (texts destination)))
           (test-assert (and (search "summary of the adopted work" compacted)
                             (not (search "carried words" compacted)))
@@ -360,7 +360,7 @@
            (test-assert (= (conversation-last-total-tokens conversation) 4321)
                         "usage totals track the newest provider step")
            (conversation-append-summary conversation
-                                        "summary of the earlier work")
+                                        (make-continuation :intent "summary of the earlier work"))
            (test-assert (= (length (conversation-input-items conversation)) 1)
                         "compaction replaces the projection with one bridge")
            (test-assert (zerop (conversation-last-total-tokens conversation))
@@ -384,7 +384,7 @@
 
 (-> test-conversation-native-compaction () null)
 (defun test-conversation-native-compaction ()
-  "Test durable opaque compaction with a portable cross-family handoff."
+  "Test durable opaque compaction with a checkpoint every family reads."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration)))
     (unwind-protect
@@ -400,7 +400,7 @@
                   :response-id    "before-native-compact"
                   :usage          '(("total_tokens" 4321))))
            (conversation-append-native-compaction
-            conversation (list item) :family ':codex :summary "Portable handoff.")
+            conversation (list item) :family ':codex :continuation (make-continuation :intent "Portable handoff."))
            (test-assert
             (and (= (length (conversation-input-items conversation)) 2)
                  (native-compaction-item-p
@@ -414,8 +414,8 @@
            (test-assert (zerop (conversation-last-total-tokens conversation))
                         "native compaction resets the tracked usage")
            (test-assert
-            (= (length (conversation-input-items-for-family conversation ':codex)) 1)
-            "the producing family receives only its opaque checkpoint")
+            (= (length (conversation-input-items-for-family conversation ':codex)) 2)
+            "the producing family receives its opaque checkpoint and the checkpoint text")
            (let ((grok-items
                    (conversation-input-items-for-family conversation ':grok)))
              (test-assert (= (length grok-items) 1)
@@ -436,7 +436,7 @@
                    (conversation-load-by-id configuration "native-compact")))
               (test-assert
                (and (= (length (conversation-input-items-for-family reloaded ':codex))
-                       1)
+                       2)
                     (= (length (conversation-input-items-for-family reloaded ':grok))
                        1))
                "native checkpoint replay preserves each family projection")))
@@ -530,7 +530,7 @@
            (setf (conversation-working-seconds conversation) 37
                  (conversation-last-activity-at conversation) (get-universal-time))
            (let* ((summary
-                    (conversation-append-summary conversation "Portable checkpoint."))
+                    (conversation-append-summary conversation (make-continuation :intent "Portable checkpoint.")))
                   (summary-sequence (getf (rest summary) :seq))
                   (pathnames        (conversation-storage-pathnames identity))
                   (active           (conversation-log-pathname conversation))
@@ -624,7 +624,7 @@
                                 (error "simulated failure after chunk publication"))))))
                         (lambda ()
                           (conversation-append-summary
-                           loaded "post-publication checkpoint")))))
+                           loaded (make-continuation :intent "post-publication checkpoint"))))))
                  (test-assert
                   (and (= (getf (rest record) :seq) expected-sequence)
                        (= (conversation-next-sequence loaded)
@@ -657,7 +657,7 @@
                   (conversation-create configuration :identifier identifier))
                 (identity (conversation-pathname conversation)))
            (conversation-append-user-message conversation "before checkpoint")
-           (conversation-append-summary conversation "checkpoint")
+           (conversation-append-summary conversation (make-continuation :intent "checkpoint"))
            (conversation-append-user-message conversation "after checkpoint")
            (let ((failure
                    (make-condition 'store-error :pathname  identity
@@ -774,7 +774,7 @@
                    (= (length (conversation-input-items legacy)) 1))
               "a legacy version-one single file remains directly resumable")
              (let* ((summary
-                      (conversation-append-summary legacy "legacy checkpoint"))
+                      (conversation-append-summary legacy (make-continuation :intent "legacy checkpoint")))
                     (summary-sequence (getf (rest summary) :seq))
                     (pathnames        (conversation-storage-pathnames identity)))
                (test-assert
@@ -887,7 +887,7 @@
                                     (json-get item "call_id"))
                             :test #'string=)))
                 "crash replay omits request-local call correlation without synthesizing repair")))
-           (conversation-append-summary conversation "Durable mixed-call work.")
+           (conversation-append-summary conversation (make-continuation :intent "Durable mixed-call work."))
            (test-assert
             (and (= (length
                      (conversation-input-items-for-request conversation))
@@ -2206,7 +2206,7 @@ process without releasing the lease, exercising kernel cleanup."
                  (test-assert
                   (= (count :inherited-reference records :key #'first) 1)
                   "child history persists one hidden inherited-reference record"))
-               (conversation-append-summary reloaded "Compacted child reference.")
+               (conversation-append-summary reloaded (make-continuation :intent "Compacted child reference."))
                (test-assert
                 (and (= (length (conversation-input-items reloaded)) 1)
                      (search "Compacted child reference."
@@ -2446,7 +2446,7 @@ process without releasing the lease, exercising kernel cleanup."
              (test-assert (equal '(102 20 120 0 0 nil) (conversation-usage loaded))
                           "reopening before compaction recovers the durable checkpoint")
              (conversation-append-provider-metadata loaded '(:usage (("input_tokens" 3))))
-             (conversation-append-summary loaded "usage migration checkpoint")
+             (conversation-append-summary loaded (make-continuation :intent "usage migration checkpoint"))
              (test-assert
               (equal '(105 20 120 0 0 nil) (conversation-usage (conversation-load identity)))
               "rotated headers preserve lifetime usage and subsequent providers")))))))
@@ -2502,7 +2502,7 @@ process without releasing the lease, exercising kernel cleanup."
                        (lambda ()
                          (conversation-append-provider-metadata
                           conversation '(:usage (("input_tokens" 3))))
-                         (conversation-append-summary conversation "concurrent rotation")
+                         (conversation-append-summary conversation (make-continuation :intent "concurrent rotation"))
                          (conversation-append-provider-metadata
                           conversation '(:usage (("input_tokens" 4))))
                          :appended))
@@ -2598,14 +2598,14 @@ process without releasing the lease, exercising kernel cleanup."
         (conversation-append-provider-metadata conversation (list :usage usage)))
       (test-assert (equal '(5 2 7 0 0 nil) (conversation-usage conversation))
                    "unusable cache counters do not imply known cache accounting")
-      (conversation-append-summary conversation "unknown cache accounting")
+      (conversation-append-summary conversation (make-continuation :intent "unknown cache accounting"))
       (test-assert
        (equal '(5 2 7 0 0 nil)
               (conversation-usage (conversation-load (conversation-pathname conversation))))
        "unknown cache accounting survives compaction and reload")
       (conversation-append-provider-metadata
        conversation '(:usage (("cached_input_tokens" 0) ("cache_creation_input_tokens" 3))))
-      (conversation-append-summary conversation "normalized usage")
+      (conversation-append-summary conversation (make-continuation :intent "normalized usage"))
       (test-assert
        (equal '(5 2 7 0 3 t)
               (conversation-usage (conversation-load (conversation-pathname conversation))))
@@ -2867,7 +2867,7 @@ process without releasing the lease, exercising kernel cleanup."
                       (unless rotated-p
                         (setf rotated-p t)
                         (conversation-append-summary
-                         conversation "rotation checkpoint"))))))
+                         conversation (make-continuation :intent "rotation checkpoint")))))))
                 (lambda ()
                   (conversation-picker-metadata-scan identity))))
               "same-size same-date chunk rotation rejects stale picker metadata")
@@ -2932,7 +2932,7 @@ process without releasing the lease, exercising kernel cleanup."
                (conversation-append-record
                 conversation
                 (list :tool-result :status ':ok :output "tool secret"))
-               (conversation-append-summary conversation "summary secret")
+               (conversation-append-summary conversation (make-continuation :intent "summary secret"))
                (test-assert
                 (= (conversation-picker-search-revision-read pathname)
                    message-revision)
@@ -3698,7 +3698,7 @@ assistant needle"))
                                      "generated header title"
                                      :source ':generated)
              (let ((old-segment (conversation-log-pathname header-only)))
-               (conversation-append-summary header-only "compacted title context")
+               (conversation-append-summary header-only (make-continuation :intent "compacted title context"))
                (delete-file old-segment))
              (let ((metadata
                      (conversation-picker-metadata-scan

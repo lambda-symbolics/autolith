@@ -421,11 +421,18 @@
    "content" (json-array
               (json-object "type" "output_text" "text" text))))
 
-(-> agent-test-compaction-message () json-object)
-(defun agent-test-compaction-message ()
-  "Return a structured handoff accepted by the compaction contract."
-  (agent-test-message
-   "[Progress] Earlier work is recorded.\n[Decisions] Continue from the durable state.\n[Context] The prior conversation and references are available.\n[Constraints] Follow the user's stated requirements.\n[Next steps] Resume the pending request and verify its result.\n[References] Use the durable conversation and any cited inference traces."))
+(-> agent-test-checkpoint-call (&optional string) json-object)
+(defun agent-test-checkpoint-call
+    (&optional (arguments "{\"intent\":\"Resume the pending request.\",\"notes\":[{\"kind\":\"completed\",\"text\":\"Earlier work is recorded.\",\"refs\":[]}],\"next\":{\"text\":\"Verify the result.\",\"refs\":[]}}"))
+  "Return a scripted compaction.submit call with ARGUMENTS, by default a valid checkpoint."
+  (agent-test-call :call-id "checkpoint" :namespace "compaction" :name "submit"
+                   :arguments arguments))
+
+(-> agent-test-refusal () json-object)
+(defun agent-test-refusal ()
+  "Return a scripted assistant message that refuses."
+  (json-object "type" "message" "role" "assistant"
+               "content" (json-array (json-object "type" "refusal" "refusal" "No."))))
 
 (-> agent-test-result
     (string list
@@ -2317,185 +2324,132 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                  numbers)))))
     (nreverse numbers)))
 
-(-> test-agent-compaction-missing-summary () null)
-(defun test-agent-compaction-missing-summary ()
-  "Test empty compaction output is a recoverable provider protocol failure."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration)))
-    (unwind-protect
-         (let* ((conversation
-                  (conversation-create configuration
-                                       :identifier "agent-empty-compaction"))
-                (provider
-                  (make-instance
-                   'scripted-provider
-                   :configuration configuration
-                   :results
-                   (list (agent-test-result "compact-empty" nil
-                                            :turn-completion ':end))))
-                (agent (agent-create :configuration configuration
-                                     :provider      provider
-                                     :conversation  conversation
-                                     :tool-registry (agent-test-registry)
-                                     :worker        nil))
-                (sample
-                  (list :format 1 :soft-header (provider-context--soft-header provider #())
-                        :history-count 0 :history-digest (provider-cache-prefix--entry #())
-                        :wire-fields nil :wire-count 0 :wire-digest (provider-cache-prefix--entry #())
-                        :tokens 1200))
-                (records-before
-                  (progn
-                    (conversation-append-record conversation (list :context-usage :sample sample))
-                    (setf (conversation-context-usage-sample conversation) sample)
-                    (conversation--read-records (conversation-pathname conversation))))
-                (failure
-                  (handler-case
-                      (progn
-                        (agent-compact-conversation
-                         agent (make-instance 'agent-observer))
-                        nil)
-                    (provider-protocol-error (condition)
-                      condition))))
-             (test-assert
-              (and failure
-                   (string= (autolith-error-message failure)
-                           "Compaction produced no usable summary handoff: the response has no visible text.")
-                   (string= (provider-error-response-id failure)
-                            "compact-empty")
-                 (null (provider-error-status failure))
-                 (null (provider-error-code failure))
-                 (null (provider-error-request-id failure))
-                 (typep failure 'agent-compaction-summary-error)
-                 (let ((response (json-decode (provider-error-response failure))))
-                   (and (string= "compact-empty" (json-get response "response_id"))
-                        (zerop (length (json-get response "output_items")))
-                        (equalp (json-get response "usage")
-                                (json-object "input_tokens" 1 "output_tokens" 1))))
-                 (equal (provider-error-response failure)
-                        (getf (agent--provider-error-metadata failure) :response)))
-              "empty compaction output is a structured provider protocol error")
-             (test-assert (equal sample (conversation-context-usage-sample conversation))
-                          "failed compaction preserves the live ordinary measured anchor")
-             (test-assert (equal sample (conversation-context-usage-sample
-                                         (conversation-load (conversation-pathname conversation))))
-                          "disk replay preserves the ordinary measured anchor after failed compaction")
-             (let* ((records-after
-                      (conversation--read-records (conversation-pathname conversation)))
-                    (added (nthcdr (length records-before) records-after)))
-               (test-assert
-                 (and (= 1 (count ':provider added :key #'first))
-                      (notany (lambda (record) (member (first record) '(:summary :native-compaction))) added)
-                      (null (conversation-input-items conversation)))
-                "rejected paid compaction records usage without publishing a checkpoint")))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+(-> agent-tests--compaction-agent (configuration conversation list) agent)
+(defun agent-tests--compaction-agent (configuration conversation results)
+  "Return an agent for CONVERSATION whose scripted provider returns RESULTS in order."
+  (agent-create :configuration configuration
+                :provider      (make-instance 'scripted-provider
+                                              :configuration configuration
+                                              :results       results)
+                :conversation  conversation
+                :tool-registry (agent-test-registry)
+                :worker        nil))
+
+(-> test-agent-compaction-rejected-submission () null)
+(defun test-agent-compaction-rejected-submission ()
+  "Test a rejected submission earns one follow-up naming its problem and stays out of durable history."
+  (loop for (rejected problem) in
+        (list (list (agent-test-call :call-id "call-wait" :namespace "job" :name "wait")
+                    "exactly one compaction.submit call")
+              (list (agent-test-checkpoint-call
+                     "{\"intent\":\"Go on.\",\"notes\":[],\"next\":{\"text\":\"\",\"refs\":[\"missing\"]}}")
+                    "does not list missing")
+              (list (agent-test-message "Here is a summary in prose.")
+                    "exactly one compaction.submit call"))
+        do (with-test-configuration (configuration)
+             (let* ((conversation (conversation-create configuration))
+                    (agent        (agent-tests--compaction-agent
+                                   configuration conversation
+                                   (list (agent-test-result "rejected" (list rejected))
+                                         (agent-test-result "accepted"
+                                                            (list (agent-test-checkpoint-call))
+                                                            :turn-completion ':end)))))
+               (conversation-append-user-message conversation "earlier context")
+               (test-assert (= 2 (agent-compact-conversation agent (make-instance 'agent-observer)))
+                            "a rejected submission costs one follow-up")
+               (let ((correction (first (last (second (reverse (scripted-provider-input-snapshots
+                                                                (agent-provider agent))))))))
+                 (test-assert (and (if (function-call-item-p rejected)
+                                       (equal (json-get rejected "call_id")
+                                              (json-get correction "call_id"))
+                                       (json-string= (json-get correction "role") "user"))
+                                   (search problem (or (json-get correction "output")
+                                                       (context--message-text correction))))
+                              "the follow-up answers the rejected response and names its problem"))
+               (let ((kinds (mapcar #'first (conversation--read-records
+                                             (conversation-pathname conversation)))))
+                 (test-assert (and (= 1 (count :summary kinds))
+                                   (notany (lambda (kind) (member kind '(:provider-item :tool-result)))
+                                           kinds))
+                              "a rejected submission never enters durable history"))
+               (test-assert (equal '((1 :summary) (2 :summary))
+                                   (agent-tests--request-numbers conversation))
+                            "both requests are accounted"))))
   nil)
 
-(-> test-agent-compaction-tool-call-follow-up () null)
-(defun test-agent-compaction-tool-call-follow-up ()
-  "Test a stray compaction tool call is rejected in transient request state."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration)))
-    (unwind-protect
-         (let* ((conversation
-                  (conversation-create
-                   configuration :identifier "agent-compaction-follow-up"))
-                (call
-                  (json-object
-                   "type" "function_call"
-                   "namespace" "job"
-                   "name" "wait"
-                   "call_id" "call-compact-wait"
-                   "arguments" "{}"))
-                (summary (agent-test-compaction-message))
-                (provider
-                  (make-instance
-                   'scripted-provider
-                   :configuration configuration
-                   :results
-                   (list
-                    (agent-test-result "compact-call" (list call))
-                    (agent-test-result "compact-summary" (list summary)
-                                       :turn-completion ':end))))
-                (agent
-                  (agent-create
-                   :configuration configuration
-                   :provider      provider
-                   :conversation  conversation
-                   :tool-registry (agent-test-registry)
-                   :worker        nil)))
-           (conversation-append-user-message conversation "earlier context")
-           (test-assert
-            (= (agent-compact-conversation
-                agent (make-instance 'agent-observer))
-               2)
-            "a rejected compaction tool call consumes one bounded follow-up")
-           (let* ((snapshots
-                    (nreverse (scripted-provider-input-snapshots provider)))
-                  (follow-up   (second snapshots))
-                  (tool-output (find-if #'clinker-transcript:function-call-output-item-p follow-up)))
-             (test-assert
-              (and (= (length snapshots) 2)
-                   tool-output
-                   (equal "call-compact-wait" (json-get tool-output "call_id"))
-                   (json-string= (json-get tool-output "type")
-                                 "function_call_output")
-                   (search "unavailable during compaction"
-                           (json-get tool-output "output")))
-              "the follow-up sees a transient mechanics result for the call"))
-           (let ((records nil))
-             (conversation-map-records
-              conversation
-              (lambda (record)
-                (push record records)))
-             (test-assert
-              (and (= (count :provider records :key #'first) 2)
-                   (= (count :summary records :key #'first) 1)
-                   (zerop (count :provider-item records :key #'first))
-                   (zerop (count :tool-result records :key #'first)))
-              "stray compaction calls never enter durable history"))
-           (test-assert
-            (equal (agent-tests--request-numbers conversation)
-                   '((1 :summary) (2 :summary)))
-            "both successful compaction requests remain visible to accounting"))
-      (platform-delete-directory-tree
-       *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> test-agent-compaction-corrects-rejected-handoff () null)
-(defun test-agent-compaction-corrects-rejected-handoff ()
-  "Test a finished but malformed handoff earns a follow-up naming its problem."
+(-> test-agent-compaction-failed-generation () null)
+(defun test-agent-compaction-failed-generation ()
+  "Test a generation that fails after it began costs one request and is asked again."
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
-           (summary      (agent-test-compaction-message))
-           (long         (agent-test-message
-                          (format nil "~A ~A"
-                                  (provider-result-assistant-text
-                                   (agent-test-result "valid" (list summary) :turn-completion ':end))
-                                  (make-string *compaction-summary-maximum-characters*
-                                               :initial-element #\x))))
-           (provider     (make-instance
-                          'scripted-provider
-                          :configuration configuration
-                          :results       (list (agent-test-result "compact-long" (list long)
-                                                                  :turn-completion ':end)
-                                               (agent-test-result "compact-summary" (list summary)
-                                                                  :turn-completion ':end))))
-           (agent        (agent-create :configuration configuration
-                                       :provider      provider
-                                       :conversation  conversation
-                                       :tool-registry (agent-test-registry)
-                                       :worker        nil)))
+           (agent        (agent-tests--compaction-agent
+                          configuration conversation
+                          (list (make-condition 'provider-stream-abandoned
+                                                :message     "The stream ended early."
+                                                :status      nil :code     nil
+                                                :request-id  nil :response nil
+                                                :response-id nil :attempts 1)
+                                (agent-test-result "accepted" (list (agent-test-checkpoint-call))
+                                                   :turn-completion ':end)))))
       (conversation-append-user-message conversation "earlier context")
       (test-assert (= 2 (agent-compact-conversation agent (make-instance 'agent-observer)))
-                   "a rejected handoff consumes one bounded follow-up")
-      (let* ((follow-up  (second (reverse (scripted-provider-input-snapshots provider))))
-             (correction (first (last follow-up))))
-        (test-assert (and (json-string= (json-get correction "role") "user")
-                          (search "not usable: it has 12,"
-                                  (context--message-text correction)))
-                     "the follow-up names the rejected handoff's problem"))
-      (test-assert (equal '((1 :summary) (2 :summary)) (agent-tests--request-numbers conversation))
-                   "both summary requests are accounted")))
+                   "a failed generation is counted and the checkpoint is requested again")
+      (test-assert (and (conversation-continuation conversation)
+                        (equal '((1 :summary) (2 :summary))
+                               (agent-tests--request-numbers conversation)))
+                   "the retry publishes its checkpoint beside the record of the failure")))
+  nil)
+
+(-> test-agent-compaction-without-submission () null)
+(defun test-agent-compaction-without-submission ()
+  "Test compaction without a usable submission keeps the earlier notes and marks the gap, while a refusal publishes nothing."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (observer     (make-instance 'agent-observer))
+           (agent
+             (agent-tests--compaction-agent
+              configuration conversation
+              (append (list (agent-test-result "first" (list (agent-test-checkpoint-call))
+                                               :turn-completion ':end))
+                      (loop repeat *agent-compaction-maximum-generations*
+                            collect (agent-test-result "empty" nil :turn-completion ':end))
+                      (list (agent-test-result "refusal" (list (agent-test-refusal)))))))
+           (sample
+             (list :format 1 :soft-header (provider-context--soft-header (agent-provider agent) #())
+                   :history-count 0 :history-digest (provider-cache-prefix--entry #())
+                   :wire-fields nil :wire-count 0 :wire-digest (provider-cache-prefix--entry #())
+                   :tokens 1200)))
+      (conversation-append-user-message conversation "first request")
+      (agent-compact-conversation agent observer)
+      (let ((first-uncovered (conversation-next-sequence conversation)))
+        (conversation-append-user-message conversation "second request")
+        (test-assert (= *agent-compaction-maximum-generations*
+                        (agent-compact-conversation agent observer))
+                     "every generation is spent before compaction stops asking")
+        (let ((continuation (conversation-continuation conversation)))
+          (test-assert (and (equal "Resume the pending request." (getf continuation :intent))
+                            (equal (list (list (conversation-identifier conversation)
+                                               first-uncovered first-uncovered))
+                                   (getf continuation :unsummarized)))
+                       "the fallback checkpoint keeps the earlier notes and names the unsummarized records"))
+        (test-assert (search "second request" (json-encode (conversation-input-items conversation)))
+                     "the fallback checkpoint retains the recent tail verbatim"))
+      (conversation-append-record conversation (list :context-usage :sample sample))
+      (setf (conversation-context-usage-sample conversation) sample)
+      (let ((records (length (conversation--read-records (conversation-pathname conversation)))))
+        (test-assert (handler-case
+                         (progn (agent-compact-conversation agent observer) nil)
+                       (provider-protocol-error ()
+                         t))
+                     "a refusal ends compaction with a provider protocol error")
+        (test-assert (equal '(:provider)
+                            (mapcar #'first
+                                    (nthcdr records (conversation--read-records
+                                                     (conversation-pathname conversation)))))
+                     "a refused request records its usage and publishes no checkpoint"))
+      (dolist (current (list conversation (conversation-load (conversation-pathname conversation))))
+        (test-assert (equal sample (conversation-context-usage-sample current))
+                     "failed compaction preserves the measured context anchor"))))
   nil)
 
 (-> test-agent-compaction () null)
@@ -2507,14 +2461,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
          (let* ((conversation (conversation-create configuration
                                                    :identifier
                                                    "agent-compaction"))
-                (summary-item
-                  (json-object
-                   "type" "message"
-                   "role" "assistant"
-                   "content" (json-array
-                              (json-object
-                               "type" "output_text"
-                                 "text" "[Progress] Earlier work is complete. [Decisions] Continue with the recorded plan. [Context] Prior context is durable. [Constraints] Follow the user's requirements. [Next steps] Resume the pending task. [References] Use the conversation archive."))))
+                (summary-item (agent-test-checkpoint-call))
                 (answer-item
                   (json-object
                    "type" "message"
@@ -2583,20 +2530,13 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
 
 (-> test-agent-native-compaction () null)
 (defun test-agent-native-compaction ()
-  "Test that an opaque native checkpoint supplements the durable handoff."
+  "Test that an opaque native window is stored beside a checkpoint every provider reads."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration)))
     (unwind-protect
          (let* ((conversation
                   (conversation-create configuration :identifier "agent-native-compact"))
-                (summary-item
-                  (json-object
-                   "type" "message"
-                   "role" "assistant"
-                   "content" (json-array
-                              (json-object
-                               "type" "output_text"
-                                 "text" "[Progress] Portable handoff is ready. [Decisions] Continue from durable state. [Context] Prior context is preserved. [Constraints] Respect current requirements. [Next steps] Resume the task. [References] Consult the conversation archive."))))
+                (summary-item (agent-test-checkpoint-call))
                 (earlier-item
                   (json-object
                    "type" "message"
@@ -2624,11 +2564,11 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                                         (agent-test-result "turn-native"
                                                            (list answer-item)
                                                            :turn-completion ':end))))
-                (agent (agent-create :configuration configuration
-                                     :provider      provider
-                                     :conversation  conversation
-                                     :tool-registry (agent-test-registry)
-                                     :worker        nil)))
+                (agent        (agent-create :configuration configuration
+                                            :provider      provider
+                                            :conversation  conversation
+                                            :tool-registry (agent-test-registry)
+                                            :worker        nil)))
             (conversation-append-user-message conversation "earlier context")
             (conversation-append-provider-item conversation earlier-item)
             (conversation-append-provider-metadata
@@ -2649,8 +2589,8 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                3)
             "native compaction receives the full durable projection")
            (test-assert
-            (= (first (reverse (scripted-provider-input-counts provider))) 1)
-            "portable summarization starts from the native checkpoint only")
+            (= (first (reverse (scripted-provider-input-counts provider))) 3)
+            "the checkpoint is written from the readable history, not from the native window")
            (test-assert
             (find :native-compaction
                   (rest (conversation--read-records
@@ -2662,11 +2602,11 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
              (first (conversation-input-items conversation)))
             "the active provider reuses the opaque checkpoint")
            (test-assert
-             (= (length (conversation-input-items-for-family conversation ':codex)) 2)
-             "the active provider receives the opaque checkpoint and new answer")
+             (= (length (conversation-input-items-for-family conversation ':codex)) 3)
+             "the active provider receives the opaque window, the checkpoint and the new answer")
            (test-assert
              (= (length (conversation-input-items-for-family conversation ':grok)) 2)
-             "another provider receives the portable handoff and new answer")
+             "another provider receives the checkpoint and the new answer")
            (test-assert
             (equal (agent-tests--request-numbers conversation)
                    '((1 nil) (1 :native) (2 :summary) (3 nil)))

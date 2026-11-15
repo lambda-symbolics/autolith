@@ -530,8 +530,12 @@ entry with supports_search_tool."
 
 (defmethod provider-wire-tools
     ((provider codex-subscription-provider) (tool-namespaces vector))
-  "Use native deferred namespaces on capable Codex models, else eager tools."
-  (if (provider-deferred-tool-loading-p provider)
+  "Use native deferred namespaces on capable Codex models, else eager tools.
+
+A request that forces one tool declares its tools eagerly, because a deferred
+tool cannot be forced."
+  (if (and (provider-deferred-tool-loading-p provider)
+           (not (consp *provider-tool-choice*)))
       (provider-deferred-wire-tools tool-namespaces
                                     :description *codex-tool-search-description*)
       (call-next-method)))
@@ -644,12 +648,9 @@ changing one never invalidates a provider's cached prefix of earlier history."
            (provider-request-tool-namespaces configuration tool-namespaces
                                              :hosted-web-search-p hosted-web-search-p))
          (effective-namespaces
-           (if compaction-p
-               #()
-               (concatenate 'vector
-                            (provider-responses-request-namespaces provider
-                                                                  request-namespaces)
-                            (coerce hosted-tools 'vector))))
+           (concatenate 'vector
+                        (provider-responses-request-namespaces provider request-namespaces)
+                        (coerce hosted-tools 'vector)))
          (delivery
            (unless compaction-p
              (context-resolve-request configuration conversation request-namespaces

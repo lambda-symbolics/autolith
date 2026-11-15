@@ -47,6 +47,26 @@
         (setf (symbol-function (first original))
               (rest original))))))
 
+(-> test-compaction-request (model-provider conversation) json-object)
+(defun test-compaction-request (provider conversation)
+  "Return the request PROVIDER makes to compact CONVERSATION, checked to force compaction.submit.
+
+The wire name of the tool must appear exactly twice in the request: where the
+tool is declared and where the request forces it."
+  (let* ((*provider-tool-choice* *continuation-submit-tool*)
+         (request                (provider-request-object
+                                  provider conversation (continuation-tool-namespaces)
+                                  :compaction-p t))
+         (encoded                (json-encode request))
+         (name                   (apply #'provider-wire-tool-name provider
+                                        *continuation-submit-tool*)))
+    (test-assert (= 2 (loop for start = (search name encoded) then (search name encoded
+                                                                           :start2 (1+ start))
+                            while start
+                            count t))
+                 "a compaction request declares compaction.submit and forces that call")
+    request))
+
 (-> test-object-contains-string-p (t string) boolean)
 (defun test-object-contains-string-p (root needle)
   "Return true when an ordinary object reachable from ROOT contains NEEDLE."

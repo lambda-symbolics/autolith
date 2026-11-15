@@ -226,7 +226,7 @@
              (provider (make-instance
                         (if native-p 'native-scripted-provider 'scripted-provider)
                         :configuration configuration
-                        :results       (list (agent-test-result "summary" (list (agent-test-compaction-message))
+                        :results       (list (agent-test-result "summary" (list (agent-test-checkpoint-call))
                                                                 :turn-completion ':end)
                                             (mission-test--result "Done.")))))
         (when native-p

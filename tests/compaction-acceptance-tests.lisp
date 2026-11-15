@@ -52,59 +52,79 @@
     (push details (compaction-admission-test-starts observer))
     (compaction-admission-test-cap observer)))
 
-(-> test-compaction-summary-acceptance () null)
-(defun test-compaction-summary-acceptance ()
-  "Validate paid summaries and publish the last text answer even when misshapen.
+(-> test-compaction-submission-acceptance () null)
+(defun test-compaction-submission-acceptance ()
+  "Accept exactly one finished compaction.submit call whose arguments are a valid checkpoint.
 
-Each case lists its output items, turn completion, whether the handoff passes
-the strict shape, and whether the only allowed request publishes it."
-  (let* ((valid (agent-test-compaction-message))
-         (text  (provider-result-assistant-text
-                 (agent-test-result "text" (list valid) :turn-completion ':end))))
-    (dolist (case (list (list (list valid) ':end t t)
-                       (list (list valid) ':continue nil nil)
-                       (list (list valid) ':unspecified t t)
-                       (list nil ':end nil nil)
-                       (list (list (agent-test-message "unstructured text")) ':end nil t)
-                       (list (list (agent-test-message
-                                    (format nil "## [Progress]~%Work is recorded.~2%**[Decisions]** Continue.~2%## [Context]~%State is durable.~2%## [Constraints]~%Follow the user.~2%## [Next steps]~%Resume.~2%## [References]~%The archive."))) ':end t t)
-                       (list (list (agent-test-message
-                                    (format nil "Here is the handoff.~%~A" text))) ':end nil t)
-                       (list (list (agent-test-message
-                                    (concatenate 'string text " [Progress] Duplicate."))) ':end nil t)
-                       (list (list (agent-test-message
-                                    (concatenate 'string text (make-string 12000 :initial-element #\x)))) ':end nil t)
-                       (list (list valid (json-object "type" "refusal" "refusal" "No.")) ':end nil nil)
-                       (list (list valid (json-object "type" "message" "role" "assistant"
-                                                     "refusal" "No." "content" #())) ':end nil nil)))
-      (destructuring-bind (items completion usable-p published-p) case
-        (with-test-configuration (configuration)
-          (let* ((conversation (conversation-create configuration))
-                 (result       (agent-test-result "paid-summary" items :turn-completion completion))
-                 (provider     (make-instance 'scripted-provider :configuration configuration :results (list result)))
-                 (agent        (agent-create :configuration configuration :conversation conversation
-                                             :provider provider :tool-registry (agent-test-registry) :worker nil)))
-            (conversation-append-user-message conversation "retain exact source evidence")
-            (let ((before                                      (mapcar #'json-encode (conversation-input-items conversation)))
-                  (*agent-compaction-maximum-summary-requests* 1))
-              (test-assert (eq usable-p (agent--compaction-summary-usable-p result))
-                           "only a finished structured refusal-free handoff is usable")
-              (let ((published
-                      (handler-case
-                          (progn (agent-compact-conversation agent (make-instance 'agent-observer)) t)
-                        (provider-protocol-error () nil))))
-                (test-assert (eq published-p published)
-                             "the last request publishes any text answer and nothing else"))
-              (test-assert (equal '((1 :summary)) (agent-tests--request-numbers conversation))
-                           "every completed summary attempt is charged once")
-              (unless published-p
-                (test-assert (equal before (mapcar #'json-encode (conversation-input-items conversation)))
-                             "rejection preserves the source projection")
-                (test-assert (equal before
-                                    (mapcar #'json-encode
-                                            (conversation-input-items
-                                             (conversation-load (conversation-pathname conversation)))))
-                             "rejection preserves the replayed projection"))))))))
+Each case lists a response's output items, its turn completion, and whether
+it submits a checkpoint."
+  (flet ((submit (arguments &rest fields)
+           "Return a submit call with ARGUMENTS and FIELDS replacing its own."
+           (let ((call (agent-test-checkpoint-call arguments)))
+             (loop for (name value) on fields by (partial #'nthcdr 2)
+                   do (setf (gethash name call) value))
+             call))
+
+         (arguments (&key (intent "Go on.") (notes "[]")
+                          (next "{\"text\":\"\",\"refs\":[]}") (extra ""))
+           "Return submit arguments built from the JSON texts of their fields."
+           (format nil "{\"intent\":~S,\"notes\":~A,\"next\":~A~A}" intent notes next extra))
+
+         (note (kind text)
+           "Return the JSON text of one note of KIND holding TEXT."
+           (format nil "{\"kind\":~S,\"text\":~S,\"refs\":[]}" kind text)))
+    (let* ((valid      (agent-test-checkpoint-call))
+           (citing     (submit (arguments :next "{\"text\":\"Read it.\",\"refs\":[\"known\"]}")))
+           (references (list (list :handle "known" :kind ':message :label "A record.")
+                             (list :handle "other" :kind ':message :label "Another record."))))
+      (flet ((submission (items completion)
+               "Return the checkpoint a response of ITEMS and COMPLETION submits, or NIL."
+               (agent--compaction-submission
+                (agent-test-result "submission" items :turn-completion completion)
+                references nil)))
+        (loop for (items completion accepted-p) in
+              (list (list (list valid) ':end t)
+                    ;; A tool call leaves some providers' turns unfinished.
+                    (list (list valid) ':continue t)
+                    (list (list valid) ':unspecified t)
+                    (list (list (json-object "type" "reasoning" "summary" #()) valid) ':end t)
+                    (list (list citing) ':end t)
+                    (list nil ':end nil)
+                    (list (list (agent-test-message "A summary in prose.")) ':end nil)
+                    (list (list valid (agent-test-message "Submitted.")) ':end nil)
+                    (list (list valid valid) ':end nil)
+                    (list (list (agent-test-call :call-id "wait" :namespace "job" :name "wait"))
+                          ':end nil)
+                    (list (list (submit (arguments) "call_id" "")) ':end nil)
+                    (list (list (submit (arguments) "status" "incomplete")) ':end nil)
+                    (list (list (submit "{\"intent\":")) ':end nil)
+                    (list (list (submit (arguments :intent ""))) ':end nil)
+                    (list (list (submit (arguments
+                                         :intent (make-string
+                                                  (1+ *continuation-intent-maximum-characters*)
+                                                  :initial-element #\i))))
+                          ':end nil)
+                    (list (list (submit (arguments :extra ",\"verified\":true"))) ':end nil)
+                    (list (list (submit (arguments :extra ",\"intent\":\"Twice.\""))) ':end nil)
+                    (list (list (submit (arguments
+                                         :notes (format nil "[~A]" (note "done" "Tests pass.")))))
+                          ':end nil)
+                    (list (list (submit (arguments
+                                         :notes (format nil "[~A]" (note "open" "")))))
+                          ':end nil)
+                    (list (list (submit (arguments
+                                         :notes (format nil "[~{~A~^,~}]"
+                                                        (loop repeat (1+ *continuation-maximum-notes*)
+                                                              collect (note "open" "More."))))))
+                          ':end nil)
+                    (list (list (submit (arguments
+                                         :next "{\"text\":\"\",\"refs\":[\"unknown\"]}")))
+                          ':end nil))
+              do (test-assert (eq accepted-p (not (null (submission items completion))))
+                              "only one finished, valid compaction.submit call submits a checkpoint"))
+        (test-assert (equal (list (first references))
+                            (getf (submission (list citing) ':end) :references))
+                     "a checkpoint keeps the references it cites and no others"))))
   nil)
 
 (-> test-compaction-native-paid-rejection () null)
@@ -115,7 +135,7 @@ the strict shape, and whether the only allowed request publishes it."
       (let* ((conversation (conversation-create configuration))
              (provider     (make-instance 'scripted-provider :configuration configuration
                                           :results                          (list (agent-test-result "summary"
-                                                                                                    (list (agent-test-compaction-message))
+                                                                                                    (list (agent-test-checkpoint-call))
                                                                                                     :turn-completion ':end))))
              (agent        (agent-create :configuration configuration :conversation conversation
                                          :provider provider :tool-registry (agent-test-registry) :worker nil)))
@@ -150,7 +170,7 @@ the strict shape, and whether the only allowed request publishes it."
                (provider     (make-instance 'compaction-admission-test-provider
                                             :configuration configuration
                                             :results       (list (agent-test-result "summary"
-                                                                                   (list (agent-test-compaction-message))
+                                                                                   (list (agent-test-checkpoint-call))
                                                                                    :turn-completion ':end))))
                (observer     (make-instance 'compaction-admission-test-observer
                                             :cap (if large-mcp-p 1000 50000)))
@@ -192,7 +212,7 @@ the strict shape, and whether the only allowed request publishes it."
                                                                   :configuration configuration
                                                                   :results       (loop repeat 3 append
                                                                                    (list (agent-test-result "summary"
-                                                                                                            (list (agent-test-compaction-message))
+                                                                                                            (list (agent-test-checkpoint-call))
                                                                                                             :turn-completion ':end)
                                                                                          (agent-test-result "answer" (list (agent-test-message "verified"))
                                                                                                             :turn-completion ':end)))))
@@ -310,7 +330,7 @@ the strict shape, and whether the only allowed request publishes it."
                (make-instance 'compaction-gap-test-provider
                               :configuration configuration
                               :mode          mode
-                              :results       (list (agent-test-result "summary" (list (agent-test-compaction-message)))
+                              :results       (list (agent-test-result "summary" (list (agent-test-checkpoint-call)))
                                                    (agent-test-result "answer" (list (agent-test-message "OK"))))))
              (application
                (when mission-p (mission-inference-test--application configuration provider)))
@@ -528,7 +548,7 @@ the strict shape, and whether the only allowed request publishes it."
                                       (when continued-p
                                         (list (agent-test-result "unfinished" nil :turn-completion ':continue)))
                                       (list (agent-test-result
-                                             "summary" (list (agent-test-compaction-message))
+                                             "summary" (list (agent-test-checkpoint-call))
                                              :usage usage)))))
              (application  (when mission-p (mission-inference-test--application configuration provider)))
              (conversation (if application (application-conversation application)

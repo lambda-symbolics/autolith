@@ -212,7 +212,7 @@
                                      (funcall write-record path record :require-absent require-absent)))))
                    (lambda ()
                      (test-assert
-                      (handler-case (progn (conversation-append-summary conversation "Failed checkpoint") nil)
+                      (handler-case (progn (conversation-append-summary conversation (make-continuation :intent "Failed checkpoint")) nil)
                         (shell-log-error () t))
                       "Receipt publication failure vetoes segment rotation")))
                   (test-assert (equal active (conversation-storage-active-pathname identity))
@@ -229,7 +229,7 @@
                              (lambda ()
                                (unwind-protect
                                     (handler-case
-                                        (conversation-append-summary (conversation-load identity) "Shell checkpoint")
+                                        (conversation-append-summary (conversation-load identity) (make-continuation :intent "Shell checkpoint"))
                                       (error (condition) (setf failure condition)))
                                  (sb-thread:signal-semaphore done)))
                              :name "shell delivery rotation"))
@@ -972,7 +972,7 @@
                        "v1 identity segment contains accumulated message receipt"))
         (loop for receipt in (rest receipts)
               do (let ((old (conversation-storage-active-pathname identity)))
-                   (conversation-append-summary conversation "Real checkpoint")
+                   (conversation-append-summary conversation (make-continuation :intent "Real checkpoint"))
                    (test-assert (not (equal old (conversation-storage-active-pathname identity)))
                                 "production checkpoint rotates the physical segment")
                    (test-assert
@@ -1003,7 +1003,7 @@
                                    :root                                                                (conversation-identifier conversation)))
                     (receipt      (task-completion--receipt (getf (shell-log-artifact-metadata artifact) :execution-id))))
                (shell-log-tests--receipt-append conversation receipt)
-               (when (eq kind :header) (conversation-append-summary conversation "Header receipt"))
+               (when (eq kind :header) (conversation-append-summary conversation (make-continuation :intent "Header receipt")))
                (let* ((path  (conversation-storage-active-pathname (conversation-pathname conversation)))
                       (forms (copy-tree (conversation--read-records path))))
                  (case kind
@@ -1028,7 +1028,7 @@
                     (incf (getf (rest (second forms)) :seq))
                     (conversation-identifier-migration--write-forms path forms))
                    (:checkpoint
-                    (conversation-append-summary conversation "Checkpoint")
+                    (conversation-append-summary conversation (make-continuation :intent "Checkpoint"))
                     (let* ((active  (conversation-storage-active-pathname (conversation-pathname conversation)))
                            (rotated (conversation--read-records active)))
                       (conversation-identifier-migration--write-forms active (list (first rotated)))))
@@ -1137,7 +1137,7 @@
              (let* ((artifact (shell-log-tests--receipt-capture configuration runtime conversation :root "linked-root"))
                     (receipt  (task-completion--receipt (getf (shell-log-artifact-metadata artifact) :execution-id))))
                (shell-log-tests--receipt-append conversation receipt)
-               (conversation-append-summary conversation "Header witness")
+               (conversation-append-summary conversation (make-continuation :intent "Header witness"))
                (let* ((active (conversation-storage-active-pathname (conversation-pathname conversation)))
                       (target (merge-pathnames "foreign-segment.sexp" (config :data-root configuration))))
                  (uiop:copy-file active target)
@@ -1287,9 +1287,9 @@
                      (conversation-identifier-migration--write-forms file forms)))
                  (check-state (null mismatch) "after receipt")
                  (unless (eq mismatch ':header)
-                   (conversation-append-summary conversation "Details checkpoint")
+                   (conversation-append-summary conversation (make-continuation :intent "Details checkpoint"))
                    (unless (eq target conversation)
-                     (conversation-append-summary target "Other owner checkpoint"))
+                     (conversation-append-summary target (make-continuation :intent "Other owner checkpoint")))
                    (conversation-load (conversation-pathname conversation))
                    (check-state (null mismatch) "after rotation and reload")))))
         (task-orchestrator-close runtime))))
@@ -1385,7 +1385,7 @@
                                                     (list (shell-log--public-metadata
                                                            (shell-log-artifact-metadata artifact))))))))
                        (push artifact captures))))
-                 (conversation-append-summary owner "Owner checkpoint")
+                 (conversation-append-summary owner (make-continuation :intent "Owner checkpoint"))
                  (conversation-load (conversation-pathname owner))))
              (setf captures (nreverse captures)
                    jobs     (nreverse jobs))
@@ -1864,7 +1864,7 @@
       (conversation-append-record conversation
         (list :tool-result :call-id "old-call" :status ':ok
               :details (list :shell-logs (list (shell-log--public-metadata metadata)))))
-      (conversation-append-summary conversation "Checkpoint before the receipt index existed")
+      (conversation-append-summary conversation (make-continuation :intent "Checkpoint before the receipt index existed"))
       (platform-delete-directory-tree *platform* receipts :validate t)
       (setf conversation (conversation-load identity))
       (test-assert (not (shell-log--sync-delivered-p configuration metadata))

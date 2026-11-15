@@ -59,7 +59,7 @@
                              :identifier execution :storage-root directory))
               (identity     (conversation-pathname conversation)))
          (conversation-append-user-message conversation "actual persisted conversation")
-         (conversation-append-summary conversation "persisted compacted checkpoint")
+         (conversation-append-summary conversation (make-continuation :intent "persisted compacted checkpoint"))
          (conversation-append-user-message conversation "after compaction")
          (snapshot-write result-path (list :status ':success :conversation-file (namestring identity)))
          (let* ((segments (conversation-storage-pathnames identity))

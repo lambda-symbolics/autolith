@@ -46,7 +46,7 @@
                          (json-object "type" "compaction" "encrypted_content" "private-checkpoint")))
    :results      (list (agent-test-result
                         "unfinished-summary"
-                        (list (agent-test-compaction-message))
+                        (list (agent-test-checkpoint-call))
                         :turn-completion ':end))))
 
 (-> compaction-tests--call (string) json-object)
@@ -99,8 +99,8 @@
             (if native-p
                   (conversation-append-native-compaction
                    conversation (list (json-object "type" "compaction" "encrypted_content" "private-checkpoint"))
-                   :family ':codex :summary "Portable handoff." :compaction capture)
-                (conversation-append-summary conversation "Portable handoff." :compaction capture))
+                   :family ':codex :continuation (make-continuation :intent "Portable handoff.") :compaction capture)
+                (conversation-append-summary conversation (make-continuation :intent "Portable handoff.") :compaction capture))
             (let ((record (compaction-tests--checkpoint conversation)))
               (test-assert (= cutoff (getf (rest record) :cutoff-seq)) "checkpoint records the request cutoff")
               (test-assert (= (1- commit-sequence) (getf (rest record) :through-seq))
@@ -133,7 +133,7 @@
            (*task-test-effect-count* 0))
       (conversation-append-user-message conversation "uncertain work")
       (conversation-append-provider-item conversation (compaction-tests--call "uncertain-call"))
-      (conversation-append-summary conversation "The outcome is unknown.")
+      (conversation-append-summary conversation (make-continuation :intent "The outcome is unknown."))
       (dolist (projection (list conversation (conversation-load (conversation-pathname conversation))))
         (let ((outputs (compaction-tests--outputs projection "uncertain-call")))
           (test-assert (= 1 (length outputs)) "uncertain calls receive exactly one correlated repair")
@@ -142,7 +142,7 @@
       (let ((capture (conversation-compaction-capture conversation)))
         (conversation-append-tool-result conversation "uncertain-call" :tool-name "test.effect"
                                          :output "authoritative recovered output" :success-p t)
-        (conversation-append-summary conversation "The actual outcome is now known."
+        (conversation-append-summary conversation (make-continuation :intent "The actual outcome is now known.")
                                      :compaction capture))
       (dolist (projection (list conversation (conversation-load (conversation-pathname conversation))))
         (let ((outputs (compaction-tests--outputs projection "uncertain-call")))
@@ -221,7 +221,7 @@
                        (error "injected checkpoint publication failure"))))
          (lambda ()
            (test-assert (handler-case
-                            (progn (conversation-append-summary conversation "unpublished summary") nil)
+                            (progn (conversation-append-summary conversation (make-continuation :intent "unpublished summary")) nil)
                           (simple-error () t))
                         "checkpoint failure is propagated")))
         (test-assert (equal items (conversation-input-items conversation)) "publication failure preserves the projection")
@@ -344,7 +344,7 @@
                                               "both stable execution receipts are durable"))
                                (test-assert (null (task-completion-deliver fresh))
                                             "a repeated safe boundary does not redeliver either outcome")
-                               (conversation-append-summary (agent-conversation fresh) "Delivered both original jobs.")
+                               (conversation-append-summary (agent-conversation fresh) (make-continuation :intent "Delivered both original jobs."))
                                (let ((again (job-completion-tests--fresh-agent fresh configuration)))
                                  (unwind-protect
                                       (progn
@@ -371,7 +371,7 @@
       (let ((conversation (conversation-create configuration)))
         (conversation-append-user-message conversation "checkpoint corruption fixture")
         (conversation-append-provider-item conversation (compaction-tests--call "corruption-call"))
-        (conversation-append-summary conversation "Unknown result retained.")
+        (conversation-append-summary conversation (make-continuation :intent "Unknown result retained."))
         (let* ((pathname   (conversation-log-pathname conversation))
                (records    (copy-tree (conversation--read-records pathname)))
                (checkpoint (find :summary records :key #'first))

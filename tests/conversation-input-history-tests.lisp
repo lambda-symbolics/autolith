@@ -14,7 +14,7 @@
           (push input expected)
           (conversation-append-user-message conversation input))
         (when (zerop (mod (1+ index) 25))
-          (conversation-append-summary conversation "checkpoint")))
+          (conversation-append-summary conversation (make-continuation :intent "checkpoint"))))
       (dolist (kind '(:command :lisp))
         (push "duplicate" expected)
         (conversation-append-user-operation
@@ -39,7 +39,7 @@
            (test-assert (equal (conversation-input-history loaded) expected)
                         "reload reads the complete sidecar despite a damaged retired segment")
            (conversation-append-user-message loaded "new input")
-           (conversation-append-summary loaded "another checkpoint")
+           (conversation-append-summary loaded (make-continuation :intent "another checkpoint"))
            (test-assert
             (equal (conversation-input-history (conversation-load identity))
                    (append expected '("new input")))
@@ -58,7 +58,7 @@
            (scans          0)
            (publications   0))
       (conversation-append-user-message conversation "retired")
-      (conversation-append-summary conversation "checkpoint")
+      (conversation-append-summary conversation (make-continuation :intent "checkpoint"))
       (conversation-append-user-message conversation "active")
       (delete-file sidecar)
       (test-call-with-function-replacements
@@ -77,7 +77,7 @@
                         "missing history rebuilds from archived and active inputs")
            (conversation-input-history loaded)
            (conversation-append-user-message loaded "next")
-           (conversation-append-summary loaded "checkpoint")
+           (conversation-append-summary loaded (make-continuation :intent "checkpoint"))
            (test-assert
             (equal (conversation-input-history (conversation-load identity))
                    '("retired" "active" "next"))
@@ -245,7 +245,7 @@
                            (apply original pathname arguments)))))
          (lambda ()
            (conversation-append-user-message conversation "second")
-           (conversation-append-summary conversation "checkpoint")
+           (conversation-append-summary conversation (make-continuation :intent "checkpoint"))
            (test-assert
             (and (not (equal (conversation-log-pathname conversation) active))
                  (= (length (conversation-storage-pathnames identity)) 2)
@@ -264,7 +264,7 @@
            (identity     (conversation-pathname conversation))
            (sidecar      (conversation-input-history-pathname identity)))
       (conversation-append-user-message conversation "retired")
-      (conversation-append-summary conversation "checkpoint")
+      (conversation-append-summary conversation (make-continuation :intent "checkpoint"))
       (conversation-append-user-message conversation "active")
       (let ((forms (log-read sidecar)))
         (sexp-store:log-write sidecar (butlast forms))

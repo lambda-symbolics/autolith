@@ -305,24 +305,14 @@ presents the warning in the first channel it opens only."
     list)
 (defun application--expected-error-entry (application condition)
   "Return the transcript entry describing expected CONDITION."
-  (append
-   (application--transcript-entry
-    application
-    :style  ':failure
-    :header "✗ error"
-    :body   (if (typep condition 'credentials-unavailable)
-                (format nil "~A~%Use (auth) to authenticate Autolith directly."
-                        condition)
-                (format nil "~A" condition)))
-   (when (and (typep condition 'agent-compaction-summary-error)
-              (provider-error-response condition))
-     (list (terminal-span ':plain (format nil "~%  "))
-           (termdown:make-widget
-            ':code-copy "(copy bug report to clipboard)"
-            (list ':copy
-                  (format nil "Autolith ~A~%~A~%~%Parsed provider response:~%~A~%"
-                          *autolith-version* condition
-                          (provider-error-response condition))))))))
+  (application--transcript-entry
+   application
+   :style  ':failure
+   :header "✗ error"
+   :body   (if (typep condition 'credentials-unavailable)
+               (format nil "~A~%Use (auth) to authenticate Autolith directly."
+                       condition)
+               (format nil "~A" condition))))
 
 (-> application-handle-expected-error
     (application (or autolith-error cl-llm-provider-api:provider-api-error))

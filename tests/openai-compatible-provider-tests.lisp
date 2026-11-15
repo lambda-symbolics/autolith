@@ -1340,6 +1340,7 @@
                   (conversation-create provider-configuration :identifier
                                        "openai-compatible-compaction")))
              (conversation-append-user-message conversation "Compact this history.")
+             (test-compaction-request provider conversation)
              (multiple-value-bind (request delivery)
                  (provider-request-object provider conversation #() :compaction-p t)
                (let* ((messages       (json-get request "messages"))
@@ -1568,8 +1569,7 @@
                   "built-in functions have acceptable Responses parameter roots and names")
                  (test-assert (string= canonical (json-encode (tool-parameters search-tool)))
                               "wire projection leaves canonical validation intact")
-                 (let ((compaction (provider-request-object provider conversation #()
-                                                            :compaction-p t)))
+                 (let ((compaction (test-compaction-request provider conversation)))
                    (test-assert (and (eq yason:false (json-get compaction "store"))
                                      (eq yason:false (json-get compaction "parallel_tool_calls"))
                                      (not (gethash "reasoning" compaction)))
