@@ -726,27 +726,36 @@
              (sb-sys:with-interrupts (check t failure-p))
              (sb-sys:without-interrupts (check nil failure-p)))
         (fmakunbound symbol))))
-  (let ((original-version (symbol-function 'lisp-implementation-version))
-        (original-find    (symbol-function 'find-symbol))
-        (entered-p        nil))
-    (sb-ext:without-package-locks
-      (dolist (scenario '(:version :binding))
-        (test-call-with-function-replacements
-         (list (list 'lisp-implementation-version
-                     (lambda () (if (eq scenario ':version) "2.6.7" (funcall original-version))))
-               (list 'find-symbol
-                     (lambda (name &optional (package *package*))
-                       (if (and (eq scenario ':binding) (string= name "ITIMER-EMULATION-DEINIT"))
-                           nil
-                           (funcall original-find name package)))))
-         (lambda ()
-           (test-assert
-            (typep (handler-case
-                       (platform-call-with-checkpoint-save *platform* (lambda () (setf entered-p t)))
-                     (platform-error (condition) condition))
-                   (find-class 'win32-checkpoint-runtime-unsupported))
-            "An uninspected or incomplete Windows runtime fails before the save thunk"))))
-      (test-assert (not entered-p) "Unsupported timer profiles cannot detach runtime state")))
+  (let* ((thread-symbol  (find-symbol "*TIMER-THREAD*" "SB-IMPL"))
+         (thread-bound-p (and thread-symbol (boundp thread-symbol)))
+         (thread-value   (when thread-bound-p (symbol-value thread-symbol))))
+    (test-assert thread-bound-p "The inspected Windows timer state is initially bound")
+    (dolist (scenario '(:version :binding))
+      (let ((entered-p nil))
+        (flet ((reject-profile ()
+                 "Reject this scenario before entering the runtime-detaching thunk."
+                 (test-assert
+                  (typep (handler-case
+                             (platform-call-with-checkpoint-save *platform* (lambda () (setf entered-p t)))
+                           (platform-error (condition) condition))
+                         (find-class 'win32-checkpoint-runtime-unsupported))
+                  (format nil "Windows runtime profile ~S is rejected before the save thunk" scenario))
+                 (test-assert (not entered-p)
+                              (format nil "Windows runtime profile ~S cannot detach state" scenario))))
+          (ecase scenario
+            (:version
+             (sb-ext:without-package-locks
+               (test-call-with-function-replacements
+                (list (list 'lisp-implementation-version (lambda () "2.6.7")))
+                #'reject-profile)))
+            (:binding
+             (sb-ext:without-package-locks
+               (progv (list thread-symbol) nil
+                 (test-assert (not (boundp thread-symbol)) "The requester has no timer-thread binding in this scope")
+                 (reject-profile))))))
+        (test-assert (and (eql (boundp thread-symbol) thread-bound-p)
+                          (or (not thread-bound-p) (eq (symbol-value thread-symbol) thread-value)))
+                     (format nil "Windows runtime profile ~S restores the caller's timer binding" scenario)))))
   (dolist (scenario '(:normal :early-failure :terminate-failure :join-failure :close-failure :no-thread :no-handle))
     (let* ((deinit-symbol (gensym "TIMER-DEINIT-"))
            (thread-symbol (gensym "TIMER-THREAD-"))
