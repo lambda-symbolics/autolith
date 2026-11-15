@@ -615,7 +615,7 @@
            conversation (json-object "type" "function_call_output" "call_id" "prefix-call"
                                      "output" "fresh tool result"))
           (dotimes (index 2)
-            (declare (ignore index))
+            (declare (ignorable index))
             (let* ((*provider-context-request* (list :conversation conversation))
                    (next                       (provider-request-object provider conversation #()))
                    (messages                   (json-get next "messages")))
