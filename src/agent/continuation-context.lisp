@@ -49,23 +49,25 @@ AUTHORITIES is the result of CONTINUATION--AUTHORITIES.")
 (defmethod continuation-reference-state ((kind (eql :gate)) reference authorities)
   "Return the status of a gate of the conversation's own mission.
 
-A passed gate whose inputs no longer match the fingerprint it passed on says
-so. The inputs are fingerprinted as the mission does it; the gate is neither
-run nor changed. Inputs that cannot be read leave the status as it is."
+A passed gate says so when its inputs no longer match the fingerprint it
+passed on, and when they cannot be read to tell. The inputs are fingerprinted
+as the mission does it; the gate is neither run nor changed."
   (let* ((mission (getf authorities :mission))
          (gate    (and mission
                        (equal (getf reference :mission) (mission-knowledge--identity mission))
                        (find (getf reference :gate) (getf (mission-context-goal mission) :gates)
                              :key (lambda (gate) (getf gate :id)) :test #'equal))))
     (when gate
-      (format nil "~(~A~)~:[~;, inputs changed since it was checked~]"
+      (format nil "~(~A~)~@[, ~A~]"
               (getf gate :status)
               (and (eq (getf gate :status) ':passed)
                    (handler-case
-                       (not (equal (getf gate :fingerprint)
-                                   (mission-gate-fingerprint gate (getf authorities :tool-context))))
+                       (and (not (equal (getf gate :fingerprint)
+                                        (mission-gate-fingerprint
+                                         gate (getf authorities :tool-context))))
+                            "inputs changed since it was checked")
                      (error ()
-                       nil)))))))
+                       "inputs cannot be read to check that it still holds")))))))
 
 (defmethod continuation-reference-state ((kind (eql :claim)) reference authorities)
   "Return a fact's logical status, whether it applies now, and the bases it rests on.
