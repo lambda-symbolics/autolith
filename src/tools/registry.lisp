@@ -324,15 +324,19 @@
          (typep (tool-context-agent context) class)
          t)))
 
+(defvar *tool-authorization-context* nil
+  "The exact tool execution whose permission callback is running on this thread.")
+
 (-> tool-context-authorize-command
     (tool-context string pathname)
     keyword)
 (defun tool-context-authorize-command (context command directory)
   "Return :DENY, :SANDBOXED, or :FULL-ACCESS for COMMAND in DIRECTORY."
-  (let* ((function (tool-context-command-authorization-function context))
-         (decision (if function
-                       (funcall function command directory)
-                       ':deny)))
+  (let* ((*tool-authorization-context* context)
+         (function                     (tool-context-command-authorization-function context))
+         (decision                     (if function
+                                           (funcall function command directory)
+                                           ':deny)))
     (unless (member decision '(:deny :sandboxed :full-access))
       (error 'tool-error
              :message   (format nil "Command authorization returned invalid decision ~S."
@@ -345,10 +349,11 @@
     keyword)
 (defun tool-context-authorize-tool (context tool arguments)
   "Return :ALLOW or :DENY for externally implemented TOOL and ARGUMENTS."
-  (let* ((function (tool-context-tool-authorization-function context))
-         (decision (if function
-                       (funcall function tool arguments)
-                       ':deny)))
+  (let* ((*tool-authorization-context* context)
+         (function                     (tool-context-tool-authorization-function context))
+         (decision                     (if function
+                                           (funcall function tool arguments)
+                                           ':deny)))
     (unless (member decision '(:allow :deny))
       (error 'tool-error
              :message

@@ -63,6 +63,36 @@
                    "completed record identities deduplicate")))
   nil)
 
+(-> test-fullscreen-annotation-restoration () null)
+(defun test-fullscreen-annotation-restoration ()
+  "Restore an annotation's call, deduplicate it, and preserve it through completion."
+  (with-terminal-ui (ui (fullscreen-test--ui (make-instance 'recording-terminal :columns 80)))
+    (let* ((origin     (tool-outcome-test--call 1 "restored"))
+           (annotation
+             (list 2 "verdict for original command"
+                   (list :kind ':annotation :call-key '(:call "owner" "restored")
+                         :annotations     (list (terminal-span ':annotation (format nil "~%permission verdict")))
+                         :origin-function (lambda () origin)))))
+      (terminal-ui-present-records ui (list annotation))
+      (test-assert (and (= 1 (fullscreen-test--chunk-count ui))
+                        (search "restored" (tool-outcome-test--text ui))
+                        (search "permission verdict" (tool-outcome-test--text ui)))
+                   "A judgment restores its original invocation in one chunk.")
+      (test-assert (zerop (terminal-ui-present-records ui (list annotation)))
+                   "Repeated annotation identities do not duplicate the verdict.")
+      (terminal-ui-present-records
+       ui (list (tool-outcome-test--result 3 "restored" :body (list (terminal-span ':plain (format nil "~%output"))))))
+      (test-assert (and (search "permission verdict" (tool-outcome-test--text ui))
+                        (search "output" (tool-outcome-test--text ui)))
+                   "A later result preserves the restored judgment alongside its body.")
+      (terminal-ui-present-records
+       ui (list (list 4 "verdict for missing command in /workspace"
+                      (list :kind ':annotation :call-key '(:call "owner" "missing")
+                            :origin-function (lambda () nil)))))
+      (test-assert (and (= 2 (fullscreen-test--chunk-count ui))
+                        (search "missing command in /workspace" (tool-outcome-test--text ui)))
+                   "A missing origin displays the self-identifying fallback atomically."))))
+
 (-> test-fullscreen-outcome-deferred-order () null)
 (defun test-fullscreen-outcome-deferred-order ()
   "Publish mixed suspended output in order and associate tags with the queued chunks."

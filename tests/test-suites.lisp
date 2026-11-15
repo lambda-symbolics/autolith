@@ -359,6 +359,7 @@
 (define-test-suite fullscreen
   test-fullscreen-transcript-residency
   test-fullscreen-outcome-batch
+  test-fullscreen-annotation-restoration
   test-transcript-entry-semantics
   test-fullscreen-outcome-deferred-order
   test-fullscreen-outcome-retag
@@ -1603,6 +1604,7 @@
   test-terminal-image-attachments
   test-terminal-input-decoding
   test-terminal-status-worked-time
+  test-terminal-judgment-scope
   test-terminal-context-meter
   test-terminal-bounded-editor-repaint
   test-terminal-transient-notice
@@ -1713,6 +1715,7 @@
   test-session-titles-command
   test-hurry-up-mode
   test-command-permission-modes
+  test-automatic-permission-presentation
   test-interrupt-open-instruction
   test-repeated-interrupt-forces-exit
   test-forced-exit-without-durable-conversation

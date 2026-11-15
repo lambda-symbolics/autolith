@@ -1042,6 +1042,82 @@
                      "session permission modes with a workspace sandbox"))
   nil)
 
+(-> test-automatic-permission-presentation () null)
+(defun test-automatic-permission-presentation ()
+  "Show judging during inference and attach its verdict across unrelated notices."
+  (with-test-configuration (configuration)
+    (let* ((ui           (fullscreen-test--ui (make-instance 'recording-terminal :columns 100 :rows 40)))
+           (conversation (conversation-create configuration))
+           (application  (make-instance 'application :configuration configuration
+                                         :conversation conversation :ui ui
+                                         :tool-registry             (make-default-tool-registry)
+                                         :provider                  (make-instance 'rlm-inference-test-provider :results nil)))
+           (directory    (config :working-directory configuration))
+           (calls        0)
+           (context      (make-instance 'tool-context :conversation conversation :call-id "judged"
+                                         :command-authorization-function
+                                         (lambda (command directory)
+                                           (application--auto-command-permission application command directory)))))
+      (with-terminal-ui (active ui)
+        (dolist (identifier '("judged" "other"))
+          (terminal-ui-present-records
+           active
+           (list (application--record-presentation
+                  application
+                  (list :provider-item :seq (if (equal identifier "judged") 1 2)
+                        :wire-json     (json-encode
+                                        (agent-test-call :call-id identifier :namespace "shell" :name "run"
+                                                         :arguments (json-encode
+                                                                     (json-object "command" "printf judged")))))))))
+        (terminal-ui-set-status active "running shell.run")
+        (terminal-ui-set-local-activity active "local work")
+        (let ((started-at (terminal-ui-status-started-at active)))
+          (test-call-with-function-replacements
+           (list (list 'permissions-model-classify-command
+                       (lambda (command directory &key provider configuration sandbox-available-p user-instructions)
+                         (declare (ignore command directory provider configuration sandbox-available-p user-instructions))
+                         (incf calls)
+                         (test-assert (search "judging" (terminal--spans-text
+                                                         (terminal-ui--status-row-at active
+                                                                                    (funcall (terminal-ui-clock-function active))
+                                                                                    100)))
+                                      "The bottom modeline displays judging while inference is pending.")
+                         (test-assert (eq context *tool-authorization-context*)
+                                      "Permission inference retains the exact invoking context.")
+                         (application-present application "cache miss notice")
+                         (values ':full-access "allowed"))))
+           (lambda ()
+             (test-assert (eq ':full-access (tool-context-authorize-command context "printf judged" directory))
+                          "Automatic authorization applies its classified decision.")
+             (let ((other (make-instance 'tool-context :conversation conversation :call-id "other"
+                                                       :command-authorization-function
+                                                       (lambda (command directory)
+                                                         (application--auto-command-permission application command directory)))))
+               (tool-context-authorize-command other "printf judged" directory))))
+          (test-assert (and (= calls 1) (null (terminal-ui-judgments active))
+                            (= started-at (terminal-ui-status-started-at active))
+                            (equal "local work" (terminal-ui-local-activity active)))
+                       "Cached decisions skip judging, and inference preserves unrelated activity clocks."))
+        (let* ((viewport (fullscreen-terminal-ui-viewport active))
+               (first    (clinedi:transcript-viewport-chunk-text viewport 0))
+               (second   (clinedi:transcript-viewport-chunk-text viewport 1))
+               (notice   (clinedi:transcript-viewport-chunk-text viewport 2)))
+          (test-assert (and (= 3 (fullscreen-test--chunk-count active))
+                            (search "auto-permission full access" first)
+                            (search "auto-permission full access" second)
+                            (equal "cache miss notice" (string-trim '(#\Newline) notice)))
+                       "Identical commands retain their own verdicts, separate from the cache notice."))
+        (terminal-ui-present-records
+         active (list (application--record-presentation
+                       application (list :tool-result :seq 3 :call-id "judged" :tool "shell.run"
+                                         :status ':ok :output "done"))))
+        (dolist (width '(40 100))
+          (terminal-ui-resize active width :rows 40)
+          (test-assert (search "auto-permission" (clinedi:transcript-viewport-chunk-text
+                                                  (fullscreen-terminal-ui-viewport active) 0))
+                       "A folded result and resize preserve its attached verdict."))
+        (test-assert (null *tool-authorization-context*) "Authorization restores the caller's context.")))))
+
 (-> test-interrupt-open-instruction () null)
 (defun test-interrupt-open-instruction ()
   "Test that Ctrl-C exits with an exact command only for durable conversations."

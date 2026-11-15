@@ -2393,9 +2393,11 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
         application
         (application--permission-mode-entry
          ':auto
-         (if (application--command-sandbox-available-p)
-             "Commands will be classified automatically as sandboxed, full access, or denied."
-             "Commands will be classified automatically as full access or denied."))))
+         (concatenate 'string
+                      (if (application--command-sandbox-available-p)
+                          "Commands will be classified automatically as sandboxed, full access, or denied."
+                          "Commands will be classified automatically as full access or denied.")
+                      " The status bar shows judging during classification; each decision is attached to its operation."))))
       ((eq choice ':sandbox)
        (unless (application--command-sandbox-available-p)
          (error 'configuration-error

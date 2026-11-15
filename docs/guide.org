@@ -93,6 +93,15 @@ disable it. Strings represent text such as objectives, messages, names, and
 identifiers. Pass structured arguments as Lisp data, not as source text inside a
 string.
 
+** Automatic permissions
+
+Use =(permissions :auto)= to classify operations without an approval picker.
+During a fresh classification, read =judging= and the operation in the status
+bar. Cached decisions skip this phase. In fullscreen, read the decision beside
+its exact tool call, even when cache notices or other output intervene. The
+annotation survives tool completion, folding, and resizing. In linear output,
+read the command and working directory alongside the decision.
+
 * Onboarding
 
 At the opening boot screen, press Space or Enter to start the tour. Press Esc or

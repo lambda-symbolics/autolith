@@ -433,6 +433,11 @@ panels while such frames show, as during the boot screen."))
     :type     (option (integer 0))
     :documentation
     "The conversation's accumulated working seconds when the activity began.")
+   (judgments
+    :initform      nil
+    :accessor      terminal-ui-judgments
+    :type          list
+    :documentation "Owner-scoped automatic permission evaluations currently in flight.")
    (local-activity
     :initform      nil
     :accessor      terminal-ui-local-activity

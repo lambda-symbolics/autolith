@@ -1350,6 +1350,7 @@ its parenthesis open, and are dropped once the name closes it itself."
    (null
     (or (terminal-ui-status ui)
         (terminal-ui-local-activity ui)
+        (terminal-ui-judgments ui)
         (terminal-ui-compacting-p ui)
         (terminal-ui--command-presentation-activities ui)
         (terminal-ui-agent-activities ui)
@@ -1625,6 +1626,9 @@ its parenthesis open, and are dropped once the name closes it itself."
      (let ((started-at (or (terminal-ui-status-started-at ui) now)))
        (values started-at
                (or (terminal-ui-status-progress-at ui) started-at))))
+    ((terminal-ui-judgments ui)
+     (let ((started-at (getf (first (terminal-ui-judgments ui)) :started-at)))
+       (values started-at started-at)))
     ((terminal-ui-local-activity ui)
      (let ((started-at (or (terminal-ui-local-activity-started-at ui) now)))
        (values started-at started-at)))
@@ -1744,6 +1748,7 @@ its parenthesis open, and are dropped once the name closes it itself."
        (and animated-p
             (list (terminal-ui-status ui)
                   (terminal-ui-local-activity ui)
+                  (terminal-ui-judgments ui)
                   (terminal-ui--status-signature-at ui now)))
        (and compacting-p
             (terminal-ui--compaction-phase-at
@@ -1953,6 +1958,10 @@ joins the meter when every segment fits."
            (and animated-p
                 (append
                  (terminal-ui--status-spinner-spans-at ui now)
+                 (when (terminal-ui-judgments ui)
+                   (list (terminal-span ':status-accent " judging")
+                         (terminal-span ':status-dim
+                                        (format nil " ~A" (getf (first (terminal-ui-judgments ui)) :label)))))
                  (list (terminal-span ':status-accent " ∙ ")
                        (terminal-span ':status-dim
                                       (terminal-ui--status-text-at ui now)))
@@ -3342,6 +3351,26 @@ for a phase the transcript already shows, such as a streaming response."
                (terminal-ui-status-rendered-signature ui) nil)
          (terminal-ui--paint-live ui)))))
   ui)
+
+(-> terminal-ui-call-with-judgment ((option terminal-ui) string function) (values &rest t))
+(defun terminal-ui-call-with-judgment (ui label function)
+  "Show permission judging of LABEL while calling FUNCTION, returning all its values.
+
+Each scope removes only its own state on every unwind. Other activities and
+concurrent judgments retain their independent ownership and clocks."
+  (let ((judgment (list :label      (text-cell-prefix (sanitize-text label :single-line-p t) 48)
+                        :started-at (and ui (funcall (terminal-ui-clock-function ui))))))
+    (unwind-protect
+         (progn
+           (when ui
+             (with-terminal-ui-locked (ui)
+               (push judgment (terminal-ui-judgments ui))
+               (terminal-ui--paint-live ui)))
+           (funcall function))
+      (when ui
+        (with-terminal-ui-locked (ui)
+          (setf (terminal-ui-judgments ui) (remove judgment (terminal-ui-judgments ui) :test #'eq))
+          (terminal-ui--paint-live ui))))))
 
 (-> terminal-ui-set-local-activity
     (terminal-ui (option string))

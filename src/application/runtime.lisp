@@ -2883,8 +2883,8 @@ A channel message shows its sender and channel instead of an operation."
        entry)))
 
 (-> application-present
-    (application (or string list) &key (:identifier t) (:group t)) boolean)
-(defun application-present (application entry &key identifier group)
+    (application (or string list) &key (:identifier t) (:group t) (:metadata list)) boolean)
+(defun application-present (application entry &key identifier group metadata)
   "Append non-conversation ENTRY once, optionally under a stable IDENTIFIER.
 
 The channel's structured clients receive its text as a :PRESENT event."
@@ -2922,10 +2922,12 @@ The channel's structured clients receive its text as a :PRESENT event."
                    (or identifier
                        (list :presentation (incf (application-presentation-counter application)))))
                  (emitted-p
-                   (terminal-ui-append-finalized
-                    ui
-                    identifier
-                    presented-entry :group (unless invocation group))))
+                  (if metadata
+                      (plusp (terminal-ui-present-records
+                              ui (list (list identifier presented-entry
+                                             (append metadata (list :group group))))))
+                      (terminal-ui-append-finalized
+                       ui identifier presented-entry :group (unless invocation group)))))
             (when (and invocation emitted-p)
               (setf *application-command-presentation-pending-p* nil))
             emitted-p)))))

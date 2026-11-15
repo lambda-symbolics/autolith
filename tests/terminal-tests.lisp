@@ -963,6 +963,37 @@
       (ignore-errors (terminal-ui-stop ui))))
   nil)
 
+(-> test-terminal-judgment-scope () null)
+(defun test-terminal-judgment-scope ()
+  "Remove only the finishing judgment on normal, error and nonlocal exits."
+  (with-terminal-ui (ui (terminal-ui-create :terminal (make-instance 'recording-terminal :columns 80)))
+    (terminal-ui-set-status ui "working")
+    (terminal-ui-set-local-activity ui "local work")
+    (let ((started-at (terminal-ui-status-started-at ui)))
+      (test-assert
+       (equal '(:full-access "reason")
+              (multiple-value-list
+               (terminal-ui-call-with-judgment
+                ui "outer command"
+                (lambda ()
+                  (test-assert (= 1 (length (terminal-ui-judgments ui))) "The outer judgment owns one scope.")
+                  (handler-case
+                      (terminal-ui-call-with-judgment ui "failed command" (lambda () (error "probe")))
+                    (simple-error () nil))
+                  (test-assert (equal "outer command" (getf (first (terminal-ui-judgments ui)) :label))
+                               "An inner failure removes only its own judgment.")
+                  (catch 'cancel
+                    (terminal-ui-call-with-judgment ui "cancelled command" (lambda () (throw 'cancel nil))))
+                  (test-assert (= 1 (length (terminal-ui-judgments ui)))
+                               "Cancellation removes only the cancelled scope.")
+                  (values ':full-access "reason")))))
+       "Judging preserves every value returned by the classifier.")
+      (test-assert (and (null (terminal-ui-judgments ui))
+                        (= started-at (terminal-ui-status-started-at ui))
+                        (equal "working" (terminal-ui-status ui))
+                        (equal "local work" (terminal-ui-local-activity ui)))
+                   "Finishing judgment clears its indicator without replacing other work."))))
+
 (-> test-terminal-timed-status () null)
 (defun test-terminal-timed-status ()
   "Test status animation, elapsed activity, and stale progress timing."

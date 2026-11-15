@@ -2542,45 +2542,58 @@ as the terminal UI's exclusive-input function."
             :description (if external-tool-p "do not call the external tool"
                              "do not run the command"))))))
 
+(-> application--present-permission-decision
+    (application list &key (:command string) (:directory pathname)) boolean)
+(defun application--present-permission-decision (application entry &key command directory)
+  "Attach permission ENTRY to its exact tool call, or identify the operation inline."
+  (let* ((context      *tool-authorization-context*)
+         (conversation (and context (tool-context-conversation context)))
+         (call-key     (when (and conversation
+                                  (non-empty-string-p (tool-context-call-id context)))
+                         (list ':call (conversation-identifier conversation)
+                               (tool-context-call-id context))))
+         (ui           (application-ui application))
+         (metadata     (when (and call-key ui (terminal-ui-fullscreen-p ui))
+                         (list :kind ':annotation :call-key call-key
+                               :annotations (cons (terminal-span ':plain (string #\Newline)) entry)
+                               :origin-function
+                               (lambda ()
+                                 (when (eq conversation (application-conversation application))
+                                   (application--tool-outcome-origin
+                                    application (list :call-key call-key)))))))
+         (fallback     (append entry
+                               (list (terminal-span
+                                      ':annotation
+                                      (format nil " · ~A in ~A"
+                                              (sanitize-text command :single-line-p t)
+                                              (sanitize-text (namestring directory) :single-line-p t)))))))
+    (if metadata
+        (application-present application fallback :metadata metadata)
+        (application-present application fallback))))
+
 (-> application--apply-classified-command-permission
     (application string pathname &key (:decision keyword) (:reason string))
     keyword)
 (defun application--apply-classified-command-permission
     (application command directory &key decision reason)
-  "Apply one automatic DECISION for COMMAND with a terse annotation of its call.
-
-The command already appears with its tool call, so the notice attaches to it
-and never restates it; only a refusal carries the classifier's short reason. A
-sandbox grant is revalidated at this final authorization boundary."
-  (declare (ignore command directory))
-  (ecase decision
-    (:sandboxed
-     (if (application--command-sandbox-available-p)
-         (progn
-           (application-present
-            application
-            (list (terminal-span ':annotation "  auto-permission sandbox")) :group ':attached)
-           ':sandboxed)
-         (progn
-           (application-present
-            application
-            (list (terminal-span
-                   ':annotation
-                   "  auto-permission deny: the workspace sandbox became unavailable")) :group ':attached)
-           ':deny)))
-    (:full-access
-     (application-present
-      application
-      (list (terminal-span ':annotation "  auto-permission full access")) :group ':attached)
-     ':full-access)
-    (:deny
-     (application-present
-      application
-      (list (terminal-span
-             ':annotation
-             (format nil "  auto-permission deny: ~A"
-                     (sanitize-text reason :single-line-p t)))) :group ':attached)
-     ':deny)))
+  "Apply DECISION for the exact operation, revalidating any sandbox grant."
+  (when (and (eq decision ':sandboxed) (not (application--command-sandbox-available-p)))
+    (setf decision ':deny
+          reason "the workspace sandbox became unavailable"))
+  (application--present-permission-decision
+   application
+   (list (terminal-span
+          ':annotation
+          (format nil "  auto-permission ~A"
+                  (ecase decision
+                    (:sandboxed
+                     "sandbox")
+                    (:full-access
+                     "full access")
+                    (:deny
+                     (format nil "deny: ~A" (sanitize-text reason :single-line-p t)))))))
+   :command command :directory directory)
+  decision)
 
 (-> application--current-user-instructions (application) (option string))
 (defun application--current-user-instructions (application)
@@ -2650,12 +2663,16 @@ the commands of one instruction rather than the whole session."
                       (rest cached)
                       "the cached classifier decision was unusable")))
         (multiple-value-bind (inferred-decision inferred-reason)
-            (permissions-model-classify-command
-             command directory
-             :provider            (application-provider application)
-             :configuration       (application-configuration application)
-             :sandbox-available-p sandbox-available-p
-             :user-instructions   user-instructions)
+            (terminal-ui-call-with-judgment
+             (and (slot-boundp application 'ui) (application-ui application))
+             command
+             (lambda ()
+               (permissions-model-classify-command
+                command directory
+                :provider            (application-provider application)
+                :configuration       (application-configuration application)
+                :sandbox-available-p sandbox-available-p
+                :user-instructions   user-instructions)))
           (let* ((decision
                    (application--automatic-command-decision inferred-decision))
                  (decision

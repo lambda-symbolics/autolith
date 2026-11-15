@@ -115,8 +115,10 @@
         (terminal-ui--finalized-content
          ui (if (eq (getf record :kind) ':call)
                 (if transform
-                    (funcall transform entry (getf record :state) body)
-                    (terminal-ui-fullscreen--record-entry entry (getf record :state) body))
+                     (funcall transform entry (getf record :state)
+                              (append (getf record :annotations) body))
+                     (terminal-ui-fullscreen--record-entry
+                      entry (getf record :state) (append (getf record :annotations) body)))
                 entry)
          :group (getf record :group))
       (values (concatenate 'string prefix text) (concatenate 'string prefix display)
@@ -127,6 +129,7 @@
   "Charge logical sources retained by RECORD to its bounded viewport chunk."
   (+ (or (getf record :source-characters) 0)
      (or (getf record :body-source-characters) 0)
+     (loop for span in (getf record :annotations) sum (length (terminal-span-text span)))
      (let ((markdown (getf record :markdown)))
        (if markdown
            (+ (length (getf markdown :source))
@@ -182,15 +185,24 @@
       (terminal-ui--remember-finalized ui (list identifier) :note-output-p nil)
       display)))
 
+(-> terminal-ui-fullscreen--apply-outcome (list list) list)
+(defun terminal-ui-fullscreen--apply-outcome (record metadata)
+  "Update copied RECORD with an outcome or an annotation of its exact call."
+  (setf (getf record :job-key) (or (getf metadata :job-key) (getf record :job-key)))
+  (if (eq (getf metadata :kind) ':annotation)
+      (setf (getf record :annotations)
+            (append (getf record :annotations) (getf metadata :annotations)))
+      (dolist (key '(:state :retain-output-p :body :body-layout :body-source-characters :entry-transform))
+        (setf (getf record key) (getf metadata key))))
+  record)
+
 (-> terminal-ui-fullscreen--replace-record
     (fullscreen-terminal-ui list &key (:identifier t) (:metadata list)) boolean)
 (defun terminal-ui-fullscreen--replace-record (ui record &key identifier metadata)
   "Replace RECORD's invocation with its latest source-backed outcome."
   (let ((next (copy-list record)))
-    (setf (getf next :identifiers) (cons identifier (getf record :identifiers))
-          (getf next :job-key) (or (getf metadata :job-key) (getf record :job-key)))
-    (dolist (key '(:state :retain-output-p :body :body-layout :body-source-characters :entry-transform))
-      (setf (getf next key) (getf metadata key)))
+    (setf (getf next :identifiers) (cons identifier (getf record :identifiers)))
+    (setf next (terminal-ui-fullscreen--apply-outcome next metadata))
     (multiple-value-bind (text display regions)
         (terminal-ui-fullscreen--record-content
          ui next (clinedi:transcript-viewport-width (fullscreen-terminal-ui-viewport ui)))
@@ -218,10 +230,7 @@
          (origin  (when resolve (funcall resolve))))
     (when origin
       (destructuring-bind (origin-identifier entry origin-metadata) origin
-        (let ((next (copy-list origin-metadata)))
-          (setf (getf next :job-key) (or (getf metadata :job-key) (getf next :job-key)))
-          (dolist (key '(:state :retain-output-p :body :body-layout :body-source-characters :entry-transform))
-            (setf (getf next key) (getf metadata key)))
+        (let ((next (terminal-ui-fullscreen--apply-outcome (copy-list origin-metadata) metadata)))
           (let ((display (terminal-ui-fullscreen--append-entry
                           ui origin-identifier entry :metadata next)))
             (when (gethash origin-identifier (fullscreen-terminal-ui-presentation-records ui))
@@ -239,10 +248,10 @@
           (let* ((index  (fullscreen-terminal-ui-presentation-records ui))
                  (record (or (gethash (getf metadata :call-key) index)
                              (gethash (getf metadata :job-key) index))))
-            (unless (and record (member (getf metadata :kind) '(:result :completion))
+            (unless (and record (member (getf metadata :kind) '(:result :completion :annotation))
                          (terminal-ui-fullscreen--replace-record
                           ui record :identifier identifier :metadata metadata))
-              (let ((restored (when (member (getf metadata :kind) '(:result :completion))
+              (let ((restored (when (member (getf metadata :kind) '(:result :completion :annotation))
                                 (terminal-ui-fullscreen--restore-outcome ui identifier metadata))))
                 (cond
                   (restored

@@ -72,6 +72,11 @@
                                    ':deny))
             (tool-function       (lambda (tool arguments)
                                    (declare (ignore tool arguments))
+                                   (test-assert (and *tool-authorization-context*
+                                                     (eq conversation (tool-context-conversation *tool-authorization-context*))
+                                                     (search "worker:origin-call:fixture:9:3"
+                                                             (tool-context-call-id *tool-authorization-context*)))
+                                                "external authorization retains its correlated presentation owner")
                                    (incf authorization-count)
                                    ':deny))
             (context
