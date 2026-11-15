@@ -26,11 +26,11 @@ Return the encoded request and its context delivery."
             :items   (conversation-input-items-for-family
                       conversation (provider-family provider)
                       :include-ephemeral-p (not compaction-p))
-            :prefix  (list (system-prompt configuration)
-                           (and compaction-p *compaction-instructions*))
-            :suffix  (unless compaction-p
-                       (list goal-context
-                             (and delivery (context-delivery-rendered delivery))))
+            :prefix  (list (system-prompt configuration))
+            :suffix  (if compaction-p
+                         (list *compaction-instructions*)
+                         (list goal-context
+                               (and delivery (context-delivery-rendered delivery))))
             :options (list :tool-choice           *provider-tool-choice*
                            :maximum-output-tokens *provider-maximum-output-tokens*
                            :include-thoughts-p

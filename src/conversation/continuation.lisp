@@ -74,7 +74,7 @@
 
 (-> continuation-tool-namespaces () vector)
 (defun continuation-tool-namespaces ()
-  "Return the provider tool namespaces of a compaction request: its one submit tool."
+  "Return the provider tool namespace that declares compaction.submit."
   (destructuring-bind (namespace name) *continuation-submit-tool*
     (json-array
      (json-object
@@ -84,7 +84,7 @@
       "tools" (json-array
                (json-object
                 "name" name
-                "description" "Submit the checkpoint that replaces the conversation so far."
+                "description" "Submit the checkpoint that replaces the conversation so far. Autolith asks for this call when it compacts the conversation. Never call it otherwise."
                 "strict" t
                 "parameters" (cl-llm-provider-api:output-schema->json
                               *continuation-submission-schema*)))))))

@@ -774,7 +774,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
               :tool-allowlist     '("test.echo")
               :tool-restriction-p t))
            (test-assert
-            (and (equal (scripted-provider-tool-schema-counts provider) '(1 1))
+            (and (equal (scripted-provider-tool-schema-counts provider) '(2 2))
                  (equal (scripted-provider-tool-choices provider) '(:none :auto)))
             "a restricted turn keeps its tool schemas but disables calls after its bounded round")
            (test-assert
@@ -968,7 +968,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                 (search "tool-round limit" (format nil "~A" condition))))
             "a restricted turn rejects calls beyond its tool-round limit")
            (test-assert
-            (and (equal (scripted-provider-tool-schema-counts provider) '(1 1))
+            (and (equal (scripted-provider-tool-schema-counts provider) '(2 2))
                  (equal (scripted-provider-tool-choices provider) '(:none :auto)))
             "the provider may not call tools after the restricted limit")
            (test-assert

@@ -995,15 +995,18 @@
                    (provider-wire-function-name--valid-p wire-name))
               "eager Responses fallback uses the shared grammar-safe tool codec"))
            (let* ((compaction-request (test-compaction-request provider conversation))
-                  (tools              (json-get compaction-request "tools")))
+                  (input              (json-get compaction-request "input"))
+                  (submit
+                    (find (apply #'provider-wire-tool-name provider *continuation-submit-tool*)
+                          (json-get compaction-request "tools")
+                          :key (lambda (tool) (json-get tool "name")) :test #'equal)))
              (test-assert
               (and (json-false-p (gethash "parallel_tool_calls" compaction-request))
-                   (= 1 (length tools))
-                   (json-string= (json-get (aref tools 0) "type") "function")
-                   (eq t (json-get (aref tools 0) "strict"))
-                   (search "Call compaction.submit once"
-                           (json-get compaction-request "instructions")))
-              "a compaction request declares only the strict submit tool, eagerly, with its instructions"))
+                   (json-string= (json-get submit "type") "function")
+                   (eq t (json-get submit "strict"))
+                   (test-object-contains-string-p (aref input (1- (length input)))
+                                                  "Call compaction.submit once"))
+              "a compaction request declares the strict submit tool eagerly and ends with its instructions"))
            (let* ((fallback-configuration
                     (configuration-copy configuration :model  "gpt-5.3-codex"
                                        :provider-validation-p nil))

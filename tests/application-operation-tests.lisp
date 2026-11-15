@@ -777,8 +777,10 @@
                           "the registered Lisp command compacts below the automatic threshold")
              (test-assert
               (and (equal (scripted-provider-compaction-flags provider) '(t))
-                   (equal (scripted-provider-tool-schema-counts provider) '(1)))
-              "manual compaction makes one request that offers only the submit tool")
+                   (equal (scripted-provider-tool-schema-counts provider)
+                          (list (length (agent--tool-namespaces (application-agent application)
+                                                                :tools-p t)))))
+              "manual compaction makes one request that declares the tools of ordinary requests")
              (test-assert
               (= (conversation-next-sequence conversation)
                  (+ sequence-before (if native-p 3 2)))

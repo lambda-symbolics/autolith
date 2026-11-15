@@ -404,16 +404,15 @@
                   "skill-selected-beta"))
                "visible skill.load enables catalog and selected instructions")
               (test-assert
-               (null
-                (skill-context-contributor
-                 (make-instance
-                  'request-context
-                  :configuration configuration
-                  :conversation  conversation
-                  :tool-namespaces
-                  (skill-tests--tool-namespaces)
-                  :compaction-p  t)))
-               "skills are absent from compaction side requests")))
+               (skill-context-contributor
+                (make-instance
+                 'request-context
+                 :configuration configuration
+                 :conversation  conversation
+                 :tool-namespaces
+                 (skill-tests--tool-namespaces)
+                 :compaction-p  t))
+               "compaction requests repeat the skill context that ordinary requests anchor")))
            (test-assert
              (not (skill-logical-turn-active-p))
             "logical-turn selection is dynamically scoped")
