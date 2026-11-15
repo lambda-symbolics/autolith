@@ -349,12 +349,8 @@
 (defun test-prompt-cache-one-response-prefix ()
   "Measure reusable prefixes through real product projections with one-response exchanges."
   (with-test-configuration (configuration)
-    (test-call-with-function-replacements
-     (list (list 'context-resolve-request
-                 (lambda (&rest arguments)
-                   (declare (ignore arguments))
-                   nil)))
-     (lambda ()
+    (let ((*context-contributors*          nil)
+          (*context-request-contributions* nil))
        (dolist (provider
                 (list (provider-create configuration)
                       (openai-compatible-provider-create
@@ -427,7 +423,7 @@
                          (null (getf change :fields))
                          (null (getf change :first-changed-item)))
                     (format nil "~A omits one-response exchanges without mutating its reusable prefix"
-                            (class-name (class-of provider)))))))))))))
+                             (class-name (class-of provider))))))))))))
   nil)
 
 (-> prompt-cache-tests--wire-request (&key (:tools string) (:texts list) (:ttl (option string)))
