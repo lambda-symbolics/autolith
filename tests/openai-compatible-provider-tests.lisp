@@ -1569,7 +1569,6 @@
                               "wire projection leaves canonical validation intact")
                  (let ((compaction (test-compaction-request provider conversation)))
                    (test-assert (and (eq yason:false (json-get compaction "store"))
-                                     (eq yason:false (json-get compaction "parallel_tool_calls"))
                                      (not (gethash "reasoning" compaction)))
                                 "compaction uses the public API policy"))
                  (dolist (pair '(("search" "content") ("custom__ns" "some.name")

@@ -50,11 +50,13 @@
   "Disable server-side response storage and allow parallel calls for public API requests.
 
 Parallel calls let one response carry independent calls, which the agent runs
-in waves, instead of spending a model request on each. Compaction calls none.
+in waves, instead of spending a model request on each. A compaction request
+allows them too: the service renders the setting into the tool section, where
+the cached prompt begins.
 CONVERSATION's prompt cache key routes its requests to the same cache."
-  (declare (ignore provider))
+  (declare (ignore provider compaction-p))
   (list "store" yason:false
-        "parallel_tool_calls" (if compaction-p yason:false t)
+        "parallel_tool_calls" t
         "prompt_cache_key" (conversation-prompt-cache-key conversation)))
 
 (defmethod provider-wire-tool-name

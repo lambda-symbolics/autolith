@@ -632,8 +632,8 @@ NIL leaves the service default in place."))
      (conversation conversation)
      &key compaction-p)
   "Return the fields sent by one Codex Responses request."
-  (provider--codex-responses-request-fields
-   provider conversation :compaction-p compaction-p))
+  (declare (ignore compaction-p))
+  (provider--codex-responses-request-fields provider conversation))
 
 (defmethod provider-request-object
     ((provider responses-api-provider) (conversation conversation)
