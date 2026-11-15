@@ -310,7 +310,7 @@
                        (declare (ignore statuses))
                        nil)))
               (lambda ()
-                (main-dispatch '("localgroup" "status"))))
+                (main-dispatch '("status"))))
              (test-assert
               (and observed-configuration
                    (string= (config :model observed-configuration) model)
