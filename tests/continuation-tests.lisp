@@ -213,7 +213,7 @@
                 (list (agent-test-result
                        "cited"
                        (list (agent-test-checkpoint-call
-                              (format nil "{\"intent\":\"Fix the parser.\",\"notes\":[{\"kind\":\"completed\",\"text\":\"The tests pass.\",\"refs\":[~S]}],\"next\":{\"text\":\"Finish the parser.\",\"refs\":[~S]}}"
+                              (format nil "{\"intent\":\"Fix the parser.\",\"notes\":[{\"kind\":\"completed\",\"text\":\"The tests pass.\",\"refs\":[~S]}],\"next\":\"Finish the parser.\",\"next_refs\":[~S]}"
                                       (getf result :handle) (getf step :handle)))))))
           (agent-compact-conversation agent (make-instance 'agent-observer))
           (let ((checkpoint (conversation-continuation conversation)))

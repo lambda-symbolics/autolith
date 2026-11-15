@@ -396,7 +396,7 @@ credentials and model metadata independently of their cached wire routes."
 intent: what the user wants done, in at most ~:D characters.
 notes: at most ~D notes of at most ~:D characters, each holding one fact. Give every note a kind: decision for a choice that was made and why, constraint for a rule or user preference to keep following, completed for finished work, open for unfinished work, and uncertainty for something not yet known.
 next: the next step, in at most ~:D characters.
-refs: the handles from the reference catalog below that show where a note or the next step comes from, at most ~D each. Cite what supports a completed note whenever the catalog lists it. Leave refs empty when the catalog lists nothing that fits, and never write a handle the catalog does not list.
+refs and next_refs: the handles from the reference catalog below that show where a note or the next step comes from, at most ~D each. Cite what supports a completed note whenever the catalog lists it. Leave refs empty when the catalog lists nothing that fits, and never write a handle the catalog does not list.
 
 The latest user message is quoted below when there is one, and the next step must agree with it. When the conversation starts with an earlier checkpoint, carry over what still holds from it. Name completed rlm.infer and rlm.map frames by their trace identifiers as inference:<trace-id> resources instead of restating their content; the traces stay readable through resource.read."
           *continuation-intent-maximum-characters*
