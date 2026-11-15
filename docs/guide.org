@@ -2705,7 +2705,10 @@ instead of public OpenAI API limits from models.dev. In =(settings)=, toggle
 the built-in ChatGPT provider. Set =AUTOLITH_PREFER_CODEX_CONTEXT_WINDOW=off= to
 override it for one process. =AUTOLITH_CONTEXT_WINDOW= takes precedence over
 both sources. Compaction uses =compaction-threshold-percent= of the selected
-window, 80% by default.
+window, 80% by default. The requests of a compaction are checked against the
+model's catalog limit when that is larger than the selected window, since
+compacting is how a conversation gets back under it. This holds for every
+provider and for a window set through =AUTOLITH_CONTEXT_WINDOW=.
 
 ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
 advertises Fast support. Fast responses count more heavily against plan usage;
