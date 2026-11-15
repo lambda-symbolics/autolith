@@ -350,30 +350,48 @@ Nothing is written while no server runs."
 (defparameter *world-client-stop-timeout* 60
   "Seconds to wait for the recorded world server process to exit after accepting stop.")
 
+(-> world-client--observe-exit (t) (member :dead :alive :unknown))
+(defun world-client--observe-exit (pid)
+  "Observe PID until absence or a monotonic deadline; return its last state.
+PID liveness cannot establish process identity after PID reuse. Invalid PIDs
+and inspection failures yield :UNKNOWN, never confirmed exit."
+  (unless (typep pid '(integer 1 *))
+    (return-from world-client--observe-exit ':unknown))
+  (let ((deadline (+ (get-internal-real-time)
+                    (* (max 0 *world-client-stop-timeout*)
+                       internal-time-units-per-second))))
+    (loop
+      (let* ((state     (handler-case (ls-compat.posix:process-state pid)
+                          (error () ':unknown)))
+             (remaining (/ (- deadline (get-internal-real-time))
+                           internal-time-units-per-second)))
+        (when (or (eq state ':dead) (<= remaining 0))
+          (return state))
+        (sleep (min 0.05 remaining))))))
+
 (-> world-client--stop-server (cons stream) null)
 (defun world-client--stop-server (entry stream)
   "Ask ENTRY to stop, report progress on STREAM, and confirm its process has exited."
   (let ((pid (getf (rest (rest entry)) :pid)))
     (localgroup--print-response (localgroup-query-record entry ':stop) stream)
     (force-output stream)
-    (let ((*localgroup-kill-exit-timeout* *world-client-stop-timeout*))
-      (case (localgroup--observe-kill-exit pid)
-        (:dead
-         (localgroup--write-styled-line
-          stream
-          (list (terminal-span ':success "· world server stopped"))
-          (localgroup--status-output-styled-p stream))
-         (force-output stream))
-        (:alive
-         (error 'localgroup-error
-                :operation ':stop
-                :message   (format nil "Could not confirm world server exit: recorded PID ~D is still present (possibly reused)."
-                                   pid)))
-        (otherwise
-         (error 'localgroup-error
-                :operation ':stop
-                :message   (format nil "Could not confirm world server exit for recorded PID ~S."
-                                   pid))))))
+    (case (world-client--observe-exit pid)
+      (:dead
+       (localgroup--write-styled-line
+        stream
+        (list (terminal-span ':success "· world server stopped"))
+        (localgroup--status-output-styled-p stream))
+       (force-output stream))
+      (:alive
+       (error 'localgroup-error
+              :operation ':stop
+              :message   (format nil "Could not confirm world server exit: recorded PID ~D is still present (possibly reused)."
+                                 pid)))
+      (otherwise
+       (error 'localgroup-error
+              :operation ':stop
+              :message   (format nil "Could not confirm world server exit for recorded PID ~S."
+                                 pid)))))
   nil)
 
 (-> world-client--stop-command () clingon:command)

@@ -1712,13 +1712,12 @@ Otherwise, change the permission mode inside the conversation with
 =(permissions ...)=. =--image= and =--simulate-crash= cannot be combined with
 =--detached=.
 
-Control a session with the following commands:
+Control a channel with the following commands:
 
 #+BEGIN_SRC sh
 autolith tell   TARGET "message"
 autolith pause  [TARGET]
 autolith detach [TARGET]
-autolith kill   [TARGET]
 #+END_SRC
 
 Use a channel ID, a unique part of one, an agent's name with or without =@=,
@@ -1729,14 +1728,13 @@ explicitly. For example, =autolith tell researcher "review this"= sends a
 message to researcher wherever that agent resides. Ambiguous IDs report their
 matches and select nothing.
 
-When exactly one endpoint is reachable, omit =TARGET= from =pause=, =detach= or
-=kill= to select it. These commands require a hosted channel;
+When exactly one endpoint is reachable, omit =TARGET= from =pause= or =detach=
+to select it. These commands require a hosted channel;
 =tell= also accepts cold channels. A message sent there, including a mention
 from another channel, starts its resident agent without attaching a terminal.
 A parked agent has no channel to receive it. Run =autolith start= to start
 the world server in the background before using =tell=.
 =pause= cancels active work and holds queued primary work.
-=kill= requests graceful shutdown.
 
 On POSIX hosts, detaching hands a session to a supervised process group that
 outlives the terminal. On Windows, the supervisor uses a Job Object for the

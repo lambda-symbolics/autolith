@@ -1855,8 +1855,6 @@ autolith uninstall removes the installation and keeps user data."
                         "detach" "detach a hosted channel from its terminal" ':detach)
                        (localgroup--operation-command
                         "pause" "pause a hosted channel" ':pause)
-                       (localgroup--operation-command
-                        "kill" "close a hosted channel" ':kill)
                        (world-client--start-command)
                        (world-client--stop-command))
    :handler

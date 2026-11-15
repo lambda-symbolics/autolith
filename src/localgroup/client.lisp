@@ -523,8 +523,6 @@ HEADER-P renders field labels rather than status values."
                                          " detaches from its terminal")
                                         (:pause
                                          " pauses")
-                                        (:kill
-                                         " closes")
                                         (otherwise
                                          (format nil ": ~(~A~) requested" operation))))))
      styled-p))
@@ -921,48 +919,9 @@ the message without publishing the capsule or exiting."
      (localgroup--run-status
       :sexp-p (not (null (getopt command ':sexp)))))))
 
-(defparameter *localgroup-kill-exit-timeout* 2
-  "Seconds to observe the selected PID after a successful localgroup kill response.")
-
-(-> localgroup--observe-kill-exit (t) (member :dead :alive :unknown))
-(defun localgroup--observe-kill-exit (pid)
-  "Observe PID until absence or a monotonic deadline; return its last state.
-PID liveness cannot establish process identity after PID reuse. Invalid PIDs
-and inspection failures yield :UNKNOWN, never confirmed exit."
-  (unless (typep pid '(integer 1 *))
-    (return-from localgroup--observe-kill-exit ':unknown))
-  (let ((deadline (+ (get-internal-real-time)
-                     (* (max 0 *localgroup-kill-exit-timeout*)
-                        internal-time-units-per-second))))
-    (loop
-      (let* ((state     (handler-case (ls-compat.posix:process-state pid)
-                          (error () ':unknown)))
-             (remaining (/ (- deadline (get-internal-real-time))
-                           internal-time-units-per-second)))
-        (when (or (eq state ':dead) (<= remaining 0))
-          (return state))
-        (sleep (min 0.05 remaining))))))
-
-(-> localgroup--check-kill-exit (t) null)
-(defun localgroup--check-kill-exit (pid)
-  "Report incomplete or uncertain exit using only the selected record's PID."
-  (case (localgroup--observe-kill-exit pid)
-    (:dead
-     nil)
-    (:alive
-     (error 'localgroup-error
-            :operation ':kill
-            :message   (format nil "Could not confirm session exit: recorded PID ~D is still present (possibly reused); its conversation may stay locked."
-                               pid)))
-    (otherwise
-     (error 'localgroup-error
-            :operation ':kill
-            :message   (format nil "Could not confirm session exit for recorded PID ~S; its conversation may stay locked."
-                               pid)))))
-
 (-> localgroup--operation-command (string string keyword) clingon:command)
 (defun localgroup--operation-command (name description operation)
-  "Return a single-session OPERATION command definition."
+  "Return a channel OPERATION command definition."
   (make-command
    :name        name
    :description description
@@ -972,39 +931,9 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
      (let ((arguments (command-arguments command)))
        (unless (member (length arguments) '(0 1))
          (error 'localgroup-error
-                 :message  (format nil "~A accepts at most one channel or agent designator." name)
+                :message   (format nil "~A accepts at most one channel or agent designator." name)
                 :operation ':arguments))
        (let* ((configuration (localgroup--client-configuration))
-              (entry         (localgroup--session-record configuration (first arguments)))
-              (pid           (getf (rest (rest entry)) :pid))
-              (response      (localgroup-query-record entry operation)))
-         (localgroup--print-response response *standard-output*)
-         (when (eq operation ':kill)
-           (if (localgroup--hosted-pid-p configuration pid)
-               (localgroup--check-channel-closed (first entry))
-               (localgroup--check-kill-exit pid))))))))
-
-(-> localgroup--hosted-pid-p (configuration t) boolean)
-(defun localgroup--hosted-pid-p (configuration pid)
-  "Return true when PID is the world server's: the record names a channel it hosts, not a process of its own."
-  (let ((world (world-client-entry configuration)))
-    (and world (eql pid (getf (rest (rest world)) :pid)) t)))
-
-(defparameter *localgroup-channel-close-seconds* 5
-  "How long autolith kill waits for a hosted channel to withdraw its endpoint.")
-
-(-> localgroup--check-channel-closed (pathname) null)
-(defun localgroup--check-channel-closed (pathname)
-  "Report a hosted channel that still publishes its endpoint record PATHNAME after the wait.
-
-The world server keeps running, so the channel's exit shows as its record
-going away."
-  (let ((deadline (+ (get-internal-real-time)
-                     (* *localgroup-channel-close-seconds* internal-time-units-per-second))))
-    (loop while (and (probe-file pathname) (< (get-internal-real-time) deadline))
-          do (sleep 0.05))
-    (when (probe-file pathname)
-      (error 'localgroup-error
-             :operation ':kill
-             :message   "Could not confirm the channel closed: its endpoint is still published.")))
-  nil)
+              (entry         (localgroup--session-record configuration (first arguments))))
+         (localgroup--print-response (localgroup-query-record entry operation)
+                                    *standard-output*))))))

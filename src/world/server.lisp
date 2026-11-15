@@ -4,7 +4,7 @@
 
 ;;; One process serves a world. Every open channel is an application of its
 ;;; own, hosted on its own thread with its own localgroup endpoint, so
-;;; terminals attach, tell, detach and kill per channel exactly as before.
+;;; users can attach terminals, pause work or detach individual channels.
 ;;; The server answers at one more endpoint, "world", through which clients
 ;;; open channels, and it stays alive without clients until it is stopped.
 
