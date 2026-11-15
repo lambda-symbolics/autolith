@@ -3044,7 +3044,7 @@ show."
 (define-application-command application--builtin-rename-command
     (:name              "/rename"
      :argument          "[[WHO] NAME]"
-     :description       "name a participant for @mentions"
+     :description       "rename an agent"
      :tip               "renames this channel's agent, or the participant WHO names, or picks one without arguments; names are letters, digits, hyphens and underscores."
      :busy-behavior     :inspect
      :terminal-behavior :exclusive-without-arguments
