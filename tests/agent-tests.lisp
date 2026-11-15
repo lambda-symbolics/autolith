@@ -423,7 +423,7 @@
 
 (-> agent-test-checkpoint-call (&optional string) json-object)
 (defun agent-test-checkpoint-call
-    (&optional (arguments "{\"intent\":\"Resume the pending request.\",\"notes\":[{\"kind\":\"completed\",\"text\":\"Earlier work is recorded.\",\"refs\":[]}],\"next\":{\"text\":\"Verify the result.\",\"refs\":[]}}"))
+    (&optional (arguments "{\"intent\":\"Resume the pending request.\",\"notes\":[{\"kind\":\"completed\",\"text\":\"Earlier work is recorded.\",\"refs\":[]}],\"next\":\"Verify the result.\",\"next_refs\":[]}"))
   "Return a scripted compaction.submit call with ARGUMENTS, by default a valid checkpoint."
   (agent-test-call :call-id "checkpoint" :namespace "compaction" :name "submit"
                    :arguments arguments))
@@ -2342,7 +2342,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
         (list (list (agent-test-call :call-id "call-wait" :namespace "job" :name "wait")
                     "exactly one compaction.submit call")
               (list (agent-test-checkpoint-call
-                     "{\"intent\":\"Go on.\",\"notes\":[],\"next\":{\"text\":\"\",\"refs\":[\"missing\"]}}")
+                     "{\"intent\":\"Go on.\",\"notes\":[],\"next\":\"\",\"next_refs\":[\"missing\"]}")
                     "does not list missing")
               (list (agent-test-message "Here is a summary in prose.")
                     "exactly one compaction.submit call"))

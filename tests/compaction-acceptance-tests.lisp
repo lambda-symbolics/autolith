@@ -65,16 +65,16 @@ it submits a checkpoint."
                    do (setf (gethash name call) value))
              call))
 
-         (arguments (&key (intent "Go on.") (notes "[]")
-                          (next "{\"text\":\"\",\"refs\":[]}") (extra ""))
-           "Return submit arguments built from the JSON texts of their fields."
-           (format nil "{\"intent\":~S,\"notes\":~A,\"next\":~A~A}" intent notes next extra))
+         (arguments (&key (intent "Go on.") (notes "[]") (next "") (next-refs "[]") (extra ""))
+           "Return submit arguments built from their fields; NOTES and NEXT-REFS are JSON texts."
+           (format nil "{\"intent\":~S,\"notes\":~A,\"next\":~S,\"next_refs\":~A~A}"
+                   intent notes next next-refs extra))
 
          (note (kind text)
            "Return the JSON text of one note of KIND holding TEXT."
            (format nil "{\"kind\":~S,\"text\":~S,\"refs\":[]}" kind text)))
     (let* ((valid      (agent-test-checkpoint-call))
-           (citing     (submit (arguments :next "{\"text\":\"Read it.\",\"refs\":[\"known\"]}")))
+           (citing     (submit (arguments :next "Read it." :next-refs "[\"known\"]")))
            (references (list (list :handle "known" :kind ':message :label "A record.")
                              (list :handle "other" :kind ':message :label "Another record."))))
       (flet ((submission (items completion)
@@ -117,8 +117,9 @@ it submits a checkpoint."
                                                         (loop repeat (1+ *continuation-maximum-notes*)
                                                               collect (note "open" "More."))))))
                           ':end nil)
-                    (list (list (submit (arguments
-                                         :next "{\"text\":\"\",\"refs\":[\"unknown\"]}")))
+                    (list (list (submit (arguments :next-refs "[\"unknown\"]"))) ':end nil)
+                    ;; The next step is a string, never an object.
+                    (list (list (submit "{\"intent\":\"Go on.\",\"notes\":[],\"next\":{\"text\":\"\",\"refs\":[]}}"))
                           ':end nil))
               do (test-assert (eq accepted-p (not (null (submission items completion))))
                               "only one finished, valid compaction.submit call submits a checkpoint"))

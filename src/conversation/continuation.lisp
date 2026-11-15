@@ -57,17 +57,22 @@
                  :properties            properties
                  :required              (mapcar #'first properties)
                  :additional-properties nil)))
-    (let ((text '("text" (:type :string)))
-          (refs '("refs" (:type :array :items (:type :string))))
-          (kind (list "kind"
-                      (list :type ':string
-                            :enum (mapcar (lambda (heading) (string-downcase (first heading)))
-                                          *continuation-note-headings*)))))
+    (let ((handles '(:type :array :items (:type :string)))
+          (kind    (list "kind"
+                         (list :type ':string
+                               :enum (mapcar (lambda (heading) (string-downcase (first heading)))
+                                             *continuation-note-headings*)))))
       (cl-llm-provider-api:output-schema-normalize
        (object '("intent" (:type :string))
-               (list "notes" (list :type ':array :items (object kind text refs)))
-               (list "next" (object text refs))))))
-  "The arguments of a compaction.submit call, as a native output schema.")
+               (list "notes"
+                     (list :type  ':array
+                           :items (object kind '("text" (:type :string)) (list "refs" handles))))
+               '("next" (:type :string))
+               (list "next_refs" handles)))))
+  "The arguments of a compaction.submit call, as a native output schema.
+
+The next step is a plain string beside its handles. Models write it that way
+even when a schema asks for an object, and then submit invalid JSON.")
 
 
 ;;;; -- Public Functions --
@@ -145,8 +150,9 @@ references it may cite. UNSUMMARIZED passes to MAKE-CONTINUATION."
        (let* ((continuation
                 (make-continuation
                  :intent       (json-get object "intent")
-                 :notes        (map 'list #'continuation--row (json-get object "notes"))
-                 :next         (continuation--row (json-get object "next"))
+                 :notes        (map 'list #'continuation--note (json-get object "notes"))
+                 :next         (list :text (json-get object "next")
+                                     :refs (coerce (json-get object "next_refs") 'list))
                  :references   references
                  :unsummarized unsummarized))
               (problem      (continuation-problem continuation)))
@@ -308,12 +314,10 @@ the same. A completed note that cites nothing is marked unsubstantiated."
                     (third range)  (max sequence (third range)))
               (push (list conversation sequence sequence) ranges)))))))
 
-(-> continuation--row (hash-table) list)
-(defun continuation--row (object)
-  "Return a submitted note or next step OBJECT as a property list."
-  (let ((kind (json-get object "kind")))
-    (append (when kind
-              (list :kind (first (assoc kind *continuation-note-headings*
-                                        :test #'string-equal))))
-            (list :text (json-get object "text")
-                  :refs (coerce (json-get object "refs") 'list)))))
+(-> continuation--note (hash-table) list)
+(defun continuation--note (object)
+  "Return a submitted note OBJECT as a property list."
+  (list :kind (first (assoc (json-get object "kind") *continuation-note-headings*
+                            :test #'string-equal))
+        :text (json-get object "text")
+        :refs (coerce (json-get object "refs") 'list)))
