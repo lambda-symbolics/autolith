@@ -53,12 +53,13 @@
                  "a closed workspace counts its channels and their unread messages")
     (test-assert (search "· e-6uouHJ 1 pending" (eighth lines))
                  "a channel without a name or title shows its identifier and the deliveries waiting")
-    (multiple-value-bind (rows actions) (world-sidebar--rows entries 8 :offset 3)
+    (multiple-value-bind (rows actions) (world-sidebar--rows entries 7 :offset 3)
       (let ((cut (world-sidebar-tests--text rows)))
-        (test-assert (and (= (length cut) 8)
+        (test-assert (and (= (length cut) 7)
                           (equal (getf (third actions) :open) "d6uouHJ")
-                          (equal (getf (sixth actions) :command) "(new)")
-                          (equal (getf (seventh actions) :command) "(delete)"))
+                          (equal (mapcar (lambda (button) (getf button :command))
+                                         (getf (sixth actions) :buttons))
+                                 '("(new)" "(delete)")))
                      "the viewport scrolls tree entries without moving command actions"))))
   (let ((entries (list (list :kind ':inbox :id "f6uouHJ" :current-p nil :unread 2))))
     (multiple-value-bind (rows actions) (world-sidebar--rows entries 6)
@@ -73,11 +74,11 @@
                      "the inbox has a separate color and its action follows the heading's spacer")))
     (loop for height from 0 to 6
           do (multiple-value-bind (rows actions) (world-sidebar--rows entries height)
-               (test-assert (and (= (length rows) height (length actions))
-                                (or (< height 3)
-                                    (and (null (first (last actions)))
-                                         (equal (getf (nth (- height 2) actions) :command) "(delete)"))))
-                           "short sidebars keep footer actions outside the available tree viewport"))))
+                 (test-assert (and (= (length rows) height (length actions))
+                                   (or (zerop height)
+                                       (= 2 (length (getf (nth (max 0 (- height 2)) actions)
+                                                         :buttons)))))
+                              "short sidebars keep footer actions outside the available tree viewport"))))
   (with-test-configuration (configuration)
     (let ((sidebar (world-sidebar-create configuration))
           (channel (make-instance 'channel :identifier "jobs" :owner "user"
@@ -250,9 +251,9 @@
                    "the first wheel tick scrolls the viewport and reveals its selection")
       (localgroup-screen-filter-event screen ':home)
       (localgroup-screen-filter-event screen ':page-down)
-      (test-assert (and (= (world-sidebar-selected-row sidebar) 4)
+      (test-assert (and (= (world-sidebar-selected-row sidebar) 5)
                         (= (world-sidebar-scroll-offset sidebar) 1)
-                        (equal (screen-panel-click sidebar 12 6) '(:switch :session-id "channel-4")))
+                        (equal (screen-panel-click sidebar 12 7) '(:switch :session-id "channel-5")))
                    "paging reveals the selected channel and visible clicks use scrolled identities")
       (let ((toggled nil))
         (test-call-with-function-replacements
@@ -273,9 +274,11 @@
                         (eq (screen-panel-click sidebar 12 1) ':redraw)
                         (= (world-sidebar-scroll-offset sidebar) 4))
                    "heading controls scroll the tree while retaining the footer geometry")
-      (test-assert (and (equal (screen-panel-click sidebar 4 7) '(:application-command "(new)"))
-                        (equal (screen-panel-click sidebar 4 8) '(:application-command "(delete)")))
-                   "fixed buttons dispatch common commands after scrolling")
+      (test-assert (and (equal (screen-panel-click sidebar 4 8) '(:application-command "(new)"))
+                        (equal (screen-panel-click sidebar 12 8) '(:application-command "(delete)"))
+                        (every (lambda (column) (null (screen-panel-click sidebar column 8)))
+                               '(1 7 8 17)))
+                   "each inline command has its own hit target, excluding surrounding spaces")
       (localgroup-screen-filter-event screen ':end)
       (test-assert (and (equal (localgroup-screen-filter-event screen ':submit)
                                '(:application-command "(delete)"))
@@ -283,7 +286,7 @@
                    "End and Enter invoke the delete action and dismiss the drawer")
       (setf (world-sidebar-selected-row sidebar) 9)
       (screen-panel-rows sidebar terminal :height 7 :width 80)
-      (test-assert (= (world-sidebar-scroll-offset sidebar) 8)
+      (test-assert (= (world-sidebar-scroll-offset sidebar) 7)
                    "a smaller viewport reveals the selected entry")
       (screen-panel-rows sidebar terminal :height 20 :width 80)
       (test-assert (zerop (world-sidebar-scroll-offset sidebar))
@@ -341,9 +344,7 @@
                (case height
                  (0
                   (null result))
-                 (1
-                  (equal result '(:application-command "(new)")))
-                 (2
+                 ((1 2)
                   (member result '((:application-command "(new)")
                                    (:application-command "(delete)")) :test #'equal)))
                "tiny panels submit only command buttons rendered at their height")))))
@@ -352,24 +353,41 @@
 
 (-> test-world-sidebar-command-events () null)
 (defun test-world-sidebar-command-events ()
-  "Test footer events use the receiving controller's common command-submission path."
+  "Relay framed sidebar commands into the receiving controller's submission path."
   (with-test-configuration (configuration)
-    (let* ((terminal    (make-instance 'recording-terminal :columns 80 :rows 24))
+    (let* ((terminal    (localgroup-terminal-create))
            (ui          (terminal-ui-create :terminal terminal))
            (application (make-instance 'application :ui ui :configuration configuration))
            (controller  (application-input-controller-create application))
+           (packets     (with-output-to-string (stream)
+                          (dolist (event '((:application-command "(quit)")
+                                           (:application-command 7)
+                                           (:application-command "(new)")
+                                           (:application-command "(delete)")))
+                            (daemon-write-packet stream (list :event event)))))
+           (attachment  (make-instance 'image-daemon:attachment :socket nil :mode ':control
+                                       :stream (make-two-way-stream
+                                                (make-string-input-stream packets)
+                                                (make-string-output-stream))))
            (submitted   nil))
-      (test-call-with-function-replacements
-       (list (list 'application-input-controller--handle-submission
-                   (lambda (candidate text &key steer-p)
-                     (test-assert (and (eq candidate controller) (not steer-p))
-                                  "footer submission uses this terminal client's controller")
-                     (push text submitted))))
-       (lambda ()
-         (dolist (command '("(new)" "(delete)"))
-           (application-input-controller--process-event controller (list ':application-command command)))))
-      (test-assert (equal (reverse submitted) '("(new)" "(delete)"))
-                   "both footer operations enter the common application command path")))
+      (image-daemon:relay-attach terminal attachment :rows 24 :columns 80 :styled-p nil
+                                :session-id "sidebar-commands")
+      (unwind-protect
+           (test-call-with-function-replacements
+            (list (list 'application-input-controller--handle-submission
+                        (lambda (candidate text &key steer-p)
+                          (test-assert (and (eq candidate controller) (not steer-p))
+                                       "footer submission uses this terminal client's controller")
+                          (push text submitted))))
+            (lambda ()
+              (image-daemon:relay-read-attachment terminal attachment
+                                                :event-validator #'localgroup--terminal-event-p)
+              (loop while (terminal-input-ready-p terminal)
+                    do (application-input-controller--process-event controller
+                                                                   (terminal-read-event terminal)))
+              (test-assert (equal (reverse submitted) '("(new)" "(delete)"))
+                           "only the two sidebar commands cross the relay into application submission")))
+        (image-daemon:relay-detach terminal attachment))))
   nil)
 
 (-> test-world-sidebar-unread () null)

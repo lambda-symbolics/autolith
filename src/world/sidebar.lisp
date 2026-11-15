@@ -66,7 +66,7 @@
     :initform      #()
     :accessor      world-sidebar-actions
     :type          vector
-    :documentation "What a click on each row of the last rendering does, as plists of :OPEN and :TOGGLE, or NIL.")
+    :documentation "The last rendering's row actions, including column-bounded command buttons, or NIL.")
    (selected-row
     :initform      0
     :accessor      world-sidebar-selected-row
@@ -180,13 +180,15 @@ a refresh is due."
 
 (defmethod screen-panel-rows ((panel world-sidebar) terminal &key height width)
   "Render the tree viewport and fixed actions, retaining logical keyboard selection."
-  (setf (world-sidebar-viewport-height panel) (max 0 (- height 5))
-        (world-sidebar-footer-count panel) (min 2 height))
+  (setf (world-sidebar-viewport-height panel) (max 0 (- height 4))
+        (world-sidebar-footer-count panel) (if (plusp height) 2 0))
   (world-sidebar--reveal-selection panel)
   (multiple-value-bind (rows actions)
       (world-sidebar--rows (world-sidebar-entries panel) height
                            :offset   (world-sidebar-scroll-offset panel)
-                           :drawer-p (= width (terminal-columns terminal)))
+                           :drawer-p (= width (terminal-columns terminal))
+                           :selected (when (= width (terminal-columns terminal))
+                                       (world-sidebar-selected-row panel)))
     (setf (world-sidebar-actions panel) (coerce actions 'vector))
     (loop for spans in rows
           for action in actions
@@ -199,9 +201,15 @@ a refresh is due."
                          padded))))))
 
 (defmethod screen-panel-click ((panel world-sidebar) column row)
-  "Dispatch a fixed command button or the visible tree row's open/toggle action."
-  (let* ((actions (world-sidebar-actions panel))
-         (action  (and (<= 1 row (length actions)) (aref actions (1- row)))))
+  "Dispatch the command button under COLUMN or the visible tree row's action."
+  (let* ((actions    (world-sidebar-actions panel))
+         (row-action (and (<= 1 row (length actions)) (aref actions (1- row))))
+         (buttons    (getf row-action :buttons))
+         (action     (if buttons
+                         (find-if (lambda (button)
+                                    (<= (getf button :start) column (getf button :end)))
+                                  buttons)
+                         row-action)))
     (cond
       ((getf action :scroll-controls-p)
        (when (>= column 12)
@@ -612,13 +620,25 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
 
 ;;;; -- Rows --
 
+(-> world-sidebar--button-spans (list (option integer)) list)
+(defun world-sidebar--button-spans (buttons selected)
+  "Render BUTTONS on one line, highlighting only the SELECTED logical action."
+  (loop for button in buttons
+        for first-p = t then nil
+        append (list (terminal-span ':plain (if first-p " " "  "))
+                     (terminal-span (if (eql selected (getf button :index))
+                                        ':selected
+                                        ':sidebar-action)
+                                    (getf button :command)))))
+
 (-> world-sidebar--rows
-    (list (integer 0) &key (:drawer-p boolean) (:offset (integer 0)))
+    (list (integer 0) &key (:drawer-p boolean) (:offset (integer 0))
+                          (:selected (option integer)))
     (values list list))
-(defun world-sidebar--rows (entries height &key drawer-p (offset 0))
-  "Return HEIGHT rows and hit actions, with a scrolling tree above fixed command buttons."
-  (let* ((footer-count  (min 2 height))
-         (legend-count  (if (> height 2) 1 0))
+(defun world-sidebar--rows (entries height &key drawer-p (offset 0) selected)
+  "Return HEIGHT rows and hit actions, with a scrolling tree above one row of command buttons."
+  (let* ((footer-count  (min 1 height))
+         (legend-count  (if (> height 1) 1 0))
          (heading-count (min 2 (max 0 (- height footer-count legend-count))))
          (limit         (max 0 (- height heading-count footer-count legend-count)))
          (start         (min offset (max 0 (- (length entries) limit))))
@@ -626,7 +646,12 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
          (shown         (subseq entries start end))
          (heading       (subseq (list (list (terminal-span ':brand " CHANNELS  ↑ ↓")) nil) 0 heading-count))
          (filler        (make-list (- limit (length shown)) :initial-element nil))
-         (commands      (subseq '("(new)" "(delete)") 0 footer-count))
+         (buttons       (loop for command in '("(new)" "(delete)")
+                              for index from (length entries)
+                              for column = 2 then (+ column (text-cell-width previous) 2)
+                              for previous = command
+                              collect (list :command command :index index :start column
+                                            :end (+ column (text-cell-width command) -1))))
          (legend        (when (plusp legend-count)
                           (list (if drawer-p
                                     (list (terminal-span ':legend-dim " ↑↓ select · PgUp/PgDn scroll · Enter · Esc"))
@@ -634,16 +659,16 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
                                           (terminal-span ':legend-dim " toggle")))))))
     (values
      (append heading (mapcar #'world-sidebar--entry-spans shown) filler
-             (mapcar (lambda (command) (list (terminal-span ':legend-accent (concatenate 'string " " command)))) commands)
+             (when (plusp footer-count)
+               (list (world-sidebar--button-spans buttons selected)))
              legend)
      (append (subseq (list (list :scroll-controls-p t) nil) 0 heading-count)
              (loop for entry in shown
                    for index from start
                    collect (append (world-sidebar--entry-action entry) (list :index index)))
              filler
-             (loop for command in commands
-                   for index from (length entries)
-                   collect (list :command command :index index))
+             (when (plusp footer-count)
+               (list (list :buttons buttons)))
              (when legend (list nil))))))
 
 (-> world-sidebar--entry-action (list) (option list))

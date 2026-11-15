@@ -428,8 +428,10 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
 
 (-> localgroup--terminal-event-p (t) boolean)
 (defun localgroup--terminal-event-p (event)
-  "Accept ordinary relay input and bounded fullscreen wheel, click, drag and release events."
+  "Accept relay input, bounded pointer events and the sidebar's channel commands."
   (not (null (or (image-daemon:daemon-terminal-event-p event)
+                 (and (typep event '(cons (eql :application-command) (cons string null)))
+                      (member (second event) '("(new)" "(delete)") :test #'equal))
                  (typep event '(cons (eql :scroll) (cons (member -1 1) null)))
                  (typep event '(cons (member :click :drag :release)
                                 (cons (integer 1 10000)
