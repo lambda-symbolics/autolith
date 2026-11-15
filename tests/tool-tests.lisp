@@ -735,7 +735,8 @@
          (received      nil)
          (schema        (tool-object-schema
                          (json-object
-                          "path"    (tool-string-property "Path")
+                            "path"    (tool-string-property "Path")
+                            "count"   (tool-integer-property "Count")
                           "options" (tool-object-schema
                                       (json-object "deep-name" (tool-string-property "Deep name"))
                                       '("deep-name"))
@@ -771,6 +772,24 @@
                       "nested object names are corrected")
          (test-assert (equal (json-get (aref (json-get received "rows") 0) "row-id") "1")
                       "array item names are corrected"))
+         (let ((result (tool-registry-execute-call
+                        registry
+                        (json-object "namespace" "probe" "name" "contract"
+                                     "arguments" "{\"path\":\"workspace:probe\",\"count\":\"7\"}")
+                        context)))
+           (test-assert (tool-result-success-p result)
+                        "a declared integer accepts its decimal text")
+           (test-assert (eql (json-get received "count") 7)
+                        "the decimal text becomes an integer argument"))
+         (let ((result (tool-registry-execute-call
+                        registry
+                        (json-object "namespace" "probe" "name" "contract"
+                                     "arguments" "{\"path\":\"workspace:probe\",\"count\":\"7.5\"}")
+                        context)))
+           (test-assert (tool-result-success-p result)
+                        "a non-integer spelling still reaches dispatch")
+           (test-assert (equal (json-get received "count") "7.5")
+                        "only exact decimal text becomes an integer"))
        (let ((result (tool-registry-execute-call
                       registry
                       (json-object "namespace" "probe" "name" "contract"
