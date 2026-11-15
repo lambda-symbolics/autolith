@@ -96,7 +96,7 @@
 
 (-> test-cli-detached-dispatch () null)
 (defun test-cli-detached-dispatch ()
-  "Exercise parsed detached starts in the world server and in a rescue process, live reuse, receipts, and rejected options."
+  "Exercise detached world-server and rescue starts, receipts, and rejected options."
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let* ((identifier  "b6uouHJ")
@@ -196,12 +196,6 @@
                (reject '("--detached" "open" "b-6") 'configuration-error)
                (test-assert (and (= (length spawned) 1) (null attached) (null operations))
                             "detached open fails before querying or attaching a running channel")
-               (main-dispatch '("open" "b6"))
-               (test-assert (and (= (length spawned) 1) (= (length attached) 1))
-                            "ordinary live resume attaches even for a direct start")
-               (main-dispatch '("open" "b6" "--read-only"))
-               (test-assert (eq (second (first attached)) ':read-only)
-                            "read-only open observes a live endpoint without acquiring control")
                (let ((styled (with-output-to-string (stream)
                                (main--print-detached-receipt record :stream stream :styled-p t))))
                  (test-assert (and (find #\Escape styled) (search "424242" styled))
@@ -213,9 +207,7 @@
                                     ("--detached" "--image" "image.png")
                                     ("--detached" "--simulate-crash")
                                     ("--detached" "auth")
-                                    ("open" "b" "--detached" "--immutable")
-                                    ("open" "b" "--model" "model")
-                                    ("open" "b" "--permissions" "full")))
+                                    ("open" "b" "--detached" "--immutable")))
                  (reject arguments 'configuration-error))
                (test-assert (and (= (length spawned) 1) (= (length opened) 1))
                             "invalid options do not launch sessions")
@@ -379,7 +371,9 @@
                            (setf records (localgroup-endpoint-records configuration))
                            (test-assert
                             (and (= resume-status 64) (search "--detached" errors)
-                                 (null (main--live-conversation-record configuration "b6uouHJ"))
+                                 (not (find "b6uouHJ" records :test #'string=
+                                            :key                    (lambda (entry)
+                                                                      (localgroup--record-session-id (rest entry)))))
                                  (= (length records) 1))
                             "a detached open of saved history does not start another channel"))))))
                ;; The channels live in the world server the first start launched.
@@ -422,8 +416,8 @@
               (lambda (resolve-configuration prefix)
                 (declare (ignore resolve-configuration prefix))
                 identifier))
-        (list 'main--live-conversation-record
-              (lambda (&rest arguments) (declare (ignore arguments)) nil))
+        (list 'localgroup-endpoint-records
+              (lambda (&rest arguments) (declare (ignore arguments)) (list record)))
         (list 'world-client-open
               (lambda (open-configuration &rest arguments)
                 (declare (ignore open-configuration))
@@ -438,7 +432,9 @@
                 record))
         (list 'localgroup-attach-record
               (lambda (attach-configuration entry mode &key panel screen notice client-version)
-                (declare (ignore attach-configuration panel screen notice client-version))
+                (declare (ignore attach-configuration notice client-version))
+                (test-assert (and panel screen)
+                             "plain starts and explicit opens attach with the same world navigation UI")
                 (push (list (rest entry) mode) attached)
                 (when attach-error (error attach-error))
                 (when switch-to
@@ -559,6 +555,14 @@
            (main-dispatch '("--immutable" "--fullscreen"))
            (test-assert (equal (getf (first opened) :launch) '(:immutable-p t :fullscreen-p t))
                         "the options a start states explicitly travel with the open")
+           (setf opened nil)
+           (main-dispatch (list "open" identifier "--model" "model" "--permissions" "full"
+                                "--fullscreen"))
+           (let ((launch (getf (first opened) :launch)))
+             (test-assert (and (equal (getf launch :model) "model")
+                               (eq (getf launch :permission-mode) ':full-access)
+                               (eq (getf launch :fullscreen-p) t))
+                          "explicit live opens forward the same launch options as plain starts"))
            (setf opened nil)
            (main-dispatch '())
            (test-assert (null (getf (first opened) :launch))

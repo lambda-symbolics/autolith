@@ -97,24 +97,6 @@ full displayed IDs and available metadata."
                                    "--localgroup-handoff")))))))
   nil)
 
-(-> main--validate-live-options (clingon:command) null)
-(defun main--validate-live-options (command)
-  "Reject launch-only overrides rather than silently ignoring them on live reuse."
-  (dolist (option '(:model :provider :permissions :immutable :pristine
-                    :fullscreen :plain :almighty :images :simulate-crash))
-    (when (getopt* command option)
-      (error 'configuration-error
-             :message (format nil "A running conversation cannot accept the launch option --~A."
-                              (if (eq option ':images) "image" (string-downcase option))))))
-  nil)
-
-(-> main--live-conversation-record (configuration string) (option cons))
-(defun main--live-conversation-record (configuration identifier)
-  "Find an exact live conversation endpoint without selecting another ID by prefix."
-  (find identifier (localgroup-endpoint-records configuration)
-        :key  (lambda (entry) (localgroup--record-session-id (rest entry)))
-        :test #'string=))
-
 (-> main--print-detached-receipt
     (cons &key (:stream stream) (:styled-p boolean)) null)
 (defun main--print-detached-receipt

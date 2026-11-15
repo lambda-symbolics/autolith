@@ -1047,15 +1047,6 @@ state, including an empty list after successful or pristine startup."
         (error 'configuration-error :message "Read-only opening requires an interactive terminal."))
       (when image-values
         (error 'configuration-error :message "--read-only cannot be combined with --image.")))
-    (unless handoff-record
-      (let ((record (and effective-open-id
-                         (main--live-conversation-record configuration effective-open-id))))
-        (when record
-          (main--validate-live-options command)
-          (localgroup-relay-exit configuration
-                                 (localgroup-attach-record configuration record attachment-mode)
-                                 attachment-mode)
-          (return-from main--start-session nil))))
     (when detached-p
       (main--start-detached configuration
                             :permission-mode permission-mode
