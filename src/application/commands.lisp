@@ -1547,7 +1547,7 @@ comes first."
     (when world
       (let ((inbox (world-inbox-channel world))
             (channels
-             (application--channels-newest-first application
+             (application--channels-newest-first application world
               (remove-if #'channel-inbox-p (world-channels world)))))
         (labels ((item (channel depth group)
                    "Return the picker item of CHANNEL nested DEPTH deep in GROUP."
@@ -1582,24 +1582,26 @@ comes first."
                  append (loop for node in (world-channel-forest members)
                               append (items node 0 group)))))))))
 
-(-> application--channels-newest-first (application list) list)
-(defun application--channels-newest-first (application channels)
-  "Return CHANNELS with the top-level ones whose conversation changed last first, and children by creation.
+(-> application--channels-newest-first (application world list) list)
+(defun application--channels-newest-first (application world channels)
+  "Return CHANNELS with top-level histories newest first and nested channels by creation.
 
-Only a top-level conversation's file is looked at: finding a child's file
+A top-level channel without durable history sorts by its creation time.
+Only top-level conversation files are consulted; locating a child's history
 searches every task directory."
   (let ((configuration (application-configuration application)))
     (mapcar #'rest
-            (stable-sort (mapcar (lambda (channel)
-                                   (cons (if (channel-parent channel)
-                                             (channel-created-at channel)
-                                             (or (conversation-storage-write-date
-                                                  (conversation-pathname-for-id configuration
-                                                                                (channel-identifier channel)))
-                                                 (channel-updated-at channel)))
-                                         channel))
-                                 channels)
-                         #'> :key #'first))))
+            (stable-sort
+             (mapcar (lambda (channel)
+                       (cons (if (world-channel-top-level-p world channel)
+                                 (let ((date (conversation-storage-write-date
+                                              (conversation-pathname-for-id
+                                               configuration (channel-identifier channel)))))
+                                   (if (plusp date) date (channel-created-at channel)))
+                                 (channel-created-at channel))
+                             channel))
+                     channels)
+             #'> :key #'first))))
 
 (-> application--pick-channel (application) (option string))
 (defun application--pick-channel (application)

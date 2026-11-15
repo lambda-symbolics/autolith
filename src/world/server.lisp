@@ -956,8 +956,7 @@ person's inbox is never a candidate: it is opened only by name."
                                        (world-server--hosts server)))
          (candidates    nil))
     (dolist (channel (world-channels world))
-      (when (and (null (channel-parent channel))
-                 (not (channel-inbox-p channel))
+      (when (and (world-channel-top-level-p world channel)
                  (string= workspace (channel-workspace channel)))
         (push (cons (channel-identifier channel)
                     (find (channel-identifier channel) hosts

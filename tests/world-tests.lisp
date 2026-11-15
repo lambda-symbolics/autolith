@@ -2735,7 +2735,12 @@
                    (equal (second case)
                           (mapcar #'channel-identifier
                                   (world-sidebar--channels sidebar catalogue)))
-                   "fresh hosted creation and persisted history sort newest first")))))
+                   "fresh hosted creation and persisted history sort newest first")
+                  (test-assert
+                   (equal (second case)
+                          (mapcar (lambda (item) (getf item :value))
+                                  (rest (application--channel-items application))))
+                   "the picker orders home children by history and fresh hosted creation")))))
           (test-assert
            (and (world-channel-find catalogue "blivecat")
                 (not (world-channel-find durable "blivecat"))
