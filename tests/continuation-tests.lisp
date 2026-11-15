@@ -253,19 +253,25 @@
 (-> test-continuation-gate-references () null)
 (defun test-continuation-gate-references ()
   "Offer the gates of a conversation's mission, resolve them only there, and notice changed inputs."
-  (with-test-configuration (configuration root)
-    (setf configuration (configuration-copy configuration :working-directory root))
-    (let* ((application  (mission-test--application configuration))
-           (conversation (application-conversation application)))
-      (mission-test--write-file (merge-pathnames "gate-input" root) "first state")
+  (with-test-configuration (base root)
+    (let* ((workspace     (ensure-directories-exist (merge-pathnames "work/" root)))
+           (configuration (configuration-copy base :working-directory workspace))
+           (outside       (merge-pathnames "outside-input" root))
+           (application   (mission-test--application configuration))
+           (conversation  (application-conversation application)))
+      (mission-test--write-file (merge-pathnames "gate-input" workspace) "first state")
+      (mission-test--write-file outside "outside state")
       (application-mission-start
        application
        (mission-test--specification
-        :gates '((:id "unit" :kind :artifact :path "unit" :inputs ("gate-input") :deterministic-p t))))
-      (flet ((gate ()
-               "Return the reference a checkpoint taken now holds for the gate."
-               (find ':gate (continuation-references (application-agent application) nil)
-                     :key (lambda (reference) (getf reference :kind))))
+        :gates (list '(:id "unit" :kind :artifact :path "unit" :inputs ("gate-input")
+                       :deterministic-p t)
+                     (list :id "outside" :kind ':artifact :path "unit" :deterministic-p t
+                           :inputs (list (namestring outside))))))
+      (flet ((gate (&optional (identifier "unit"))
+               "Return the reference a checkpoint taken now holds for gate IDENTIFIER."
+               (find identifier (continuation-references (application-agent application) nil)
+                     :key (lambda (reference) (getf reference :gate)) :test #'equal))
 
              (state (reference)
                "Return the state REFERENCE resolves to now."
@@ -287,17 +293,20 @@
         (let ((reference (gate)))
           (test-assert (equal "passed" (getf reference :observed))
                        "a gate that passed on its current inputs reads as passed")
-          (mission-test--write-file (merge-pathnames "gate-input" root) "changed state")
+          (mission-test--write-file (merge-pathnames "gate-input" workspace) "changed state")
           (test-assert (equal "passed, inputs changed since it was checked" (state reference))
                        "a passed gate whose declared input changed is reported without running it")
           (test-assert (eq ':passed (getf (first (getf (application-goal application) :gates))
                                           :status))
-                       "resolving a reference leaves the mission's gate untouched")))))
+                       "resolving a reference leaves the mission's gate untouched")
+          (test-assert (equal "passed, inputs cannot be read to check that it still holds"
+                              (getf (gate "outside") :observed))
+                       "a passed gate whose input needs authorization to read does not read as plainly passed")))))
   nil)
 
 (-> test-continuation-claim-references () null)
 (defun test-continuation-claim-references ()
-  "Offer the facts a conversation was given and resolve one that stops holding, derived facts included."
+  "Offer the facts a conversation read and resolve one that stops holding, derived facts included."
   (with-test-configuration (configuration)
     (setf (config :knowledge-mode configuration) "active")
     (knowledge-tests--define-appointments configuration)
