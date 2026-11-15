@@ -163,6 +163,11 @@
                             (equal (conversation-identifier conversation) (getf result :conversation))
                             (= (getf result :sequence) (1- (conversation-next-sequence conversation))))
                        "a tool result is named by its conversation, sequence and call")
+          (test-assert (search (format nil "conversation:id/~A sequence ~D"
+                                       (conversation-identifier conversation)
+                                       (getf result :sequence))
+                               (getf result :label))
+                       "its label gives the address the conversation resource reads it at")
           (test-assert (equal "doing" (getf step :observed))
                        "a plan step holds the state it had at capture")
           (let ((*continuation-maximum-references* 2))
