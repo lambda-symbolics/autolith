@@ -206,7 +206,7 @@
 
 (-> test-continuation-gate-references () null)
 (defun test-continuation-gate-references ()
-  "Offer the gates of a conversation's mission and resolve them only within that mission."
+  "Offer the gates of a conversation's mission, resolve them only there, and notice changed inputs."
   (with-test-configuration (configuration root)
     (setf configuration (configuration-copy configuration :working-directory root))
     (let* ((application  (mission-test--application configuration))
@@ -230,5 +230,21 @@
                             (equal "pending" (getf reference :observed)))
                        "a gate reference names its mission by conversation and holds the gate's status")
           (test-assert (null (state (list* :mission "mission/elsewhere/0" reference)))
-                       "a gate of another conversation's mission does not resolve here")))))
+                       "a gate of another conversation's mission does not resolve here"))
+        (test-call-with-function-replacements
+         (list (list 'application-tool-context (lambda (app) (mission-test--context app)))
+               (list 'mission-gate-execute
+                     (lambda (gate context)
+                       (declare (ignore gate context))
+                       (values t "bounded test evidence"))))
+         (lambda () (application-mission-verify application)))
+        (let ((reference (gate)))
+          (test-assert (equal "passed" (getf reference :observed))
+                       "a gate that passed on its current inputs reads as passed")
+          (mission-test--write-file (merge-pathnames "gate-input" root) "changed state")
+          (test-assert (equal "passed, inputs changed since it was checked" (state reference))
+                       "a passed gate whose declared input changed is reported without running it")
+          (test-assert (eq ':passed (getf (first (getf (application-goal application) :gates))
+                                          :status))
+                       "resolving a reference leaves the mission's gate untouched")))))
   nil)
