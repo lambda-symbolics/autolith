@@ -255,6 +255,32 @@ idsmall references for the offered memories."
   "Return the viewer name that remembers which facts CONVERSATION was given."
   (format nil "recall:~A" (conversation-identifier conversation)))
 
+(-> memory-context-note-given (configuration (option conversation) list) null)
+(defun memory-context-note-given (configuration conversation claims)
+  "Remember that CONVERSATION was given the facts CLAIMS, as they hold now.
+
+A fact it was given before keeps the entry it has, so a change since then is
+still reported."
+  (when (and conversation claims)
+    (let ((view (knowledge-view-current configuration)))
+      (knowledge-viewer-update
+       configuration (memory-context-recall-viewer conversation)
+       (knowledge-view-workspace view)
+       :time     (knowledge-view-now view)
+       :function (lambda (previous time first-p)
+                   (declare (ignore time first-p))
+                   (let ((added (remove-if-not
+                                 (lambda (entry)
+                                   (and (member (getf entry :claim) claims :test #'string=)
+                                        (not (member (getf entry :claim) previous
+                                                     :key  (lambda (seen) (getf seen :claim))
+                                                     :test #'string=))))
+                                 (knowledge-view-snapshot view))))
+                     (if added
+                         (values (append previous added) nil)
+                         (values ':keep nil)))))))
+  nil)
+
 (-> memory-context--recall-changes
     (configuration conversation &key (:view knowledge-view) (:offered list))
     (option context-contribution))
