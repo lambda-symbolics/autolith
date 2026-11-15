@@ -1550,8 +1550,9 @@ If the server cannot be started or does not answer, the start ends with the
 reason. No session runs in the terminal's own process instead.
 
 Closing the terminal, detaching, or losing the connection leaves the channel
-running. Use =(quit)= to end it. Use =(open "ID")= to attach to another
-channel; the server opens it if needed and leaves the previous one running.
+running. Submit =(close)= as a complete top-level form to end it. Within other
+Lisp forms, =close= is Common Lisp's stream operation. Use =(open "ID")= to attach
+to another channel; the server opens it if needed and leaves the previous one running.
 In a pristine or recovery session, which runs apart from the server, use the
 same command to resume that conversation in place.
 

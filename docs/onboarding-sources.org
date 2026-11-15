@@ -472,7 +472,7 @@ Closing the terminal also leaves the channel working.
 =autolith lg attach ID --read-only=   watch a channel
 Use =--take-over= instead of =--read-only= to take control.
 
-Use =(quit)= to close your current channel.
+Use =(close)= to close your current channel.
 Use =autolith lg stop= to stop the server and every channel it hosts.
 
 =lg= is shorthand for =localgroup=.

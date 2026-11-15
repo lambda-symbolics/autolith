@@ -748,6 +748,21 @@ argument objects to construct a label; only the outer argument list is copied."
            (member (first form) '(list vector json-object) :test #'eq)
            (every #'application-operation--immediate-argument-p (rest form)))))
 
+(-> application-operation--close-command-p (application-command) boolean)
+(defun application-operation--close-command-p (command)
+  "Recognize the built-in close command's canonical registration."
+  (and (eq (application-command-definition-name command) 'application--builtin-close-command)
+       (string= (application-command-name command) "/close")))
+
+(-> application-operation--top-level-close (application t) (option application-command-operation))
+(defun application-operation--top-level-close (application form)
+  "Resolve exactly the zero-argument local CLOSE form without binding CL:CLOSE."
+  (when (and (proper-list-p form) (= 1 (length form)) (eq (first form) 'cl:close))
+    (let ((operation (application-operation-find application 'cl:close)))
+      (when (and (typep operation 'application-command-operation)
+                 (application-operation--close-command-p (application-operation-backend operation)))
+        operation))))
+
 (defmethod application-operation-active-turn-action
     ((operation application-command-operation) argument-forms)
   "Return command busy policy, retaining modal safety unless explicitly immediate."
@@ -802,6 +817,10 @@ wait for the serialized application boundary."
         (cond
           ((application-operation--immediate-vault-form-p form)
            ':execute)
+          ((and (consp form) (eq (first form) 'cl:close))
+           (if (application-operation--top-level-close application form)
+               ':cancel
+               ':hold))
           ((and (proper-list-p form)
                 (symbolp (first form)))
            (let* ((operation (application-operation-find application (first form)))
@@ -995,7 +1014,10 @@ No live result, tool, or native data object escapes in the snapshot."
            (installed (gethash symbol *application-operation-bindings*))
            (existing  (and (fboundp symbol) (fdefinition symbol))))
       (when (and existing
-                 (not (and installed (eq existing installed))))
+                 (not (and installed (eq existing installed)))
+                 (not (and (eq symbol 'cl:close)
+                           (string= name "/close")
+                           (application-operation--close-command-p command))))
         (error 'configuration-error
                :message (format nil "Application command ~A conflicts with existing function ~S."
                                 name symbol)))))

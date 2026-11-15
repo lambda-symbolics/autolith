@@ -649,7 +649,7 @@
                                (application-command-invocation-parse
                                 "/operation-failure"))
                              (quit-invocation
-                               (application-command-invocation-parse "/quit"))
+                               (application-command-invocation-parse "/close"))
                              (quit-command
                                (application-command-invocation-command
                                 quit-invocation)))
@@ -678,7 +678,7 @@
                              (application-input-controller--run-responsive-command
                               controller quit-command quit-invocation)
                              ':quit)
-                            "responsive quit preserves its successful loop action"))))
+                            "responsive close preserves its successful loop action"))))
                       (let* ((records
                                (conversation-user-operation-snapshot
                                 (application-conversation application)))
@@ -690,7 +690,7 @@
                                          (getf record :source))
                                        properties)
                                '("/operation-abort" "/operation-abort"
-                                 "/operation-failure" "/quit"))
+                                 "/operation-failure" "/close"))
                               (equal
                                (mapcar (lambda (record)
                                          (getf record :status))

@@ -3842,8 +3842,8 @@ pristine or recovery session runs apart from it."
                 "Detach scheduled; the terminal releases once current work reaches a safe stop."))))))
   ':continue)
 
-(define-application-command application--builtin-quit-command
-    (:name              "/quit"
+(define-application-command application--builtin-close-command
+    (:name              "/close"
      :aliases           ("/exit")
      :argument          nil
      :description       "leave Autolith"

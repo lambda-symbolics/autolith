@@ -401,7 +401,7 @@
   (test-assert
    (and (string= (application-command-name
                   (application-command-find "/EXIT"))
-                 "/quit")
+                 "/close")
         (string= (application-command-name
                   (application-command-find "/usage"))
                  "/status"))
@@ -412,7 +412,7 @@
      (application-command-find "/EXIT")
      (application-command-invocation-parse "/EXIT"))
     ':cancel)
-   "quit aliases inherit the command's cancellation policy")
+   "close aliases inherit the command's cancellation policy")
   (dolist (case '(("/settings" "(settings :onboarding-p nil)"
                               "(settings :boot-screen-seconds 2)"
                               "(settings :terminal-theme)")
@@ -1714,7 +1714,7 @@
                             (recording-terminal-output terminal))
                       (queued-recording-terminal-enqueue terminal ':interrupt)
                       (queued-recording-terminal-enqueue
-                       terminal '(:insert "/quit"))
+                       terminal '(:insert "/close"))
                       (queued-recording-terminal-enqueue terminal ':submit))
                     :name "Autolith active-turn stop-key test"))
              (unwind-protect
@@ -1980,7 +1980,7 @@
                              (setf producer-condition condition)))
                       (queued-recording-terminal-enqueue terminal ':interrupt)
                       (queued-recording-terminal-enqueue
-                       terminal '(:insert "/quit"))
+                       terminal '(:insert "(close)"))
                       (queued-recording-terminal-enqueue terminal ':submit)))
                   :name "Autolith active tool stop-key test"))
            (unwind-protect
@@ -5138,7 +5138,7 @@
                     ("/effort" :hold)
                     ("/status" :execute)
                     ("/compact" :hold)
-                    ("/quit" :cancel)))
+                    ("/close" :cancel)))
       (destructuring-bind (input expected) case
         (test-assert (eq (busy-action input) expected)
                      (format nil "busy ~A resolves to ~A" input expected)))))

@@ -812,19 +812,19 @@
                      (search "Terminal-owning work cannot pause" output)
                      (search "aborted" output :test #'char-equal))
                 "eval-now rejects modal authorization instead of self-joining"))
-             (deque-clear work-items)
-             (recording-terminal-reset terminal)
-             (application-input-controller--handle-submission
-              controller "(values :later)")
-             (test-assert
-              (and (equal (application-input-controller--state controller :work-items)
-                          '((:lisp "(values :later)")))
-                   (null
-                    (application-input-controller--state controller :steering-items))
-                   (search "local evaluation scheduled"
-                           (recording-terminal-output terminal)
-                           :test #'char-equal))
-              "busy arbitrary Lisp waits for the idle boundary instead of steering")
+             (dolist (source '("(values :later)" "(close nil)"))
+               (deque-clear work-items)
+               (recording-terminal-reset terminal)
+               (application-input-controller--handle-submission controller source)
+               (test-assert
+                (and (equal (application-input-controller--state controller :work-items)
+                            (list (list ':lisp source)))
+                     (null (application-input-controller--state controller :steering-items))
+                     (not (application-input-controller-stopping-p controller))
+                     (search "local evaluation scheduled"
+                             (recording-terminal-output terminal)
+                             :test #'char-equal))
+                "busy arbitrary Lisp and stream CLOSE wait without cancelling the turn"))
              (deque-clear work-items)
              (setf (application-input-controller-active-p controller) nil
                    (application-input-controller-stopping-p controller) t)
@@ -845,15 +845,15 @@
                               (conversation-input-items
                                (application-conversation application))))
                   "local work shows exact source and values outside ordinary provider history")))
-             (let ((quit-controller
+             (let ((close-controller
                      (lisp-machine-tests--controller application)))
                (application-input-controller--run-work
-                quit-controller '(:lisp "(quit)"))
+                close-controller '(:lisp "(close)"))
                (test-assert
-                (and (application-input-controller-stopping-p quit-controller)
-                     (eq (application-input-controller-exit-reason quit-controller)
+                (and (application-input-controller-stopping-p close-controller)
+                     (eq (application-input-controller-exit-reason close-controller)
                          ':quit))
-                "a Lisp quit operation exits through the responsive controller")))
+                "a Lisp close operation exits through the responsive controller")))
         (ignore-errors (terminal-ui-stop ui))
         (ignore-errors
           (tool-registry-close-runtime-state
@@ -1034,7 +1034,7 @@
                (terminal-ui-finish-prompt-block ui 0)
                (terminal-ui-open-prompt-block ui)
                (recording-terminal-reset terminal)
-               (run-lisp-work "(quit)")
+               (run-lisp-work "(close)")
                (let ((output (recording-terminal-output terminal)))
                  (test-assert
                   (and (application-input-controller-stopping-p controller)
@@ -1044,7 +1044,7 @@
                        (zerop
                         (terminal-tests--substring-count (marker "B") output))
                        (eq (terminal-ui-prompt-marker-state ui) ':closed))
-                  "quit completes its block without opening another prompt")))
+                  "close completes its block without opening another prompt")))
           (ignore-errors (application-input-controller-stop controller))
           (ignore-errors (terminal-ui-stop ui))
           (ignore-errors

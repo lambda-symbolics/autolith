@@ -276,59 +276,61 @@
 (-> test-application-operation-binding-conflicts () null)
 (defun test-application-operation-binding-conflicts ()
   "Test canonical operation conflicts fail registration and never break evaluation."
-  (let* ((command
-           (application-command-create
-            :definition-name   'application-operation-tests--conflicting-search
-            :name              "/search"
-            :aliases           nil
-            :argument          nil
-            :description       "Conflict with the inherited Common Lisp SEARCH function."
-            :tip               "exists for binding conflict tests."
-            :busy-behavior     ':inspect
-            :terminal-behavior ':shared
-            :lambda-list       nil
-            :callable-p        nil
-            :static-options    nil
-            :handler
-            (lambda (application invocation)
-              (declare (ignore application invocation))
-              ':continue)))
-         (operation (application-operation--from-command command))
-         (symbol    (application-operation--function-symbol "search"))
-         (existing  (fdefinition symbol))
-         (snapshot  (application-command--registry-snapshot)))
-    (test-assert
-     (handler-case
-         (progn
-           (register-application-command command :source ':test)
-           nil)
-       (configuration-error ()
-         t))
-     "command registration rejects canonical Lisp function conflicts")
-    (test-assert
-     (equal snapshot (application-command--registry-snapshot))
-     "rejected canonical binding conflicts leave the command registry unchanged")
-    (test-assert
-     (null (application-operation--install-binding operation))
-     "binding installation skips conflicting legacy operations")
-    (test-assert
-     (eq (fdefinition symbol) existing)
-     "skipped operation bindings preserve the existing function"))
-  (let ((snapshot (application-command--registry-snapshot))
-        (command  (application-command-create
-                   :definition-name 'application-operation-tests--conflicting-alias
-                   :name "/alias-conflict" :aliases '("/search")
-                   :description     "An alias conflicting with Common Lisp SEARCH."
-                   :tip             "Exercise native alias binding conflicts."
-                   :busy-behavior ':inspect :terminal-behavior ':shared
-                   :handler         (lambda (application invocation)
-                                      (declare (ignore application invocation))
-                                      ':continue))))
-    (test-assert (handler-case (progn (register-application-command command :source ':test) nil)
-                   (configuration-error () t))
-                 "registration rejects aliases that shadow existing Lisp functions")
-    (test-assert (equal snapshot (application-command--registry-snapshot))
-                 "rejected aliases are not partially registered"))
+  (dolist (name '("/search" "/close"))
+    (let* ((command
+             (application-command-create
+              :definition-name   'application-operation-tests--conflicting-function
+              :name              name
+              :aliases           nil
+              :argument          nil
+              :description       "Conflict with an inherited Common Lisp function."
+              :tip               "exists for binding conflict tests."
+              :busy-behavior     ':inspect
+              :terminal-behavior ':shared
+              :lambda-list       nil
+              :callable-p        nil
+              :static-options    nil
+              :handler
+              (lambda (application invocation)
+                (declare (ignore application invocation))
+                ':continue)))
+           (operation (application-operation--from-command command))
+           (symbol    (application-operation--function-symbol (subseq name 1)))
+           (existing  (fdefinition symbol))
+           (snapshot  (application-command--registry-snapshot)))
+      (test-assert
+       (handler-case
+           (progn
+             (register-application-command command :source ':test)
+             nil)
+         (configuration-error ()
+           t))
+       "command registration rejects canonical Lisp function conflicts")
+      (test-assert
+       (equal snapshot (application-command--registry-snapshot))
+       "rejected canonical binding conflicts leave the command registry unchanged")
+      (test-assert
+       (null (application-operation--install-binding operation))
+       "binding installation skips conflicting legacy operations")
+      (test-assert
+       (eq (fdefinition symbol) existing)
+       "skipped operation bindings preserve the existing function")))
+  (dolist (alias '("/search" "/close"))
+    (let ((snapshot (application-command--registry-snapshot))
+          (command  (application-command-create
+                     :definition-name 'application-operation-tests--conflicting-alias
+                     :name "/alias-conflict" :aliases (list alias)
+                     :description     "An alias conflicting with a Common Lisp function."
+                     :tip             "Exercise native alias binding conflicts."
+                     :busy-behavior ':inspect :terminal-behavior ':shared
+                     :handler         (lambda (application invocation)
+                                        (declare (ignore application invocation))
+                                        ':continue))))
+      (test-assert (handler-case (progn (register-application-command command :source ':test) nil)
+                     (configuration-error () t))
+                   "registration rejects aliases that shadow existing Lisp functions")
+      (test-assert (equal snapshot (application-command--registry-snapshot))
+                   "rejected aliases are not partially registered")))
   nil)
 
 (-> test-vault-operation-routing () null)
@@ -430,8 +432,9 @@
                           "applications install a dynamic operation completion provider")
              (test-assert (member "/help" entry-names :test #'string=)
                           "slash compatibility completion retains canonical commands")
-             (test-assert (member "(domestic)" entry-names :test #'string=)
-                          "completion offers a canonical no-argument Lisp command")
+             (test-assert (and (member "(close)" entry-names :test #'string=)
+                               (null (application-command-find "/quit")))
+                          "completion offers the renamed no-argument Lisp command")
              (test-assert
               (and (member "/ste on" entry-names :test #'string=)
                    (member "/ste off" entry-names :test #'string=))
@@ -453,9 +456,9 @@
                      (null (primary-of "(domestic)")))
                 "finite option entries stay behind their canonical command rows")
                (test-assert
-                (and (equal (primary-of "/exit") "/quit")
-                     (equal (primary-of "/usage") "/status")
-                     (null (primary-of "/quit")))
+                 (and (equal (primary-of "/exit") "/close")
+                      (equal (primary-of "/usage") "/status")
+                      (null (primary-of "/close")))
                 "alias entries stay behind their canonical command rows"))
              (test-assert
               (and resource-entry
@@ -492,7 +495,10 @@
                        ("(channel.send :text \"text\")" :execute)
                        ("(channel.send :text (read-file \"/tmp/example\"))" :execute)
                        ("(goal \"pause\")" :hold)
-                       ("(quit)" :cancel)
+                       ("(close)" :cancel)
+                       ("(close nil)" :hold)
+                       ("(close (make-string-output-stream))" :hold)
+                       ("(progn (close))" :hold)
                        ("(update)" :hold)
                        ("(compact)" :hold)
                        ("(resource.read :uri \"workspace:.\")" :execute)
@@ -629,7 +635,8 @@
                    (equal (application-lisp-evaluation-values evaluation)
                           '(":FINISHED"))
                    (search "(help" output)
-                   (search "(resource.read" output))
+                  (search "(resource.read" output)
+                  (search "(close)" output))
               "nested help can present the full registered operation reference"))
            (recording-terminal-reset terminal)
            (test-assert (eq (application--run-command-input application "/help")
@@ -646,15 +653,36 @@
            (recording-terminal-reset terminal)
            (test-assert
             (and (eq (application--run-command-input application "/exit") ':quit)
-                 (search "Prefer (quit)." (recording-terminal-output terminal)))
+                 (search "Prefer (close)." (recording-terminal-output terminal)))
             "slash aliases hint the canonical command operation name")
            (let ((evaluation
-                   (application-lisp-evaluate "(quit)" :application application)))
+                   (application-lisp-evaluate "(close)" :application application)))
              (test-assert
               (and (eq (application-lisp-evaluation-status evaluation) ':ok)
                    (eq (application-lisp-evaluation-loop-action evaluation) ':quit)
                    (null (application-lisp-evaluation-values evaluation)))
-              "a canonical quit operation transfers control to the application loop"))
+              "a canonical close operation transfers control to the application loop"))
+           (let ((stream-close (fdefinition 'cl:close)))
+             (test-assert (eq (find-symbol "CLOSE" :autolith) 'cl:close)
+                          "the channel command uses the inherited Common Lisp symbol")
+             (dolist (case '(("(close (make-string-output-stream))" ("T"))
+                             ("(let ((stream (make-string-output-stream))) (close stream) (open-stream-p stream))" ("NIL"))))
+               (destructuring-bind (source expected-values) case
+                 (let ((evaluation (application-lisp-evaluate source :application application)))
+                   (test-assert (and (eq (application-lisp-evaluation-status evaluation) ':ok)
+                                     (null (application-lisp-evaluation-loop-action evaluation))
+                                     (equal (application-lisp-evaluation-values evaluation) expected-values))
+                                "top-level stream closing and nested stream forms use Common Lisp"))))
+             (test-assert (eq stream-close (fdefinition 'cl:close))
+                          "operation installation preserves the stream CLOSE function"))
+           (let ((evaluation
+                   (application-lisp-evaluate
+                    "(progn (close))" :application application
+                    :restart-selector              (lambda (condition restarts)
+                                                     (declare (ignore condition restarts)) nil))))
+             (test-assert (and (eq (application-lisp-evaluation-status evaluation) ':aborted)
+                               (null (application-lisp-evaluation-loop-action evaluation)))
+                          "a nested zero-argument CLOSE is an ordinary Lisp arity error"))
            (let ((*update-check-fetch-function* (lambda () "v99.0.0")))
              (setf (application-installation-provenance application)
                    (make-instance

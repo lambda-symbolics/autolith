@@ -485,7 +485,7 @@
          ("/fix-skipped-definitions" :hold)
          ("/vault-restore" :execute)
          ("/vault-discard" :execute)
-         ("/quit" :cancel)))
+         ("/close" :cancel)))
     (destructuring-bind (input expected) case
       (let* ((invocation (application-command-invocation-parse input))
              (command    (application-command-invocation-command invocation)))
@@ -497,7 +497,8 @@
        '(("/model" t)
          ("/effort high" nil)
          ("/open K-8vQ2mp" nil)
-         ("/compact" nil)))
+         ("/compact" nil)
+         ("/close" nil)))
     (destructuring-bind (input expected) case
       (let* ((invocation (application-command-invocation-parse input))
              (command    (application-command-invocation-command invocation)))
@@ -515,7 +516,7 @@
   (test-assert
    (every #'application-command-callable-p
           (application-command-list))
-   "every built-in command uses ordinary Common Lisp call semantics")
+   "every built-in command supplies a native argument contract")
   (dolist
       (case
        '(("/help" (&optional topic))
@@ -527,7 +528,8 @@
          ("/titles" (&optional (mode ':status)))
          ("/hurry-up" (&optional (mode ':status)))
          ("/papercut" (&optional identifier))
-         ("/papercut-close" (&optional identifier))))
+         ("/papercut-close" (&optional identifier))
+         ("/close" nil)))
     (destructuring-bind (name lambda-list) case
       (let ((command (application-command-find name)))
         (test-assert
