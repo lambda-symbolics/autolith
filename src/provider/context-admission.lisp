@@ -277,7 +277,6 @@ messages that later change fail closed."
          (output       (and (json-object-p usage) (json-get usage "output_tokens")))
          (total        (and (json-object-p usage) (json-get usage "total_tokens"))))
     (when conversation
-      (setf (conversation-context-usage-sample conversation) nil)
       (when (and (getf context :eligible-p) adapter projection
                  (getf context :wire)
                  (typep input '(integer 1)) (typep output '(integer 0))

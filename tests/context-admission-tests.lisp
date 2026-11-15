@@ -1010,10 +1010,14 @@
                            (json-object "input_tokens" 1000 "output_tokens" 0)
                            (json-object "input_tokens" 1000 "output_tokens" 200 "total_tokens" 2)
                            (json-object "input_tokens" 1000 "output_tokens" 200 "cached_input_tokens" 2000)))
-         (context-admission-test--measure agent :envelope-length 64)
-         (context-admission-test--measure agent :usage usage :envelope-length 64)
-         (test-assert (null (conversation-context-usage-sample conversation))
-                      "an incomplete or inconsistent response cannot establish a sample"))
+        (context-admission-test--measure agent :envelope-length 64)
+        (let ((sample (copy-tree (conversation-context-usage-sample conversation))))
+          (context-admission-test--measure agent :usage usage :envelope-length 64)
+          (test-assert (equal sample (conversation-context-usage-sample conversation))
+                       "invalid usage cannot replace the previous measurement")
+          (test-assert (equal sample (conversation-context-usage-sample
+                                      (conversation-load (conversation-pathname conversation))))
+                       "replay retains the previous measurement after invalid usage")))
        (context-admission-test--measure agent :envelope-length 64)
        (let* ((unconfigured (make-instance 'model-provider))
               (context      (provider-context-request-create unconfigured conversation #())))
@@ -1051,34 +1055,35 @@
          (multiple-value-bind (tokens matched-p) (provider-context--matched-input provider request)
            (declare (ignore tokens))
            (test-assert (not matched-p) "conversations do not share usage anchors")))
-       (context-admission-test--measure
-        agent :envelope-length 64
-        :during-request        (lambda (conversation)
-                                 (conversation-append-user-message conversation "Arrived while awaiting a reply.")))
-       (test-assert (null (conversation-context-usage-sample conversation))
-                    "input arriving in flight is not charged to the provider output allowance")
-       (context-admission-test--measure agent :envelope-length 64)
-       (conversation-append-provider-metadata conversation '(:usage (("input_tokens" 1200) ("output_tokens" 200))))
-       (test-assert (conversation-context-usage-sample conversation)
-                    "ordinary provider metadata does not discard the latest measured anchor")
-       (let ((sample (copy-tree (conversation-context-usage-sample conversation))))
-         (agent--note-compaction-request
-          agent (make-instance 'agent-observer) :request-number 2
-          :usage                                                (json-object "input_tokens" 1200 "output_tokens" 200))
-         (test-assert (equal sample (conversation-context-usage-sample conversation))
-                      "compaction request metering preserves the live ordinary anchor")
-         (test-assert (equal sample (conversation-context-usage-sample
-                                     (conversation-load (conversation-pathname conversation))))
-                      "disk replay preserves the ordinary anchor after compaction metering"))
-       (conversation-append-summary conversation (make-continuation :intent "A replacement context."))
-       (test-assert (null (conversation-context-usage-sample conversation)) "summary publication invalidates the sample")
-       (test-assert (null (conversation-context-usage-sample
-                           (conversation-load (conversation-pathname conversation))))
-                    "disk replay invalidates the sample at summary publication")
-       (context-admission-test--measure agent :envelope-length 64)
-       (test-assert (conversation-context-usage-sample
-                     (conversation-load (conversation-pathname conversation)))
-                    "disk resume restores fingerprint evidence for revalidation"))))
+      (let ((sample (copy-tree (conversation-context-usage-sample conversation))))
+        (context-admission-test--measure
+         agent :envelope-length 64
+         :during-request        (lambda (conversation)
+                                  (conversation-append-user-message conversation "Arrived while awaiting a reply.")))
+        (test-assert (equal sample (conversation-context-usage-sample conversation))
+                     "concurrent input prevents advancing the measurement"))
+      (context-admission-test--measure agent :envelope-length 64)
+      (conversation-append-provider-metadata conversation '(:usage (("input_tokens" 1200) ("output_tokens" 200))))
+      (test-assert (conversation-context-usage-sample conversation)
+                   "ordinary provider metadata does not discard the latest measured anchor")
+      (let ((sample (copy-tree (conversation-context-usage-sample conversation))))
+        (agent--note-compaction-request
+         agent (make-instance 'agent-observer) :request-number 2
+         :usage                                                (json-object "input_tokens" 1200 "output_tokens" 200))
+        (test-assert (equal sample (conversation-context-usage-sample conversation))
+                     "compaction request metering preserves the live ordinary anchor")
+        (test-assert (equal sample (conversation-context-usage-sample
+                                    (conversation-load (conversation-pathname conversation))))
+                     "disk replay preserves the ordinary anchor after compaction metering"))
+      (conversation-append-summary conversation (make-continuation :intent "A replacement context."))
+      (test-assert (null (conversation-context-usage-sample conversation)) "summary publication invalidates the sample")
+      (test-assert (null (conversation-context-usage-sample
+                          (conversation-load (conversation-pathname conversation))))
+                   "disk replay invalidates the sample at summary publication")
+      (context-admission-test--measure agent :envelope-length 64)
+      (test-assert (conversation-context-usage-sample
+                    (conversation-load (conversation-pathname conversation)))
+                   "disk resume restores fingerprint evidence for revalidation"))))
   nil)
 
 (-> test-context-admission-measured-high-usage () null)
@@ -1259,9 +1264,10 @@
                              :usage                         (json-object "input_tokens" 1000 "output_tokens" 200
                                                                          "total_tokens" 1200))
         :request-number 2)
-       (test-assert (null (conversation-context-usage-sample
-                           (conversation-load (conversation-pathname conversation))))
-                    "a response interrupted before publishing coverage invalidates the older anchor")
+       (test-assert (conversation-context-usage-sample-p
+                     (conversation-context-usage-sample
+                      (conversation-load (conversation-pathname conversation))))
+                    "an interrupted response preserves the older measured anchor")
        (conversation-append-record conversation '(:context-usage :sample (:format 1)))
        (test-assert (null (conversation-context-usage-sample
                            (conversation-load (conversation-pathname conversation))))
