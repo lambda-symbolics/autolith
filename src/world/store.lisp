@@ -632,23 +632,23 @@ batch that would leave a dangling reference is refused whole."
           (conversation-identifier-display (channel-identifier channel))
           (channel-title channel)))
 
-(-> world-channel-resolve (world string) channel)
-(defun world-channel-resolve (world fragment)
+(-> world-channel-resolve (world string &key (:error-p boolean)) (option channel))
+(defun world-channel-resolve (world fragment &key (error-p t))
   "Return the one channel of WORLD that FRAGMENT names in full or in part.
 
 An exact identifier in canonical or display form wins; otherwise the one
 channel whose identifier contains FRAGMENT, compared without regard to case.
 Several matches are reported together, newest change first, and select
-nothing; so does no match."
+nothing. No match signals an error unless ERROR-P is NIL."
   (let ((matches (identifier-match fragment (world-channels world) :key #'channel-identifier)))
     (cond
       ((null matches)
-       (error 'world-error
-              :message    (format nil "No channel matches ~A."
-                                  fragment)
-              :pathname   nil
-              :operation  ':resolve
-              :identifier fragment))
+       (when error-p
+         (error 'world-error
+                :message    (format nil "No channel matches ~A." fragment)
+                :pathname   nil
+                :operation  ':resolve
+                :identifier fragment)))
       ((rest matches)
        (error 'world-channel-ambiguous
               :message    (format nil "Channel ID ~S is ambiguous. Matching channels:~%~{  ~A~^~%~}"
@@ -726,24 +726,29 @@ need hundreds of suffixes."
             do (push participant named))
     (and (= (length named) 1) (first named))))
 
-(-> world-channel-designated (world configuration string) channel)
-(defun world-channel-designated (world configuration designator)
+(-> world-channel-designated
+    (world configuration string &key (:error-p boolean)) (option channel))
+(defun world-channel-designated (world configuration designator &key (error-p t))
   "Return the channel DESIGNATOR names in WORLD by identifier, legacy alias, agent or fragment.
 
-The word inbox names the person's inbox, and @NAME the channel where the
-participant NAME resides. A full identifier, in either form or as a retained
-legacy alias of CONFIGURATION, names its channel directly; anything else is
-resolved as a fragment through WORLD-CHANNEL-RESOLVE."
+The word inbox names the person's inbox, and @NAME the participant NAME's
+residence. A full channel identifier, including a retained legacy alias of
+CONFIGURATION, takes priority over a bare participant name or identifier.
+Otherwise resolve a channel ID fragment. With ERROR-P NIL, return NIL for
+an unknown fragment; ambiguous or parked targets still signal an error."
   (or (and (string-equal designator *world-inbox-designator*)
            (world-inbox-channel world))
       (and (uiop:string-prefix-p "@" designator)
            (world--residence-channel world (subseq designator 1)))
       (let ((resolved (handler-case
                           (conversation-identifier-migration-resolve configuration designator)
-                        (conversation-error ()
+                        ((or conversation-error conversation-identifier-error) ()
                           nil))))
         (and resolved (world-channel-find world resolved)))
-      (world-channel-resolve world designator)))
+      (and (or (world-participant-named world designator)
+               (world-participant-find world designator))
+           (world--residence-channel world designator))
+      (world-channel-resolve world designator :error-p error-p)))
 
 (-> world-channel-groups (list (option string)) list)
 (defun world-channel-groups (channels current)

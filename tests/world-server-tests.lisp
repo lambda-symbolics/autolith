@@ -431,27 +431,63 @@ run once the wake has."
 
 (-> test-world-server-tell () null)
 (defun test-world-server-tell ()
-  "Test lg tell's server operation sends a channel a message from the person, by a fragment of its identifier."
+  "Exercise CLI tells and interchannel messages through durable delivery and cold-host scheduling."
   (world-server-tests--call
    (lambda (server configuration root)
      (declare (ignore root))
      (world-tests--persisted-conversation configuration "btell11" 1000)
+     (world-tests--persisted-conversation configuration "btell22" 2000)
      (world-server--reconcile configuration)
-     (test-call-with-function-replacements
-      (list (list 'world-server-wake-channel
-                  (lambda (candidate identifier)
-                    (declare (ignore candidate identifier))
-                    nil)))
-      (lambda ()
-        (let ((answer (world-server--dispatch server ':tell (list :channel "btell" :text "from outside"))))
-          (test-assert (and (eq (first answer) ':ok)
-                            (equal (getf (rest answer) :channel) "btell11"))
-                       "a fragment names the channel told")
-          (let ((delivery (first (world-inbox-deliveries configuration "btell11"))))
-            (test-assert (and delivery
-                              (string= (world-delivery-text delivery) "from outside")
-                              (eq (world-delivery-sender-kind delivery) ':human))
-                         "the channel's inbox holds the message from the person")))))))
+     (world-participant-rename configuration "al-btell11" "receiver")
+     (let ((started nil))
+       (test-call-with-function-replacements
+        (list (list 'localgroup--client-configuration (lambda () configuration))
+              (list 'world-server--start-host
+                    (lambda (candidate &key conversation-id directory arguments)
+                      (declare (ignore candidate directory arguments))
+                      (push conversation-id started)
+                      nil)))
+        (lambda ()
+          (labels ((drain-wakeups ()
+                     "Wait for the server's main thread to finish the queued wakeups."
+                     (let ((done-p nil))
+                       (world-server--enqueue server (lambda () (setf done-p t)))
+                       (test-assert (task-tests--wait-until (lambda () done-p) 10)
+                                    "message wakeups complete on the server's main thread")))
+
+                   (delivery (text)
+                     "Return the receiver's durable copy of TEXT."
+                     (find text (world-inbox-deliveries configuration "btell11")
+                           :key #'world-delivery-text :test #'string=)))
+            (loop for selector in '("btell11" "b-tell11" "tell11" "receiver"
+                                    "@RECEIVER" "al-btell11")
+                  for index from 1
+                  for text = (format nil "from CLI ~D" index)
+                  do (setf started nil)
+                     (let ((output
+                             (with-output-to-string (*standard-output*)
+                               (let ((command (parse-command-line
+                                               (main--top-level-command)
+                                               (list "lg" "tell" selector text))))
+                                 (funcall (command-handler command) command)))))
+                       (drain-wakeups)
+                       (test-assert
+                        (and (equal started '("btell11"))
+                             (search (conversation-identifier-display "btell11") output)
+                             (delivery text)
+                             (eq (world-delivery-sender-kind (delivery text)) ':human))
+                        "CLI IDs and agent designators deliver as the person and schedule the cold recipient")))
+            (dolist (case '(("receiver" "from another channel" :post)
+                            ("btell22" "@receiver please review" :mention)))
+              (destructuring-bind (channel text kind) case
+                (setf started nil)
+                (world-message-send configuration :sender "al-btell22" :channel channel :text text)
+                (drain-wakeups)
+                (test-assert (and (equal started '("btell11"))
+                                  (delivery text)
+                                  (eq (world-delivery-sender-kind (delivery text)) ':agent)
+                                  (eq (world-delivery-kind (delivery text)) kind))
+                             "a direct message or mention from another channel schedules its cold recipient")))))))))
   nil)
 
 (-> test-world-server-kill-channel () null)

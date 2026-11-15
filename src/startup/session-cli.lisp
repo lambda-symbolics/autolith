@@ -68,14 +68,14 @@ metadata."
 ;;;; -- Explicit Detached Starts --
 
 (-> main--validate-detached-options
-    (clingon:command &key (:open-requested-p boolean) (:open-id (option string)))
+    (clingon:command &key (:open-requested-p boolean))
     null)
-(defun main--validate-detached-options (command &key open-requested-p open-id)
-  "Reject unattended starts which require interactive startup input."
+(defun main--validate-detached-options (command &key open-requested-p)
+  "Reject detached opens and unattended starts requiring interactive input."
   (when (getopt* command ':detached)
-    (when (and open-requested-p (not (non-empty-string-p open-id)))
+    (when open-requested-p
       (error 'configuration-error
-             :message "A detached open needs a channel: autolith open ID --detached."))
+             :message "--detached starts a new channel; open attaches this terminal."))
     (dolist (option '(:images :simulate-crash :localgroup-handoff))
       (when (getopt* command option)
         (error 'configuration-error

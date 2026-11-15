@@ -324,13 +324,13 @@ Nothing is written while no server runs."
   (make-command
    :name        "tell"
    :description "send a channel a message, as you would with (tell)"
-   :usage       "CHANNEL MESSAGE"
+   :usage       "TARGET MESSAGE"
    :handler
    (lambda (command)
      (let ((arguments (command-arguments command)))
        (unless (= (length arguments) 2)
          (error 'localgroup-error
-                :message   "localgroup tell takes the channel and one quoted message."
+                :message   "localgroup tell takes a channel or agent designator and one quoted message."
                 :operation ':arguments))
        (let* ((configuration (localgroup--client-configuration))
               (entry         (or (world-client-entry configuration)

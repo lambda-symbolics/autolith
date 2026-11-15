@@ -946,8 +946,7 @@ state, including an empty list after successful or pristine startup."
                   authentication-selection authentication-method)
   "Start one interactive Autolith session from COMMAND's parsed options."
   (main--register-local-source-trees)
-  (main--validate-detached-options command :open-requested-p open-requested-p
-                                          :open-id           open-id)
+  (main--validate-detached-options command :open-requested-p open-requested-p)
   (let* ((detached-p               (not (null (getopt* command ':detached))))
          (pristine-p               (not (null (getopt* command ':pristine))))
          (immutable-p              (or pristine-p
@@ -1046,11 +1045,9 @@ state, including an empty list after successful or pristine startup."
                          (main--live-conversation-record configuration effective-open-id))))
         (when record
           (main--validate-live-options command)
-          (if detached-p
-              (main--print-detached-receipt record)
-              (localgroup-relay-exit configuration
-                                     (localgroup-attach-record configuration record ':control)
-                                     ':control))
+          (localgroup-relay-exit configuration
+                                 (localgroup-attach-record configuration record ':control)
+                                 ':control)
           (return-from main--start-session nil))))
     (when detached-p
       (main--start-detached configuration
@@ -1484,7 +1481,7 @@ gives the terminal back in between."
   (make-command
    :name        "open"
    :description "open a channel in this terminal, or pick one"
-   :usage       "[ID] [--detached]"
+   :usage       "[ID]"
    :handler
    (lambda (command)
      (main--start-session
@@ -1895,10 +1892,9 @@ autolith uninstall removes the installation and keeps user data."
                  (format *error-output* "~&~A~%" condition)
                  (uiop:quit 64)))))
        (when (and (getopt* command ':detached)
-                  (not (member (command-name command) '("autolith" "open")
-                               :test #'string=)))
+                  (not (string= (command-name command) "autolith")))
          (error 'configuration-error
-                :message "--detached is supported only for a new channel or autolith open ID."))
+                :message "--detached is supported only when starting a new channel."))
        (funcall (command-handler command) command))))
   nil)
 

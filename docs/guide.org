@@ -1673,22 +1673,19 @@ Start an unattended session, or resume one by conversation ID or a part of it:
 
 #+BEGIN_SRC sh
 autolith --detached
-autolith open b-6 --detached
 autolith open b-6
 autolith open
 #+END_SRC
 
-With =--detached=, Autolith prints the full conversation ID and session PID,
-then exits without attaching. This works with closed stdin. Detached resume
-requires an ID. Without
-=--detached=, omit the ID to open the =(open)= channel picker. An exact canonical
-or displayed ID wins; otherwise any part of an ID selects the one conversation
-containing it, without regard to case, and a part matching several reports
-every matching ID with its available title, workspace, time, and preview
-instead of selecting one. Running conversations,
-including empty new sessions, are selectable. Resuming a running conversation
-attaches to it; detached resume prints its existing PID without disturbing its
-clients. Launch-only overrides such as =--model= are rejected when resuming a
+Use =autolith --detached= to start a new unattended channel and print its full
+conversation ID and session PID. This works with closed stdin. Open an existing
+channel in this terminal with =autolith open ID=, or omit the ID for the =(open)=
+channel picker. An exact canonical or displayed ID wins; otherwise any part of an
+ID selects the one conversation containing it, without regard to case. An
+ambiguous part reports every matching ID with its available title, workspace,
+time, and preview. Running conversations, including empty new sessions, are
+selectable; opening one attaches to it.
+Launch-only overrides such as =--model= are rejected when resuming a
 running conversation. For hosted channels, =--permissions= may be used when
 no terminal is attached, as described under Checkpoints and launch options.
 Otherwise, change the permission mode inside the conversation with
@@ -1698,26 +1695,29 @@ Otherwise, change the permission mode inside the conversation with
 Control a session with the following commands:
 
 #+BEGIN_SRC sh
-autolith lg tell   CHANNEL "message"
-autolith lg pause  [SESSION-ID]
-autolith lg attach [SESSION-ID]
-autolith lg attach [SESSION-ID] --read-only
-autolith lg attach [SESSION-ID] --take-over
-autolith lg detach [SESSION-ID]
-autolith lg kill   [SESSION-ID]
+autolith lg tell   TARGET "message"
+autolith lg pause  [TARGET]
+autolith lg attach [TARGET]
+autolith lg attach [TARGET] --read-only
+autolith lg attach [TARGET] --take-over
+autolith lg detach [TARGET]
+autolith lg kill   [TARGET]
 #+END_SRC
 
-=lg= is an alias for =localgroup=. When exactly one endpoint is reachable,
-these commands select it when =SESSION-ID= is omitted. With multiple sessions,
-provide a full ID or any part of one that matches a single session. Parts are
-matched without regard to case and with the display hyphen dropped, for
-example =b=, =b-6=, =uouh= or =6UOU= for =b-6uouHJ=. A full ID in either form
-takes priority. If a part matches more than one session, the error lists the
-matching IDs and nothing happens; give a longer part.
+=lg= is an alias for =localgroup=. Use a channel ID, a unique part of one, an
+agent's name with or without =@=, a participant ID, or =inbox= as =TARGET=.
+Names and ID fragments are matched without regard to case. Full channel IDs
+take priority over bare names; use =@NAME= to select a participant's residence
+explicitly. For example, =autolith lg tell researcher "review this"= sends a
+message to researcher wherever that agent resides. Ambiguous IDs report their
+matches and select nothing.
 
-Use =tell= to send a channel a message as you would with =(tell)=; a channel
-nobody serves is served for its agent to read it. It needs a running world
-server, which =autolith lg start= starts in the background.
+When exactly one endpoint is reachable, omit =TARGET= from =pause=, =attach=,
+=detach= or =kill= to select it. These commands require a hosted channel;
+=tell= also accepts cold channels. A message sent there, including a mention
+from another channel, starts its resident agent without attaching a terminal.
+A parked agent has no channel to receive it. Run =autolith lg start= to start
+the world server in the background before using =tell=.
 =pause= cancels active work and holds queued primary work.
 =kill= requests graceful shutdown.
 

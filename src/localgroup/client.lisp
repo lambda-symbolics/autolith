@@ -144,15 +144,30 @@ mismatches yield :UNKNOWN; neither read nor transport creates or modifies record
 
 (-> localgroup--find-record (configuration string) cons)
 (defun localgroup--find-record (configuration session-id)
-  "Return CONFIGURATION's unique endpoint matching SESSION-ID in full or in part.
+  "Return CONFIGURATION's endpoint for a channel ID, fragment or resident's name.
 
-An exact identifier in canonical or display form wins; otherwise the one
-record whose identifier contains SESSION-ID, compared without regard to case.
-Several matches are reported together and select nothing."
+Resolve world designators first, including @NAME, bare names and legacy
+aliases. Retain endpoint-only identifier discovery for rescue sessions.
+Ambiguous or parked targets select nothing."
   (let* ((records (localgroup-endpoint-records configuration))
-         (matches (identifier-match session-id records
-                                    :key (lambda (entry)
-                                           (localgroup--record-session-id (rest entry))))))
+         (channel (handler-case
+                      (world-channel-designated (world-load configuration) configuration
+                                               session-id :error-p nil)
+                    (world-error (condition)
+                      (error 'localgroup-error
+                             :message    (autolith-error-message condition)
+                             :operation  ':discover
+                             :session-id session-id
+                             :cause      condition))))
+         (matches (if channel
+                      (remove-if-not
+                       (lambda (entry)
+                         (string= (channel-identifier channel)
+                                  (localgroup--record-session-id (rest entry))))
+                       records)
+                      (identifier-match session-id records
+                                        :key (lambda (entry)
+                                               (localgroup--record-session-id (rest entry)))))))
     (cond ((null matches)
            (error 'localgroup-error
                   :message    (format nil "No hosted channel matches ~S." session-id)
@@ -912,7 +927,7 @@ the message without publishing the capsule or exiting."
   (make-command
    :name        "attach"
    :description "attach this terminal to a hosted channel"
-   :usage       "[SESSION-ID]"
+   :usage       "[TARGET]"
    :options     (list (make-option ':flag
                                    :long-name   "read-only"
                                    :key         ':read-only
@@ -926,7 +941,7 @@ the message without publishing the capsule or exiting."
      (let ((arguments (command-arguments command)))
        (unless (member (length arguments) '(0 1))
          (error 'localgroup-error
-                :message   "localgroup attach accepts at most one session identifier."
+                :message   "localgroup attach accepts at most one channel or agent designator."
                 :operation ':arguments))
        (let ((read-only-p (not (null (getopt command ':read-only))))
              (take-over-p (not (null (getopt command ':take-over)))))
@@ -993,13 +1008,13 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
   (make-command
    :name        name
    :description description
-   :usage       "[SESSION-ID]"
+   :usage       "[TARGET]"
    :handler
    (lambda (command)
      (let ((arguments (command-arguments command)))
        (unless (member (length arguments) '(0 1))
          (error 'localgroup-error
-                :message   (format nil "localgroup ~A accepts at most one session identifier." name)
+                :message   (format nil "localgroup ~A accepts at most one channel or agent designator." name)
                 :operation ':arguments))
        (let* ((configuration (localgroup--client-configuration))
               (entry         (localgroup--session-record configuration (first arguments)))
