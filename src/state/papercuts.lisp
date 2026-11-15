@@ -799,22 +799,3 @@ its first consented telemetry identity without recording another report."
 (defun papercut-call-source (papercut)
   "Return the canonical Lisp call that opens PAPERCUT."
   (format nil "(papercut ~S)" (papercut-short-identifier papercut)))
-
-(-> papercut-excerpt (string integer) string)
-(defun papercut-excerpt (content limit)
-  "Return a single-line prefix of CONTENT no longer than LIMIT characters."
-  (let* ((single-line
-           (with-output-to-string (stream)
-             (loop with spacing-p = nil
-                   for character across content
-                   if (find character '(#\Space #\Tab #\Newline #\Return))
-                     do (unless spacing-p
-                          (write-char #\Space stream)
-                          (setf spacing-p t))
-                   else
-                     do (write-char character stream)
-                        (setf spacing-p nil))))
-         (trimmed (string-trim '(#\Space) single-line)))
-    (if (<= (length trimmed) limit)
-        trimmed
-        (format nil "~A..." (subseq trimmed 0 (max 0 (- limit 3)))))))

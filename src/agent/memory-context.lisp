@@ -146,7 +146,7 @@ adds its status and the reason."
             "updated_at" (memory--timestamp-string (memory-updated-at memory))
             "title" (memory-title memory)
             "tags" (coerce (memory-tags memory) 'vector)
-            "excerpt" (memory--excerpt (memory-content memory)
+            "excerpt" (single-line-excerpt (memory-content memory)
                                        *memory-context-excerpt-limit*))))
     (unless (eq (memory-assessment-status assessment) ':current)
       (setf (gethash "status" line)

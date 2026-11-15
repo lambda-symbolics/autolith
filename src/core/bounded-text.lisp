@@ -28,6 +28,25 @@ prefix without a notice."
               (bounded-string-prefix-length (length text) :limit limit :uri uri)
             (concatenate 'string (subseq text 0 kept) notice))))))
 
+(-> single-line-excerpt (string integer) string)
+(defun single-line-excerpt (content limit)
+  "Return a single-line prefix of CONTENT no longer than LIMIT characters."
+  (let* ((single-line
+           (with-output-to-string (stream)
+             (loop with spacing-p = nil
+                   for character across content
+                   if (find character '(#\Space #\Tab #\Newline #\Return))
+                     do (unless spacing-p
+                          (write-char #\Space stream)
+                          (setf spacing-p t))
+                   else
+                     do (write-char character stream)
+                        (setf spacing-p nil))))
+         (trimmed (string-trim '(#\Space) single-line)))
+    (if (<= (length trimmed) limit)
+        trimmed
+        (format nil "~A..." (subseq trimmed 0 (max 0 (- limit 3)))))))
+
 (-> bounded-string-prefix-length
     (integer &key (:limit integer) (:uri (option string)))
     (values integer (option string)))

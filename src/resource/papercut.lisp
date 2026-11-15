@@ -182,7 +182,7 @@
               "assessment: ~(~A~)~%assessed: ~A~%assessment note: ~A"
               (papercut-assessment-verdict papercut)
               (papercut-timestamp-string (papercut-assessed-at papercut))
-              (papercut-excerpt (papercut-assessment-note papercut) note-limit))
+              (single-line-excerpt (papercut-assessment-note papercut) note-limit))
       "assessment: unassessed"))
 
 (-> papercut-resource--render-summary (papercut) non-empty-string)
@@ -196,7 +196,7 @@
           (papercut-resource--render-assessment
            papercut *papercut-resource-excerpt-limit*)
           (papercut-title papercut)
-          (papercut-excerpt
+          (single-line-excerpt
            (papercut-content papercut)
            *papercut-resource-excerpt-limit*)))
 
