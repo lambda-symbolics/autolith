@@ -213,6 +213,12 @@
                      "the excerpt identifies the retrievable conversation and call")
         (test-assert (equal output (getf (rest record) :output))
                      "the durable result contains the full evidence")
+        (test-assert (equal (list :conversation "precompaction-large"
+                                  :sequence     (getf (rest record) :seq)
+                                  :tool         "shell.run"
+                                  :status       ':error)
+                            (gethash item (conversation-item-records conversation)))
+                     "the bounded output still names its durable record")
         (test-assert (zerop (conversation-precompact conversation))
                      "an already bounded projection is not rewritten"))))
   nil)

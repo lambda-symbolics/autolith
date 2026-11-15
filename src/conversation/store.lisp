@@ -650,6 +650,36 @@ ordinary append protocol. Failed scans or checkpoint writes can be retried."
   (clinker-transcript:projection-metadata-table
    (conversation-projection conversation) ':handoff-family))
 
+(-> conversation-item-records (conversation) hash-table)
+(defun conversation-item-records (conversation)
+  "Return the item-identity table of the durable records that items show.
+
+A user message or a tool result maps to a property list of the :CONVERSATION
+and :SEQUENCE of its record; a tool result adds its :TOOL and :STATUS. A
+compaction checkpoint cites records by these."
+  (clinker-transcript:projection-metadata-table
+   (conversation-projection conversation) ':record))
+
+(-> conversation-item-record-p (t) boolean)
+(defun conversation-item-record-p (value)
+  "Return true when VALUE names the durable record a provider item shows."
+  (and (record-check value
+                     :properties-p     t
+                     :fields           (list (list :indicator ':conversation
+                                                   :validate  #'non-empty-string-p
+                                                   :required  t)
+                                             (list :indicator ':sequence
+                                                   :validate  (lambda (sequence)
+                                                                (typep sequence '(integer 1)))
+                                                   :required  t)
+                                             (list :indicator ':tool
+                                                   :validate  (lambda (tool)
+                                                                (typep tool '(option string))))
+                                             (list :indicator ':status
+                                                   :validate  #'symbolp))
+                     :allow-other-keys nil)
+       t))
+
 (defclass conversation-picker-metadata ()
   ((source-segment
     :initarg       :source-segment
@@ -1904,6 +1934,39 @@ this append's original EOF, including when publication failed after the write."
               (model-family model (conversation-model-provider conversation))))
       (clinker-transcript:projection-append (conversation-projection conversation) item))))
 
+(-> conversation--append-record-item (conversation json-object list) json-object)
+(defun conversation--append-record-item (conversation item record)
+  "Append ITEM, the provider item of RECORD, and remember which record it shows.
+
+Only a sequenced user message or tool result is remembered."
+  (destructuring-bind (kind &key seq role tool status &allow-other-keys) record
+    (with-recursive-lock-held ((conversation-append-lock conversation))
+      (conversation--append-input-item conversation item)
+      (when (and (typep seq '(integer 1))
+                 (or (eq kind ':tool-result) (eq role ':user)))
+        (setf (gethash item (conversation-item-records conversation))
+              (list* :conversation (conversation-identifier conversation)
+                     :sequence     seq
+                     (and (eq kind ':tool-result)
+                          (list :tool tool :status status)))))
+      item)))
+
+(-> conversation-item-text (json-object) string)
+(defun conversation-item-text (item)
+  "Return the text of ITEM, a user message or a tool output, without its images."
+  (let ((content (or (json-get item "content") (json-get item "output"))))
+    (typecase content
+      (string
+       content)
+      (vector
+       (format nil "~{~A~^~%~}"
+               (loop for part across content
+                     for text = (and (json-object-p part) (json-get part "text"))
+                     when (stringp text)
+                       collect text)))
+      (otherwise
+       ""))))
+
 (-> conversation--append-ephemeral-input-item
     (conversation json-object &key (:attachments list))
     json-object)
@@ -2310,7 +2373,7 @@ transcript show automatic INPUT as a short notice."
                          (list :wire-json (json-encode item))))))
                (conversation--remember-image-attachments conversation attachments)
                (setf durable-p t)
-               (values (conversation--append-input-item conversation item)
+               (values (conversation--append-record-item conversation item record)
                        record))
           (unless durable-p
             (setf (conversation-title conversation) previous-title
@@ -2488,39 +2551,40 @@ transcript show automatic INPUT as a short notice."
                   (item (function-call-output-item call-id wire-output)))
              (ecase persistence
                (:durable
-                (conversation-append-record
-                 conversation
-                 (append
-                   (list :tool-result
-                         :call-id call-id
-                         :tool       tool-name
-                         :tool-label tool-label
-                         :status     (ecase category
-                                       (:success
-                                        ':ok)
-                                       (:failure
-                                        ':error)
-                                       (:neutral
-                                        ':neutral)
-                                       (:mechanics
-                                        ':mechanics))
-                         :category   category
-                         :details    (conversation--bounded-tool-details details)
-                         :output     output)
-                  (when attachments
-                    (list
-                     :content-blocks
-                     (mapcar #'conversation--tool-content-block-record blocks)))
-                  (when cpu-microseconds
-                    (list :cpu-microseconds  cpu-microseconds
-                          :real-microseconds real-microseconds))
-                  (unless attachments
-                    (list :wire-json (json-encode item)))))
-                (conversation--remember-image-attachments conversation attachments)
-                (setf retained-p t)
-                (when (eq category ':failure)
-                  (conversation-note-failed-call conversation call-id))
-                (conversation--append-input-item conversation item))
+                (let ((record
+                        (conversation-append-record
+                         conversation
+                         (append
+                           (list :tool-result
+                                 :call-id call-id
+                                 :tool       tool-name
+                                 :tool-label tool-label
+                                 :status     (ecase category
+                                               (:success
+                                                ':ok)
+                                               (:failure
+                                                ':error)
+                                               (:neutral
+                                                ':neutral)
+                                               (:mechanics
+                                                ':mechanics))
+                                 :category   category
+                                 :details    (conversation--bounded-tool-details details)
+                                 :output     output)
+                          (when attachments
+                            (list
+                             :content-blocks
+                             (mapcar #'conversation--tool-content-block-record blocks)))
+                          (when cpu-microseconds
+                            (list :cpu-microseconds  cpu-microseconds
+                                  :real-microseconds real-microseconds))
+                          (unless attachments
+                            (list :wire-json (json-encode item)))))))
+                  (conversation--remember-image-attachments conversation attachments)
+                  (setf retained-p t)
+                  (when (eq category ':failure)
+                    (conversation-note-failed-call conversation call-id))
+                  (conversation--append-record-item conversation item record)))
                (:next-response
                 (conversation--append-ephemeral-input-item
                  conversation
@@ -3151,8 +3215,8 @@ ordinary responses replace it."
           (conversation--record-error
            conversation properties
            "A persisted image message has invalid text content."))
-        (conversation--append-input-item
-         conversation (user-message-item content attachments))))))
+        (conversation--append-record-item
+         conversation (user-message-item content attachments) (cons kind properties))))))
 
 (defmethod conversation--project-record
     ((kind (eql :title)) conversation properties)
@@ -3186,7 +3250,7 @@ ordinary responses replace it."
          (conversation--record-error
           conversation properties
           "A persisted multimodal tool result has no call identifier."))
-       (conversation--append-input-item
+       (conversation--append-record-item
         conversation
         (function-call-output-item
          call-id
@@ -3195,7 +3259,8 @@ ordinary responses replace it."
            (lambda (descriptor)
              (conversation--tool-content-block-from-record
               conversation descriptor properties))
-           descriptors))))))
+           descriptors)))
+        (cons kind properties))))
     ((conversation--property-present-p properties :images)
      (let ((call-id     (getf properties :call-id))
            (descriptors (getf properties :images)))
@@ -3206,7 +3271,7 @@ ordinary responses replace it."
          (conversation--record-error
           conversation properties
           "A persisted image tool result has no call identifier."))
-       (conversation--append-input-item
+       (conversation--append-record-item
         conversation
         (function-call-output-item
          call-id
@@ -3214,7 +3279,8 @@ ordinary responses replace it."
           (append
            (when (non-empty-string-p (or (getf properties :output) ""))
              (list (getf properties :output)))
-           (conversation--record-images conversation descriptors)))))))))
+           (conversation--record-images conversation descriptors))))
+        (cons kind properties))))))
 
 (defmethod conversation--project-record
     ((kind (eql :inherited-reference)) conversation properties)
@@ -3374,7 +3440,7 @@ ordinary responses replace it."
            "A persisted provider item is not a JSON object."))
         (when (eq kind ':provider-item)
           (conversation--repair-provider-item-arguments item))
-        (conversation--append-input-item conversation item)))
+        (conversation--append-record-item conversation item record)))
     nil))
 
 (-> conversation--peek-segment-header (pathname) (option list))

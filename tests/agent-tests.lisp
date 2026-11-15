@@ -2404,8 +2404,9 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
 (defun test-agent-compaction-without-submission ()
   "Test compaction without a usable submission keeps the earlier notes and marks the gap, while a refusal publishes nothing."
   (with-test-configuration (configuration)
-    (let* ((conversation (conversation-create configuration))
-           (observer     (make-instance 'agent-observer))
+    (let* ((*conversation-compaction-tail-characters* 0)
+           (conversation                              (conversation-create configuration))
+           (observer                                  (make-instance 'agent-observer))
            (agent
              (agent-tests--compaction-agent
               configuration conversation
@@ -2420,8 +2421,8 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                    :wire-fields nil :wire-count 0 :wire-digest (provider-cache-prefix--entry #())
                    :tokens 1200)))
       (conversation-append-user-message conversation "first request")
-      (agent-compact-conversation agent observer)
-      (let ((first-uncovered (conversation-next-sequence conversation)))
+      (let ((carried (1- (conversation-next-sequence conversation))))
+        (agent-compact-conversation agent observer)
         (conversation-append-user-message conversation "second request")
         (test-assert (= *agent-compaction-maximum-generations*
                         (agent-compact-conversation agent observer))
@@ -2429,9 +2430,9 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
         (let ((continuation (conversation-continuation conversation)))
           (test-assert (and (equal "Resume the pending request." (getf continuation :intent))
                             (equal (list (list (conversation-identifier conversation)
-                                               first-uncovered first-uncovered))
+                                               carried carried))
                                    (getf continuation :unsummarized)))
-                       "the fallback checkpoint keeps the earlier notes and names the unsummarized records"))
+                       "the fallback checkpoint keeps the earlier notes and names the record nobody summarized, which the first checkpoint carried forward"))
         (test-assert (search "second request" (json-encode (conversation-input-items conversation)))
                      "the fallback checkpoint retains the recent tail verbatim"))
       (conversation-append-record conversation (list :context-usage :sample sample))

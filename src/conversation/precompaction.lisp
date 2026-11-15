@@ -137,7 +137,9 @@ elapsed before NOW. Unknown lifetime alone is not evidence of a cold cache."
 
 (-> conversation-precompaction--bounded-output (conversation json-object) json-object)
 (defun conversation-precompaction--bounded-output (conversation item)
-  "Return ITEM with head/tail excerpts and a retrievable durable evidence reference."
+  "Return ITEM with head/tail excerpts and a retrievable durable evidence reference.
+
+The copy shows the same durable record as ITEM."
   (let* ((output    (json-get item "output"))
          (call-id   (json-get item "call_id"))
          (limit     *conversation-precompaction-output-maximum-characters*)
@@ -150,12 +152,16 @@ elapsed before NOW. Unknown lifetime alone is not evidence of a cold cache."
          (available (max 0 (- limit (length reference) 8)))
          (head      (ceiling available 2))
          (tail      (floor available 2))
-         (copy      (json-object-copy item)))
+         (copy      (json-object-copy item))
+         (records   (conversation-item-records conversation)))
     (setf (gethash "output" copy)
           (format nil "~A~%[...]~%~A~%~A"
                   (subseq output 0 head)
                   (subseq output (- (length output) tail))
                   reference))
+    (multiple-value-bind (record present-p) (gethash item records)
+      (when present-p
+        (setf (gethash copy records) record)))
     copy))
 
 (-> conversation-precompaction--user-message-p (t) boolean)

@@ -264,7 +264,10 @@ The test fails for that version and every later version.
   =clinker-transcript= carry-forward plan. It validates late arrivals and truthful
   repairs before publishing a self-contained checkpoint, then installs the
   replacement projection. =:cutoff-seq= identifies the request snapshot;
-  =:through-seq= covers every record before checkpoint publication.
+  =:through-seq= covers every record before checkpoint publication. Each user
+  message and tool result item names its durable record in projection
+  metadata. Carried rows keep that name, so a later checkpoint cites the record
+  where it was written, also after another conversation adopted the context.
 - =src/conversation/continuation.lisp= defines the typed checkpoint: the
   =compaction.submit= schema, its validation and the rendering stored beside
   it. The checkpoint record keeps both. The text is what the model reads, so a

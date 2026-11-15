@@ -120,12 +120,19 @@
           (checkpoint  (continuation-tests--checkpoint)))
       (conversation-append-user-message origin "earlier work")
       (conversation-append-summary origin checkpoint)
+      (conversation-append-user-message origin "later work")
       (conversation-append-context-adoption destination (conversation-context-rows origin)
                                             :participant "agent")
       (dolist (current (list destination
                              (conversation-load (conversation-pathname destination))))
         (test-assert (equal checkpoint (conversation-continuation current))
-                     "the adopted context keeps the checkpoint and its references unchanged"))
+                     "the adopted context keeps the checkpoint and its references unchanged")
+        (test-assert (equal (list (list :text         "later work"
+                                        :conversation (conversation-identifier origin)
+                                        :sequence     (1- (conversation-next-sequence origin))))
+                            (conversation-compaction-evidence
+                             (conversation-compaction-capture current)))
+                     "a record the context brought along is cited where it was written"))
       (let ((other (conversation-create configuration))
             (rows  (mapcar (lambda (row)
                              (let ((row (copy-list row)))
@@ -143,14 +150,15 @@
 (defun test-continuation-references ()
   "Offer records and plan steps to a checkpoint, keep what it cites, and report a cited step that changes."
   (with-test-configuration (configuration)
-    (let* ((conversation (conversation-create configuration))
-           (agent        (agent-tests--compaction-agent configuration conversation nil))
-           (long         (make-string (* 2 *continuation-label-characters*)
-                                      :initial-element #\s))
-           (steps        (list '(:text "Write the parser" :status :doing :id "parser")
-                               '(:text "Tag the release" :status :pending)
-                               (list :text (concatenate 'string long " one") :status ':pending)
-                               (list :text (concatenate 'string long " two") :status ':done))))
+    (let* ((*conversation-compaction-tail-characters* 0)
+           (conversation                              (conversation-create configuration))
+           (agent                                     (agent-tests--compaction-agent configuration conversation nil))
+           (long                                      (make-string (* 2 *continuation-label-characters*)
+                                                                   :initial-element #\s))
+           (steps                                     (list '(:text "Write the parser" :status :doing :id "parser")
+                                                            '(:text "Tag the release" :status :pending)
+                                                            (list :text (concatenate 'string long " one") :status ':pending)
+                                                            (list :text (concatenate 'string long " two") :status ':done))))
       (plan-update configuration steps)
       (conversation-append-user-message conversation "Fix the parser.")
       (conversation-append-provider-item
@@ -158,12 +166,14 @@
       (conversation-append-tool-result conversation "call-1" :tool-name "shell.run"
                                                              :output    "12 tests passed"
                                                              :success-p t)
+      (conversation-append-user-message conversation "Now the printer.")
       (flet ((references (&rest arguments)
                "Return the references a checkpoint taken now may cite."
                (apply #'continuation-references
                       agent
-                      (conversation-compaction-evidence-records
-                       (conversation-compaction-capture conversation))
+                      (conversation-compaction-evidence
+                       (conversation-compaction-portable-capture
+                        (conversation-compaction-capture conversation)))
                       arguments))
 
              (changes ()
@@ -180,14 +190,14 @@
                               :key (lambda (reference) (getf reference :step)) :test #'equal)))
           (test-assert (equal '(:plan-step :plan-step :plan-step :plan-step :tool-result :message)
                               (mapcar (lambda (reference) (getf reference :kind)) offered))
-                       "plan steps come first, then the covered records, newest first")
+                       "plan steps come first, then the records before the retained tail, newest first")
           (test-assert (equal '("pending" "done")
                               (mapcar (lambda (reference) (getf reference :observed))
                                       (subseq offered 2 4)))
                        "steps that differ only past the quoted start of their text stay distinct")
           (test-assert (and (equal "call-1" (getf result :call-id))
                             (equal (conversation-identifier conversation) (getf result :conversation))
-                            (= (getf result :sequence) (1- (conversation-next-sequence conversation))))
+                            (= (getf result :sequence) (- (conversation-next-sequence conversation) 2)))
                        "a tool result is named by its conversation, sequence and call")
           (test-assert (search (format nil "conversation:id/~A sequence ~D"
                                        (conversation-identifier conversation)
@@ -211,6 +221,16 @@
                          "the checkpoint keeps exactly the references it cites")
             (test-assert (member result (references :prior checkpoint) :test #'equal)
                          "a later catalog still offers what the previous checkpoint cited"))
+          (conversation-append-user-message conversation "And the docs.")
+          (dolist (current (list conversation
+                                 (conversation-load (conversation-pathname conversation))))
+            (test-assert (equal (list (list :text         "Now the printer."
+                                            :conversation (conversation-identifier conversation)
+                                            :sequence     (1+ (getf result :sequence))))
+                                (conversation-compaction-evidence
+                                 (conversation-compaction-portable-capture
+                                  (conversation-compaction-capture current))))
+                         "a message the checkpoint carried forward is cited by the next one, live and after reload"))
           (test-assert (null (changes))
                        "unchanged references add nothing to a request")
           (plan-update configuration (cons '(:text "Write the parser" :status :done :id "parser")

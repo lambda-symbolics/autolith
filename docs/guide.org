@@ -2334,9 +2334,10 @@ strict schema and size bounds, and stores the checkpoint in typed form beside
 its text.
 
 Before the request, Autolith lists what the checkpoint may cite: the user
-messages and tool results it covers, plan steps, mission gates, facts the
-conversation was given and unfinished jobs, at most 64 in all. Each has a short
-handle. A note cites the handles that support it and the checkpoint keeps the
+messages and tool results the request shows, plan steps, mission gates, facts
+the conversation was given and unfinished jobs, at most 64 in all. Messages and
+results that an earlier checkpoint kept verbatim are among them. Each has a
+short handle. A note cites the handles that support it and the checkpoint keeps the
 cited references. A completed note that cites nothing reads =(unsubstantiated)=.
 
 A record reference gives its =conversation:id/<id>= address and sequence, and
@@ -2351,8 +2352,8 @@ knowledge is active.
 If a submission is rejected, Autolith tells the model what to correct and asks
 again, for at most four generations in all. If none of them is usable,
 compaction still publishes a checkpoint. It keeps the previous checkpoint's
-notes and the recent tail, and it names the record range that nobody
-summarized. A refusal, a permission failure or an unreachable provider ends
+notes and the recent tail, and it names the range of records the request
+showed and nobody summarized. A refusal, a permission failure or an unreachable provider ends
 compaction with an error and leaves the conversation unchanged.
 
 Before either request, Autolith captures a fixed history cutoff. The checkpoint
