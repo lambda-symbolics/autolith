@@ -512,10 +512,35 @@ skips the repository check."
                     (test-assert (directory (merge-pathnames "generations/*/autolith.core"
                                                              (config :data-root configuration)))
                                  "the launcher published the saved heap as a generation")
-                    (test-assert (and (not (probe-file (world-server-restart-pathname configuration)))
-                                      (world-server-running-p configuration)
-                                      (world-restart-tests--conversation-held-p configuration channel))
-                                 "the restarted server holds the world and the conversation, and removed its marker")
+                    (let* ((marker-absent-p
+                             (not (probe-file (world-server-restart-pathname configuration))))
+                           (world-running-p
+                             (if marker-absent-p
+                                 (world-server-running-p configuration)
+                                 ':not-probed))
+                           (conversation-held-p
+                             (if (and marker-absent-p world-running-p)
+                                 (world-restart-tests--conversation-held-p configuration channel)
+                                 ':not-probed))
+                           (held-p (and marker-absent-p world-running-p conversation-held-p)))
+                      (test-assert
+                       held-p
+                       (if held-p
+                           "the restarted server holds the world and the conversation, and removed its marker"
+                           (let ((logs (world-restart-tests--logs configuration)))
+                             (format nil "the restarted server holds the world and the conversation, and removed its marker~%Operands: ~S~%Stage: ~A~%Logs:~%~A"
+                                     (list :marker-absent-p     marker-absent-p
+                                           :world-running-p     world-running-p
+                                           :conversation-held-p conversation-held-p
+                                           :world-pid           (getf (rest (rest world)) :pid)
+                                           :channel-pid         (getf (rest (rest resumed)) :pid))
+                                     (bounded-string
+                                      (prin1-to-string
+                                       (world-restart-tests--diagnostics
+                                        configuration (getf (rest (rest entry)) :pid)
+                                        (funcall launch-process)))
+                                      :limit 8000)
+                                     (subseq logs (max 0 (- (length logs) 8000))))))))
                     (world-restart-tests--check-resumed-runtime resumed)
                     ;; The heap was saved holding locks of a thread that
                     ;; is gone; a second checkpoint needs them again.
