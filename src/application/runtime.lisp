@@ -11,6 +11,9 @@ Clicking the rendered call's header inserts it into the composer.")
 (defparameter *application-transcript-layout-columns* nil
   "Dynamic column count when replaying a resident transcript source.")
 
+(defparameter *application-transcript-source-cache* nil
+  "Width-independent decoded sources and semantic previews for one publication.")
+
 (defparameter *application-tool-input-expanded-p* nil
   "Whether a resident tool input is being laid out in its expanded view.")
 
@@ -2800,6 +2803,22 @@ A channel message shows its sender and channel instead of an operation."
                       (concatenate 'string (subseq summary 0 500) "…")
                       summary)))))
 
+(-> application--transcript-source-value (list function) t)
+(defun application--transcript-source-value (key build)
+  "Reuse one immutable transform at KEY within the current publication only."
+  (if *application-transcript-source-cache*
+      (multiple-value-bind (value present-p)
+          (gethash key *application-transcript-source-cache*)
+        (if present-p
+            value
+            (setf (gethash key *application-transcript-source-cache*) (funcall build))))
+      (funcall build)))
+
+(-> application--transcript-json (string) t)
+(defun application--transcript-json (source)
+  "Decode SOURCE once per resident publication, or directly outside publication."
+  (application--transcript-source-value (list ':json source) (lambda () (json-decode source))))
+
 (-> conversation-record-entry (application list) (option list))
 (defun conversation-record-entry (application record)
   "Return the styled transcript entry represented by durable RECORD."
@@ -2825,7 +2844,7 @@ A channel message shows its sender and channel instead of an operation."
      (let ((wire-json (getf (rest record) :wire-json)))
        (and (stringp wire-json)
             (response-item-entry application
-                                 (json-decode wire-json)
+                                  (application--transcript-json wire-json)
                                  :timestamp  (getf (rest record) :time)
                                  :tool-label (getf (rest record) :tool-label)))))
     (:assistant-yield
@@ -3086,30 +3105,48 @@ The channel's structured clients receive its text as a :PRESENT event."
 
 (-> application--record-layout (application list &key (:expanded-input-p boolean)) function)
 (defun application--record-layout (application record &key expanded-input-p)
-  "Retain RECORD's source for a fresh layout, optionally expanding its input."
-  (lambda (columns)
-    (let ((*application-transcript-layout-columns* columns)
-          (*application-tool-input-expanded-p*     expanded-input-p))
-      (conversation-record-entry application record))))
+  "Retain RECORD's decoded sources and semantic previews across width changes."
+  (let ((cache (or *application-transcript-source-cache* (make-hash-table :test #'equal))))
+    (lambda (columns)
+      (let ((*application-transcript-layout-columns* columns)
+            (*application-tool-input-expanded-p*     expanded-input-p)
+            (*application-transcript-source-cache*   cache))
+        (conversation-record-entry application record)))))
 
 (-> application--record-source-characters (list) (integer 0))
 (defun application--record-source-characters (record)
-  "Estimate retained logical RECORD storage for viewport eviction accounting."
+  "Charge retained RECORD and cached sources, including all preview variants."
   (labels ((weight (value)
              (typecase value
                (string
                 (length value))
                (cons
                 (+ 8 (weight (first value)) (weight (rest value))))
+               (hash-table
+                (loop for key being the hash-keys of value using (hash-value entry)
+                      sum (+ (weight key) (weight entry))))
+               (vector
+                (loop for entry across value sum (weight entry)))
                (t
                 0))))
-    (weight record)))
+    (+ (weight record) (weight *application-transcript-source-cache*))))
+
+(-> application--record-source-weight (list) function)
+(defun application--record-source-weight (record)
+  "Return RECORD's live retained weight as its publication gains preview variants."
+  (let ((cache *application-transcript-source-cache*))
+    (lambda ()
+      (let ((*application-transcript-source-cache* cache))
+        (application--record-source-characters record)))))
 
 (-> application--record-presentation
     (application list &key (:outcomes (option hash-table))) (option list))
 (defun application--record-presentation (application record &key outcomes)
   "Return RECORD's identity, styled entry and explicit presentation semantics."
-  (let* ((entry    (conversation-record-entry application record))
+  (let* ((*application-transcript-source-cache*
+           (when (terminal-ui-fullscreen-p (application-ui application))
+             (make-hash-table :test #'equal)))
+         (entry    (conversation-record-entry application record))
          (metadata (append
                     (application--record-entry-semantics record entry)
                     (when (terminal-ui-fullscreen-p (application-ui application))
@@ -3125,7 +3162,7 @@ The channel's structured clients receive its text as a :PRESENT event."
     (when (and entry (terminal-ui-fullscreen-p (application-ui application))
                (not (getf metadata :markdown)))
       (setf (getf metadata :entry-layout) (application--record-layout application record)
-            (getf metadata :source-characters) (application--record-source-characters record))
+            (getf metadata :source-characters) (application--record-source-weight record))
       (when (getf metadata :expandable-input-p)
         (setf (getf metadata :expanded-entry-layout)
               (application--record-layout application record :expanded-input-p t))))

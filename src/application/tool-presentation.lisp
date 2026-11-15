@@ -77,7 +77,7 @@ Shell output is not assumed to be shell source."
   (let ((source (json-get call "arguments")))
     (when (non-empty-string-p source)
       (handler-case
-          (let ((arguments (json-decode source)))
+          (let ((arguments (application--transcript-json source)))
             (and (json-object-p arguments) arguments))
         (json-error ()
           nil)))))

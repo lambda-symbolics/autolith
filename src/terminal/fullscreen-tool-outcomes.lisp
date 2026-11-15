@@ -127,15 +127,19 @@
 (-> terminal-ui-fullscreen--record-source-characters (list) (integer 0))
 (defun terminal-ui-fullscreen--record-source-characters (record)
   "Charge logical sources retained by RECORD to its bounded viewport chunk."
-  (+ (or (getf record :source-characters) 0)
-     (or (getf record :body-source-characters) 0)
-     (loop for span in (getf record :annotations) sum (length (terminal-span-text span)))
-     (let ((markdown (getf record :markdown)))
-       (if markdown
-           (+ (length (getf markdown :source))
-              (loop for span in (getf markdown :header)
-                    sum (length (terminal-span-text span))))
-           0))))
+  (flet ((weight (key)
+           "Read an integer charge or a live source-cache weight."
+           (let ((value (getf record key)))
+             (if (functionp value) (funcall value) (or value 0)))))
+    (+ (weight :source-characters)
+       (weight :body-source-characters)
+       (loop for span in (getf record :annotations) sum (length (terminal-span-text span)))
+       (let ((markdown (getf record :markdown)))
+         (if markdown
+             (+ (length (getf markdown :source))
+                (loop for span in (getf markdown :header)
+                      sum (length (terminal-span-text span))))
+             0)))))
 
 (-> terminal-ui-fullscreen--record-layout-function
     (fullscreen-terminal-ui list) (option function))

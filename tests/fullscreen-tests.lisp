@@ -1594,6 +1594,92 @@
 
 ;;;; -- General Resident Sources and Publication Work --
 
+(-> test-terminal-fullscreen-decoded-source-reflow () null)
+(defun test-terminal-fullscreen-decoded-source-reflow ()
+  "Reuse publication decoding and semantic source previews through reflow and outcomes."
+  (with-test-configuration (configuration)
+    (let* ((*fullscreen-transcript-character-limit* 50000)
+           (terminal                                (make-instance 'recording-terminal :columns 120 :rows 24))
+           (ui                                      (fullscreen-test--ui terminal))
+           (application                             (make-instance 'application :configuration configuration
+                                                                               :tool-registry  (make-default-tool-registry)
+                                                                               :conversation (conversation-create configuration) :ui ui))
+           (forms                                   (coerce (loop for index below 12
+                                                                 collect (format nil "(let ((value ~D))~%  (list :value value :last-source ~D))"
+                                                                                 index index))
+                                                            'vector))
+           (call                                    (list :provider-item :seq 1 :wire-json
+                                                          (json-encode
+                                                           (agent-test-call :call-id "decoded-source" :namespace "lisp" :name "eval"
+                                                                            :arguments (json-encode (json-object "forms" forms))))))
+           (result                                  (list :tool-result :seq 2 :call-id "decoded-source" :tool "lisp.eval"
+                                                          :status ':ok :output "(:body-source (list :value 42))"))
+           (key                                     (application--tool-outcome-key application ':call "decoded-source"))
+           (decode                                  #'json-decode)
+           (render                                  #'render-source)
+           (decodes                                 0)
+           (renders                                 0))
+      (with-terminal-ui (active ui)
+        (test-call-with-function-replacements
+         (list (list 'json-decode
+                     (lambda (source) (incf decodes) (funcall decode source)))
+               (list 'render-source
+                     (lambda (&rest arguments) (incf renders) (apply render arguments))))
+         (lambda ()
+           (terminal-ui-present-records active (list (application--record-presentation application call)))
+           (test-assert (and (plusp decodes) (plusp renders))
+                        "the initial publication primes decoding and highlighted source")
+           (let* ((viewport       (fullscreen-terminal-ui-viewport active))
+                  (initial-weight (terminal-ui-fullscreen--record-source-characters
+                                   (gethash key (fullscreen-terminal-ui-presentation-records active))))
+                  (initial-charge (clinedi:transcript-viewport-resident-characters viewport)))
+             (labels ((resident ()
+                        "Find the current copy-on-write presentation record."
+                        (gethash key (fullscreen-terminal-ui-presentation-records active)))
+
+                      (reflow (needle)
+                        "Exercise width changes without decoding or highlighting retained source again."
+                        (setf decodes 0 renders 0)
+                        (dolist (width '(32 90 120))
+                          (terminal-ui-resize active width :rows 24)
+                          (test-assert (search needle (clinedi:transcript-viewport-chunk-text viewport 0))
+                                       "the retained source remains available across widths"))
+                        (test-assert (and (zerop decodes) (zerop renders))
+                                     "width-only reflow reuses decoded values and source-preview spans")))
+               (reflow ":value")
+               (test-assert (not (search ":last-source 11" (clinedi:transcript-viewport-chunk-text viewport 0)))
+                            "the original publication keeps the bounded input preview")
+               (with-terminal-ui-locked (active)
+                 (terminal-ui-fullscreen--toggle-tool-input active key))
+               (test-assert (and (plusp renders)
+                                 (search ":last-source 11" (clinedi:transcript-viewport-chunk-text viewport 0)))
+                            "expansion renders and retains the previously unseen full-input variant")
+               (let* ((expanded (resident))
+                      (weight   (terminal-ui-fullscreen--record-source-characters expanded))
+                      (entry    (funcall (getf expanded :expanded-entry-layout) 120)))
+                 (test-assert (and (> weight initial-weight)
+                                   (> (clinedi:transcript-viewport-resident-characters viewport)
+                                      initial-charge))
+                              "expanded cached source rows increase the actual viewport charge")
+                 (test-assert (find ':syntax-keyword entry :key #'terminal-span-style)
+                              "cached previews retain semantic syntax styles rather than themed ANSI")
+                 (reflow ":last-source 11")
+                 (with-terminal-ui-locked (active)
+                   (terminal-ui-fullscreen--toggle-tool-input active key))
+                 (test-assert (and (zerop renders)
+                                   (not (search ":last-source 11" (clinedi:transcript-viewport-chunk-text viewport 0)))
+                                   (= weight (terminal-ui-fullscreen--record-source-characters (resident))))
+                              "collapse reuses its preview and keeps both retained variants charged"))
+               (terminal-ui-present-records active (list (application--record-presentation application result)))
+               (test-assert (and (= 1 (fullscreen-test--chunk-count active))
+                                 (functionp (getf (resident) :body-layout)))
+                            "a folded outcome retains its own primed source layout")
+               (reflow ":body-source")
+               (terminal-ui-append-finalized active ':eviction (make-string 50000 :initial-element #\x))
+               (test-assert (and (= 1 (fullscreen-test--chunk-count active)) (null (resident)))
+                            "viewport eviction releases the indexed source and its cache closures"))))))))
+  nil)
+
 (-> test-terminal-fullscreen-source-tool-reflow () null)
 (defun test-terminal-fullscreen-source-tool-reflow ()
   "Rerender original call arguments and folded outcomes across inline/table layouts."

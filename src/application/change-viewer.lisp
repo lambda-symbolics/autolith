@@ -35,16 +35,19 @@
 
 PROMPT, when supplied, leads the first line and indents the following ones.
 RAINBOW-PARENTHESES-P enables nesting colors for dedicated Lisp displays."
-  (let ((rows (render-source text
-                             :source-path            path
-                             :syntax-language        language
-                             :prompt                 prompt
-                             :line-limit             limit
-                             :sanitize-line-function #'application--sanitize-change-line
-                             :span-function          #'syntax--terminal-span)))
-    (if rainbow-parentheses-p
-        (syntax--rainbow-source-rows rows)
-        rows)))
+  (application--transcript-source-value
+   (list ':preview text path language prompt limit rainbow-parentheses-p)
+   (lambda ()
+     (let ((rows (render-source text
+                                :source-path            path
+                                :syntax-language        language
+                                :prompt                 prompt
+                                :line-limit             limit
+                                :sanitize-line-function #'application--sanitize-change-line
+                                :span-function          #'syntax--terminal-span)))
+       (if rainbow-parentheses-p
+           (syntax--rainbow-source-rows rows)
+           rows)))))
 
 
 ;;; Before-and-after viewer

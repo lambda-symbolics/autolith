@@ -385,6 +385,7 @@
   test-terminal-fullscreen-markdown-stream-reflow
   test-terminal-fullscreen-markdown-rollback-residency
   test-terminal-fullscreen-source-tool-reflow
+  test-terminal-fullscreen-decoded-source-reflow
   test-terminal-fullscreen-lisp-input-expansion
   test-terminal-fullscreen-source-prose-reflow
   test-terminal-fullscreen-idle-publication-work
