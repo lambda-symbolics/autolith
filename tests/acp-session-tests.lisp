@@ -388,39 +388,45 @@
        (let ((identifier (agentcomms:client-new-session client (namestring root)))
              (run-turn   (symbol-function 'agent-run-user-turn)))
          (dolist (outcome '(:success :error))
-           (setf (acp-session-test-updates client) nil)
-           (test-call-with-function-replacements
-            (list
-             (list 'agent-run-user-turn
-                   (lambda (agent text &rest options &key observer &allow-other-keys)
-                     (agent-observer-reasoning observer "pending ")
-                     (agent-observer-reasoning observer "thought")
-                     (if (eq outcome ':error)
-                         (error "Original turn failure")
-                         (apply run-turn agent text options)))))
-            (lambda ()
-              (if (eq outcome ':error)
-                  (test-assert
-                   (handler-case
-                       (progn
-                         (agentcomms:client-prompt client identifier
-                                                  (list (agentcomms:acp-text-content "turn")))
-                         nil)
-                     (agentcomms:acp-remote-error () t))
-                   "a failed turn returns a protocol error")
-                  (test-assert
-                   (eq ':end-turn
-                       (agentcomms:client-prompt client identifier
-                                                (list (agentcomms:acp-text-content "turn"))))
-                   "the prompt returns its terminal outcome"))))
-           (let ((thoughts (remove ':agent-thought-chunk (reverse (acp-session-test-updates client))
-                                   :key #'agentcomms:acp-update-kind :test-not #'eq)))
-             (test-assert
-              (and (= 1 (length thoughts))
-                   (equal "pending thought"
-                          (agentcomms:acp-content-text
-                           (agentcomms:json-get (first thoughts) "content"))))
-              (format nil "the editor has the final thought batch before the ~(~A~) reply" outcome))))))
+          (setf (acp-session-test-updates client) nil
+                (acp-session-test-wire-events client) nil)
+          (test-call-with-function-replacements
+           (list
+            (list 'agent-run-user-turn
+                  (lambda (agent text &rest options &key observer &allow-other-keys)
+                    (agent-observer-reasoning observer "pending ")
+                    (agent-observer-reasoning observer "thought")
+                    (if (eq outcome ':error)
+                       (error 'autolith-error :message "Original turn failure")
+                       (apply run-turn agent text options)))))
+           (lambda ()
+             (if (eq outcome ':error)
+                 (test-assert
+                  (handler-case
+                      (progn
+                        (agentcomms:client-prompt client identifier
+                                                 (list (agentcomms:acp-text-content "turn")))
+                        nil)
+                   (agentcomms:acp-remote-error (condition)
+                     (and (= -32603 (agentcomms:acp-method-error-code condition))
+                          (equal "condition"
+                                 (agentcomms:json-get
+                                  (first (last (acp-session-test-turn-events client)))
+                                  "outcome")))))
+                  "a failed turn delivers its terminal boundary before the protocol error")
+                 (test-assert
+                  (eq ':end-turn
+                      (agentcomms:client-prompt client identifier
+                                               (list (agentcomms:acp-text-content "turn"))))
+                  "the prompt returns its terminal outcome"))))
+          (let ((thoughts (remove ':agent-thought-chunk (reverse (acp-session-test-updates client))
+                                  :key #'agentcomms:acp-update-kind :test-not #'eq)))
+            (test-assert
+             (and (= 1 (length thoughts))
+                  (equal "pending thought"
+                         (agentcomms:acp-content-text
+                          (agentcomms:json-get (first thoughts) "content"))))
+             (format nil "the editor has the final thought batch before the ~(~A~) reply" outcome))))))
      :results (list (acp-session-test-text-result "done"))))
   nil)
 
