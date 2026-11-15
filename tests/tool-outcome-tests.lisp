@@ -67,12 +67,17 @@
 (defun test-fullscreen-annotation-restoration ()
   "Restore an annotation's call, deduplicate it, and preserve it through completion."
   (with-terminal-ui (ui (fullscreen-test--ui (make-instance 'recording-terminal :columns 80)))
-    (let* ((origin     (tool-outcome-test--call 1 "restored"))
+    (let* ((origin (tool-outcome-test--call 1 "restored"))
+           (entry  (append (second origin)
+                           (list (terminal-span ':dim (format nil "~%operation 1: edit"))
+                                 (terminal-span ':dim (format nil "~%operation 2: edit")))))
            (annotation
              (list 2 "verdict for original command"
                    (list :kind ':annotation :call-key '(:call "owner" "restored")
                          :annotations     (list (terminal-span ':annotation (format nil "~%permission verdict")))
                          :origin-function (lambda () origin)))))
+      (setf (second origin) entry
+            (getf (third origin) :entry-layout) (lambda (width) (declare (ignore width)) entry))
       (terminal-ui-present-records ui (list annotation))
       (test-assert (and (= 1 (fullscreen-test--chunk-count ui))
                         (search "restored" (tool-outcome-test--text ui))
@@ -80,11 +85,18 @@
                    "A judgment restores its original invocation in one chunk.")
       (test-assert (zerop (terminal-ui-present-records ui (list annotation)))
                    "Repeated annotation identities do not duplicate the verdict.")
-      (terminal-ui-present-records
-       ui (list (tool-outcome-test--result 3 "restored" :body (list (terminal-span ':plain (format nil "~%output"))))))
-      (test-assert (and (search "permission verdict" (tool-outcome-test--text ui))
-                        (search "output" (tool-outcome-test--text ui)))
-                   "A later result preserves the restored judgment alongside its body.")
+      (let ((result (tool-outcome-test--result
+                     3 "restored" :state ':failure :body (list (terminal-span ':plain (format nil "~%output"))))))
+        (setf (getf (third result) :entry-transform) #'application--resource-edit-failure-entry)
+        (terminal-ui-present-records ui (list result)))
+      (dolist (width '(40 80))
+        (terminal-ui-resize ui width :rows 20)
+        (let* ((text     (tool-outcome-test--text ui))
+               (position (search "permission verdict" text)))
+          (test-assert (and position
+                            (not (search "permission verdict" text :start2 (1+ position)))
+                            (search "output" text))
+                       "Per-operation failure bodies and relayout retain one call-owned judgment.")))
       (terminal-ui-present-records
        ui (list (list 4 "verdict for missing command in /workspace"
                       (list :kind ':annotation :call-key '(:call "owner" "missing")

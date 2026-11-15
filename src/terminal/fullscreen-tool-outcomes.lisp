@@ -115,8 +115,8 @@
         (terminal-ui--finalized-content
          ui (if (eq (getf record :kind) ':call)
                 (if transform
-                     (funcall transform entry (getf record :state)
-                              (append (getf record :annotations) body))
+                     (append (funcall transform entry (getf record :state) body)
+                             (getf record :annotations))
                      (terminal-ui-fullscreen--record-entry
                       entry (getf record :state) (append (getf record :annotations) body)))
                 entry)
