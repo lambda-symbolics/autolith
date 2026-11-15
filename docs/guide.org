@@ -2348,34 +2348,41 @@ portable path. A native window includes the full returned item window, in
 provider order.
 
 The model writes the checkpoint by calling =compaction.submit=. A compaction
-request offers no other tool and requires that call. The call gives an intent,
-up to 16 notes and a next step. A note is a decision, a constraint, completed
-work, open work or an uncertainty. Autolith checks the arguments against a
-strict schema and size bounds, and stores the checkpoint in typed form beside
-its text.
+request repeats the instructions, tools and history of the ordinary requests
+around it, so the provider reads them from its prompt cache. Only the
+compaction instructions at the end are new, and the request requires that one
+call. Every request that offers tools therefore declares =compaction.submit=,
+with the note never to call it unasked. A provider that keys its cache on the
+required call, as GLM does through OpenRouter, still charges the history in
+full. The call gives an intent, up to 16 notes and a next step. A note is a
+decision, a constraint, completed work, open work or an uncertainty. Autolith
+checks the arguments against a strict schema and size bounds, and stores the
+checkpoint in typed form beside its text.
 
 Before the request, Autolith lists what the checkpoint may cite: the user
 messages and tool results the request shows, plan steps, mission gates, facts
-the conversation was given and unfinished jobs, at most 64 in all. Messages and
-results that an earlier checkpoint kept verbatim are among them. Each has a
-short handle. A note cites the handles that support it and the checkpoint keeps the
-cited references. A completed note that cites nothing reads =(unsubstantiated)=.
+the conversation was given or read from =memory:facts= and =memory:claim/<id>=,
+and unfinished jobs, at most 64 in all. Messages and results that an earlier
+checkpoint kept verbatim are among them. Each has a short handle. A note cites
+the handles that support it and the checkpoint keeps the cited references. A
+completed note that cites nothing reads =(unsubstantiated)=.
 
 A record reference gives its =conversation:id/<id>= address and sequence, and
 a fact reference its =memory:claim/<id>= address, so the evidence can be read
 again, also from a conversation that adopted the checkpoint. When a cited plan
-step, mission gate or fact changes after the checkpoint, later requests say
-which one changed and what its state is now. That covers a passed gate whose
-declared inputs changed since it was checked, and a fact whose support or
-premises were withdrawn. Facts are offered and checked only while structured
-knowledge is active.
+step, mission gate or fact changes after the checkpoint, the next turn says
+once which one changed and what its state is now. That covers a passed gate
+whose declared inputs changed since it was checked, or cannot be read without
+asking for permission. It also covers a fact whose support or premises were
+withdrawn, and one that still holds but rests on a disputed premise. Facts are
+offered and checked only while structured knowledge is active.
 
 If a submission is rejected, Autolith tells the model what to correct and asks
 again, for at most four generations in all. If none of them is usable,
 compaction still publishes a checkpoint. It keeps the previous checkpoint's
-notes and the recent tail, and it names the range of records the request
-showed and nobody summarized. A refusal, a permission failure or an unreachable provider ends
-compaction with an error and leaves the conversation unchanged.
+notes and the recent tail, and it names the range of records the request showed
+and nobody summarized. A refusal, a permission failure or an unreachable
+provider ends compaction with an error and leaves the conversation unchanged.
 
 Before either request, Autolith captures a fixed history cutoff. The checkpoint
 includes unresolved calls with correlated actual or interrupted/unknown outputs,
