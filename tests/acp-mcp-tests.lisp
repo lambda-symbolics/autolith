@@ -123,11 +123,12 @@
                   (test-assert (= 1 (length (mcp-server-registrations)))
                                "client registrations have no global lifetime")
                   (dolist (runtime runtimes)
-                    (let* ((tool (find runtime (tool-registry-tools registry)
+                    (let* ((tool (find runtime (mcp-tool-registry-discovered-tools registry)
                                        :test #'eq
                                        :key  (lambda (candidate)
-                                               (and (typep candidate 'mcp-provider-tool)
-                                                    (mcp-provider-tool-runtime candidate)))))
+                                               (mcp-provider-tool-runtime candidate))))
+                           (activated
+                             (mcp-tool-registry-activate-tools registry (list tool)))
                            (result
                             (mcparen:mcp-server-runtime-call
                              runtime
@@ -137,6 +138,9 @@
                                 (mcp-client-call-tool client (mcp-provider-tool-raw-tool tool)
                                                       (json-object)))))))
                       (test-assert tool "managed discovery publishes every server's tool")
+                      (test-assert (member (tool-canonical-name tool) activated
+                                          :test #'string=)
+                                   "discovery tools activate on demand")
                       (test-assert (not (search secret (tool-description tool)))
                                    "discovery metadata is redacted")
                       (test-assert (not (search secret (tool-result-content result)))

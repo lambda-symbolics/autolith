@@ -340,14 +340,34 @@
     (tool-registry string)
     (option mcp-provider-tool))
 (defun test-mcp--tool-with-raw-name (registry raw-name)
-  "Return REGISTRY's MCP tool with exact RAW-NAME."
-  (find raw-name
-        (tool-registry-tools registry)
-        :test #'string=
-        :key
-        (lambda (tool)
-          (and (typep tool 'mcp-provider-tool)
-               (mcp-tool-name (mcp-provider-tool-raw-tool tool))))))
+  "Return REGISTRY's MCP tool with exact RAW-NAME, activating it when needed."
+  (let ((tool
+          (or (find raw-name
+                    (tool-registry-tools registry)
+                    :test #'string=
+                    :key
+                    (lambda (candidate)
+                      (and (typep candidate 'mcp-provider-tool)
+                           (mcp-tool-name
+                            (mcp-provider-tool-raw-tool candidate)))))
+              (find raw-name
+                    (mcp-tool-registry-discovered-tools registry)
+                    :test #'string=
+                    :key
+                    (lambda (candidate)
+                      (mcp-tool-name
+                       (mcp-provider-tool-raw-tool candidate)))))))
+    (when tool
+      (mcp-tool-registry-activate-tools registry (list tool)))
+    tool))
+
+(-> test-mcp--activate-first-provider-tool (tool-registry) (option mcp-provider-tool))
+(defun test-mcp--activate-first-provider-tool (registry)
+  "Activate and return REGISTRY's first discovered MCP provider tool."
+  (let ((tool (first (mcp-tool-registry-discovered-tools registry))))
+    (when tool
+      (mcp-tool-registry-activate-tools registry (list tool)))
+    tool))
 
 (-> test-mcp--context
     (configuration conversation tool-registry)
@@ -1966,10 +1986,7 @@
                     (test-mcp--context
                      configuration conversation registry))
                   (provider-tool
-                    (find-if
-                     (lambda (tool)
-                       (typep tool 'mcp-provider-tool))
-                     (tool-registry-tools registry)))
+                    (test-mcp--activate-first-provider-tool registry))
                   (resources
                     (tool-registry-find registry "mcp" "resources"))
                   (templates
@@ -2590,11 +2607,8 @@
              (non-empty-string-p
               (mcp-server-runtime-launch-environment-fingerprint runtime)))
             "the first credential snapshot launches one tracked MCP process")
-           (let* ((provider-tool
-                    (find-if
-                     (lambda (tool)
-                       (typep tool 'mcp-provider-tool))
-                     (tool-registry-tools registry)))
+             (let* ((provider-tool
+                      (test-mcp--activate-first-provider-tool registry))
                   (context
                     (test-mcp--context
                      configuration conversation registry))
@@ -3200,6 +3214,7 @@
   (test-mcp-server-scoped-tool-identifiers)
   (test-mcp-initialization-metadata-bounds)
   (test-mcp-result-text-bound)
+    (test-mcp-search-activation-bounds)
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration)))
     (unwind-protect
@@ -3797,42 +3812,52 @@
                   (tool-registry-delete-if all-tools-registry
                                            (lambda (tool)
                                              (eq tool static-tool)))
-                  (mcp-tool-registry--replace-dynamic-tools
-                   all-tools-registry
-                   manager
-                   (mcp-tools--manager-tool-objects manager))
-                  (test-assert
-                   (equal
-                    (mapcar
-                     (lambda (tool)
-                       (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
-                     (remove-if-not
-                      (lambda (tool)
-                        (and (typep tool 'mcp-provider-tool)
-                             (eq (mcp-managed-tool-manager tool) manager)))
-                      (tool-registry-tools all-tools-registry)))
-                    '("read file" "read/file" "mutate" "error" "image"))
-                   "a valid MCP retry restores provider tools in discovery order")
-                  (let ((local (make-instance
-                                'tool
-                                :namespace   "static"
-                                :name        "after"
-                                :description "A local tool registered after MCP discovery."
-                                :parameters  (tool-object-schema (json-object) nil))))
-                    (tool-registry-register all-tools-registry local)
-                    (let ((before (json-encode
-                                   (tool-registry-provider-schemas all-tools-registry))))
-                      (mcp-tool-registry--replace-dynamic-tools
-                       all-tools-registry
-                       manager
-                       (reverse (mcp-tools--manager-tool-objects manager)))
-                      (test-assert
-                       (string= before (json-encode
-                                        (tool-registry-provider-schemas all-tools-registry)))
-                       "a refresh listing the same tools in another order keeps every declaration in place"))
-                    (tool-registry-delete-if all-tools-registry
-                                             (lambda (tool)
-                                               (eq tool local)))))
+                    (mcp-tool-registry--replace-dynamic-tools
+                     all-tools-registry
+                     manager
+                     (mcp-tools--manager-tool-objects manager))
+                    (test-assert
+                     (equal
+                      (mapcar
+                       (lambda (tool)
+                         (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
+                       (mcp-tool-registry-discovered-tools all-tools-registry))
+                      '("read file" "read/file" "mutate" "error" "image"))
+                     "a valid MCP retry restores the discovery set in order")
+                    (mcp-tool-registry-activate-discovered-tools
+                     all-tools-registry)
+                    (test-assert
+                     (equal
+                      (mapcar
+                       (lambda (tool)
+                         (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
+                       (remove-if-not
+                        (lambda (tool)
+                          (and (typep tool 'mcp-provider-tool)
+                               (eq (mcp-managed-tool-manager tool) manager)))
+                        (tool-registry-tools all-tools-registry)))
+                      '("read file" "read/file" "mutate" "error" "image"))
+                     "activation registers the discovery set in discovery order")
+                    (let ((local (make-instance
+                                  'tool
+                                  :namespace   "static"
+                                  :name        "after"
+                                  :description "A local tool registered after MCP discovery."
+                                  :parameters  (tool-object-schema (json-object) nil))))
+                      (tool-registry-register all-tools-registry local)
+                      (let ((before (json-encode
+                                     (tool-registry-provider-schemas all-tools-registry))))
+                        (mcp-tool-registry--replace-dynamic-tools
+                         all-tools-registry
+                         manager
+                         (reverse (mcp-tools--manager-tool-objects manager)))
+                        (test-assert
+                         (string= before (json-encode
+                                          (tool-registry-provider-schemas all-tools-registry)))
+                         "a refresh listing the same tools in another order keeps every declaration in place"))
+                      (tool-registry-delete-if all-tools-registry
+                                               (lambda (tool)
+                                                 (eq tool local)))))
                (test-assert
                 (and
                  (test-mcp--tool-with-raw-name
@@ -4228,5 +4253,65 @@
                    (test-assert (search label (terminal--spans-text
                                                (conversation-record-entry application handoff)))
                                 "handoff headers use the saved tool label")))))
+        (mcp-manager-close manager))))
+  nil)
+
+(-> test-mcp-search-activation-bounds () null)
+(defun test-mcp-search-activation-bounds ()
+  "Test MCP tool activation bounds, eviction order, and search failures."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (manager transport) (test-mcp--manager configuration)
+      (declare (ignore transport))
+      (unwind-protect
+           (let* ((registry     (make-instance 'tool-registry))
+                  (conversation (conversation-create configuration))
+                  (context      (test-mcp--context configuration conversation registry)))
+             (labels ((active-provider-names ()
+                        (loop for tool in (tool-registry-tools registry)
+                              when (typep tool 'mcp-provider-tool)
+                                collect (mcp-tool-name
+                                         (mcp-provider-tool-raw-tool tool))))
+
+                        (run-search (query)
+                        (tool-execute
+                         (find "mcp.search" (tool-registry-tools registry)
+                               :test #'string= :key #'tool-canonical-name)
+                         context (json-object "query" query))))
+               (mcp-tool-registry-register-manager registry manager)
+                 (let ((discovered (mcp-tool-registry-discovered-tools registry)))
+                   (test-assert (plusp (length discovered))
+                                "the binding holds discovered provider tools")
+                   (test-assert (null (active-provider-names))
+                                "discovery activates no provider tool before a search")
+                   (let ((*mcp-activated-tool-limit* 2)
+                         (*mcp-activated-tool-schema-character-limit* most-positive-fixnum))
+                     (mcp-tool-registry-activate-discovered-tools registry)
+                     (test-assert
+                      (equal (active-provider-names)
+                             (mapcar (lambda (tool)
+                                       (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
+                                     (last discovered
+                                           (min 2 (length discovered)))))
+                      "activation keeps the newest tools and evicts the oldest"))
+                   (let ((*mcp-activated-tool-limit* 1)
+                         (*mcp-activated-tool-schema-character-limit* most-positive-fixnum))
+                     (let ((result (run-search "read")))
+                       (test-assert
+                        (and (tool-result-success-p result)
+                             (= 1 (length (active-provider-names)))
+                             (search "activated 1 of" (tool-result-content result)))
+                        "search activates within the tool bound and reports the rest"))))
+               (let ((*mcp-activated-tool-schema-character-limit* 1))
+                   (let ((result (run-search "read")))
+                   (test-assert
+                    (and (not (tool-result-success-p result))
+                         (search "none fits the activation bound"
+                                 (tool-result-content result)))
+                    "search fails when no match fits the schema bound")))
+                 (let ((result (run-search "absent-tool-query")))
+                 (test-assert
+                  (and (not (tool-result-success-p result))
+                       (search "No discovered MCP tool matches" (tool-result-content result)))
+                    "search reports a query with no matches"))))
         (mcp-manager-close manager))))
   nil)
