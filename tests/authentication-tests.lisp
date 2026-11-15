@@ -526,6 +526,43 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> authentication-tests--test-main-fullscreen-authentication-boot-policy () null)
+(defun authentication-tests--test-main-fullscreen-authentication-boot-policy ()
+  "Test fullscreen command-line authentication skips its temporary boot frame."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (provider      (make-instance 'codex-subscription-provider))
+         (prompt        "SYNTHETIC-AUTH-PROMPT")
+         (boot-called-p nil)
+         (output        (make-string-output-stream)))
+    (setf (config :fullscreen-p configuration) t)
+    (unwind-protect
+         (progn
+           (test-call-with-function-replacements
+            (list
+             (list 'main--authentication-provider
+                   (lambda (candidate selection)
+                     (declare (ignore candidate selection))
+                     provider))
+             (list 'terminal-ui-boot-screen
+                   (lambda (ui phase &optional detail)
+                     (declare (ignore ui phase detail))
+                     (setf boot-called-p t)))
+             (list 'provider-authenticate-with-method
+                   (lambda (candidate method &key stream open-browser-p)
+                     (declare (ignore candidate method open-browser-p))
+                     (format stream "~A~%" prompt)
+                     "Synthetic provider authentication.")))
+            (lambda ()
+              (let ((*standard-output* output))
+                (main-authenticate configuration "example"))))
+           (test-assert (not boot-called-p)
+                        "fullscreen CLI auth skips the temporary boot frame")
+           (test-assert (search prompt (get-output-stream-string output))
+                        "fullscreen CLI auth still writes the provider prompt"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-authentication-store () null)
 (defun test-authentication-store ()
   "Test private credential storage without exposing real authentication data."
@@ -535,6 +572,7 @@
   (authentication-tests--test-api-key-terminal-mode)
   (authentication-tests--test-provider-api-key-prompts)
   (authentication-tests--test-main-input-descriptor)
+  (authentication-tests--test-main-fullscreen-authentication-boot-policy)
   (authentication-tests--test-native-methods)
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))

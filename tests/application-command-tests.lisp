@@ -1457,6 +1457,67 @@
                  (search "Deferred finalized row." history))
             "localgroup auth shows direct and deferred output in order of ownership")))
       (terminal-ui-stop ui)))
+  (with-test-configuration (configuration)
+    (let* ((conversation                         (conversation-create configuration :identifier "fullscreen-auth"))
+           (secret                               "SYNTHETIC-HIDDEN-INPUT")
+           (captured                             (make-string-output-stream))
+           (packets                              (make-string-output-stream))
+           (terminal                             (make-instance 'application-authentication-test-localgroup-terminal
+                                                                :direct-terminal nil :rows 24 :columns 80
+                                                                :events (list (list :paste secret) ':submit)))
+           (controller                           (make-instance 'image-daemon:attachment
+                                                                :socket nil :stream packets :mode ':control))
+           (ui                                   (terminal-ui-create :terminal terminal :fullscreen-p t))
+           (application                          (make-instance 'application :configuration configuration
+                                                                :conversation conversation :ui ui))
+           (whole-screen-during-authentication-p nil)
+           (provider
+             (make-instance 'application-authentication-test-provider :read-input-p t
+                            :activity-callback
+                            (lambda ()
+                              (setf whole-screen-during-authentication-p
+                                    (localgroup-terminal-screen-whole-p terminal))))))
+      (setf (image-daemon:relay-controller terminal) controller
+            (terminal-interactive-p terminal) t)
+      (unwind-protect
+           (progn
+             (image-daemon:attachment-start controller)
+             (terminal-ui-start ui)
+             (test-call-with-function-replacements
+              (list (list 'application--authentication-provider
+                          (lambda (candidate provider-name)
+                            (declare (ignore candidate provider-name))
+                            provider)))
+              (lambda ()
+                (let ((*standard-output* captured))
+                  (test-assert
+                   (eq (application-run-lisp-input application "(auth \"grok\")") ':continue)
+                   "callable fullscreen auth reads queued localgroup input"))))
+             (test-assert
+              (and whole-screen-during-authentication-p
+                   (string= (application-authentication-test-provider-input provider) secret)
+                   (null (application-authentication-test-localgroup-terminal-events terminal))
+                   (eq (image-daemon:relay-controller terminal) controller)
+                   (not (localgroup-terminal-screen-whole-p terminal))
+                   (not (terminal-ui-live-output-suspended-p ui)))
+              "fullscreen auth owns the whole display and input, then restores the channel")
+             (image-daemon:attachment-finish controller nil)
+             (let ((packet-text (get-output-stream-string packets)))
+               (test-assert
+                (and (search "Open the provider login page now." packet-text)
+                     (not (search secret packet-text)))
+                "provider instructions reach the terminal without echoing hidden input"))
+             (test-assert
+              (notany (lambda (text)
+                        (or (search secret text)
+                            (search "Open the provider login page now." text)))
+                      (list (get-output-stream-string captured)
+                            (with-standard-io-syntax
+                              (prin1-to-string
+                               (conversation-records-from conversation 0 most-positive-fixnum)))))
+              "provider I/O is absent from Lisp output and durable conversation records"))
+        (unwind-protect (terminal-ui-stop ui)
+          (image-daemon:attachment-close controller)))))
   nil)
 
 (-> test-application-typed-action-controls () null)

@@ -470,8 +470,13 @@ distinguishing the legend from the placeholder and the modeline."
 ;;;; -- Physical Frames and Navigation --
 
 (-> terminal-ui-fullscreen-paint
-    (fullscreen-terminal-ui &key (:rows list) (:cursor-row integer) (:cursor-column integer)) null)
-(defun terminal-ui-fullscreen-paint (ui &key rows (cursor-row 0) (cursor-column 0))
+    (fullscreen-terminal-ui &key (:rows list) (:cursor-row integer)
+                            (:cursor-column integer)
+                            (:whole-screen-p boolean))
+    null)
+(defun terminal-ui-fullscreen-paint
+    (ui &key rows (cursor-row 0) (cursor-column 0)
+             (whole-screen-p (terminal-ui-boot-waiting-p ui)))
   "Diff trusted display-string ROWS at absolute positions, without scrolling the terminal.
 
 ROWS are already wrapped to the terminal width by their composers, so they are
@@ -485,7 +490,7 @@ row that still overruns instead of scrolling."
                            :cursor-column    cursor-column
                            :cursor-visible-p (and (fullscreen-terminal-ui-cursor-visible-p ui)
                                                   (not (terminal-ui-boot-waiting-p ui)))
-                           :whole-screen-p   (terminal-ui-boot-waiting-p ui)))
+                           :whole-screen-p   whole-screen-p))
   nil)
 
 (-> terminal-ui-fullscreen-scroll (fullscreen-terminal-ui integer) null)

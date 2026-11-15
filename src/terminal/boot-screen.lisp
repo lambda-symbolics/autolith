@@ -226,7 +226,8 @@ the tip."
       (multiple-value-bind (rows cursor-row)
           (terminal-ui--boot-screen-frame ui :phase phase :detail detail
                                          :height (terminal-rows (terminal-ui-terminal ui)))
-        (terminal-ui-fullscreen-paint ui :rows rows :cursor-row cursor-row :cursor-column 0))))
+        (terminal-ui-fullscreen-paint
+         ui :rows rows :cursor-row cursor-row :cursor-column 0 :whole-screen-p t))))
   nil)
 
 (-> terminal-ui--await-interactive (terminal (or null function) number) boolean)
