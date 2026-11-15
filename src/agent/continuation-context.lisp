@@ -123,9 +123,8 @@ one thing keeps one handle from checkpoint to checkpoint."
 
 (-> continuation--plan-step-key (plan-step) string)
 (defun continuation--plan-step-key (step)
-  "Return what names STEP in a reference: its identifier, or else its text."
-  (single-line-excerpt (or (plan-step-identifier step) (plan-step-text step))
-                       *continuation-label-characters*))
+  "Return what names STEP in a reference: its identifier, or else its whole text."
+  (or (plan-step-identifier step) (plan-step-text step)))
 
 (-> continuation--authorities (configuration conversation) list)
 (defun continuation--authorities (configuration conversation)
