@@ -398,7 +398,7 @@ notes: at most ~D notes of at most ~:D characters, each holding one fact. Give e
 next: the next step, in at most ~:D characters.
 refs and next_refs: the handles from the reference catalog below that show where a note or the next step comes from, at most ~D each. Cite what supports a completed note whenever the catalog lists it. Leave refs empty when the catalog lists nothing that fits, and never write a handle the catalog does not list.
 
-The latest user message is quoted below when there is one, and the next step must agree with it. When the conversation starts with an earlier checkpoint, carry over what still holds from it. Name completed rlm.infer and rlm.map frames by their trace identifiers as inference:<trace-id> resources instead of restating their content; the traces stay readable through resource.read."
+The latest user message is quoted below when there is one, and the next step must agree with it. Messages and results that the catalog lists and the history above does not show are newer. They stay after the checkpoint as they are, so keep the notes and the next step consistent with them. When the conversation starts with an earlier checkpoint, carry over what still holds from it. Name completed rlm.infer and rlm.map frames by their trace identifiers as inference:<trace-id> resources instead of restating their content; the traces stay readable through resource.read."
           *continuation-intent-maximum-characters*
           *continuation-maximum-notes*
           *continuation-note-maximum-characters*

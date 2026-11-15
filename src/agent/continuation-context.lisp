@@ -100,8 +100,8 @@ at capture."
 
 Plan steps, mission gates, facts the conversation was given and the jobs of
 the UNFINISHED-WORK snapshot come first, then the references the PRIOR
-checkpoint kept, then EVIDENCE, the user messages and tool results the model
-is shown, up to *CONTINUATION-MAXIMUM-REFERENCES*. A thing named twice keeps
+checkpoint kept, then EVIDENCE, the captured user messages and tool results,
+up to *CONTINUATION-MAXIMUM-REFERENCES*. A thing named twice keeps
 its first reference, so a plan step, gate or fact the prior checkpoint cited
 shows its state now."
   (let ((configuration (agent-configuration agent))
@@ -277,7 +277,8 @@ view. A fact's label gives the address the memory resource reads it at."
 
 Its label gives the address the conversation resource reads the record at, so
 the record stays reachable from a conversation that adopts the checkpoint."
-  (destructuring-bind (&key conversation sequence text call-id tool status) evidence
+  (destructuring-bind (&key conversation sequence text call-id tool status &allow-other-keys)
+      evidence
     (let ((identity (list :conversation conversation :sequence sequence))
           (address  (format nil "conversation:id/~A sequence ~D" conversation sequence)))
       (if call-id
