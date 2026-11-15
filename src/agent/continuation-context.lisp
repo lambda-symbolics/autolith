@@ -11,11 +11,16 @@
 (defparameter *continuation-label-characters* 120
   "Maximum characters of the text a reference's label quotes.")
 
-(defparameter *continuation-context-maximum-changes* 16
-  "Maximum changed references one request reports.")
-
 (defparameter *continuation-maximum-claims* 16
   "Maximum facts given to the conversation that one catalog offers.")
+
+(defvar *continuation-context-turn-changes* (make-hash-table :test #'equal :synchronized t)
+  "Each conversation's changed-reference advice for its current turn, computed once.
+
+An entry lists the turn, the advice, the checkpoint it was computed for and
+the state of each reference the model was last told.")
+
+(context-register-conversation-table *continuation-context-turn-changes*)
 
 (defgeneric continuation-reference-state (kind reference authorities)
   (:documentation
@@ -104,31 +109,32 @@ shows its state now."
            :key (lambda (reference) (getf reference :handle)) :test #'string= :from-end t))))
 
 (define-context-contributor continuation-changes (request)
-  "Report the references the current checkpoint cites whose state changed since."
+  "Report once each reference the current checkpoint cites whose state changed.
+
+The states are read once per turn. A change the model was told is not
+reported again until the state changes once more."
   (let* ((conversation (request-context-conversation request))
-         (observed     (and (not (request-context-compaction-p request))
-                            (remove nil
-                                    (getf (conversation-continuation conversation) :references)
-                                    :key (lambda (reference) (getf reference :observed)))))
-         (authorities  (and observed
-                            (continuation--authorities
-                             (request-context-configuration request) conversation)))
-         (changes
-           (loop for reference in observed
-                 for state = (continuation-reference-state
-                              (getf reference :kind) reference authorities)
-                 unless (equal state (getf reference :observed))
-                   collect (format nil "~A, ~A: was ~A, ~:[can no longer be found~;now ~:*~A~]"
-                                   (getf reference :handle) (getf reference :label)
-                                   (getf reference :observed) state))))
-    (when changes
-      (make-context-contribution
-       :identifier        "continuation-changes"
-       :instruction
-       (format nil "These references of the checkpoint changed after it was written. Revisit the notes that cite them.~%~{- ~A~%~}"
-               (take *continuation-context-maximum-changes* changes))
-       :priority          55
-       :deduplication-key "continuation-changes"))))
+         (continuation (and (not (request-context-compaction-p request))
+                            (conversation-continuation conversation)))
+         (observed     (remove nil (getf continuation :references)
+                               :key (lambda (reference) (getf reference :observed)))))
+    (when observed
+      (let ((identifier (conversation-identifier conversation))
+            (turn       (memory-context--turn-key conversation)))
+        (destructuring-bind (&optional cached-turn advice checkpoint told)
+            (gethash identifier *continuation-context-turn-changes*)
+          (if (and (eql cached-turn turn) (eq checkpoint continuation))
+              advice
+              (multiple-value-bind (advice states)
+                  (continuation--changes
+                   (continuation--authorities (request-context-configuration request)
+                                              conversation)
+                   observed
+                   :told (and (eq checkpoint continuation) told)
+                   :turn turn)
+                (setf (gethash identifier *continuation-context-turn-changes*)
+                      (list turn advice continuation states))
+                advice)))))))
 
 
 ;;;; -- Private Functions --
@@ -176,6 +182,40 @@ input outside the workspace."
           :tool-context (make-instance 'tool-context :configuration configuration
                                                      :conversation  conversation
                                                      :worker        nil))))
+
+(-> continuation--changes
+    (list list &key (:told list) (:turn integer)) (values (option context-contribution) list))
+(defun continuation--changes (authorities references &key told turn)
+  "Return advice on REFERENCES whose state differs from what the model knows, and their states now.
+
+The states are resolved against AUTHORITIES. TOLD maps a handle to the state
+the model was last told; a reference it leaves out is known by the state
+observed at capture. The second value maps each handle to its state now. The
+advice is delivered once in turn number TURN."
+  (let* ((states  (mapcar (lambda (reference)
+                            (cons (getf reference :handle)
+                                  (continuation-reference-state
+                                   (getf reference :kind) reference authorities)))
+                          references))
+         (changes (loop for reference in references
+                        for (handle . state) in states
+                        for entry = (assoc handle told :test #'string=)
+                        for known = (if entry
+                                        (rest entry)
+                                        (getf reference :observed))
+                        unless (equal state known)
+                          collect (format nil "~A, ~A: was ~:[missing~;~:*~A~], ~:[can no longer be found~;now ~:*~A~]"
+                                          handle (getf reference :label) known state))))
+    (values (and changes
+                 (make-context-contribution
+                  :identifier        "continuation-changes"
+                  :instruction
+                  (format nil "These references of the checkpoint changed after it was written. Revisit the notes that cite them.~%~{- ~A~%~}"
+                          changes)
+                  :priority          55
+                  :lifetime          ':next-request
+                  :deduplication-key (format nil "continuation-changes:~D" turn)))
+            states)))
 
 (-> continuation--authority-references (configuration conversation list) list)
 (defun continuation--authority-references (configuration conversation authorities)
