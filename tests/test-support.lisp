@@ -55,14 +55,13 @@
                (json-get (or (json-get request "request") request) field))
              *provider-cache-wire-sequence-fields*)))
 
-(-> test-compaction-request (model-provider conversation) json-object)
-(defun test-compaction-request (provider conversation)
+(-> test-compaction-request (model-provider conversation &key (:forced-p boolean)) json-object)
+(defun test-compaction-request (provider conversation &key (forced-p t))
   "Return the request PROVIDER makes to compact CONVERSATION, checked against an ordinary one.
 
-The compaction request declares compaction.submit and forces that call, so
-the tool's wire name appears once where it is declared and once where it is
-forced. It also repeats the ordinary request's instructions, tool
-declarations and history, which lets the provider read them from its cache."
+FORCED-P checks whether the tool's wire name appears again in the forced
+choice. The request repeats the ordinary instructions, tool declarations
+and history, which lets the provider read them from its cache."
   (let* ((tools      (concatenate
                       'vector
                       (json-array
@@ -81,15 +80,16 @@ declarations and history, which lets the provider read them from its cache."
     (flet ((body (request)
              "Return the object of REQUEST that holds the prompt."
              (or (json-get request "request") request)))
-      (test-assert (= 2 (loop for start = (search name encoded)
-                                then (search name encoded :start2 (1+ start))
-                              while start
-                              count t))
-                   "a compaction request declares compaction.submit and forces that call")
+      (test-assert (= (if forced-p 2 1)
+                      (loop for start = (search name encoded)
+                              then (search name encoded :start2 (1+ start))
+                            while start
+                            count t))
+                   "a compaction request declares the submit tool and uses the expected tool choice")
       (test-assert (every (lambda (field)
-                            (string= (json-encode (json-get (body ordinary) field))
-                                     (json-encode (json-get (body compaction) field))))
-                          '("instructions" "system" "systemInstruction" "tools"))
+                           (string= (json-encode (json-get (body ordinary) field))
+                                    (json-encode (json-get (body compaction) field))))
+                         '("instructions" "system" "systemInstruction" "tools"))
                    "a compaction request repeats the ordinary instructions and tool declarations")
       (let ((shared (1- (length (test-request-history compaction)))))
         (test-assert (equal (subseq (test-request-history ordinary) 0 shared)

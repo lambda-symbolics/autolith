@@ -155,7 +155,9 @@ instructions and delivers no context."
                             (list goal-context (context-delivery-rendered-tail delivery))))
               :options (list :shared-items          shared
                              :ephemeral-items       ephemeral-items
-                             :tool-choice           *provider-tool-choice*
+                             ;; Forced tools reject thinking on current models and
+                             ;; change the ordinary message-prefix cache key.
+                             :tool-choice           (unless compaction-p *provider-tool-choice*)
                              :maximum-output-tokens *provider-maximum-output-tokens*
                              :cache-ttl             (provider-prompt-cache-ttl
                                                      configuration))))))

@@ -1664,8 +1664,8 @@ repair either, and a checkpoint without notes would only lose history."
   "Ask the model for a checkpoint of VIEW; return it and the number of requests issued.
 
 Each request declares TOOL-NAMESPACES, the tools of the ordinary requests
-around it with compaction.submit among them, and forces that call. The
-instructions follow the history.
+around it with compaction.submit among them, and forces that call where the
+provider supports it. The instructions follow the history.
 They quote LATEST-REQUEST, the user message that stays after the checkpoint,
 and list REFERENCES. A rejected submission is shown back to the
 model with what to correct. The checkpoint is NIL when

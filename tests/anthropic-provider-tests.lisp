@@ -322,30 +322,45 @@
 
 (-> anthropic-provider-test--compaction-request () null)
 (defun anthropic-provider-test--compaction-request ()
-  "Test Anthropic's compaction request."
-  (let* ((configuration (anthropic-provider-test--configuration))
-         (provider      (anthropic-provider-create configuration))
-         (conversation  (conversation-create configuration)))
-    (conversation-append-user-message conversation "Conversation to summarize.")
-    (test-compaction-request provider conversation)
-    (multiple-value-bind (request delivery)
-        (provider-request-object provider conversation (continuation-tool-namespaces)
-                                 :goal-context "request-local goal"
-                                 :compaction-p t)
-      (let* ((system   (json-get request "system"))
-             (messages (json-get request "messages"))
-             (texts    (loop for block across system
-                             collect (json-get block "text"))))
-        (test-assert (null delivery)
-                     "compaction resolves no request-local context delivery")
-        (test-assert (= 1 (length (json-get request "tools")))
-                     "compaction requests declare only the submit tool")
-        (test-assert
-         (and (not (find *compaction-instructions* texts :test #'string=))
-              (test-object-contains-string-p (aref messages (1- (length messages)))
-                                             *compaction-instructions*)
-              (not (test-object-contains-string-p request "request-local goal")))
-         "compaction instructions follow the history, and the goal context stays out"))))
+  "Keep compaction compatible with thinking and the ordinary cached prefix."
+  (with-test-configuration (configuration)
+    (dolist (model '("claude-haiku-4-5-20251001" "claude-fable-5-2" "claude-opus-5-5"
+                     "claude-sonnet-5-5" "claude-haiku-5-5"))
+      (setf (config :model configuration) model
+            (config :reasoning-effort configuration) "high")
+      (let* ((provider     (anthropic-provider-create configuration))
+             (conversation (conversation-create configuration))
+             (tools        (continuation-tool-namespaces)))
+        (conversation-append-user-message conversation "Conversation to summarize.")
+        (test-compaction-request provider conversation :forced-p nil)
+        (let* ((ordinary               (provider-request-object provider conversation tools))
+               (*provider-tool-choice* *continuation-submit-tool*))
+          (multiple-value-bind (request delivery)
+              (provider-request-object provider conversation tools
+                                       :goal-context "request-local goal"
+                                       :compaction-p t)
+            (let* ((system   (json-get request "system"))
+                   (messages (json-get request "messages"))
+                   (submit   (aref (json-get request "tools") 0))
+                   (texts    (loop for block across system
+                                  collect (json-get block "text"))))
+              (test-assert
+               (and (equal (json-get (json-get request "tool_choice") "type") "auto")
+                    (equalp (json-get ordinary "tool_choice") (json-get request "tool_choice"))
+                    (equalp (json-get ordinary "thinking") (json-get request "thinking"))
+                    (equalp (json-get ordinary "output_config") (json-get request "output_config"))
+                    (json-false-p (json-get (json-get submit "input_schema") "additionalProperties")))
+               "compaction preserves automatic choice, thinking, effort and the closed submission schema")
+              (test-assert (null delivery)
+                           "compaction resolves no request-local context delivery")
+              (test-assert (= 1 (length (json-get request "tools")))
+                           "compaction requests declare only the submit tool")
+              (test-assert
+               (and (not (find *compaction-instructions* texts :test #'string=))
+                    (test-object-contains-string-p (aref messages (1- (length messages)))
+                                                  *compaction-instructions*)
+                    (not (test-object-contains-string-p request "request-local goal")))
+               "compaction instructions follow the history, and the goal context stays out")))))))
   nil)
 
 (-> anthropic-provider-test--transport () null)
