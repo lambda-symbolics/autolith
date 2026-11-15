@@ -1,79 +1,15 @@
 (in-package #:autolith)
 
-;;;; -- Native Compaction Window Contracts --
+;;;; -- Stored Native Compaction Windows --
 
 (-> native-compaction-tests--opaque (string) json-object)
 (defun native-compaction-tests--opaque (content)
   "Return a native item containing CONTENT as opaque provider state."
   (json-object "type" "compaction" "encrypted_content" content))
 
-(-> test-native-compaction-window-validation () null)
-(defun test-native-compaction-window-validation ()
-  "Preserve complete windows and account successful envelopes before rejecting bad items."
-  (with-test-configuration (configuration)
-    (let* ((provider (provider-create configuration))
-           (usage    (json-object "input_tokens" 100 "output_tokens" 10))
-           (message  (json-object "type" "message" "role" "user" "content"
-                                  (json-array (json-object "type" "input_text" "text" "exact request"))))
-           (call     (json-object "type" "function_call" "call_id" "native-call"
-                                  "name" "probe" "arguments" "{}"))
-           (output   (function-call-output-item "native-call" "verified result"))
-           (opaque   (native-compaction-tests--opaque "opaque-one"))
-           (window   (list message opaque call output
-                           (native-compaction-tests--opaque "opaque-two")))
-           (events   nil))
-      (flet ((decode (items)
-               "Decode ITEMS and capture each completed usage notification."
-               (provider--decode-native-compaction-response
-                provider (json-encode (json-object "id" "paid-native" "usage" usage
-                                                  "output" (coerce items 'vector)))
-                :status 200 :headers nil
-                :event-callback (lambda (event) (push event events)))))
-        (multiple-value-bind (decoded returned-usage) (decode window)
-          (test-assert (= 5 (length decoded)) "the entire native output window survives decoding")
-          (test-assert (equal '("message" "compaction" "function_call" "function_call_output" "compaction")
-                              (mapcar (lambda (item) (json-get item "type")) decoded))
-                       "native output order is exact, including both opaque items")
-          (test-assert (= 100 (json-get returned-usage "input_tokens")) "paid usage is returned"))
-        (test-assert (= 1 (length events)) "one successful native envelope emits one completion")
-        (dolist (body '("" "not-json" "[]" "null"))
-          (let ((before (length events)))
-            (test-assert
-             (handler-case
-                 (progn
-                   (provider--decode-native-compaction-response
-                    provider body :status 200 :headers nil
-                    :event-callback (lambda (event) (push event events)))
-                   nil)
-               (provider-error () t))
-             "an undecodable HTTP success body is rejected")
-            (test-assert (and (= (1+ before) (length events))
-                              (null (native-compaction-completed-event-usage (first events))))
-                         "an undecodable completion is metered once with unknown usage")))
-        (multiple-value-bind (decoded returned-usage) (decode (list message))
-          (test-assert (and (null decoded) (= 100 (json-get returned-usage "input_tokens")))
-                       "an opaque-free successful response retains usage for portable fallback"))
-        (dolist (bad (list (list opaque (json-object))
-                          (list opaque (json-object "type" "message" "role" "user" "content" "bad"))
-                          (list opaque (json-object "type" "message" "role" "assistant" "content"
-                                                    (json-array (json-object "type" "refusal" "refusal" "no"))))
-                          (list opaque output)
-                          (list opaque call)
-                          (list opaque call call output)))
-          (let ((before (length events)))
-            (test-assert
-             (handler-case (progn (decode bad) nil) (provider-error () t))
-             "malformed, refusal and invalid-correlation windows are rejected")
-            (test-assert (= (1+ before) (length events))
-                         "the rejected paid response was already metered")
-            (test-assert (= 100 (json-get (native-compaction-completed-event-usage (first events))
-                                         "input_tokens"))
-                         "the notification preserves reported usage"))))))
-  nil)
-
 (-> test-native-compaction-window-replay () null)
 (defun test-native-compaction-window-replay ()
-  "Replay full native windows and project checkpoints across provider families."
+  "Replay stored native windows and project checkpoints across provider families."
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
            (window       (list (native-compaction-tests--opaque "first")
@@ -81,21 +17,18 @@
                                             "encrypted_content" "retained-reasoning")
                                (native-compaction-tests--opaque "last"))))
       (conversation-append-user-message conversation "original")
-      (conversation-append-native-compaction conversation window
-                                             :family ':responses :continuation (make-continuation :intent "portable handoff"))
-      (let ((loaded (conversation-load-by-id configuration (conversation-identifier conversation))))
+      (let ((loaded (test-conversation-with-native-window
+                     configuration conversation window
+                     :family ':responses :continuation (make-continuation :intent "portable handoff"))))
         (dolist (family '(:responses :messages))
-          (let ((before (conversation-input-items-for-family conversation family))
-                (after  (conversation-input-items-for-family loaded family)))
-            (test-assert (equal (mapcar #'json-encode before) (mapcar #'json-encode after))
-                         "reload reproduces the exact family projection")
+          (let ((items (conversation-input-items-for-family loaded family)))
             (test-assert
-             (and (test-object-contains-string-p (last after) "portable handoff")
-                  (equal (mapcar #'json-encode (butlast after))
+             (and (test-object-contains-string-p (last items) "portable handoff")
+                  (equal (mapcar #'json-encode (butlast items))
                          (and (eq family ':responses) (mapcar #'json-encode window))))
              "the source family receives the full ordered window before the checkpoint and other families only the checkpoint")
             (test-assert (= (if (eq family ':responses) 2 0)
-                            (count-if #'native-compaction-item-p after))
+                            (count-if #'native-compaction-item-p items))
                          "all opaque items belong exclusively to their originating family"))))
       (let ((legacy (conversation-create configuration)))
         (conversation-append-record

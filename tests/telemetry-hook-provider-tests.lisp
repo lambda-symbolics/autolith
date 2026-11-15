@@ -231,24 +231,14 @@
   (declare (ignore conversation tool-namespaces event-callback goal-context compaction-p))
   (values (pop (scripted-provider-results provider)) :secondary 17))
 
-(defclass telemetry-test-mission-provider (telemetry-test-values-provider) ()
-  (:documentation "Custom streaming and native-compaction provider for mission accounting."))
-
-(defmethod provider-native-compact-conversation
-    ((provider telemetry-test-mission-provider) (conversation conversation)
-     &key tool-namespaces event-callback)
-  "Return a compacted marker, fixed usage and an extra secondary value."
-  (declare (ignore provider conversation tool-namespaces event-callback))
-  (values :compacted (json-object "input_tokens" 2 "output_tokens" 3) :secondary))
-
 (-> test-telemetry-hooks--mission-accounting () null)
 (defun test-telemetry-hooks--mission-accounting ()
-  "Compose enabled telemetry with mission admission and both usage protocols."
+  "Compose enabled telemetry with mission admission."
   (test-telemetry--call
    (lambda (configuration)
      (let* ((result       (mission-test--result "done"))
-            (provider     (make-instance 'telemetry-test-mission-provider
-                                         :configuration configuration :results (list result result)))
+            (provider     (make-instance 'telemetry-test-values-provider
+                                         :configuration configuration :results (list result result result)))
             (application  (mission-test--application configuration))
             (conversation (application-conversation application)))
        (setf (application-provider application) provider)
@@ -266,12 +256,8 @@
                                                 :tool-namespaces #() :event-callback #'identity))
                          (list result :secondary 17))
                   "Mission streaming retains all provider values with telemetry enabled.")
-                 (multiple-value-bind (item usage extra)
-                     (provider-native-compact-conversation
-                      provider conversation :tool-namespaces #() :event-callback #'identity)
-                   (test-assert (and (eq item :compacted) (eq extra :secondary)
-                                     (= 2 (json-get usage "input_tokens")))
-                                "Mission native compaction retains all provider values."))
+                 (provider-stream-turn provider conversation
+                                       :tool-namespaces #() :event-callback #'identity)
                  (test-assert
                   (handler-case
                       (progn (provider-stream-turn provider conversation
@@ -282,8 +268,8 @@
          (declare (ignore results))
          (test-telemetry-hooks--assert-attempts (first bodies) 2))
        (let ((goal (application-goal application)))
-         (test-assert (= 2 (getf goal :turns-used)) "Both protocols charge one mission turn.")
-         (test-assert (= 10 (getf goal :tokens-used)) "Both protocols settle exact reported usage.")
+         (test-assert (= 2 (getf goal :turns-used)) "Each request charges one mission turn.")
+         (test-assert (= 10 (getf goal :tokens-used)) "Each request settles exact reported usage.")
          (test-assert (eq :exhausted (getf goal :status)) "Mission exhaustion is durable.")
          (test-assert (= 1 (length (scripted-provider-results provider)))
                       "Rejected inference does not consume a scripted response.")))))

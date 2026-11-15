@@ -54,18 +54,15 @@
   test-compaction-request-view-isolation
   test-compaction-summary-mission-ownership
   test-compaction-summary-mission-failures
-  test-compaction-native-view-mission-ownership
   test-compaction-final-projection-gap
   test-compaction-final-admission-trigger
   test-compaction-mission-admission-trigger
   test-compaction-admission-recovery-bounds
   test-compaction-submission-acceptance
-  test-compaction-native-paid-rejection
   test-compaction-next-request-admission
   test-compaction-repeated-continuation-accounting)
 
 (define-test-suite native-compaction-window
-  test-native-compaction-window-validation
   test-native-compaction-window-replay)
 
 (define-test-suite continuation
@@ -1116,7 +1113,6 @@
   test-provider-prompt-cache-ttl
   test-provider-shared-items-breakpoint
   test-provider-cost
-  test-provider-native-compaction
   test-provider-rate-limits
   test-provider-context-presentation
   test-provider-transport-boundary
@@ -1409,7 +1405,6 @@
   test-agent-compaction-without-submission
   test-precompaction-before-compaction
   test-agent-compaction
-  test-agent-native-compaction
   test-agent-parallel-tool-wave
   test-agent-tool-wave-cancellation
   test-agent-tool-wave-retained-cleanup
@@ -1872,8 +1867,7 @@
   test-mission-wall-budget
   test-mission-command-and-compaction
   test-mission-queued-child-authority
-  test-mission-inline-parent-cancellation
-  test-mission-native-compaction-budget)
+  test-mission-inline-parent-cancellation)
 
 (define-test-suite lisp-machine
   test-application-lisp-evaluation
@@ -2107,8 +2101,7 @@
   test-compaction-recovery-recent-images
   test-compaction-recovery-image-text-controls
   test-compaction-recovery-image-summary-transport
-  test-unsupported-native-mission-fallback
-  test-unsupported-native-model-window
+  test-compaction-recovery-mission-model-window
   test-compaction-recovery-notice-counts
   test-compaction-recovery-encrypted-history
   test-compaction-recovery-publication-preserves-tail-families
@@ -2119,27 +2112,24 @@
   test-compaction-recovery-mission-accounting
   test-compaction-recovery-selected-route
   test-compaction-recovery-exhaustion
-  test-expanded-native-unavailable-negative-controls
-  test-expanded-native-unavailable-representations
-  test-expanded-native-unavailable-ordinary
-  test-expanded-native-unavailable-manual
-  test-expanded-native-unavailable-reactive
-  test-expanded-native-unavailable-schedule
-  test-expanded-native-unavailable-terminal-idle
-  test-expanded-native-unavailable-acp-idle
-  test-expanded-native-no-fit-product-boundaries
-  test-expanded-native-no-fit-acp
-  test-expanded-native-no-fit-acp-prompt
-  test-expanded-native-no-fit-acp-queue
-  test-expanded-native-no-fit-acp-completion
-  test-expanded-native-stream-fixture
-  test-expanded-native-paid-arrival-fixture
-  test-expanded-native-paid-owner-refusals
-  test-expanded-native-terminal-message-owners
-  test-expanded-native-acp-owner-matrix
-  test-expanded-native-idle-owner-matrix
-  test-expanded-native-image-owner-and-reuse
-  test-expanded-native-owner-return-values
-  test-expanded-native-idle-cancellation-refusal
-  test-expanded-native-owner-finalization-errors
-  test-expanded-native-scheduled-controller)
+  test-compaction-owner-proactive
+  test-compaction-owner-manual
+  test-compaction-owner-reactive
+  test-compaction-owner-schedule
+  test-compaction-owner-terminal-idle
+  test-compaction-owner-acp-idle
+  test-compaction-owner-no-fit-product-boundaries
+  test-compaction-owner-no-fit-acp
+  test-compaction-owner-no-fit-acp-prompt
+  test-compaction-owner-no-fit-acp-queue
+  test-compaction-owner-no-fit-acp-completion
+  test-compaction-owner-paid-arrival-fixture
+  test-compaction-owner-paid-refusals
+  test-compaction-owner-terminal-messages
+  test-compaction-owner-acp-matrix
+  test-compaction-owner-idle-matrix
+  test-compaction-owner-image-and-reuse
+  test-compaction-owner-return-values
+  test-compaction-owner-idle-cancellation-refusal
+  test-compaction-owner-finalization-errors
+  test-compaction-owner-scheduled-controller)

@@ -228,17 +228,16 @@ as media; image payloads, URLs and incidental metadata are not copied."
 
 (-> compaction-recovery-call
     (compaction-recovery model-provider conversation
-     &key (:dispatch function) (:preflight function) (:native-p boolean))
+     &key (:dispatch function) (:preflight function))
     (values t conversation))
-(defun compaction-recovery-call (state provider source &key dispatch preflight native-p)
+(defun compaction-recovery-call (state provider source &key dispatch preflight)
   "Recover only a local compaction admission refusal, sharing all tier state.
 
 DISPATCH and PREFLIGHT receive the exact detached candidate. Both run against
 the window PROVIDER's model takes when that is larger than the configured one,
 so a compaction loses history only when the model itself cannot read it.
-Unrelated errors abort immediately. Native exhaustion permits portable
-fallback; portable exhaustion preserves the original conversation and signals
-the final refusal."
+Unrelated errors abort immediately. Exhaustion preserves the original
+conversation and signals the final refusal."
   (let ((view                  (compaction-recovery-view state source))
         (failure               nil)
         (*compaction-provider* provider))
@@ -283,9 +282,6 @@ the final refusal."
           (multiple-value-bind (result success-p) (try-fitting-candidate)
             (when success-p
               (return-from compaction-recovery-call (values result view))))))
-      (when native-p
-        (compaction-recovery-note state :portable-fallback)
-        (return-from compaction-recovery-call (values nil view)))
       (when (< (compaction-recovery-tier state) 3)
         (setf (compaction-recovery-tier state) 3
               view                          (compaction-recovery-text-view state view))

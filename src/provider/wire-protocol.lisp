@@ -552,14 +552,11 @@ same way, so ordinary and compaction requests share one cached prefix."
 The server remembers which deferred tools are loaded only through the
 tool_search_output items in the request history, so an expansion must
 replay with its tools on every later request of the conversation; replaying
-it empty made the model search the same namespace again on every round. The
-Codex reference at commit 18194bfd3534ca567d886eac454028dafaa68b6c empties the
-tools only when trimming history for compaction, which
-*provider-history-trimming-p* marks here."
+it empty made the model search the same namespace again on every round."
   (cond
     ((and (json-object-p item)
           (json-string= (json-get item "type") "tool_search_output"))
-     (provider-tool-search-output-replay item :trimming-p *provider-history-trimming-p*))
+     (provider-tool-search-output-replay item))
     ((and (provider-deferred-tool-loading-p provider)
           (json-object-p item)
           (function-call-item-p item)

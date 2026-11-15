@@ -100,9 +100,8 @@
         (t
          ':internal)))
 
-(-> telemetry--provider-attempt
-    (model-provider function &key (:native-compaction-p boolean) (:fallback-p boolean)) t)
-(defun telemetry--provider-attempt (provider function &key native-compaction-p fallback-p)
+(-> telemetry--provider-attempt (model-provider function &key (:fallback-p boolean)) t)
+(defun telemetry--provider-attempt (provider function &key fallback-p)
   "Record terminal outcomes of real attempts, preserving values and nonlocal exits."
   (when (and (not fallback-p) *telemetry-provider-attempt-count*)
     (incf *telemetry-provider-attempt-count*))
@@ -123,8 +122,7 @@
            (values-list results))
       (when (or (not fallback-p) (zerop *telemetry-provider-attempt-count*))
         (telemetry--note-provider-result
-         provider start results :native-compaction-p native-compaction-p
-         :outcome outcome :error-type error-type)))))
+         provider start results :outcome outcome :error-type error-type)))))
 
 (defmethod provider-attempt-turn :around
     ((provider model-provider) (conversation conversation)
@@ -133,16 +131,8 @@
   (declare (ignore conversation arguments))
   (telemetry--provider-attempt provider (lambda () (call-next-method))))
 
-(defmethod provider-attempt-native-compaction :around
-    ((provider model-provider) (conversation conversation)
-     &rest arguments &key &allow-other-keys)
-  "Measure native compaction attempts without exporting checkpoint material."
-  (declare (ignore conversation arguments))
-  (telemetry--provider-attempt provider (lambda () (call-next-method))
-                              :native-compaction-p t))
-
-;; Mission admission specializes CONVERSATION on its class. Use T here so these
-;; wrappers compose with that accounting method instead of replacing it.
+;; Mission admission specializes CONVERSATION on its class. Use T here so this
+;; wrapper composes with that accounting method instead of replacing it.
 (defmethod provider-stream-turn :around
     ((provider model-provider) (conversation t)
      &rest arguments &key &allow-other-keys)
@@ -154,22 +144,9 @@
      (let ((*telemetry-provider-attempt-count* 0))
        (telemetry--provider-attempt provider (lambda () (call-next-method)) :fallback-p t)))))
 
-(defmethod provider-native-compact-conversation :around
-    ((provider model-provider) (conversation t)
-     &rest arguments &key &allow-other-keys)
-  "Cover native compaction outside agent turns, preserving all returned values."
-  (declare (ignore conversation arguments))
-  (telemetry--call-with-provider-run
-   provider
-   (lambda ()
-     (let ((*telemetry-provider-attempt-count* 0))
-       (telemetry--provider-attempt provider (lambda () (call-next-method))
-                                   :native-compaction-p t :fallback-p t)))))
-
 (-> telemetry--note-provider-result
-    (model-provider integer list &key (:native-compaction-p boolean)
-     (:outcome keyword) (:error-type (option keyword))) null)
-(defun telemetry--note-provider-result (provider start results &key native-compaction-p outcome error-type)
+    (model-provider integer list &key (:outcome keyword) (:error-type (option keyword))) null)
+(defun telemetry--note-provider-result (provider start results &key outcome error-type)
   "Emit a usage-only event for an attempt, even if it failed before returning."
   (when *telemetry-run*
     (telemetry--call-safely
@@ -178,10 +155,8 @@
               (metadata   (or *telemetry-response-metadata*
                               (when (typep result 'provider-result)
                                 (provider-result-metadata result))))
-              (usage      (if native-compaction-p
-                              (second results)
-                              (when (typep result 'provider-result)
-                                (provider-result-usage result))))
+              (usage      (when (typep result 'provider-result)
+                            (provider-result-usage result)))
               (normalized (when usage
                             (provider-usage-normalize usage)))
               (writes     (if metadata
@@ -202,7 +177,7 @@
                              (config :model (provider-configuration provider))))
           :response-model (when metadata (provider-response-metadata-model metadata))
           :outcome outcome :error-type error-type
-          :role           (if native-compaction-p ':compaction *telemetry-request-role*)
+          :role           *telemetry-request-role*
           :finish-reason  (or (when metadata (provider-response-metadata-finish-reason metadata))
                               (when (typep result 'provider-result)
                                 (if (provider-result-tool-calls result) ':tool-calls

@@ -969,31 +969,6 @@
                 (test-assert (job-terminal-p job) "explicit mission cancellation publishes queued child termination"))))
         (task-orchestrator-close orchestrator)))))
 
-(defclass mission-test-native-provider (scripted-provider) ()
-  (:documentation "A scripted provider reporting separate native-compaction usage."))
-
-(defmethod provider-native-compact-conversation
-    ((provider mission-test-native-provider) (conversation conversation)
-     &key tool-namespaces event-callback)
-  "Return one compacted item and exact native inference usage."
-  (declare (ignore provider conversation tool-namespaces event-callback))
-  (values (json-object "type" "compaction") (json-object "input_tokens" 2 "output_tokens" 3)))
-
-(-> test-mission-native-compaction-budget () null)
-(defun test-mission-native-compaction-budget ()
-  "Include native compaction usage and retain exact reported token exhaustion."
-  (with-test-configuration (configuration)
-    (let ((application (mission-test--application configuration)))
-      (application-mission-start application (mission-test--specification :tokens 4))
-      (multiple-value-bind (item usage)
-          (provider-native-compact-conversation
-           (make-instance 'mission-test-native-provider :results nil)
-           (application-conversation application) :tool-namespaces #() :event-callback #'identity)
-        (test-assert (and item usage) "native compaction preserves both protocol values"))
-      (test-assert (= 1 (getf (application-goal application) :turns-used)) "native compaction charges an inference admission")
-      (test-assert (= 5 (getf (application-goal application) :tokens-used)) "reported usage is recorded without clipping it to the limit")
-      (test-assert (eq ':exhausted (getf (application-goal application) :status)) "reported token exhaustion is a durable terminal state"))))
-
 (-> test-mission-inline-parent-cancellation () null)
 (defun test-mission-inline-parent-cancellation ()
   "Interrupt a blocked inline mission through its explicit cross-pool parent link."

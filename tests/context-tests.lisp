@@ -529,16 +529,16 @@
 (defun test-context-estimate-provider-family ()
   "Estimate the native window only for the provider family that can use it."
   (with-test-configuration (configuration)
-    (let* ((conversation (conversation-create configuration))
+    (let* ((checkpoint   (json-object "type" "context_compaction"
+                                      "encrypted_content"
+                                      (make-string 4000 :initial-element #\c)))
+           (conversation (test-conversation-with-native-window
+                          configuration (conversation-create configuration) (list checkpoint)
+                          :family ':codex :continuation (make-continuation :intent "Portable handoff.")))
            (application  (make-instance 'application
                                         :configuration configuration
                                         :conversation  conversation
-                                        :provider      (make-instance 'native-scripted-provider)))
-           (checkpoint   (json-object "type" "context_compaction"
-                                      "encrypted_content"
-                                      (make-string 4000 :initial-element #\c))))
-        (conversation-append-native-compaction
-         conversation (list checkpoint) :family ':codex :continuation (make-continuation :intent "Portable handoff."))
+                                        :provider      (make-instance 'codex-scripted-provider))))
       (test-call-with-function-replacements
        (list (list 'system-prompt
                    (lambda (configuration)
