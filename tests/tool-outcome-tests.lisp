@@ -152,6 +152,73 @@
                      "replacement and append succeed after rollback"))))
   nil)
 
+(-> test-fullscreen-handoff-origin () null)
+(defun test-fullscreen-handoff-origin ()
+  "Recover evicted calls for handoffs and completions, including deferred publication."
+  (with-test-configuration (configuration)
+    (dolist (deferred-p '(nil t))
+      (let* ((*fullscreen-transcript-character-limit* 4000)
+             (conversation                            (conversation-create configuration))
+             (ui                                      (fullscreen-test--ui (make-instance 'recording-terminal :columns 100 :rows 24)))
+             (application                             (make-instance 'application :configuration configuration
+                                                                    :conversation conversation :ui ui
+                                                                    :tool-registry               (make-default-tool-registry)))
+             (call                                    (conversation-append-record
+                                                       conversation
+                                                       (list :provider-item :wire-json
+                                                             (json-encode (json-object "type" "function_call" "call_id" "origin"
+                                                                                       "namespace" "shell" "name" "run"
+                                                                                       "arguments" "{\"command\":\"echo original-command\"}")))))
+             (handoff                                 (conversation-append-record
+                                                       conversation
+                                                       (list :tool-result :tool "shell.run" :call-id "origin" :status ':ok :output ""
+                                                             :details '(:tool-execution :handed-off-p t :handoff-reason :grace-expired
+                                                                        :job (:id "exec:origin" :state :running)))))
+             (call-key                                (application--tool-outcome-key application ':call "origin"))
+             (job-key                                 (application--tool-outcome-key application ':job "exec:origin")))
+        (setf (application-compact-view-p application) nil)
+        (with-terminal-ui (ui ui)
+          (terminal-ui-present-records ui (list (application--record-presentation application call)))
+          (setf (terminal-ui-live-output-suspended-p ui) deferred-p)
+          (loop for identifier from 100 to 180
+                do (terminal-ui-append-finalized ui identifier (make-string 80 :initial-element #\x)))
+          (unless deferred-p
+            (test-assert (null (gethash call-key (fullscreen-terminal-ui-presentation-records ui)))
+                         "the invocation is evicted before its background result"))
+          (terminal-ui-present-records ui (list (application--record-presentation application handoff)))
+          (setf (terminal-ui-live-output-suspended-p ui) nil)
+          (terminal-ui--present-live ui)
+          (let* ((index    (fullscreen-terminal-ui-presentation-records ui))
+                 (resident (gethash call-key index))
+                 (viewport (fullscreen-terminal-ui-viewport ui))
+                 (matching-chunks
+                   (loop for offset below (clinedi:transcript-viewport-chunk-count viewport)
+                         for text = (clinedi:transcript-viewport-chunk-text viewport offset)
+                         when (search "original-command" text) collect text)))
+            (test-assert (and resident (eq resident (gethash job-key index))
+                              (eq (getf resident :state) ':pending)
+                              (= (length matching-chunks) 1)
+                              (search "exec:origin" (first matching-chunks)))
+                         "the background note and original command share one indexed chunk")
+            (test-assert (zerop (terminal-ui-present-records
+                                 ui (list (application--record-presentation application call))))
+                         "paging the restored invocation does not duplicate it"))
+          (loop for identifier from 200 to 280
+                do (terminal-ui-append-finalized ui identifier (make-string 80 :initial-element #\y)))
+          (let ((completion
+                  (conversation-append-record
+                   conversation
+                   (list :message :role ':user :content "completed" :automatic-p t
+                         :job-completion '(:job-id "exec:origin" :outcome :success :summary "completed")))))
+            (terminal-ui-present-records ui (list (application--record-presentation application completion)))
+            (let ((resident (gethash call-key (fullscreen-terminal-ui-presentation-records ui))))
+              (test-assert (and resident (eq (getf resident :state) ':success)
+                                (search "original-command" (tool-outcome-test--text ui))
+                                (member (application--record-presentation-identifier application completion)
+                                        (getf resident :identifiers) :test #'equal))
+                           "a completion recovers its durable invocation after another eviction")))))))
+  nil)
+
 (-> test-fullscreen-outcome-eviction-and-reset () null)
 (defun test-fullscreen-outcome-eviction-and-reset ()
   "Forget semantic aliases and associated result identities at the residency boundary."

@@ -364,6 +364,7 @@
   test-fullscreen-outcome-retag
   test-fullscreen-outcome-publication-retry
   test-fullscreen-outcome-eviction-and-reset
+  test-fullscreen-handoff-origin
   test-terminal-compact-success-groups
   test-terminal-compact-success-stream-and-retry
   test-terminal-compact-call-groups
@@ -1515,6 +1516,7 @@
   test-task-durable-job-lookup
   test-session-tool-execution-jobs
   test-shell-execution-jobs
+  test-execution-admission-presentation
   test-tool-execution-overflow-binding
   test-tool-execution-retention
   test-task-job-list-pagination

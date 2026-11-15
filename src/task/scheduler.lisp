@@ -626,10 +626,14 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
                                        :limit *tool-execution-summary-limit*)
                        :operation-function   operation-function))))
     (handler-case
-        (first
-         (job-pool-submit-batch
-          (task-orchestrator-execution-pool orchestrator)
-          (list entry)))
+        (let ((job (first (job-pool-submit-batch
+                           (task-orchestrator-execution-pool orchestrator)
+                           (list entry)))))
+          (task-orchestrator-emit
+           orchestrator ':tool-execution-lifecycle
+           (list :id (session-job-identifier job) :tool tool-name
+                 :status ':admitted :parent-tool-call-id parent-call-id))
+          job)
       (job-pool-error (condition)
         (error 'task-error
                :message

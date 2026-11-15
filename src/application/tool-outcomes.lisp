@@ -118,6 +118,38 @@
      (when (application--job-completion-message-p (rest record))
        (application--job-completion-outcome application (rest record) entry)))))
 
+(-> application--tool-outcome-origin (application list) (option list))
+(defun application--tool-outcome-origin (application metadata)
+  "Recover the durable invocation for an outcome whose viewport chunk was evicted."
+  (let ((conversation (application-conversation application))
+        (call-key     (getf metadata :call-key))
+        (job-key      (getf metadata :job-key)))
+    (when (and (null call-key) job-key)
+      (setf call-key
+            (block found
+              (conversation-map-records
+               conversation
+               (lambda (record)
+                 (when (eq (first record) ':tool-result)
+                   (let* ((handoff (application--tool-execution-handoff record))
+                          (job     (getf (rest handoff) :job)))
+                     (when (equal job-key (application--tool-outcome-key
+                                           application ':job (getf job :id)))
+                       (return-from found
+                         (application--tool-outcome-key
+                          application ':call (getf (rest record) :call-id))))))))
+              nil)))
+    (when call-key
+      (block found
+        (conversation-map-records
+         conversation
+         (lambda (record)
+           (when (eq (first record) ':provider-item)
+             (let ((candidate (application--record-tool-outcome-basic application record nil)))
+               (when (equal call-key (getf candidate :call-key))
+                 (return-from found (application--record-presentation application record)))))))
+        nil))))
+
 (-> application--record-tool-outcome (application list list) (option list))
 (defun application--record-tool-outcome (application record entry)
   "Retain the logical outcome source alongside its current fullscreen metadata."
@@ -131,4 +163,10 @@
               (let* ((*application-transcript-layout-columns* columns)
                      (entry                                   (conversation-record-entry application record)))
                 (getf (application--record-tool-outcome-basic application record entry) :body)))))
+    (when (and (member (getf metadata :kind) '(:result :completion))
+               (terminal-ui-fullscreen-p (application-ui application)))
+      (let ((keys (list :call-key (getf metadata :call-key)
+                        :job-key  (getf metadata :job-key))))
+        (setf (getf metadata :origin-function)
+              (lambda () (application--tool-outcome-origin application keys)))))
     metadata))

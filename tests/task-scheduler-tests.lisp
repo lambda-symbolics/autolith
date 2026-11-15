@@ -1527,6 +1527,63 @@ pool must reject the cancelled parent without creating a descendant."
                                              :if-does-not-exist   ':ignore))))
   nil)
 
+(-> test-execution-admission-presentation () null)
+(defun test-execution-admission-presentation ()
+  "Present admitted shell work even while every execution worker is occupied."
+  (with-test-configuration (configuration)
+    (let* ((registry     (task-augment-tool-registry (make-instance 'tool-registry)))
+           (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
+           (parent       (task-tests--primary-agent configuration "queued-shell" registry))
+           (terminal     (make-instance 'recording-terminal :columns 100 :rows 24))
+           (ui           (terminal-ui-create :terminal terminal))
+           (application  (make-instance 'application :configuration configuration
+                                        :conversation               (agent-conversation parent)
+                                        :tool-registry registry :ui ui))
+           (lock         (make-lock "Queued shell presentation"))
+           (condition    (make-condition-variable))
+           (ready-p      nil)
+           (release-p    nil))
+      (unwind-protect
+           (with-terminal-ui (ui ui)
+             (let ((pool (task-orchestrator-execution-pool orchestrator)))
+               (job-pool-update-limits
+                pool :maximum-concurrency     1
+                :maximum-batch-size           (job-pool-maximum-batch-size pool)
+                :maximum-live-jobs            (job-pool-maximum-live-jobs pool)
+                :maximum-runtime-milliseconds (job-pool-maximum-runtime-milliseconds pool)))
+             (application-connect-task-presentation application)
+             (task-orchestrator-start-execution-job
+              orchestrator parent :tool-name "shell.run" :summary "held command"
+              :operation-function
+              (lambda ()
+                (with-lock-held (lock)
+                  (setf ready-p t)
+                  (task--condition-broadcast condition)
+                  (loop until release-p do (condition-wait condition lock :timeout 2)))
+                (make-instance 'tool-result :content "done")))
+             (test-assert (task-tests--wait-until (lambda () ready-p) 5)
+                          "the first execution occupies the only worker")
+             (let* ((job        (task-orchestrator-start-execution-job
+                                 orchestrator parent :tool-name "shell.run" :summary "queued command"
+                                 :operation-function (lambda () (make-instance 'tool-result :content "done"))))
+                    (identifier (session-job-identifier job))
+                    (row        (find identifier (terminal-ui-command-activities ui)
+                                      :key (lambda (activity) (getf activity :id)) :test #'equal)))
+               (test-assert (and (eq (job-state job) ':queued) row
+                                 (eq (getf row :state) ':queued)
+                                 (not (getf row :detached)))
+                            "synchronous queued work reaches the prompt area before a worker starts it")
+               (recording-terminal-reset terminal)
+               (terminal-ui-refresh-status ui)
+               (test-assert (search identifier (recording-terminal-output terminal))
+                            "the reader can paint the queued execution's identity")))
+        (with-lock-held (lock)
+          (setf release-p t)
+          (task--condition-broadcast condition))
+        (application-disconnect-task-presentation application)
+        (task-orchestrator-close orchestrator))))
+  nil)
+
 (-> test-shell-execution-jobs () null)
 (defun test-shell-execution-jobs ()
   "Test authorized shell jobs, automatic handoff, inspection, and cancellation."

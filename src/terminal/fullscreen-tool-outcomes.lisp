@@ -185,6 +185,24 @@
             (terminal-ui-fullscreen--forget-evicted ui (list (getf record :identifier)))
             nil)))))
 
+(-> terminal-ui-fullscreen--restore-outcome (fullscreen-terminal-ui t list) (option string))
+(defun terminal-ui-fullscreen--restore-outcome (ui identifier metadata)
+  "Restore an evicted invocation and its outcome as one indexed viewport chunk."
+  (let* ((resolve (getf metadata :origin-function))
+         (origin  (when resolve (funcall resolve))))
+    (when origin
+      (destructuring-bind (origin-identifier entry origin-metadata) origin
+        (let ((next (copy-list origin-metadata)))
+          (setf (getf next :job-key) (or (getf metadata :job-key) (getf next :job-key)))
+          (dolist (key '(:state :retain-output-p :body :body-layout :body-source-characters :entry-transform))
+            (setf (getf next key) (getf metadata key)))
+          (let ((display (terminal-ui-fullscreen--append-entry
+                          ui origin-identifier entry :metadata next)))
+            (when (gethash origin-identifier (fullscreen-terminal-ui-presentation-records ui))
+              (terminal-ui-fullscreen--tag-last ui (list identifier))
+              (terminal-ui--remember-finalized ui (list identifier) :note-output-p nil))
+            display))))))
+
 (-> terminal-ui-fullscreen--apply-presentations (fullscreen-terminal-ui list) string)
 (defun terminal-ui-fullscreen--apply-presentations (ui presentations)
   "Apply ordered semantic PRESENTATIONS inside the current publication transaction."
@@ -198,10 +216,15 @@
             (unless (and record (member (getf metadata :kind) '(:result :completion))
                          (terminal-ui-fullscreen--replace-record
                           ui record :identifier identifier :metadata metadata))
-              (when entry
-                (write-string (terminal-ui-fullscreen--append-entry
-                               ui identifier entry :metadata metadata)
-                              output)))))))))
+              (let ((restored (when (member (getf metadata :kind) '(:result :completion))
+                                (terminal-ui-fullscreen--restore-outcome ui identifier metadata))))
+                (cond
+                  (restored
+                   (write-string restored output))
+                  (entry
+                   (write-string (terminal-ui-fullscreen--append-entry
+                                  ui identifier entry :metadata metadata)
+                                 output)))))))))))
 
 (defmethod terminal-ui-present-records ((ui fullscreen-terminal-ui) presentations)
   "Publish individually replaceable records with one paint, or queue them during direct I/O."
