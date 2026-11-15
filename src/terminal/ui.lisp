@@ -1236,8 +1236,10 @@ its parenthesis open, and are dropped once the name closes it itself."
 
 (-> terminal-ui--job-cancel-text (string) string)
 (defun terminal-ui--job-cancel-text (identifier)
-  "Return the displayed job.cancel call for IDENTIFIER."
-  (format nil "(job.cancel :id ~S)" identifier))
+  "Return a portable job.cancel call for IDENTIFIER, independent of printer bindings."
+  (with-standard-io-syntax
+    (let ((*print-readably* nil))
+      (format nil "(job.cancel :id ~S)" identifier))))
 
 (-> terminal-ui--job-cancel-widget (list t) list)
 (defun terminal-ui--job-cancel-widget (spans identifier)

@@ -1001,7 +1001,10 @@
       (fullscreen-test--click ui 1 8)
       (test-assert (= 7 (length actions))
                    "clicks without an installed action function are ignored")))
-  (let ((terminal (make-instance 'recording-terminal :columns 100 :rows 20)))
+  (let ((terminal         (make-instance 'recording-terminal :columns 100 :rows 20))
+        (identifier       (coerce "exec:7" 'simple-base-string))
+        (*print-readably* t)
+        (*print-escape*   nil))
     (with-terminal-ui (ui (fullscreen-test--ui terminal))
       (setf (terminal-ui-action-function ui)
             (lambda (action)
@@ -1010,7 +1013,7 @@
       (dolist (state '(:queued :running))
         (terminal-ui-set-input ui "draft")
         (terminal-ui-set-command-activities
-         ui (list (list :id "exec:7" :type ':tool :index 7
+         ui (list (list :id identifier :type ':tool :index 7
                         :tool "shell.run" :description "Build 中文 release"
                         :state state :duration-ms 1000 :detached t)))
         (terminal-ui--paint-live ui)

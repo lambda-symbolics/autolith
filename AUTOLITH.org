@@ -18,6 +18,21 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Portable job cancellation snippets
+
+- Problem: inherited readable printing rendered base-string job identifiers as
+  SBCL array syntax in cancellation snippets.
+- Behavior: use standard local printer controls and ordinary quoted strings for
+  executable cancellation calls.
+- Scope and location: tracked =terminal-ui--job-cancel-text= and its fullscreen
+  action test; live private image commit =bf14f46c-34e2-48d7-9dc3-5a60ebdec240=,
+  private Git =0ebd4341=; papercut =t5EEfmt=.
+- Verification: 200 focused terminal, fullscreen and application cases with
+  3,037 checks passed. Active assertions covered base/general strings, escaping,
+  Unicode and hostile printer controls. Clean-process private replay passed.
+- Removal condition: discard the private printer override after booting the
+  equivalent tracked helper.
+
 ** Measured context across prompt changes
 
 - Problem: a changed prompt fingerprint discarded valid measured history after
