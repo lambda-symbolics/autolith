@@ -1,7 +1,7 @@
 (in-package #:autolith)
 
-(defparameter *provider-compaction-recovery-permit* nil
-  "Request-local, single-dispatch metadata window allowance for emergency compaction.")
+(defparameter *compaction-provider* nil
+  "The provider whose compaction request is being checked or sent, or NIL.")
 
 ;;;; -- Detached Emergency Compaction --
 
@@ -9,15 +9,18 @@
   "One compaction operation's bounded recovery state, shared by all request paths."
   (audit-function nil :type (option function))
   (tier 0 :type (integer 0 3))
-  (permit nil :type list)
-  (initialized-p nil :type boolean)
+  (refused-p nil :type boolean)
   (captured-p nil :type boolean)
   (protected (make-hash-table :test #'eq) :type hash-table)
   (notes nil :type list)
   (replacements (clinker-transcript:make-projection-lineage)))
 
 (defgeneric provider-compaction-recovery-window (provider)
-  (:documentation "Return existing selected-route metadata without discovery or preparation."))
+  (:documentation
+   "Return the context window the registry lists for PROVIDER's selected model, or NIL.
+
+A compaction request is checked against it when it is larger than the
+configured window. Read existing metadata only, without discovery or preparation."))
 
 (defmethod provider-compaction-recovery-window ((provider model-provider))
   "Read only the selected model/provider's existing registry entry."
@@ -37,7 +40,7 @@
 (-> compaction-recovery-audit (compaction-recovery keyword) (option list))
 (defun compaction-recovery-audit (state outcome)
   "Return a detached durable audit, or NIL when no recovery was necessary."
-  (when (compaction-recovery-initialized-p state)
+  (when (compaction-recovery-refused-p state)
     (list :outcome outcome :stages (reverse (copy-tree (compaction-recovery-notes state))))))
 
 (-> compaction-recovery-copy (t) t)
@@ -223,20 +226,6 @@ as media; image payloads, URLs and incidental metadata are not copied."
     (when next
       (conversation-compaction-summary-view view (nthcdr next items)))))
 
-(-> compaction-recovery-initialize (compaction-recovery model-provider) null)
-(defun compaction-recovery-initialize (state provider)
-  "Initialize the metadata permit once, only after a compaction admission refusal."
-  (unless (compaction-recovery-initialized-p state)
-    (setf (compaction-recovery-initialized-p state) t)
-    (let ((window     (provider-compaction-recovery-window provider))
-          (configured (config :context-window (provider-configuration provider))))
-      (if (and (integerp window) (> window configured))
-          (progn
-            (setf (compaction-recovery-permit state) (list provider window :ready))
-            (compaction-recovery-note state :metadata :configured configured :metadata window))
-          (compaction-recovery-note state :metadata-skipped :configured configured :metadata window))))
-  nil)
-
 (-> compaction-recovery-call
     (compaction-recovery model-provider conversation
      &key (:dispatch function) (:preflight function) (:native-p boolean))
@@ -244,11 +233,15 @@ as media; image payloads, URLs and incidental metadata are not copied."
 (defun compaction-recovery-call (state provider source &key dispatch preflight native-p)
   "Recover only a local compaction admission refusal, sharing all tier state.
 
-DISPATCH and PREFLIGHT receive the exact detached candidate. Unrelated errors
-abort immediately. Native exhaustion permits portable fallback; portable
-exhaustion preserves the original conversation and signals the final refusal."
-  (let ((view    (compaction-recovery-view state source))
-        (failure nil))
+DISPATCH and PREFLIGHT receive the exact detached candidate. Both run against
+the window PROVIDER's model takes when that is larger than the configured one,
+so a compaction loses history only when the model itself cannot read it.
+Unrelated errors abort immediately. Native exhaustion permits portable
+fallback; portable exhaustion preserves the original conversation and signals
+the final refusal."
+  (let ((view                  (compaction-recovery-view state source))
+        (failure               nil)
+        (*compaction-provider* provider))
     (labels ((attempt ()
                "Dispatch through the caller's ordinary mission accounting wrapper."
                (handler-case (values (funcall dispatch view) t)
@@ -256,35 +249,26 @@ exhaustion preserves the original conversation and signals the final refusal."
                    (setf failure condition)
                    (values nil nil))
                  (error (condition)
-                   (when (compaction-recovery-initialized-p state)
+                   (when (compaction-recovery-refused-p state)
                      (compaction-recovery-note state :aborted :condition-type (type-of condition)))
                    (error condition))))
 
              (fits-p ()
-               "Recheck admission without dispatching or consuming a permit."
+               "Recheck admission without dispatching."
                (handler-case (progn (funcall preflight view) t)
                  (provider-context-budget-error (condition)
                    (setf failure condition)
                    nil)))
 
              (try-fitting-candidate ()
-               "Try the ordinary envelope, then any still-unspent metadata permit."
-               (when (fits-p)
-                 (return-from try-fitting-candidate (attempt)))
-               (let ((permit (compaction-recovery-permit state)))
-                 (when (and permit (or (eq :ready (third permit))
-                                       (and (not native-p) (eq :portable-ready (third permit)))))
-                   (let ((*provider-compaction-recovery-permit* permit))
-                     (when (fits-p)
-                       (return-from try-fitting-candidate (attempt))))))
-               (values nil nil)))
+               "Dispatch the candidate when it passes admission."
+               (if (fits-p)
+                   (attempt)
+                   (values nil nil))))
       (multiple-value-bind (result success-p) (attempt)
         (when success-p
           (return-from compaction-recovery-call (values result view))))
-      (compaction-recovery-initialize state provider)
-      (multiple-value-bind (result success-p) (try-fitting-candidate)
-        (when success-p
-          (return-from compaction-recovery-call (values result view))))
+      (setf (compaction-recovery-refused-p state) t)
       (when (< (compaction-recovery-tier state) 1)
         (setf (compaction-recovery-tier state) 1
               view                          (compaction-recovery-strip-encrypted state view))

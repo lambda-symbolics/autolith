@@ -2107,13 +2107,12 @@
   test-compaction-recovery-recent-images
   test-compaction-recovery-image-text-controls
   test-compaction-recovery-image-summary-transport
-  test-unsupported-native-permit-controls
   test-unsupported-native-mission-fallback
-  test-unsupported-native-metadata-handoff
+  test-unsupported-native-model-window
   test-compaction-recovery-notice-counts
   test-compaction-recovery-encrypted-history
   test-compaction-recovery-publication-preserves-tail-families
-  test-compaction-recovery-metadata-permit
+  test-compaction-recovery-model-window
   test-compaction-recovery-unrelated-failure
   test-compaction-recovery-encrypted-eligibility
   test-compaction-recovery-tools-and-transcript
