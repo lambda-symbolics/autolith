@@ -680,7 +680,7 @@
 
 (-> test-localgroup-cli-targets () null)
 (defun test-localgroup-cli-targets ()
-  "Exercise aliases, optional targets, discovery, and CLI validation at dispatch."
+  "Exercise top-level operations, optional targets, discovery, and CLI validation."
   (with-test-configuration (configuration root)
     (declare (ignore root))
     (configuration-ensure-directories configuration)
@@ -725,15 +725,14 @@
                      (test-assert (null probes)
                                   "argument errors fail before discovering sessions"))))
 
-               (check-targets (alias selector)
+               (check-targets (selector)
                  "Exercise every targeted command with an omitted or explicit selector."
                  (dolist (case '(("pause" :pause) ("detach" :detach) ("kill" :kill)))
                    (destructuring-bind (name operation) case
                      (test-assert
-                      (equal (invoke (append (list alias name)
-                                             (when selector (list selector))))
+                      (equal (invoke (cons name (when selector (list selector))))
                              (list (list 1 operation nil)))
-                      "CLI aliases and optional selectors route each operation")))))
+                      "top-level operations and optional selectors route each request")))))
         (test-call-with-function-replacements
          (list
           (list 'localgroup--client-configuration (lambda () configuration))
@@ -753,21 +752,26 @@
           (list 'localgroup--run-status
                 (lambda (&key sexp-p) (push (list :status sexp-p) calls) nil)))
          (lambda ()
-           (dolist (alias '("localgroup" "lg"))
-             (test-assert (equal (invoke (list alias)) '((:status nil)))
-                          "either command spelling defaults to status")
-             (test-assert (equal (invoke (list alias "status" "--sexp")) '((:status t)))
-                          "the alias dispatches status options")
-             (dolist (arguments '(("tell") ("tell" "a" "b" "c")
-                                  ("pause" "a" "b") ("detach" "a" "b")
-                                  ("kill" "a" "b") ("attach")
-                                  ("status" "extra") ("unknown")))
-               (reject (cons alias arguments) ':arguments nil)))
+           (test-assert (equal (invoke '("status")) '((:status nil)))
+                        "status dispatches directly from the root")
+           (test-assert (equal (invoke '("status" "--sexp")) '((:status t)))
+                        "top-level status accepts its output option")
+           (dolist (arguments '(("tell") ("tell" "a" "b" "c")
+                                ("pause" "a" "b") ("detach" "a" "b")
+                                ("kill" "a" "b") ("status" "extra")
+                                ("start" "extra") ("stop" "extra")))
+             (reject arguments ':arguments nil))
+           (dolist (arguments '(("localgroup" "status") ("lg" "status")
+                                ("attach") ("unknown")))
+             (test-assert
+              (handler-case (progn (invoke arguments) nil)
+                (configuration-error () (and (null calls) (null probes))))
+              "unknown top-level commands fail before contacting a server"))
            ;; No registered endpoints, then only a stale endpoint.
            (dolist (arguments '(("pause") ("detach") ("kill")))
-             (reject (cons "lg" arguments) ':discover nil))
+             (reject arguments ':discover nil))
            (publish "d6uouHJ" 3)
-           (reject '("lg" "pause") ':discover nil)
+           (reject '("pause") ':discover nil)
            (test-assert (not (probe-file (localgroup-registry-pathname configuration "d6uouHJ")))
                         "implicit discovery prunes stale endpoints")
            ;; A stale endpoint does not make a sole live endpoint ambiguous.
@@ -788,30 +792,28 @@
            (world-participant-rename configuration "al-e6uouHJ" "cold-agent")
            (world-participant-rename configuration "al-fpark11" "parked-agent")
            (world-participant-park configuration "al-fpark11")
-           (dolist (alias '("localgroup" "lg"))
-             (check-targets alias nil)
-             (dolist (selector '("b6uouHJ" "b-6uouHJ" "b-6" "builder" "BUILDER"
-                                 "@builder" "@BUILDER" "al-b6uouHJ" "@al-b6uouHJ"))
-               (check-targets alias selector)))
+           (check-targets nil)
+           (dolist (selector '("b6uouHJ" "b-6uouHJ" "b-6" "builder" "BUILDER"
+                               "@builder" "@BUILDER" "al-b6uouHJ" "@al-b6uouHJ"))
+             (check-targets selector))
            (test-assert (not (probe-file (localgroup-registry-pathname configuration "d6uouHJ")))
                         "a stale endpoint is removed while selecting the sole live endpoint")
            ;; Multiple reachable endpoints require a selector for every operation.
            (publish "c6uouHJ" 2)
            (setf live-ports '(1 2))
            (dolist (arguments '(("pause") ("detach") ("kill")))
-             (reject (cons "lg" arguments) ':discover '("b6uouHJ" "c6uouHJ")))
-           (dolist (alias '("localgroup" "lg"))
-             (check-targets alias "b"))
-           (reject '("lg" "pause" "6uouHJ") ':discover '("b6uouHJ" "c6uouHJ" "e6uouHJ"))
+             (reject arguments ':discover '("b6uouHJ" "c6uouHJ")))
+           (check-targets "b")
+           (reject '("pause" "6uouHJ") ':discover '("b6uouHJ" "c6uouHJ" "e6uouHJ"))
            (dolist (selector '("cold-agent" "@cold-agent" "parked-agent" "@parked-agent"
                                "@nobody" "inbox"))
-             (reject (list "lg" "pause" selector) ':discover nil))
+             (reject (list "pause" selector) ':discover nil))
            ;; Explicit unavailable targets fail rather than falling back to a live one.
            (publish "d6uouHJ" 3)
-           (reject '("lg" "pause" "d") ':pause '("d6uouHJ"))
+           (reject '("pause" "d") ':pause '("d6uouHJ"))
            (test-assert (not (probe-file (localgroup-registry-pathname configuration "d6uouHJ")))
                         "explicit operations prune an unreachable target")
-           (reject '("lg" "pause" "z") ':discover '("z")))))))
+           (reject '("pause" "z") ':discover '("z")))))))
   nil)
 
 (-> test-localgroup-session-prefixes () null)
@@ -835,7 +837,7 @@
                (invoke (arguments)
                  "Run one CLI command and return its single endpoint call."
                  (setf calls nil)
-                 (let ((command (parse-command-line (main-localgroup-command)
+                 (let ((command (parse-command-line (main--top-level-command)
                                                     arguments)))
                    (funcall (command-handler command) command))
                  (test-assert (= (length calls) 1)
@@ -1877,14 +1879,14 @@
          (labels ((invoke ()
                     "Return the structured failure, or NIL on confirmed exit."
                     (let ((command (parse-command-line
-                                    (main--top-level-command) '("lg" "kill"))))
+                                    (main--top-level-command) '("kill"))))
                       (handler-case (progn (funcall (command-handler command) command) nil)
                         (localgroup-error (condition) condition))))
 
                   (invoke-main ()
                     "Return the real CLI exit status without terminating the test worker."
                     (catch 'kill-cli-exit
-                      (main '("lg" "kill"))
+                      (main '("kill"))
                       0)))
            (dolist (case '((42 :alive) (42 :unknown) (nil :alive) (0 :alive) (-1 :alive)))
              (setf pid (first case) state (second case) probes nil)

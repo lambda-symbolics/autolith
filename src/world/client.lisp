@@ -29,7 +29,7 @@ Records of dead processes are removed on the way."
     (configuration &key (permission-mode ':ask) immutable-p (attach-expected-p t))
   "Start CONFIGURATION's world server and return its endpoint entry.
 
-Without ATTACH-EXPECTED-P no terminal is about to attach, as for lg start."
+Without ATTACH-EXPECTED-P no terminal is about to attach, as for autolith start."
   (localgroup-handoff-spawn-fresh configuration
                                   :permission-mode   permission-mode
                                   :immutable-p       immutable-p
@@ -303,7 +303,7 @@ Nothing is written while no server runs."
 
 (-> world-client--start-command () clingon:command)
 (defun world-client--start-command ()
-  "Return the localgroup start sub-command, starting the world server in the background."
+  "Return the start command, starting the world server in the background."
   (make-command
    :name        "start"
    :description "start the world server in the background"
@@ -311,7 +311,7 @@ Nothing is written while no server runs."
    (lambda (command)
      (when (command-arguments command)
        (error 'localgroup-error
-              :message   "localgroup start accepts no arguments."
+               :message  "start accepts no arguments."
               :operation ':arguments))
      (let ((configuration (localgroup--client-configuration)))
        (unless (world-client-entry configuration)
@@ -320,7 +320,7 @@ Nothing is written while no server runs."
 
 (-> world-client--tell-command () clingon:command)
 (defun world-client--tell-command ()
-  "Return the localgroup tell sub-command, sending a channel a message as the person."
+  "Return the tell command, sending a channel a message as the person."
   (make-command
    :name        "tell"
    :description "send a channel a message, as you would with (tell)"
@@ -330,12 +330,12 @@ Nothing is written while no server runs."
      (let ((arguments (command-arguments command)))
        (unless (= (length arguments) 2)
          (error 'localgroup-error
-                :message   "localgroup tell takes a channel or agent designator and one quoted message."
+                 :message  "tell takes a channel or agent designator and one quoted message."
                 :operation ':arguments))
        (let* ((configuration (localgroup--client-configuration))
               (entry         (or (world-client-entry configuration)
                                  (error 'localgroup-error
-                                        :message   "No world server is running; start it with autolith lg start."
+                                         :message  "No world server is running; start it with autolith start."
                                         :operation ':tell)))
               (answer        (rest (localgroup-query-record
                                     entry ':tell (list :channel (first arguments)
@@ -378,7 +378,7 @@ Nothing is written while no server runs."
 
 (-> world-client--stop-command () clingon:command)
 (defun world-client--stop-command ()
-  "Return the localgroup stop sub-command, stopping the world server and its channels."
+  "Return the stop command, stopping the world server and its channels."
   (make-command
    :name        "stop"
    :description "stop the world server and every channel it hosts"
@@ -386,7 +386,7 @@ Nothing is written while no server runs."
    (lambda (command)
      (when (command-arguments command)
        (error 'localgroup-error
-              :message   "localgroup stop accepts no arguments."
+               :message  "stop accepts no arguments."
               :operation ':arguments))
      (let* ((configuration (localgroup--client-configuration))
             (entry         (world-client-entry configuration)))

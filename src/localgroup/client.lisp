@@ -904,7 +904,7 @@ the message without publishing the capsule or exiting."
 
 (-> localgroup--status-command () clingon:command)
 (defun localgroup--status-command ()
-  "Return the localgroup status sub-command definition."
+  "Return the status command definition."
   (make-command
    :name        "status"
    :description "show the world server and the channels it hosts"
@@ -916,7 +916,7 @@ the message without publishing the capsule or exiting."
    (lambda (command)
      (when (command-arguments command)
        (error 'localgroup-error
-              :message   "localgroup status accepts no arguments."
+               :message  "status accepts no arguments."
               :operation ':arguments))
      (localgroup--run-status
       :sexp-p (not (null (getopt command ':sexp)))))))
@@ -962,7 +962,7 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
 
 (-> localgroup--operation-command (string string keyword) clingon:command)
 (defun localgroup--operation-command (name description operation)
-  "Return a single-session localgroup OPERATION sub-command definition."
+  "Return a single-session OPERATION command definition."
   (make-command
    :name        name
    :description description
@@ -972,7 +972,7 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
      (let ((arguments (command-arguments command)))
        (unless (member (length arguments) '(0 1))
          (error 'localgroup-error
-                :message   (format nil "localgroup ~A accepts at most one channel or agent designator." name)
+                 :message  (format nil "~A accepts at most one channel or agent designator." name)
                 :operation ':arguments))
        (let* ((configuration (localgroup--client-configuration))
               (entry         (localgroup--session-record configuration (first arguments)))
@@ -991,7 +991,7 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
     (and world (eql pid (getf (rest (rest world)) :pid)) t)))
 
 (defparameter *localgroup-channel-close-seconds* 5
-  "How long lg kill waits for a hosted channel to withdraw its endpoint.")
+  "How long autolith kill waits for a hosted channel to withdraw its endpoint.")
 
 (-> localgroup--check-channel-closed (pathname) null)
 (defun localgroup--check-channel-closed (pathname)
@@ -1008,30 +1008,3 @@ going away."
              :operation ':kill
              :message   "Could not confirm the channel closed: its endpoint is still published.")))
   nil)
-
-(-> main-localgroup-command () clingon:command)
-(defun main-localgroup-command ()
-  "Return the localgroup command definition and its sub-commands."
-  (make-command
-   :name        "localgroup"
-   :aliases     '("lg")
-   :description "inspect and control the world server and the channels it hosts"
-   :sub-commands
-   (list (localgroup--status-command)
-         (world-client--tell-command)
-         (localgroup--operation-command
-          "detach" "detach a hosted channel from its terminal" ':detach)
-         (localgroup--operation-command
-          "pause" "pause a hosted channel" ':pause)
-         (localgroup--operation-command
-          "kill" "close a hosted channel" ':kill)
-         (world-client--start-command)
-         (world-client--stop-command))
-   :handler
-   (lambda (command)
-     (when (command-arguments command)
-       (error 'localgroup-error
-              :message   (format nil "Unknown localgroup command ~S."
-                                 (first (command-arguments command)))
-              :operation ':arguments))
-     (localgroup--run-status :sexp-p nil))))

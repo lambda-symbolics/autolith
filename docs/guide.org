@@ -1585,8 +1585,8 @@ The server runs until you stop it, even with no open channel or attached
 terminal:
 
 #+BEGIN_SRC sh
-autolith lg status
-autolith lg stop
+autolith status
+autolith stop
 #+END_SRC
 
 Use =status= to inspect the server process and its hosted channels, and
@@ -1680,8 +1680,8 @@ attached terminals continue using the same connection. Inspect endpoints
 with:
 
 #+BEGIN_SRC sh
-autolith localgroup status
-autolith lg status --sexp
+autolith status
+autolith status --sexp
 #+END_SRC
 
 =idle= means that the process is at input with no active work of any kind.
@@ -1715,17 +1715,17 @@ Otherwise, change the permission mode inside the conversation with
 Control a session with the following commands:
 
 #+BEGIN_SRC sh
-autolith lg tell   TARGET "message"
-autolith lg pause  [TARGET]
-autolith lg detach [TARGET]
-autolith lg kill   [TARGET]
+autolith tell   TARGET "message"
+autolith pause  [TARGET]
+autolith detach [TARGET]
+autolith kill   [TARGET]
 #+END_SRC
 
-=lg= is an alias for =localgroup=. Use a channel ID, a unique part of one, an
-agent's name with or without =@=, a participant ID, or =inbox= as =TARGET=.
+Use a channel ID, a unique part of one, an agent's name with or without =@=,
+a participant ID, or =inbox= as =TARGET=.
 Names and ID fragments are matched without regard to case. Full channel IDs
 take priority over bare names; use =@NAME= to select a participant's residence
-explicitly. For example, =autolith lg tell researcher "review this"= sends a
+explicitly. For example, =autolith tell researcher "review this"= sends a
 message to researcher wherever that agent resides. Ambiguous IDs report their
 matches and select nothing.
 
@@ -1733,7 +1733,7 @@ When exactly one endpoint is reachable, omit =TARGET= from =pause=, =detach= or
 =kill= to select it. These commands require a hosted channel;
 =tell= also accepts cold channels. A message sent there, including a mention
 from another channel, starts its resident agent without attaching a terminal.
-A parked agent has no channel to receive it. Run =autolith lg start= to start
+A parked agent has no channel to receive it. Run =autolith start= to start
 the world server in the background before using =tell=.
 =pause= cancels active work and holds queued primary work.
 =kill= requests graceful shutdown.

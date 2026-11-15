@@ -573,7 +573,7 @@ REASON, when given, is what each attached terminal is told before it lets go."
     (:tell
      (world-server-tell server (getf arguments :channel) (getf arguments :text)))
     (:stop
-     (world-server-stop server :reason "world server stopped by autolith lg stop")
+     (world-server-stop server :reason "world server stopped by autolith stop")
      (list :ok :operation ':stop :session-id *world-server-identifier*))
     (otherwise
      (list :error :message (format nil "Unknown world operation ~S." operation)))))

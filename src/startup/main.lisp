@@ -1849,7 +1849,16 @@ autolith uninstall removes the installation and keeps user data."
                        (main--data-command)
                        (main--usage-command)
                        (main--run-job-command)
-                       (main-localgroup-command))
+                       (localgroup--status-command)
+                       (world-client--tell-command)
+                       (localgroup--operation-command
+                        "detach" "detach a hosted channel from its terminal" ':detach)
+                       (localgroup--operation-command
+                        "pause" "pause a hosted channel" ':pause)
+                       (localgroup--operation-command
+                        "kill" "close a hosted channel" ':kill)
+                       (world-client--start-command)
+                       (world-client--stop-command))
    :handler
    (lambda (command)
      (when (command-arguments command)
@@ -1930,7 +1939,7 @@ autolith uninstall removes the installation and keeps user data."
                    (format nil "~A Observed lock owner PID ~D. ~A" original pid
                            (case reachability
                              (:reachable
-                              "A matching localgroup endpoint is reachable; inspect or attach with autolith lg.")
+                              "A matching localgroup endpoint is reachable; inspect it with autolith status or attach with autolith open ID.")
                              (:no-reachable-endpoint
                               (format nil "No matching published localgroup endpoint was found. Inspect and recheck PID ~D; if you choose to stop it, run kill ~D, then retry. The owner may have changed since this snapshot." pid pid))
                              (otherwise

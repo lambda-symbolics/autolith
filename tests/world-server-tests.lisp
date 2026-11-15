@@ -222,15 +222,15 @@ run once the wake has."
             (lambda ()
               (world-server--dispatch server ':stop nil)
               (test-assert (some (lambda (packet)
-                                   (search "world server stopped by autolith lg stop"
+                                   (search "world server stopped by autolith stop"
                                            (princ-to-string packet)))
                                  finished)
-                           "the attached terminal is told the server was stopped by lg stop")))))))
+                           "the attached terminal is told the server was stopped by autolith stop")))))))
     nil))
 
 (-> test-world-server-status-line () null)
 (defun test-world-server-status-line ()
-  "Test lg status leads with the world server's process and version while a server runs."
+  "Test status leads with the world server's process and version while a server runs."
   (world-server-tests--call
    (lambda (server configuration root)
      (declare (ignore server root))
@@ -238,10 +238,11 @@ run once the wake has."
                     (list (list 'localgroup--client-configuration (lambda () configuration)))
                     (lambda ()
                       (with-output-to-string (*standard-output*)
-                        (localgroup--run-status :sexp-p nil))))))
+                         (let ((command (parse-command-line (main--top-level-command) '("status"))))
+                           (funcall (command-handler command) command)))))))
        (test-assert (and (search "· world server PID" output)
                          (search (princ-to-string (current-process-id)) output))
-                    "lg status names the world server's process first"))))
+                    "status names the world server's process first"))))
   nil)
 
 (-> test-world-client-stop-outcomes () null)
@@ -299,7 +300,7 @@ run once the wake has."
          (labels ((invoke ()
                     "Return the actual CLI status without exiting the worker."
                     (catch 'stop-cli-exit
-                      (main '("lg" "stop"))
+                      (main '("stop"))
                       0)))
            (dolist (case '((42 (:dead) :ok t 0)
                            (42 (:alive) :ok t 64)
@@ -468,7 +469,7 @@ run once the wake has."
                              (with-output-to-string (*standard-output*)
                                (let ((command (parse-command-line
                                                (main--top-level-command)
-                                               (list "lg" "tell" selector text))))
+                                               (list "tell" selector text))))
                                  (funcall (command-handler command) command)))))
                        (drain-wakeups)
                        (test-assert
@@ -492,7 +493,7 @@ run once the wake has."
 
 (-> test-world-server-kill-channel () null)
 (defun test-world-server-kill-channel ()
-  "Test lg kill of a hosted channel succeeds once the channel is gone, though the server keeps running."
+  "Test killing a hosted channel succeeds once it is gone, though the server keeps running."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry      (world-client-entry configuration))
@@ -504,7 +505,7 @@ run once the wake has."
              (list (list 'localgroup--client-configuration (lambda () configuration)))
              (lambda ()
                (let ((command (parse-command-line (main--top-level-command)
-                                                  (list "lg" "kill" identifier))))
+                                                 (list "kill" identifier))))
                  (with-output-to-string (*standard-output*)
                    (funcall (command-handler command) command)))
                t))
