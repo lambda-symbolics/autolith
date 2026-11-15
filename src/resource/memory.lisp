@@ -318,7 +318,7 @@ evidence or dependents renders exactly as memories always have."
             (memory-title memory)
             (memory-tags memory)
             (memory-resource--status-line assessment)
-            (memory--excerpt (memory-content memory)
+            (single-line-excerpt (memory-content memory)
                              *memory-resource-excerpt-limit*))))
 
 (-> memory-resource--render-collection (non-empty-string list) string)
