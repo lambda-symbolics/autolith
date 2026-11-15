@@ -61,6 +61,12 @@ A world the follower returns again unchanged needs no second check.")
     :reader        participant-name
     :type          non-empty-string
     :documentation "The short name shown beside the participant's messages.")
+   (name-source
+    :initarg       :name-source
+    :initform      ':explicit
+    :reader        participant-name-source
+    :type          (member :initial :generated :explicit)
+    :documentation "Whether the handle is an initial identifier, an inferred name, or an explicitly assigned name.")
    (parent
     :initarg       :parent
     :initform      nil
@@ -249,6 +255,7 @@ records stays plain, portable text."
         :id            (world-portable-string (participant-identifier participant))
         :kind          (participant-kind participant)
         :name          (world-portable-string (participant-name participant))
+        :name-source   (participant-name-source participant)
         :parent        (world-portable-string (participant-parent participant))
         :residence     (world-portable-string (participant-residence participant))
         :subscriptions (mapcar #'world-portable-string (participant-subscriptions participant))
@@ -278,6 +285,7 @@ records stays plain, portable text."
                  (non-empty-string-p (getf properties :id))
                  (typep (getf properties :kind) 'participant-kind)
                  (world--name-p (getf properties :name))
+                 (member (getf properties :name-source ':explicit) '(:initial :generated :explicit))
                  (or (null (getf properties :parent))
                      (non-empty-string-p (getf properties :parent)))
                  (or (non-empty-string-p (getf properties :residence))
@@ -298,6 +306,7 @@ records stays plain, portable text."
                    :identifier    (getf properties :id)
                    :kind          (getf properties :kind)
                    :name          (getf properties :name)
+                   :name-source   (getf properties :name-source ':explicit)
                    :parent        (getf properties :parent)
                    :residence     (getf properties :residence)
                    :subscriptions (copy-list (getf properties :subscriptions))
@@ -363,6 +372,7 @@ records stays plain, portable text."
                  (list :identifier    (participant-identifier participant)
                        :kind          (participant-kind participant)
                        :name          (participant-name participant)
+                       :name-source   (participant-name-source participant)
                        :parent        (participant-parent participant)
                        :residence     (participant-residence participant)
                        :subscriptions (copy-list (participant-subscriptions participant))
@@ -1034,12 +1044,13 @@ names the caller in refusals."
 
 (-> world-participant-create
     (configuration &key (:kind participant-kind) (:name string) (:residence (option string))
+                        (:name-source (member :initial :explicit))
                         (:home list) (:parent (option string)) (:settings list)
                         (:id (option string)) (:now timestamp))
     (values participant channel))
 (defun world-participant-create
     (configuration &key kind name residence home parent (settings nil settings-p)
-                        id (now (get-universal-time)))
+                        (name-source ':explicit) id (now (get-universal-time)))
   "Create a participant of KIND named NAME and return it with its residence channel.
 
 RESIDENCE names an existing channel. HOME instead describes a new channel the
@@ -1054,6 +1065,7 @@ written, so reservations never pile up in a long-running process."
            configuration
            (lambda (world)
             (let ((identifier (or id (setf generated (world--generate-identifier world now)))))
+             (check-type name-source (member :initial :explicit))
              (when (world-participant-find world identifier)
                (error 'world-error
                       :message    (format nil "Participant ~A already exists." identifier)
@@ -1081,15 +1093,16 @@ written, so reservations never pile up in a long-running process."
                                                          :operation ':create-participant)
                                      (world--require-channel world residence ':create-participant)))
                     (participant (make-instance 'participant
-                                                :identifier identifier
-                                                :kind       kind
-                                                :name       (world--validate-name
-                                                             name ':create-participant)
-                                                :parent     parent
-                                                :residence  (channel-identifier channel)
-                                                :settings   (copy-list settings)
-                                                :created-at now
-                                                :updated-at now)))
+                                                :identifier  identifier
+                                                :kind        kind
+                                                :name        (world--validate-name
+                                                              name ':create-participant)
+                                                :name-source name-source
+                                                :parent      parent
+                                                :residence   (channel-identifier channel)
+                                                :settings    (copy-list settings)
+                                                :created-at  now
+                                                :updated-at  now)))
                (values (append (when home (list (world--channel-record channel)))
                                (list (world--participant-record participant)))
                        (list participant channel)))))))
@@ -1137,33 +1150,49 @@ return it; a no-op returns the existing participant without appending."
                                  (copy-list settings)
                                  (participant-settings participant))))))
 
-(-> world-participant-rename (configuration string string &key (:now timestamp)) participant)
-(defun world-participant-rename (configuration identifier name &key (now (get-universal-time)))
-  "Name participant IDENTIFIER NAME, a handle no other participant has, and return it."
+(-> world-participant-rename
+    (configuration string string &key (:now timestamp)
+      (:source (member :explicit :generated)) (:expected-residence (option string)))
+    participant)
+(defun world-participant-rename (configuration identifier name
+                                 &key (now (get-universal-time)) (source ':explicit) expected-residence)
+  "Name participant IDENTIFIER NAME and return it.
+
+A generated name replaces only an initial name in EXPECTED-RESIDENCE. Resolve
+its collisions in the same transaction; explicit names must already be unique."
+  (check-type source (member :explicit :generated))
   (world--update-participant
    configuration identifier :operation ':rename-participant :now now
    :change (lambda (world participant)
-             (declare (ignore participant))
-             (unless (world-handle-p name)
-               (error 'world-error
-                      :message    (format nil "A name is up to ~D letters, digits, hyphens and underscores, so @mentions can use it."
-                                          *world-handle-limit*)
-                      :pathname   nil
-                      :operation  ':rename-participant
-                      :identifier identifier))
-             (when (world-handle-reserved-p name)
-               (error 'world-error
-                      :message    (format nil "@~A always names the sender's parent; choose another name." name)
-                      :pathname   nil
-                      :operation  ':rename-participant
-                      :identifier identifier))
-             (when (world-participant-named-p world name :except identifier)
-               (error 'world-error
-                      :message    (format nil "Another participant is already named ~A." name)
-                      :pathname   nil
-                      :operation  ':rename-participant
-                      :identifier identifier))
-             (list :name name))))
+             (block nil
+               (when (and (eq source ':generated)
+                          (or (not (eq (participant-kind participant) ':agent))
+                              (not (eq (participant-name-source participant) ':initial))
+                              (null expected-residence)
+                              (not (equal expected-residence (participant-residence participant)))))
+                 (return nil))
+               (unless (world-handle-p name)
+                 (error 'world-error
+                        :message    (format nil "A name is up to ~D letters, digits, hyphens and underscores, so @mentions can use it."
+                                            *world-handle-limit*)
+                        :pathname   nil
+                        :operation  ':rename-participant
+                        :identifier identifier))
+               (when (world-handle-reserved-p name)
+                 (error 'world-error
+                        :message    (format nil "@~A always names the sender's parent; choose another name." name)
+                        :pathname   nil
+                        :operation  ':rename-participant
+                        :identifier identifier))
+               (let ((taken-p (world-participant-named-p world name :except identifier)))
+                 (when (and taken-p (eq source ':explicit))
+                   (error 'world-error
+                          :message    (format nil "Another participant is already named ~A." name)
+                          :pathname   nil
+                          :operation  ':rename-participant
+                          :identifier identifier))
+                 (list :name        (if taken-p (world-unique-handle world name) name)
+                       :name-source source))))))
 
 (-> world-channel-update
     (configuration string &key (:title (option string)) (:workspace (option string))

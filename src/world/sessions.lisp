@@ -23,10 +23,7 @@
 It is fixed, so every migration gives the person the same identifier.")
 
 (defparameter *world-agent-name* "autolith"
-  "The handle base of a migrated session's agent when its workspace name yields none.
-
-An agent is named after its workspace's directory, so @frob reaches the
-agent working in frob; a second agent there is frob-2.")
+  "The fallback handle base when an agent's short identifier yields no handle.")
 
 (defparameter *world-task-name* "agent"
   "The handle base of a child agent whose conversation records no name of its own.")
@@ -617,19 +614,21 @@ parent is never left behind its retired children."
                  (unless existing
                    (setf existing
                          (make-instance 'participant
-                                        :identifier agent-id
-                                        :kind       ':agent
-                                        :name       (world-unique-handle
-                                                     preview
-                                                     (if parent-id
-                                                         (world-handle-base (or (getf (rest header) :agent-name) "")
-                                                                            :fallback *world-task-name*)
-                                                         (world-session--handle-base workspace)))
-                                        :parent     keeper
-                                        :residence  identifier
-                                        :settings   (world-session--settings header)
-                                        :created-at created-at
-                                        :updated-at (max now created-at)))
+                                        :identifier  agent-id
+                                        :kind        ':agent
+                                        :name        (world-unique-handle
+                                                      preview
+                                                      (let ((name (and parent-id (getf (rest header) :agent-name))))
+                                                        (if (non-empty-string-p name)
+                                                            (world-handle-base name :fallback *world-task-name*)
+                                                            (world-session--handle-base identifier))))
+                                        :name-source (if (and parent-id (non-empty-string-p (getf (rest header) :agent-name)))
+                                                         ':explicit ':initial)
+                                        :parent      keeper
+                                        :residence   identifier
+                                        :settings    (world-session--settings header)
+                                        :created-at  created-at
+                                        :updated-at  (max now created-at)))
                    (emit (world--participant-record existing)))))
               ;; Existing agents keep their settings. Adopt a late parent's
               ;; ancestry only when adopting its channel in the same pass.
@@ -653,16 +652,19 @@ parent is never left behind its retired children."
     (values (nreverse records) (nreverse planned) (nreverse ended))))
 
 (-> world-session--handle-base (string) string)
-(defun world-session--handle-base (workspace)
-  "Return the handle base of an agent working in WORKSPACE, its directory's name."
-  (world-handle-base (world-workspace-leaf workspace) :fallback *world-agent-name*))
+(defun world-session--handle-base (identifier)
+  "Return the short channel IDENTIFIER as an agent's initial handle."
+  (let ((display (conversation-identifier-display identifier)))
+    (if (world-handle-p display)
+        display
+        (world-handle-base display :fallback *world-agent-name*))))
 
 (-> world-session--handle-records (world timestamp) list)
 (defun world-session--handle-records (world now)
   "Return the records renaming WORLD's agents whose names another participant also has.
 
-The oldest participant keeps a shared name; each later agent is renamed after
-its channel's workspace, so every participant can be mentioned by name."
+The oldest participant keeps a shared name; each later agent receives its short
+identifier as an initial handle, so every participant can be mentioned by name."
   (let ((seen    nil)
         (records nil))
     (dolist (participant (sort (copy-list (world-participants world)) #'<
@@ -672,20 +674,18 @@ its channel's workspace, so every participant can be mentioned by name."
                 (and (eq (participant-kind participant) ':agent)
                      (or (not (world-handle-p name))
                          (world-handle-reserved-p name))))
-            (let* ((residence (participant-residence participant))
-                   (channel   (and residence (world-channel-find world residence)))
-                   (base      (if channel
-                                  (world-session--handle-base (channel-workspace channel))
-                                  *world-agent-name*))
-                   (handle    (loop for index from 1
-                                    for candidate = (world-handle-suffixed base index)
-                                    unless (or (member candidate seen :test #'string-equal)
-                                               (world-participant-named-p world candidate))
-                                      return candidate)))
+            (let* ((base   (world-session--handle-base
+                            (or (participant-residence participant) (participant-identifier participant))))
+                   (handle (loop for index from 1
+                                 for candidate = (world-handle-suffixed base index)
+                                 unless (or (member candidate seen :test #'string-equal)
+                                            (world-participant-named-p world candidate))
+                                   return candidate)))
               (push handle seen)
               (push (world--participant-record
                      (world--copy-participant participant
                                               :name       handle
+                                             :name-source ':initial
                                               :updated-at (max now (participant-updated-at
                                                                     participant))))
                     records))

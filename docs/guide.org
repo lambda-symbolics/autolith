@@ -1435,10 +1435,11 @@ and transfer failures are 1. Both command groups provide =--help=.
 
 ** Session titles and resume
 
-A session gets an immediate local title from its first prompt or image. After the
-third actual user turn, Autolith may ask the active model for one concise
-replacement and save it with the conversation. The local title does not depend on
-provider generation.
+A session gets an immediate local title from its first prompt or image. Its agent
+initially uses the short channel ID as its name. After the third actual user turn,
+Autolith may ask the active model for a concise title and a descriptive agent name
+in one inference. Both are saved durably. Use =(rename "NAME")= to assign an
+explicit agent name; automatic naming only replaces the initial ID-based name.
 
 Provider-generated refreshes are enabled by default. Use =(titles)=, =(titles t)=,
 or =(titles nil)= to inspect or change the durable global preference.
@@ -1803,10 +1804,11 @@ a top-level agent, and the limits on running and queued jobs cap how many
 run at once.
 
 Every participant has a unique name, its handle, so =@name= reaches exactly
-one of them. A session's agent is named after its workspace directory, =frob=
-for an agent working in =~/work/frob=, and a second agent there is =frob-2=;
-a child agent takes the name its parent gave it, as in
-E442  =(channel.send :channel "@test-review" :text ...)=, or =agent= when it has none; you are =user=.
+one of them. A session's agent initially uses its short channel ID. With automatic
+titles enabled, the model also infers a descriptive agent name. A child agent uses
+the name its parent supplied, as in
+=(channel.send :channel "@test-review" :text ...)=; an unnamed child starts with its
+short channel ID. You are =user=.
 Names are letters, digits, hyphens and underscores, matched without regard to
 case. =(rename "NAME")= renames this channel's agent and
 =(rename "WHO" "NAME")= renames the participant =WHO= names by handle,

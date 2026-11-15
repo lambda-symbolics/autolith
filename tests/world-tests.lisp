@@ -334,13 +334,11 @@
             (test-assert (and agent
                               (equal (participant-parent agent) (participant-identifier human))
                               (world-handle-p (participant-name agent))
-                              (uiop:string-prefix-p
-                               (world-session--handle-base
-                                (namestring (config :working-directory configuration)))
-                               (participant-name agent))
+                              (equal (participant-name agent) "b-second")
+                              (eq (participant-name-source agent) ':initial)
                               (equal (getf (participant-settings agent) :model)
                                      (conversation-model second)))
-                         "a migrated session's agent resides in its channel under the human, named after the workspace")
+                         "a migrated session's agent starts under its short channel ID with the human as parent")
             (let ((load-world #'world-load)
                   (reads      0))
               (test-call-with-function-replacements
@@ -972,17 +970,15 @@
 
 (-> test-world-handles () null)
 (defun test-world-handles ()
-  "Test agents get unique workspace handles, duplicates are renamed, and renaming is checked."
+  "Test initial identifier handles, duplicate repair, and checked explicit renaming."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
-      (let ((base  (world-session--handle-base
-                    (namestring (config :working-directory configuration))))
-            (names (list (participant-name first-agent) (participant-name second-agent))))
-        (test-assert (and (member base names :test #'string=)
-                          (member (format nil "~A-2" base) names :test #'string=))
-                     "two agents in one workspace are named after it, the second numbered")
+      (let ((names (list (participant-name first-agent) (participant-name second-agent))))
+        (test-assert (and (member (conversation-identifier-display "bfirst1") names :test #'string=)
+                          (member (conversation-identifier-display "bsecnd2") names :test #'string=))
+                     "agents in one workspace have their own short identifier handles")
         (world-participant-create configuration
                                   :kind      ':agent
                                   :name      (participant-name first-agent)
@@ -1020,23 +1016,64 @@
                                 (world-participant-find world (participant-identifier second-agent)))
                             (null (world-participant-designated world "nobody")))
                        "participants are designated by name, display identifier or unique fragment"))
-        (let* ((leaf (make-string *world-handle-limit* :initial-element #\a))
-               (long (configuration-copy configuration
-                                         :working-directory
-                                         (merge-pathnames (concatenate 'string leaf "/")
-                                                          (config :working-directory configuration)))))
-          (world-tests--persisted-conversation long "bthird3" 4000)
-          (world-tests--persisted-conversation long "bfourt4" 5000)
-          (flet ((names ()
-                   "Return every participant name after a reconciliation, sorted."
-                   (sort (mapcar #'participant-name
-                                 (world-participants (values (world-reconcile-sessions long :now 6000))))
-                         #'string<)))
-            (let ((first-pass (names)))
-              (test-assert (every #'world-handle-p first-pass)
-                           "agents in a workspace at the handle length limit get valid numbered handles")
-              (test-assert (equal first-pass (names))
-                           "a second reconciliation of colliding maximum-length handles changes nothing")))))))
+        (test-assert (every #'world-handle-p
+                            (mapcar #'participant-name (world-participants (world-load configuration))))
+                     "all reconciled names are mentionable handles"))))
+  nil)
+
+(-> test-world-generated-names () null)
+(defun test-world-generated-names ()
+  "Persist generated name provenance, resolve collisions, and guard explicit names and moves."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (let* ((first-id  (participant-identifier first-agent))
+             (second-id (participant-identifier second-agent))
+             (base      (make-string *world-handle-limit* :initial-element #\a)))
+        (world-participant-rename configuration second-id base)
+        (let ((unchanged (world-participant-rename configuration second-id "inferred-name"
+                                                  :source ':generated :expected-residence "bsecnd2")))
+          (test-assert (and (equal (participant-name unchanged) base)
+                            (eq (participant-name-source unchanged) ':explicit))
+                       "an explicitly assigned name prevents automatic naming"))
+        (let ((renamed (world-participant-rename configuration first-id base
+                                                 :source ':generated :expected-residence "bfirst1")))
+          (test-assert (and (eq (participant-name-source renamed) ':generated)
+                            (not (string-equal (participant-name renamed) base))
+                            (world-handle-p (participant-name renamed))
+                            (= (length (participant-name renamed)) *world-handle-limit*))
+                       "generated names resolve case-insensitive collisions within the handle limit")
+          (let ((replayed (world--record->participant
+                           #P"world.sexp" (world--participant-record renamed))))
+            (test-assert (and (eq (participant-name-source replayed) ':generated)
+                              (equal (participant-name replayed) (participant-name renamed)))
+                         "world records preserve inferred names and their provenance"))
+          (test-assert (equal (participant-name
+                               (world-participant-rename configuration first-id "another-name"
+                                                         :source ':generated :expected-residence "bfirst1"))
+                             (participant-name renamed))
+                       "automatic naming is applied once"))
+        (world-participant-rename configuration first-id "chosen-name")
+        (test-assert (equal (participant-name
+                             (world-participant-rename configuration first-id "inferred-name"
+                                                       :source ':generated :expected-residence "bfirst1"))
+                           "chosen-name")
+                     "a concurrent explicit rename takes precedence")
+        (let* ((destination   (world-channel-create configuration
+                                                   :owner     (participant-identifier human)
+                                                   :workspace (namestring (config :working-directory configuration))))
+               (moving        (world-participant-create configuration :kind ':agent
+                                                        :name "moving-agent" :name-source ':initial
+                                                        :home               (list :workspace (namestring (config :working-directory configuration)))))
+               (moving-id     (participant-identifier moving))
+               (old-residence (participant-residence moving)))
+          (world-participant-move configuration moving-id (channel-identifier destination))
+          (let ((unchanged (world-participant-rename configuration moving-id "new-task-name"
+                                                    :source ':generated :expected-residence old-residence)))
+            (test-assert (and (equal (participant-name unchanged) (participant-name moving))
+                              (eq (participant-name-source unchanged) ':initial))
+                         "an inference from the old channel cannot rename an agent after a move"))))))
   nil)
 
 (-> test-world-composer-mentions () null)
@@ -2264,10 +2301,11 @@
                                      (participant-identifier root-agent)))
                        "a child channel nests under its root and belongs to the root's agent")
           (test-assert (and task-agent
-                            (string= (participant-name task-agent) "agent")
+                            (string= (participant-name task-agent) "exec-one")
+                            (eq (participant-name-source task-agent) ':initial)
                             (equal (participant-parent task-agent)
                                    (participant-identifier root-agent)))
-                       "a child agent whose conversation records no name is named agent, under the root's agent")
+                       "an unnamed child agent starts with its short channel ID under the root's agent")
           (test-assert (string= (participant-residence (world-human-participant world))
                                 (world-tests--inbox configuration))
                        "the person resides in the inbox")

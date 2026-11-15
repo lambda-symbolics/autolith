@@ -1048,8 +1048,8 @@ agent."
   "Create a new agent participant resident in APPLICATION's channel and return it.
 
 The channel must be served and without an agent. The new agent takes the
-application's current model and effort, a handle from the workspace, and
-the person as its parent. It starts with no context of its own; the
+application's current model and effort, its short channel identifier as an
+initial handle, and the person as its parent. It starts with no context of its own; the
 channel's history is there for it to read."
   (let* ((configuration (application-configuration application))
          (channel       (or (application-world--served-channel application)
@@ -1069,20 +1069,17 @@ channel's history is there for it to read."
              :identifier channel))
     (let ((agent (world-participant-create
                   configuration
-                  :kind      ':agent
-                  :name      (world-unique-handle world (world-handle-base
-                                                         (world-workspace-leaf
-                                                          (world-workspace-name
-                                                           (config :working-directory configuration)))
-                                                         :fallback *world-agent-name*))
-                  :residence channel
-                  :parent    (and person (participant-identifier person))
-                  :settings  (append (list :model (config :model configuration))
-                                     (let ((provider (config :model-provider configuration)))
-                                       (and (non-empty-string-p provider)
-                                            (list :model-provider provider)))
-                                     (let ((effort (config :reasoning-effort configuration)))
-                                       (and effort (list :reasoning-effort effort)))))))
+                  :kind        ':agent
+                  :name        (world-unique-handle world (world-session--handle-base channel))
+                  :name-source ':initial
+                  :residence   channel
+                  :parent      (and person (participant-identifier person))
+                  :settings    (append (list :model (config :model configuration))
+                                       (let ((provider (config :model-provider configuration)))
+                                         (and (non-empty-string-p provider)
+                                              (list :model-provider provider)))
+                                       (let ((effort (config :reasoning-effort configuration)))
+                                         (and effort (list :reasoning-effort effort)))))))
       ;; The new agent runs under this session's model, so the runtime stays;
       ;; only its context starts fresh.
       (application-world--record-arrival application agent configuration :arrival ':created)

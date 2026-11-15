@@ -3133,7 +3133,7 @@ pristine or recovery session runs apart from it."
     (:name              "/domestic"
      :argument          nil
      :description       "create a new agent for this channel"
-     :tip               "for a channel without an agent: a fresh agent with this session's model, named after the workspace."
+     :tip               "for a channel without an agent: a fresh agent with this session's model and its short channel ID as an initial name."
      :busy-behavior     :inspect
      :terminal-behavior :shared
      :callable          t)

@@ -556,7 +556,7 @@ Ordinary native defaults remain lazy and follow the current environment."
 (define-setting :session-title-generation-p (boolean-setting)
   :label                                    "Generated session titles"
   :group                                    :behavior
-  :documentation                            "Whether the provider may refresh locally derived session titles."
+  :documentation                            "Whether the provider may infer session titles and initial agent names."
   :scope                                    :durable
   :default                                  t)
 

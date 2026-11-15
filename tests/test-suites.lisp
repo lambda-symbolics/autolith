@@ -703,6 +703,7 @@
   test-world-agentless-channel
   test-world-staggered-retirement
   test-world-handles
+  test-world-generated-names
   test-world-composer-mentions
   test-world-mention-highlighting
   test-world-mention-boundaries
@@ -1770,6 +1771,7 @@
   test-command-turn-steering
   test-late-steering-promotion
   test-application-conversation-title-refresh
+  test-application-conversation-agent-name
   test-conversation-picker
   test-application-window-title
   test-working-directory-switch
