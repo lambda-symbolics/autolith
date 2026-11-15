@@ -73,15 +73,21 @@ as the mission does it; the gate is neither run nor changed."
   "Return a fact's logical status, whether it applies now, and the bases it rests on.
 
 The current knowledge view evaluates the fact from its evidence and rules, so
-a retracted premise changes the state of what was derived from it. Without an
-active view the fact is taken to stand as it did at capture."
+a retracted premise changes the state of what was derived from it. A fact that
+holds but may not justify an action, such as one derived from a disputed
+premise, says so. Without an active view the fact is taken to stand as it did
+at capture."
   (let ((view (getf authorities :view)))
     (if view
         (destructuring-bind (&key text status applicability bases &allow-other-keys)
             (first (knowledge-explain view (getf reference :claim) :limit 1))
           (and text
-               (format nil "~(~A, ~A~@[, on ~{~{~A~^ and ~}~^ or ~}~]~)"
-                       status applicability bases)))
+               (format nil "~(~A, ~A~@[, on ~{~{~A~^ and ~}~^ or ~}~]~)~:[~;, cannot justify an action~]"
+                       status applicability bases
+                       (let ((node (knowledge-view-node view (getf reference :claim))))
+                         (and node
+                              (knowledge-node-supported-p node)
+                              (not (knowledge-node-admissible-p view node)))))))
         (getf reference :observed))))
 
 

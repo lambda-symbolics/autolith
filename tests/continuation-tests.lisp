@@ -352,6 +352,11 @@
                             (equal "supported, current, on user-assertion" (getf asserted :observed))
                             (equal (getf asserted :observed) (getf derived :observed)))
                        "given facts are offered with their address, status and basis, derived ones included")
+          (knowledge-tests--said configuration "event.buffer" '("review" "PT10M")
+                                 :quote "no need to be early" :negated t)
+          (test-assert (equal "supported, current, on user-assertion, cannot justify an action"
+                              (state derived))
+                       "a fact derived from a disputed premise says that it cannot justify an action")
           (knowledge-retract configuration travel)
           (test-assert (equal "unknown, retracted" (state asserted))
                        "a retracted fact reports that it no longer applies")
