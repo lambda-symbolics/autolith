@@ -1736,14 +1736,16 @@ that maximum. A refusal and a terminal failure are signaled."
 (-> agent--compaction-checkpoint
     (agent agent-observer conversation-compaction
      &key (:view conversation) (:recovery compaction-recovery) (:request-context t)
-          (:request-number (integer 0)))
+          (:unfinished-work list) (:request-number (integer 0)))
     (values list (integer 0)))
 (defun agent--compaction-checkpoint
-    (agent observer compaction &key view recovery request-context request-number)
+    (agent observer compaction
+     &key view recovery request-context unfinished-work request-number)
   "Return the checkpoint for COMPACTION and the number of requests it took.
 
 The model writes the checkpoint from VIEW, the history before the retained
-tail, and may cite what the previous checkpoint cited. When it submits none,
+tail. It may cite the covered records, plan steps, mission gates, the jobs of
+UNFINISHED-WORK and what the previous checkpoint cited. When it submits none,
 the checkpoint keeps the previous one's notes and names the covered records
 as unsummarized."
   (let ((prior (conversation-continuation (agent-conversation agent))))
@@ -1755,7 +1757,9 @@ as unsummarized."
            :recovery        recovery
            :request-context request-context
            :latest-request  (getf (rest (assoc ':message records)) :content)
-           :references      (getf prior :references)
+           :references      (continuation-references agent records
+                                                     :prior           prior
+                                                     :unfinished-work unfinished-work)
            :unsummarized    (getf prior :unsummarized)
            :request-number  request-number)
         (values (or submitted (continuation-without-summary prior range))
@@ -1949,6 +1953,7 @@ publication. Return issued request count and optional next-request details."
                              family)
            :recovery        recovery
            :request-context request-context
+           :unfinished-work unfinished-work
            :request-number  (+ request-number issued))
         (incf issued requests)
         (let* ((next-output-tokens
