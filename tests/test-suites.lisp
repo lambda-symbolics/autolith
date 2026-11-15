@@ -1608,6 +1608,7 @@
   test-terminal-finalized-scrollback
   test-terminal-resize-frame
   test-terminal-relayed-resize
+  test-terminal-resize-lock-contention
   test-terminal-line-editor
   test-terminal-history-replacement
   test-terminal-image-attachments

@@ -267,13 +267,15 @@ recallable while the resident window obeys the editor's budgets."
 The second value reports whether FUNCTION ran. This nonblocking path keeps
 emergency terminal input responsive while another thread owns presentation."
   (let ((lock (terminal-ui-lock ui)))
-    (sb-sys:without-interrupts
-      (if (sb-thread:grab-mutex lock :waitp nil)
-          (unwind-protect
-               (sb-sys:with-interrupts
-                 (values (funcall function) t))
-            (sb-thread:release-mutex lock))
-          (values nil nil)))))
+    (if (sb-thread:holding-mutex-p lock)
+        (values (funcall function) t)
+        (sb-sys:without-interrupts
+          (if (sb-thread:grab-mutex lock :waitp nil)
+              (unwind-protect
+                   (sb-sys:with-interrupts
+                     (values (funcall function) t))
+                (sb-thread:release-mutex lock))
+              (values nil nil))))))
 
 
 ;;;; -- Terminal Presentation --
@@ -2605,21 +2607,27 @@ other groups end with one newline. This formatter does not change UI."
     (terminal-ui (option function))
     boolean)
 (defun terminal-ui-refresh-size (ui callback)
-  "Apply CALLBACK's pending terminal size to UI and report whether it repainted.
+  "Apply CALLBACK's pending size when UI's presentation lock is available.
 
-CALLBACK receives UI, so it can consult the terminal the size belongs to."
-  (let ((size (and callback (funcall callback ui))))
-    (cond
-      ((null size)
-       nil)
-      ((typep size '(cons (integer 1) (integer 1)))
-       (terminal-ui-resize ui (rest size) :rows (first size))
-       t)
-      (t
-       (error 'terminal-error
-              :message   "A terminal resize callback returned an invalid size."
-              :operation ':resize
-              :cause     nil)))))
+CALLBACK receives UI and is called only after acquiring the lock, so a busy
+publisher leaves pending geometry available for the reader's next poll."
+  (multiple-value-bind (repainted-p acquired-p)
+      (terminal-ui--call-with-lock-if-available
+       ui
+       (lambda ()
+         (let ((size (and callback (funcall callback ui))))
+           (cond
+             ((null size)
+              nil)
+             ((typep size '(cons (integer 1) (integer 1)))
+              (terminal-ui-resize ui (rest size) :rows (first size))
+              t)
+             (t
+              (error 'terminal-error
+                     :message   "A terminal resize callback returned an invalid size."
+                     :operation ':resize
+                     :cause     nil))))))
+    (and acquired-p (not (null repainted-p)))))
 
 (-> terminal-ui-report-job-statuses (terminal-ui list) null)
 (defun terminal-ui-report-job-statuses (ui records)

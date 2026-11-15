@@ -450,6 +450,101 @@
                      "a relayed resize repaints without waiting for input"))))
   nil)
 
+(-> test-terminal-resize-lock-contention () null)
+(defun test-terminal-resize-lock-contention ()
+  "Defer resize consumption behind presentation work, then apply the newest size."
+  (let* ((*terminal-resize-pending-p* nil)
+         (terminal                    (make-instance 'recording-terminal :columns 60 :rows 20))
+         (ui                          (terminal-ui-create :terminal terminal))
+         (state-lock                  (make-lock "Autolith resize contention test"))
+         (condition                   (make-condition-variable :name "Autolith resize contention test"))
+         (held-p                      nil)
+         (release-p                   nil)
+         (returned-p                  nil)
+         (reader-result               ':not-returned)
+         (reader-failure              nil)
+         (callback-calls              0)
+         (holder                      nil)
+         (reader                      nil)
+         (callback                    (lambda (candidate)
+                                        (incf callback-calls)
+                                        (application-pending-terminal-size candidate))))
+    (with-terminal-ui (active-ui ui)
+      (terminal-relayed-resize-publish terminal 24 120)
+      (unwind-protect
+           (progn
+             (setf holder
+                   (make-thread
+                    (lambda ()
+                      (with-terminal-ui-locked (active-ui)
+                        (with-lock-held (state-lock)
+                          (setf held-p t)
+                          (condition-notify condition)
+                          (loop until release-p
+                                do (condition-wait condition state-lock :timeout 2)))))
+                    :name "Autolith resize lock holder"))
+             (test-assert
+              (task-tests--wait-until
+               (lambda () (with-lock-held (state-lock) held-p)) 1)
+              "the resize fixture holds the presentation lock in another thread")
+             (setf reader
+                   (make-thread
+                    (lambda ()
+                      (handler-case
+                          (setf reader-result (terminal-ui-refresh-size active-ui callback))
+                        (error (failure)
+                          (setf reader-failure failure)))
+                      (with-lock-held (state-lock)
+                        (setf returned-p t)
+                        (condition-notify condition)))
+                    :name "Autolith nonblocking resize reader"))
+             (test-assert
+              (task-tests--wait-until
+               (lambda () (with-lock-held (state-lock) returned-p)) 1)
+              "the reader returns before the publisher releases the presentation lock")
+             (test-assert
+              (and (null reader-failure) (null reader-result) (zerop callback-calls)
+                   (equal (terminal-relayed-resize terminal) '(24 . 120))
+                   (= (terminal-columns terminal) 60))
+              "contention returns NIL without invoking the callback or consuming pending geometry")
+             (terminal-relayed-resize-publish terminal 25 121)
+             (terminal-relayed-resize-publish terminal 26 122))
+        (with-lock-held (state-lock)
+          (setf release-p t)
+          (condition-notify condition))
+        (when holder (join-thread holder))
+        (when reader (join-thread reader)))
+      (test-assert
+       (and (terminal-ui-refresh-size active-ui callback)
+            (= callback-calls 1)
+            (= (terminal-rows terminal) 26)
+            (= (terminal-columns terminal) 122)
+            (null (terminal-relayed-resize terminal)))
+       "the next reader poll consumes only the latest coalesced size after contention ends")
+      (test-assert
+       (and (null (terminal-ui-refresh-size active-ui nil))
+            (null (terminal-ui-refresh-size active-ui (constantly nil))))
+       "absent callbacks and callbacks without a pending size return NIL")
+      (dolist (invalid '((0 . 80) (24 . 0) (24 80)))
+        (test-assert
+         (handler-case
+             (progn (terminal-ui-refresh-size active-ui (constantly invalid)) nil)
+           (terminal-error (failure)
+             (eq (terminal-error-operation failure) ':resize)))
+         "invalid callback geometry signals the resize domain condition"))
+      (test-assert
+       (and (terminal-ui-refresh-size active-ui (constantly '(27 . 123)))
+            (= (terminal-rows terminal) 27)
+            (= (terminal-columns terminal) 123))
+       "a callback failure releases the presentation lock for subsequent valid geometry")
+      (with-terminal-ui-locked (active-ui)
+        (test-assert
+         (and (terminal-ui-refresh-size active-ui (constantly '(28 . 124)))
+              (= (terminal-columns terminal) 124)
+              (sb-thread:holding-mutex-p (terminal-ui-lock active-ui)))
+         "a modal reader can resize under its existing presentation lock without releasing it"))))
+  nil)
+
 (-> test-terminal-line-editor () null)
 (defun test-terminal-line-editor ()
   "Test Autolith event dispatch, submission, control policy, and reader actions."
