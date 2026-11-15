@@ -227,7 +227,8 @@ journaling or provider conversation projection."
 (defun application-lisp-code-spans (source)
   "Return Lisp SOURCE as syntax-highlighted spans, or as plain code when it does not highlight."
   (or (syntax--highlight-spans source
-                               :language *application-common-lisp-language*)
+                               :language              *application-common-lisp-language*
+                               :rainbow-parentheses-p t)
       (list (terminal-span ':code source))))
 
 (-> application-lisp--source-entry (string) list)
@@ -754,7 +755,8 @@ caller."
       (list (terminal-span ':syntax-number value))
       (or (handler-case
               (syntax--highlight-spans value
-                                       :language *application-common-lisp-language*)
+                                       :language              *application-common-lisp-language*
+                                       :rainbow-parentheses-p t)
             (error () nil))
           (list (terminal-span ':code value)))))
 

@@ -612,6 +612,10 @@ Click a =lisp.eval= input block in fullscreen to expand the complete Lisp source
 with syntax highlighting. Click it again to collapse it. The selected view
 persists through resizing and tool completion.
 
+Lisp evaluation inputs, returned source, and values use rainbow parentheses:
+matching parentheses share a color, and nesting depths cycle through six colors.
+Strings, character literals, escaped symbols, and comments do not affect depth.
+
 Tool argument names emitted with underscores are matched to declared hyphenated
 names, including nested objects and array items. If both spellings are present,
 the declared spelling takes precedence.

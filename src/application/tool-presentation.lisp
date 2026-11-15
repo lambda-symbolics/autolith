@@ -572,8 +572,10 @@ structural discriminator as a readable heading instead."
     (when (non-empty-string-p value)
       (cons (application--tool-section-row ":restart-value")
             (application--source-preview-rows
-             value :language *application-common-lisp-language*
-             :limit          *application-tool-call-lines*)))))
+             value
+             :language              *application-common-lisp-language*
+             :rainbow-parentheses-p t
+             :limit                 *application-tool-call-lines*)))))
 
 (-> application--generic-tool-call-entry (application json-object) list)
 (defun application--generic-tool-call-entry (application call)
@@ -649,10 +651,12 @@ structural discriminator as a readable heading instead."
                       (equal (function-call-canonical-name call) "lisp.eval"))
              (application--tool-outcome-key application ':call (json-get call "call_id"))))
          (rows      (application--source-preview-rows
-                     source :language *application-common-lisp-language*
-                            :limit    (if *application-tool-input-expanded-p*
-                                          (1+ (count #\Newline source))
-                                          *application-tool-call-lines*))))
+                     source
+                     :language              *application-common-lisp-language*
+                     :rainbow-parentheses-p t
+                     :limit                 (if *application-tool-input-expanded-p*
+                                                (1+ (count #\Newline source))
+                                                *application-tool-call-lines*))))
     (application--tool-entry
      application
      :style  ':tool
@@ -1553,7 +1557,9 @@ OPERATION's own declared target line so they stay numbered."
               (application--generic-argument-rows
                application arguments :excluded-keys '("value" "restart-value"))
               (application--source-preview-rows
-               value :language *application-common-lisp-language*)
+               value
+               :language              *application-common-lisp-language*
+               :rainbow-parentheses-p t)
               (application--restart-value-rows arguments)))))
 
 
@@ -1601,10 +1607,12 @@ OPERATION's own declared target line so they stay numbered."
 
 (-> application--section-preview-rows
     (string string terminal-style &key (:limit integer)
-                                      (:language (option language)))
+                                      (:language (option language))
+                                      (:rainbow-parentheses-p boolean))
     list)
 (defun application--section-preview-rows
-    (label text style &key (limit *application-tool-output-lines*) language)
+    (label text style &key (limit *application-tool-output-lines*) language
+                           rainbow-parentheses-p)
   "Return a labeled, bounded transcript section, highlighting declared LANGUAGE."
   (append
    (list (application--tool-section-row label))
@@ -1612,7 +1620,10 @@ OPERATION's own declared target line so they stay numbered."
      ((not (non-empty-string-p text))
       (list (list (terminal-span ':dim "│ (none)"))))
      (language
-      (application--source-preview-rows text :language language :limit limit))
+       (application--source-preview-rows
+        text :language              language
+             :limit                 limit
+             :rainbow-parentheses-p rainbow-parentheses-p))
      (t
       (application--preview-rows text style limit :gutter "│ ")))))
 
@@ -1652,7 +1663,8 @@ OPERATION's own declared target line so they stay numbered."
          (when (and captured values-text) (list nil))
          (application--section-preview-rows
           "values" (or values-text "") ':code
-          :language *application-common-lisp-language*))
+           :language              *application-common-lisp-language*
+           :rainbow-parentheses-p t))
         (application--preview-rows output
                                    ':dim
                                    *application-tool-output-lines*
@@ -2451,7 +2463,8 @@ that follow are the model's next observation, not something the user reads."
                       (when (and captured values-text) (list nil))
                       (application--section-preview-rows
                        "values" (or values-text "") ':code
-                       :language *application-common-lisp-language*))
+                        :language              *application-common-lisp-language*
+                        :rainbow-parentheses-p t))
                      (application--labeled-output-rows output)))))
       (call-next-method)))
 
@@ -2464,8 +2477,9 @@ that follow are the model's next observation, not something the user reads."
        record
        :rows (application--source-preview-rows
               (or (getf (rest record) :output) "")
-              :language *application-common-lisp-language*
-              :limit    *application-tool-output-lines*))
+              :language              *application-common-lisp-language*
+              :rainbow-parentheses-p t
+              :limit                 *application-tool-output-lines*))
       (call-next-method)))
 
 (defmethod application-tool-result-entry

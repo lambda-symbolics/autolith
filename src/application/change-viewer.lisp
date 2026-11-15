@@ -25,20 +25,26 @@
 
 (-> application--source-preview-rows
     (string &key (:path (option string)) (:language (option language))
-                 (:prompt (option string)) (:limit (integer 1)))
+                 (:prompt (option string)) (:limit (integer 1))
+                 (:rainbow-parentheses-p boolean))
     list)
 (defun application--source-preview-rows
-    (text &key path language prompt (limit *application-tool-call-lines*))
+    (text &key path language prompt (limit *application-tool-call-lines*)
+               rainbow-parentheses-p)
   "Return bounded syntax-highlighted source TEXT under one green ruler.
 
-PROMPT, when supplied, leads the first line and indents the following ones."
-  (render-source text
-                 :source-path            path
-                 :syntax-language        language
-                 :prompt                 prompt
-                 :line-limit             limit
-                 :sanitize-line-function #'application--sanitize-change-line
-                 :span-function          #'syntax--terminal-span))
+PROMPT, when supplied, leads the first line and indents the following ones.
+RAINBOW-PARENTHESES-P enables nesting colors for dedicated Lisp displays."
+  (let ((rows (render-source text
+                             :source-path            path
+                             :syntax-language        language
+                             :prompt                 prompt
+                             :line-limit             limit
+                             :sanitize-line-function #'application--sanitize-change-line
+                             :span-function          #'syntax--terminal-span)))
+    (if rainbow-parentheses-p
+        (syntax--rainbow-source-rows rows)
+        rows)))
 
 
 ;;; Before-and-after viewer

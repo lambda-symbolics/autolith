@@ -1736,6 +1736,8 @@
   test-native-tool-result-presentation
   test-native-role-and-continuity-presentation
   test-native-tool-result-presentation-bounds
+  test-lisp-rainbow-parentheses
+  test-lisp-rainbow-display-scope
   test-lisp-source-result-highlighting
   test-evaluation-value-highlighting
   test-tool-code-output-highlighting

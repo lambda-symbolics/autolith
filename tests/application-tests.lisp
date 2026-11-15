@@ -2347,6 +2347,96 @@
     (test-assert (< (length (test-terminal-row-text entry)) 100)
                  "excessively nested JSON uses safe bounded text instead of recursive decoding")))
 
+(-> test-lisp-rainbow-parentheses () null)
+(defun test-lisp-rainbow-parentheses ()
+  "Color only structural Lisp parentheses by depth, without reading the input."
+  ;; Brackets mark structural parentheses; literal parentheses must not gain roles.
+  (dolist (case (list '("[loop for x in '[1 2] collect x]" "1221")
+                     '("[[a] [b]] [c]" "12222111")
+                     (list (format nil "[let [[x 1]]~% [list x]]") "12332221")
+                     '("[list \"(escaped \\\" quote )\" #\\( #\\) #\\Space]" "11")
+                     '("[list |(escaped\\|name)| foo\\(bar foo\\)bar]" "11")
+                     '("[foo#|bar| [baz]]" "1221")
+                     '("[foo#\\a|(|]" "11")
+                     (list (format nil "[#\\a~C|(| [b]]" #\Page) "1221")
+                     '("[#.#| (ignored) |#[error \"never read\"]]" "1221")
+                     '("[#:foo#|(a)| #12=[x #12#]]" "1221")
+                     '("[#[1 [2]]]" "123321")
+                     '("[a #| ( #| ) |# ( |# [b]]" "1221")
+                     (list (format nil "[a ; ( ignored~% [b]]") "1221")
+                     '("[list \"\\\\\" [x]]" "1221")
+                     '("[missing-package::x #.[error \"never read\"]]" "1221")
+                     '("[[[[[[[[x]]]]]]]]" "1234561221654321")
+                     '("[" "1") '("]" "1")
+                     '("[a |unterminated(" "1")
+                     '("[a #|unterminated(" "1")))
+    (destructuring-bind (marked depths) case
+      (let* ((source   (substitute #\) #\] (substitute #\( #\[ marked)))
+             (spans    (syntax--highlight-spans source
+                                                :language              *application-common-lisp-language*
+                                                :rainbow-parentheses-p t))
+             (expected (loop for character across marked
+                             for index from 0
+                             when (find character "[]") collect index))
+             (actual   (loop with offset = 0
+                             for span in spans
+                             append (when (member (terminal-span-style span)
+                                                  *terminal-parenthesis-style-names*)
+                                      (loop for index below (length (terminal-span-text span))
+                                            collect (+ offset index)))
+                             do (incf offset (length (terminal-span-text span))))))
+        (test-assert (equal actual expected)
+                     (format nil "Only structural parentheses receive depth roles in ~S" source))
+        (test-assert (equal (loop for span in spans
+                                 when (member (terminal-span-style span)
+                                              *terminal-parenthesis-style-names*)
+                                   append (make-list (length (terminal-span-text span))
+                                                     :initial-element (terminal-span-style span)))
+                            (loop for digit across depths
+                                  collect (nth (1- (digit-char-p digit))
+                                               *terminal-parenthesis-style-names*)))
+                     "Matching delimiters share a depth color across forms and lines.")
+        (test-assert (string= source (format nil "~{~A~}" (mapcar #'terminal-span-text spans)))
+                     "Depth coloring preserves the complete source text."))))
+  (let* ((spans     (syntax--highlight-spans "(loop for x in '(1 2) collect x)"
+                                             :language              *application-common-lisp-language*
+                                             :rainbow-parentheses-p t))
+         (loop-span (find-if (lambda (span) (search "loop" (terminal-span-text span))) spans)))
+    (test-assert (eq ':syntax-keyword (terminal-span-style loop-span))
+                 "The LOOP operator retains keyword highlighting independently of parentheses.")))
+
+(-> test-lisp-rainbow-display-scope () null)
+(defun test-lisp-rainbow-display-scope ()
+  "Apply nesting colors to Lisp tool and local input, source and values only."
+  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+    (dolist (namespace '("lisp" "self"))
+      (let ((entry (response-item-entry
+                    application
+                    (json-object "type" "function_call" "namespace" namespace "name" "eval"
+                                 "arguments" (json-encode
+                                              (json-object "forms" (vector "(list (list 1))")))))))
+        (test-assert (find ':syntax-parenthesis-2 entry :key #'terminal-span-style)
+                     "Lisp evaluation tool inputs receive nesting colors.")))
+    (dolist (name '("lisp.eval" "self.eval" "lisp.describe" "lisp.source" "self.diff"))
+      (let* ((source-p (member name '("lisp.source" "self.diff") :test #'equal))
+             (output   (if source-p
+                           "(list (list 1))"
+                           (format nil "Output:~%(captured output)~%~%Values:~%((1))")))
+             (entry    (conversation-record-entry
+                        application (list :tool-result :tool name :status ':ok :output output))))
+        (test-assert (eq (not (equal name "self.diff"))
+                         (not (null (find ':syntax-parenthesis-2 entry :key #'terminal-span-style))))
+                     "Dedicated Lisp source and values receive nesting colors, excluding diffs.")
+        (unless source-p
+          (test-assert (find-if (lambda (span)
+                                  (and (eq ':plain (terminal-span-style span))
+                                       (search "(captured output)" (terminal-span-text span)))) entry)
+                       "Captured output has no nesting colors."))))
+    (dolist (spans (list (application-lisp-code-spans "((1))")
+                        (application-lisp--value-spans "((1))")))
+      (test-assert (find ':syntax-parenthesis-2 spans :key #'terminal-span-style)
+                   "Local Lisp input and rendered values receive nesting colors."))))
+
 (-> test-lisp-source-result-highlighting () null)
 (defun test-lisp-source-result-highlighting ()
   "Present returned Lisp source and mutation forms using syntax token roles."
@@ -2481,6 +2571,10 @@
                             (search (cl-hashline:line-anchor source) text)
                             (find role entry :key #'terminal-span-style))
                        "File contents preserve source, anchors and path-specific syntax.")
+          (test-assert (notany (lambda (span)
+                                 (member (terminal-span-style span)
+                                         *terminal-parenthesis-style-names*)) entry)
+                       "Resource source previews do not use Lisp nesting colors.")
           (test-assert (not (search source (test-terminal-row-text
                                             (conversation-record-entry compact record))))
                        "Resource source formatting respects compact result suppression.")

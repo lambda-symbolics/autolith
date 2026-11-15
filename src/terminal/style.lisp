@@ -23,6 +23,8 @@
       :compaction-label :compaction-track :compaction-head
       :syntax-comment :syntax-keyword :syntax-string :syntax-escape
       :syntax-number :syntax-type :syntax-function :syntax-property
+      :syntax-parenthesis-1 :syntax-parenthesis-2 :syntax-parenthesis-3
+      :syntax-parenthesis-4 :syntax-parenthesis-5 :syntax-parenthesis-6
       :syntax-heading :heading-emphasis :syntax-link)
     "Every semantic style a theme must render."))
 
@@ -44,6 +46,18 @@
   '(:lambda-logo-1 :lambda-logo-2 :lambda-logo-3
     :lambda-logo-4 :lambda-logo-5 :lambda-logo-6)
   "The Lambda Symbolics logo's green row styles, top to bottom.")
+
+(defparameter *terminal-parenthesis-style-names*
+  '(:syntax-parenthesis-1 :syntax-parenthesis-2 :syntax-parenthesis-3
+    :syntax-parenthesis-4 :syntax-parenthesis-5 :syntax-parenthesis-6)
+  "The repeating nesting-depth palette for Lisp parentheses.")
+
+(-> terminal--parenthesis-styles () list)
+(defun terminal--parenthesis-styles ()
+  "Return six distinct ANSI colors for the Lisp parenthesis depth palette."
+  (loop for name in *terminal-parenthesis-style-names*
+        for foreground in '(:yellow :cyan :magenta :green :blue :red)
+        collect (cons name (make-style :foreground foreground))))
 
 (-> terminal--style-table (list) list)
 (defun terminal--style-table (specifications)
@@ -138,6 +152,7 @@ neutral bright black because basic terminals cannot tint a row."
          collect (cons name (make-style
                              :foreground (indexed-color index :fallback ':green)
                              :bold       t)))
+   (terminal--parenthesis-styles)
    (terminal--recovery-gradient-styles)
    (terminal--lambda-logo-styles)
    (loop for (name foreground arguments) in
@@ -250,6 +265,7 @@ quiet text uses soft blue."
      (loop for name in *terminal-brand-gradient-names*
            for hex in *almighty-gradient*
            collect (cons name (make-style :foreground (hex-color hex) :bold t)))
+     (terminal--parenthesis-styles)
      (terminal--recovery-gradient-styles)
      (terminal--lambda-logo-styles)
      (loop for (name foreground arguments) in
