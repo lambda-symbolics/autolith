@@ -1495,7 +1495,7 @@
 
 (-> test-world-inbox () null)
 (defun test-world-inbox ()
-  "Test the inbox is named inbox, keeps agents out, stays out of the resume list, and the person's messages name where they were said."
+  "Test the inbox roots the channel tree, excludes agents, and preserves message origins."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
@@ -1503,6 +1503,11 @@
       (declare (ignore second-agent))
       (let* ((inbox (world-tests--inbox configuration))
              (world (world-load configuration)))
+        (test-assert (and (null (channel-parent (world-inbox-channel world)))
+                          (every (lambda (identifier)
+                                   (equal (channel-parent (world-channel-find world identifier)) inbox))
+                                 '("bfirst1" "bsecnd2")))
+                     "session channels descend directly from the home root")
         (test-assert (string= (channel-identifier (world-channel-designated world configuration "inbox"))
                               inbox)
                      "the word inbox names the person's inbox")
@@ -1538,6 +1543,43 @@
                                    (string= (world-delivery-sender copy) (participant-identifier human))
                                    (string= (world-delivery-source copy) "bfirst1"))))
                        "the person's message names the channel it was sent from, not the inbox")))))
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human agent) (world-tests--agents configuration)
+      (let* ((world (world-load configuration))
+             (inbox (channel-identifier (world-inbox-channel world)))
+             (owner (participant-identifier human))
+             (workspace (channel-workspace (world-channel-find world "bfirst1")))
+             (agent-parent (participant-parent agent)))
+        (world-channel-create configuration :id "bsecond" :owner owner :workspace workspace)
+        (world-channel-create configuration :id "bnested" :owner owner :workspace workspace
+                                            :parent "bfirst1")
+        (test-assert (equal (channel-parent (world-channel-find (world-load configuration) "bsecond")) inbox)
+                     "standalone channel creation defaults to home")
+        ;; Model a stored pre-home tree, including a nested inbox.
+        (world--transact
+         configuration
+         (lambda (current)
+           (values (mapcar (lambda (identifier)
+                             (world--channel-record
+                              (world--copy-channel (world-channel-find current identifier)
+                                                   :parent (when (equal identifier inbox) "bnested"))))
+                           (list "bfirst1" "bsecond" inbox))
+                   nil)))
+        (multiple-value-bind (repaired count) (world-reconcile-sessions configuration)
+          (test-assert (zerop count) "structural repair does not count as a source migration")
+          (test-assert (and (null (channel-parent (world-inbox-channel repaired)))
+                            (equal (channel-parent (world-channel-find repaired "bfirst1")) inbox)
+                            (equal (channel-parent (world-channel-find repaired "bsecond")) inbox)
+                            (equal (channel-parent (world-channel-find repaired "bnested")) "bfirst1")
+                            (equal (participant-parent
+                                    (world-participant-find repaired (participant-identifier agent)))
+                                   agent-parent))
+                       "unchanged sources repair stored roots while preserving nested and participant ancestry"))
+        (multiple-value-bind (unchanged count) (world-reconcile-sessions configuration)
+          (test-assert (and (zerop count) (null (world-session--home-records unchanged 5000)))
+                       "repeated home reconciliation needs no further repair")))))
   nil)
 
 (-> world-tests--child-conversation
@@ -2140,6 +2182,25 @@
                      "the root agent's descendants are its child and its grandchild")
         (test-assert (zerop (nth-value 1 (world-reconcile-sessions configuration :now 4000)))
                      "the repaired ancestry is stable"))))
+  (with-test-configuration (configuration)
+    (world-tests--child-conversation configuration "exec-late"
+                                     :root "blate11" :parent "blate11" :name "helper"
+                                     :created-at 1500)
+    (let* ((world (values (world-reconcile-sessions configuration :now 2000)))
+           (inbox (channel-identifier (world-inbox-channel world))))
+      (test-assert (equal (channel-parent (world-channel-find world "exec-late")) inbox)
+                   "a task whose parent has not arrived initially descends from home")
+      (world-tests--persisted-conversation configuration "blate11" 1000)
+      (let* ((repaired (values (world-reconcile-sessions configuration :now 3000)))
+             (parent (find ':agent (world-channel-residents repaired "blate11") :key #'participant-kind))
+             (child (find ':agent (world-channel-residents repaired "exec-late") :key #'participant-kind)))
+        (test-assert (and (equal (channel-parent (world-channel-find repaired "blate11")) inbox)
+                          (equal (channel-parent (world-channel-find repaired "exec-late")) "blate11")
+                          parent child
+                          (equal (participant-parent child) (participant-identifier parent)))
+                     "a late parent adopts the task from home with its agent ancestry"))
+      (test-assert (zerop (nth-value 1 (world-reconcile-sessions configuration :now 4000)))
+                   "late adoption settles after one reconciliation")))
   nil)
 
 (-> test-world-parent-mention () null)

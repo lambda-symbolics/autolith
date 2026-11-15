@@ -565,7 +565,7 @@ parent is never left behind its retired children."
                                               :created-at now
                                               :updated-at now)))
                (channel    (world-channel-find preview identifier))
-               (adopted-p  (and channel parent (null (channel-parent channel))))
+               (adopted-p  (and channel parent (world-channel-top-level-p preview channel)))
                (keeper     (participant-identifier (or ancestor owner)))
                (mapping    (getf change :mapping))
                (existing   (world-session--mapped-participant preview mapping identifier)))
@@ -574,7 +574,10 @@ parent is never left behind its retired children."
              (emit (world--channel-record
                     (make-instance 'channel
                                    :identifier identifier
-                                   :parent     (and parent parent-id)
+                                   :parent     (unless inbox-p
+                                                 (or (and parent parent-id)
+                                                     (let ((inbox (world-inbox-channel preview)))
+                                                       (and inbox (channel-identifier inbox)))))
                                    :owner      keeper
                                    :workspace  workspace
                                    :title      title
@@ -647,9 +650,30 @@ parent is never left behind its retired children."
       (dolist (mapping vanished)
         (retire mapping))
       (sweep)
+      (dolist (record (world-session--home-records preview now))
+        (emit record))
       (dolist (record (world-session--handle-records preview now))
         (emit record)))
     (values (nreverse records) (nreverse planned) (nreverse ended))))
+
+(-> world-session--home-records (world timestamp) list)
+(defun world-session--home-records (world now)
+  "Return records making home the root while preserving existing nested ancestry."
+  (let ((inbox (world-inbox-channel world)))
+    (when inbox
+      (let ((identifier (channel-identifier inbox)))
+        (append
+         (when (channel-parent inbox)
+           (list (world--channel-record
+                  (world--copy-channel inbox
+                                       :parent nil
+                                       :updated-at (max now (channel-updated-at inbox))))))
+         (loop for channel in (world-channels world)
+               when (and (not (channel-inbox-p channel)) (null (channel-parent channel)))
+                 collect (world--channel-record
+                          (world--copy-channel channel
+                                               :parent identifier
+                                               :updated-at (max now (channel-updated-at channel))))))))))
 
 (-> world-session--handle-base (string) string)
 (defun world-session--handle-base (identifier)
@@ -738,7 +762,7 @@ conversation and creates an inbox conversation when none is found."
                                            :orphan-p (lambda (identifier root root-requested-p)
                                                        (let ((channel (world-channel-find discovery identifier)))
                                                          (and channel
-                                                              (null (channel-parent channel))
+                                                              (world-channel-top-level-p discovery channel)
                                                               (or root-requested-p
                                                                   (world-channel-find discovery root))
                                                               t))))))
@@ -755,6 +779,7 @@ conversation and creates an inbox conversation when none is found."
           (setf vanished nil))
         (if (and (null changes)
                  (null vanished)
+                 (null (world-session--home-records discovery now))
                  (not (world-session--duplicate-names-p discovery)))
             (values discovery 0)
             (let ((updated nil) (ended nil))

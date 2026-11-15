@@ -869,6 +869,14 @@ Only the matches get sorted, not every channel."
                          (lambda (channel)
                            (equal (channel-parent channel) channel-identifier))))
 
+(-> world-channel-top-level-p (world channel) boolean)
+(defun world-channel-top-level-p (world channel)
+  "Recognize a non-inbox CHANNEL directly under home, or a legacy unparented one."
+  (and (not (channel-inbox-p channel))
+       (let* ((identifier (channel-parent channel))
+              (parent (and identifier (world-channel-find world identifier))))
+         (or (null identifier) (and parent (channel-inbox-p parent) t)))))
+
 (-> world-participant-children (world string) list)
 (defun world-participant-children (world participant-identifier)
   "Return the participants whose parent is PARTICIPANT-IDENTIFIER."
@@ -1023,7 +1031,9 @@ names the caller in refusals."
                         (conversation-identifier-generate
                          (configuration-conversation-root configuration)
                          :timestamp now)))
-        (parent     (getf home :parent))
+        (parent     (or (getf home :parent)
+                        (let ((inbox (world-inbox-channel world)))
+                          (and inbox (channel-identifier inbox)))))
         (title      (getf home :title)))
     (when (gethash identifier (world--deleted-channel-table world))
       (error 'world-error

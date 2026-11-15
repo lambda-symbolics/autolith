@@ -3,9 +3,9 @@
 ;;;; -- World Sidebar --
 
 ;;; The side panel a terminal client shows beside its channel: the person's
-;;; inbox first, with the messages waiting there unread, then every other
-;;; channel of the world grouped by workspace, with what runs there, who is
-;;; attached, and what arrived since this client last looked. Channel unread
+;;; home channel first, with the messages waiting there unread, then every
+;;; other channel beneath it, grouped by workspace, with what runs there, who
+;;; is attached, and what arrived since this client last looked. Channel unread
 ;;; and mention baselines are client-local and start at the current counts.
 ;;; A started sidebar gathers on its own thread, so reading the world, the
 ;;; server and the inboxes never holds up the terminal's keystrokes; the
@@ -227,7 +227,8 @@ a refresh is due."
     (cond
       (command
        (list ':application-command command))
-      ((and toggle (or (null open) (<= column *world-sidebar-marker-columns*)))
+      ((and toggle (or (null open)
+                       (<= column (getf action :marker-columns *world-sidebar-marker-columns*))))
        (world-sidebar--toggle panel toggle)
        ':redraw)
       (open
@@ -302,12 +303,11 @@ a refresh is due."
          (world-sidebar--reveal-selection panel)
          ':redraw)
         (:submit
-         (world-sidebar--activate
-          panel
-          (if (< current count)
-              (world-sidebar--entry-action (nth current entries))
-              (list :command (if (= current count) "(new)" "(delete)")))
-          (1+ *world-sidebar-marker-columns*)))
+         (let ((action (if (< current count)
+                           (world-sidebar--entry-action (nth current entries))
+                           (list :command (if (= current count) "(new)" "(delete)")))))
+           (world-sidebar--activate
+            panel action (1+ (getf action :marker-columns *world-sidebar-marker-columns*)))))
         ((:left :right)
          (let* ((entry  (nth current entries))
                 (action (and entry (world-sidebar--entry-action entry)))
@@ -475,7 +475,7 @@ A newly hosted channel without durable history sorts by its creation time."
                         (:statuses list) (:pending list))
     list)
 (defun world-sidebar--entries (sidebar &key inbox channels names statuses pending)
-  "Return the INBOX entry, then the workspace and channel entries of CHANNELS that are open to view.
+  "Return the home INBOX entry, then its indented workspace and channel entries.
 
 NAMES pairs channels with their agents' names; STATUSES and PENDING
 deliveries are folded in. The inbox's unread count is what waits in it for
@@ -495,12 +495,14 @@ what it hides."
                "Return the shown entries of NODE at DEPTH, and the entries of all its descendants."
                (let* ((channel    (first node))
                       (identifier (channel-identifier channel))
-                      (entry      (world-sidebar--channel-entry
-                                   sidebar channel
-                                   :depth   depth
-                                   :name    (rest (assoc identifier names :test #'string=))
-                                   :status  (gethash identifier table)
-                                   :pending (rest (assoc identifier pending :test #'string=))))
+                      (entry      (append
+                                   (world-sidebar--channel-entry
+                                    sidebar channel
+                                    :depth   depth
+                                    :name    (rest (assoc identifier names :test #'string=))
+                                    :status  (gethash identifier table)
+                                    :pending (rest (assoc identifier pending :test #'string=)))
+                                   (list :indent (if inbox 2 0))))
                       (shown      nil)
                       (all        nil))
                  (dolist (child (rest node))
@@ -536,7 +538,8 @@ what it hides."
                         (cons (append (list :kind ':workspace
                                             :key  workspace
                                             :name (world-workspace-leaf workspace)
-                                            :path (world-sidebar--short-path workspace))
+                                            :path (world-sidebar--short-path workspace)
+                                            :indent (if inbox 2 0))
                                       (world-sidebar--fold all :open-p open-p))
                               (and open-p shown)))))))))
 
@@ -682,54 +685,58 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
     (:channel
      (append (list :open (getf entry :id))
              (when (getf entry :children-p)
-               (list :toggle (getf entry :id)))))))
+                (list :toggle (getf entry :id)
+                      :marker-columns (+ *world-sidebar-marker-columns* (getf entry :indent 0))))))))
 
 (-> world-sidebar--entry-spans (list) list)
 (defun world-sidebar--entry-spans (entry)
-  "Return the styled spans of one inbox, workspace or channel ENTRY.
+  "Return the styled spans of one home, workspace or channel ENTRY.
 
 A channel shows whether it is current, its tree marker, its agent's state,
 then its agent's name and its title; a closed node shows what it hides."
-  (ecase (getf entry :kind)
-    (:inbox
-     (append
-      (list (world-sidebar--current-span entry)
-            (terminal-span ':plain " ")
-            (terminal-span ':user "inbox"))
-      (when (plusp (getf entry :unread))
-        (list (terminal-span ':notice (format nil " ~D unread" (getf entry :unread)))))))
-    (:workspace
-     (append
-      (list (world-sidebar--marker-span entry)
-            (terminal-span ':strong (format nil " ~A" (getf entry :name))))
-      (world-sidebar--hidden-spans entry)
-      (when (getf entry :open-p)
-        (list (terminal-span ':dim (format nil "  ~A" (getf entry :path)))))))
-    (:channel
-     (append
-      (list (world-sidebar--current-span entry)
-            (world-sidebar--marker-span entry)
-            (terminal-span ':plain (make-string (1+ (* 2 (getf entry :depth))) :initial-element #\Space))
-            (world-sidebar--state-span (getf entry :state) (getf entry :waiting-for-jobs-p))
-            (terminal-span (cond
-                             ((getf entry :current-p)
-                              ':legend-accent)
-                             ((getf entry :attached-p)
-                              ':user)
-                             (t
-                              ':plain))
-                           (or (getf entry :name)
-                               (getf entry :title)
-                               (conversation-identifier-display (getf entry :id)))))
-      (when (plusp (getf entry :mentions))
-        (list (terminal-span ':legend-accent (format nil " @~D" (getf entry :mentions)))))
-      (when (plusp (getf entry :unread))
-        (list (terminal-span ':notice (format nil " ~D" (getf entry :unread)))))
-      (when (plusp (getf entry :pending))
-        (list (terminal-span ':dim (format nil " ~D pending" (getf entry :pending)))))
-      (world-sidebar--hidden-spans entry)
-      (when (and (getf entry :name) (getf entry :title))
-        (list (terminal-span ':dim (format nil " ~A" (getf entry :title)))))))))
+  (append
+   (when (plusp (getf entry :indent 0))
+     (list (terminal-span ':plain (make-string (getf entry :indent) :initial-element #\Space))))
+   (ecase (getf entry :kind)
+     (:inbox
+      (append
+       (list (world-sidebar--current-span entry)
+             (terminal-span ':plain " ")
+             (terminal-span ':user "home ~"))
+       (when (plusp (getf entry :unread))
+         (list (terminal-span ':notice (format nil " ~D unread" (getf entry :unread)))))))
+     (:workspace
+      (append
+       (list (world-sidebar--marker-span entry)
+             (terminal-span ':strong (format nil " ~A" (getf entry :name))))
+       (world-sidebar--hidden-spans entry)
+       (when (getf entry :open-p)
+         (list (terminal-span ':dim (format nil "  ~A" (getf entry :path)))))))
+     (:channel
+      (append
+       (list (world-sidebar--current-span entry)
+             (world-sidebar--marker-span entry)
+             (terminal-span ':plain (make-string (1+ (* 2 (getf entry :depth))) :initial-element #\Space))
+             (world-sidebar--state-span (getf entry :state) (getf entry :waiting-for-jobs-p))
+             (terminal-span (cond
+                              ((getf entry :current-p)
+                               ':legend-accent)
+                              ((getf entry :attached-p)
+                               ':user)
+                              (t
+                               ':plain))
+                            (or (getf entry :name)
+                                (getf entry :title)
+                                (conversation-identifier-display (getf entry :id)))))
+       (when (plusp (getf entry :mentions))
+         (list (terminal-span ':legend-accent (format nil " @~D" (getf entry :mentions)))))
+       (when (plusp (getf entry :unread))
+         (list (terminal-span ':notice (format nil " ~D" (getf entry :unread)))))
+       (when (plusp (getf entry :pending))
+         (list (terminal-span ':dim (format nil " ~D pending" (getf entry :pending)))))
+       (world-sidebar--hidden-spans entry)
+       (when (and (getf entry :name) (getf entry :title))
+         (list (terminal-span ':dim (format nil " ~A" (getf entry :title))))))))))
 
 (-> world-sidebar--current-span (list) cons)
 (defun world-sidebar--current-span (entry)

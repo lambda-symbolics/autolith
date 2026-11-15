@@ -1629,18 +1629,18 @@ running one.
 *** Channel sidebar
 
 In fullscreen mode, an attached terminal can show the world's channels in a
-sidebar on the left. Your inbox comes first, with the number of messages
-waiting there unread; that count is kept on disk, so every terminal shows
-the same one. The other channels are grouped by workspace, with the current
-workspace first. Within a workspace, the channel whose conversation changed
-last comes first, and child channels are nested under their parents. Each
-channel shows its agent's name, then its title.
+sidebar on the left. Your inbox appears as =home ~=, with the number of
+messages waiting there unread; that count is kept on disk, so every terminal
+shows the same one. Other channels descend from home and are indented beneath
+it, grouped by workspace, with the current workspace first. Within a workspace,
+the channel whose conversation changed last comes first, and child channels
+are nested under their parents. Each channel shows its agent's name, then its title.
 
 The workspaces and channels form a tree. The current workspace starts open,
 and so does each channel the current one nests in; the rest start closed. A
 closed node shows how many channels it hides and their unread counts. Click
 a node's =▸= or =▾= marker, or a workspace's row, to open or close it; the
-sidebar keeps that choice. Click a channel or the inbox to switch to it.
+sidebar keeps that choice. Click a channel or home to switch to it.
 
 | Marker    | Meaning                         |
 |-----------+---------------------------------|
@@ -1664,8 +1664,8 @@ by default. Press =Ctrl-S= to open a full-screen channel drawer. Use =↑= and
 =↓= to select, =Enter= to open a channel, and =←= or =→= to close or open a
 tree node. Scroll the tree with the mouse wheel or =PageUp= and =PageDown=.
 In the docked sidebar, click the heading's scroll arrows. The =(new)= and
-=(delete)= buttons are fixed below the tree;
-select either to run the command in this terminal's current channel.
+=(delete)= buttons share a fixed row below the tree; select either to run
+the command in this terminal's current channel.
 Press =Esc= or =Ctrl-S=, or select the current channel, to return to the
 composer. Opening another channel closes the drawer.
 
