@@ -384,7 +384,7 @@
 
 (-> test-conversation-native-compaction () null)
 (defun test-conversation-native-compaction ()
-  "Test durable opaque compaction with a checkpoint every family reads."
+  "Test a stored opaque window with a checkpoint every family reads."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration)))
     (unwind-protect
@@ -399,8 +399,10 @@
             (list :request-number 1
                   :response-id    "before-native-compact"
                   :usage          '(("total_tokens" 4321))))
-           (conversation-append-native-compaction
-            conversation (list item) :family ':codex :continuation (make-continuation :intent "Portable handoff."))
+           (setf conversation
+                 (test-conversation-with-native-window
+                  configuration conversation (list item)
+                  :family ':codex :continuation (make-continuation :intent "Portable handoff.")))
            (test-assert
             (and (= (length (conversation-input-items conversation)) 2)
                  (native-compaction-item-p

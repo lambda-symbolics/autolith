@@ -406,7 +406,6 @@
                 #:provider-family
                 #:provider-item-event
                 #:provider-item-event-item
-                #:provider-native-compact-conversation
                 #:provider-normalize-output-item
                 #:provider-output-ceiling-p
                 #:provider-progress-event

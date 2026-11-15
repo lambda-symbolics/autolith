@@ -56,34 +56,13 @@
     :documentation "The compaction flag supplied on each request."))
   (:documentation "A deterministic provider for exercising repeated agent rounds."))
 
-(defclass native-scripted-provider (scripted-provider)
-  ((native-items
-    :initarg       :native-items
-    :accessor      native-scripted-provider-native-items
-    :type          list
-    :documentation "Opaque native checkpoints returned in request order.")
-   (native-input-snapshots
-    :initform      nil
-    :accessor      native-scripted-provider-native-input-snapshots
-    :type          list
-    :documentation "Durable projections observed by native compaction requests."))
-  (:documentation "A scripted provider that supports Codex-style native compaction."))
+(defclass codex-scripted-provider (scripted-provider) ()
+  (:documentation "A scripted provider in the Codex model family."))
 
-(defmethod provider-family ((provider native-scripted-provider))
-  "Treat the native scripted provider as the Codex model family."
+(defmethod provider-family ((provider codex-scripted-provider))
+  "Place the scripted provider in the Codex model family."
   (declare (ignore provider))
   ':codex)
-
-(defmethod provider-native-compact-conversation
-    ((provider native-scripted-provider)
-     (conversation conversation)
-     &key tool-namespaces event-callback)
-  "Return the next scripted native checkpoint after recording durable input."
-  (declare (ignore tool-namespaces event-callback))
-  (push (conversation-input-items-for-request
-         conversation :include-ephemeral-p nil)
-        (native-scripted-provider-native-input-snapshots provider))
-  (pop (native-scripted-provider-native-items provider)))
 
 (defmethod provider-stream-turn
     ((provider scripted-provider)
@@ -2526,92 +2505,6 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                                        0)
                                  "text"))
                         "the live projection starts from the summary bridge"))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> test-agent-native-compaction () null)
-(defun test-agent-native-compaction ()
-  "Test that an opaque native window is stored beside a checkpoint every provider reads."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration)))
-    (unwind-protect
-         (let* ((conversation
-                  (conversation-create configuration :identifier "agent-native-compact"))
-                (summary-item (agent-test-checkpoint-call))
-                (earlier-item
-                  (json-object
-                   "type" "message"
-                   "role" "assistant"
-                   "content" (json-array
-                              (json-object "type" "output_text"
-                                           "text" "Earlier response."))))
-                (answer-item
-                  (json-object
-                   "type" "message"
-                   "role" "assistant"
-                   "content" (json-array
-                              (json-object "type" "output_text"
-                                           "text" "Done."))))
-                (provider
-                  (make-instance
-                   'native-scripted-provider
-                   :configuration configuration
-                   :native-items
-                   (list (json-object "type" "compaction"
-                                      "encrypted_content" "native-checkpoint"))
-                   :results       (list (agent-test-result "compact-native"
-                                                           (list summary-item)
-                                                           :turn-completion ':end)
-                                        (agent-test-result "turn-native"
-                                                           (list answer-item)
-                                                           :turn-completion ':end))))
-                (agent        (agent-create :configuration configuration
-                                            :provider      provider
-                                            :conversation  conversation
-                                            :tool-registry (agent-test-registry)
-                                            :worker        nil)))
-            (conversation-append-user-message conversation "earlier context")
-            (conversation-append-provider-item conversation earlier-item)
-            (conversation-append-provider-metadata
-             conversation
-             (list :request-number 1
-                   :response-id    "seed-native"
-                   :usage          '(("total_tokens" 999999))))
-           (let ((pending t))
-             (test-call-with-function-replacements
-              (list (list 'agent-should-compact-p
-                          (lambda (agent) (declare (ignore agent))
-                            (prog1 pending (setf pending nil)))))
-              (lambda () (agent-run-user-turn agent "hello"))))
-           (test-assert
-            (= (length
-                (first
-                 (native-scripted-provider-native-input-snapshots provider)))
-               3)
-            "native compaction receives the full durable projection")
-           (test-assert
-            (= (first (reverse (scripted-provider-input-counts provider))) 3)
-            "the checkpoint is written from the readable history, not from the native window")
-           (test-assert
-            (find :native-compaction
-                  (rest (conversation--read-records
-                         (conversation-pathname conversation)))
-                  :key #'first)
-            "native compaction persists its opaque checkpoint")
-           (test-assert
-            (native-compaction-item-p
-             (first (conversation-input-items conversation)))
-            "the active provider reuses the opaque checkpoint")
-           (test-assert
-             (= (length (conversation-input-items-for-family conversation ':codex)) 3)
-             "the active provider receives the opaque window, the checkpoint and the new answer")
-           (test-assert
-             (= (length (conversation-input-items-for-family conversation ':grok)) 2)
-             "another provider receives the checkpoint and the new answer")
-           (test-assert
-            (equal (agent-tests--request-numbers conversation)
-                   '((1 nil) (1 :native) (2 :summary) (3 nil)))
-            "both compaction requests are metered ahead of the user request"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 

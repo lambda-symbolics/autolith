@@ -385,11 +385,6 @@ credentials and model metadata independently of their cached wire routes."
     (provider request &key credentials conversation)
   (:documentation "Open an authenticated provider stream and return body, status, and headers."))
 
-(defgeneric provider-open-native-compaction
-    (provider request &key credentials conversation)
-  (:documentation
-   "POST REQUEST to PROVIDER's native compaction endpoint and return its body."))
-
 (defparameter *compaction-instructions*
   (format nil "Stop working on the task. You are now writing the checkpoint that replaces this conversation so far. Call compaction.submit once and write nothing else. Do not call other tools, wait for jobs, or do more work.
 
@@ -485,51 +480,6 @@ With another value there, a live compaction request read nothing from the cache.
      (when (configuration-codex-fast-mode-active-p configuration)
        (list "service_tier" "priority")))))
 
-(defparameter *provider-history-trimming-p* nil
-  "True while history is projected for a compaction request.
-
-Consumed tool search expansions are replayed empty there, as the Codex
-reference does when trimming, and intact everywhere else so the server keeps
-the expanded tools loaded without another search.")
-
-(-> provider-native-compaction-request-object
-    (codex-subscription-provider conversation vector)
-    json-object)
-(defun provider-native-compaction-request-object
-    (provider conversation tool-namespaces)
-  "Build a standard Responses compaction request for CONVERSATION.
-
-Durable family-compatible history and top-level instructions participate in the
-native checkpoint. Request-local contributions and pending one-response items
-stay outside it, and consumed tool search expansions replay empty because the
-checkpoint summarizes history rather than continuing it."
-  (declare (ignore tool-namespaces))
-  (let* ((configuration (provider-configuration provider))
-         (instructions
-           (responses-standard-instructions
-            (list
-             (let ((*system-prompt-hosted-web-search-p* nil))
-               (system-prompt configuration)))))
-         (input
-           (let ((*provider-history-trimming-p* t))
-             (map 'vector
-                  (lambda (item)
-                    (provider-wire-input-item provider item))
-                  (conversation-input-items-for-family
-                   conversation
-                   (provider-family provider)
-                   :include-ephemeral-p nil)))))
-    (apply
-     #'json-object
-     (append
-      (list
-       "model" (config :model configuration)
-       "instructions" instructions
-       "input" input
-       "prompt_cache_key" (provider--codex-prompt-cache-key provider conversation))
-      (when (configuration-codex-fast-mode-active-p configuration)
-        (list "service_tier" "priority"))))))
-
 (-> provider--codex-request-headers
     (codex-subscription-provider oauth-credentials conversation
      &key (:accept string))
@@ -566,17 +516,6 @@ grew to 11392 of 11491 without it."
    (cons "thread-id" (conversation-identifier conversation))
    (cons "x-client-request-id" (conversation-identifier conversation))))
 
-(-> provider--native-compaction-endpoint (codex-subscription-provider) string)
-(defun provider--native-compaction-endpoint (provider)
-  "Return the native compaction endpoint corresponding to PROVIDER's endpoint."
-  (let ((endpoint
-          (string-right-trim
-           '(#\/)
-           (config :provider-endpoint (provider-configuration provider)))))
-    (if (uiop:string-suffix-p "/responses/compact" endpoint)
-        endpoint
-        (format nil "~A/compact" endpoint))))
-
 (defmethod provider-open-response-stream
     ((provider codex-subscription-provider)
      (request hash-table)
@@ -598,30 +537,6 @@ the requests of a turn for the same reason, at commit 6f51c65958."
      :headers      (provider--codex-request-headers
                     provider credentials conversation :accept "text/event-stream")
      :keep-alive-p t)))
-
-(defmethod provider-open-native-compaction
-    ((provider codex-subscription-provider)
-     (request hash-table)
-     &key credentials conversation)
-  "POST a JSON native compaction REQUEST to the ChatGPT Codex endpoint.
-
-The pooled connection is shared with the streaming requests so a compaction
-reaches the backend holding the conversation's cached prefix."
-  (declare (type oauth-credentials credentials)
-           (type conversation conversation))
-  (provider-call-with-response-deadline
-   300
-   (lambda ()
-     (dexador:post
-      (provider--native-compaction-endpoint provider)
-      :headers             (provider--codex-request-headers
-                            provider credentials conversation :accept "application/json")
-      :content             (json-encode-utf8 request)
-      :force-string        t
-      :keep-alive          t
-      :use-connection-pool t
-      :connect-timeout     30
-      :read-timeout        300))))
 
 
 ;;;; -- Usage Limit Failures --
@@ -871,19 +786,6 @@ and codes follow the Codex reference at commit 6f51c65958."
                                     :conversation                 conversation))
    :terminal-errors-p t))
 
-(-> provider--open-native-compaction
-    (codex-subscription-provider json-object
-     &key (:credentials oauth-credentials) (:conversation conversation))
-    (values string integer t))
-(defun provider--open-native-compaction
-       (provider request &key credentials conversation)
-  "Open an authenticated product request through portable transport normalization."
-  (provider--call-with-transport-normalization
-   (lambda ()
-     (provider-open-native-compaction provider request :credentials credentials
-                                      :conversation                 conversation))
-   :terminal-errors-p t))
-
 (define-condition provider-result-rejected (provider-retryable-error)
   ((result :initarg :result :reader provider-result-rejected-result
            :type          provider-result
@@ -1088,231 +990,20 @@ original condition or weakening the streaming safety limit."
    event-callback))
 
 
-;;;; -- Native Responses Compaction --
+;;;; -- Refused Output --
 
-(-> provider--signal-invalid-native-compaction
-    (codex-subscription-provider integer t)
-    null)
-(defun provider--signal-invalid-native-compaction (provider status headers)
-  "Signal that Codex returned an unusable successful compaction response."
-  (declare (ignore provider))
-  (error 'provider-error
-         :message    "The provider returned an invalid native compaction response."
-         :status     status
-         :request-id (provider--response-request-id headers)
-         :response   nil))
-
-(defclass native-compaction-completed-event (provider-event)
-  ((usage
-    :initarg       :usage
-    :reader        native-compaction-completed-event-usage
-    :documentation "Reported paid usage, or NIL when the provider omitted it.")
-   (response-id
-    :initarg       :response-id
-    :reader        native-compaction-completed-event-response-id
-    :documentation "The response identifier when one was reported."))
-  (:documentation "A completion notification emitted before native output validation."))
-
-(-> provider--native-compaction-refusal-p (t) boolean)
-(defun provider--native-compaction-refusal-p (value)
+(-> provider--output-refusal-p (t) boolean)
+(defun provider--output-refusal-p (value)
   "Recognize refusal items, including refusals nested inside message content."
   (typecase value
     (hash-table
      (or (equal (json-get value "type") "refusal")
          (non-empty-string-p (json-get value "refusal"))
          (loop for child being the hash-values of value
-               thereis (provider--native-compaction-refusal-p child))))
+               thereis (provider--output-refusal-p child))))
     (string
      nil)
     (vector
-     (some #'provider--native-compaction-refusal-p value))
+     (some #'provider--output-refusal-p value))
     (t
      nil)))
-
-(-> provider--native-compaction-item-valid-p (json-object) boolean)
-(defun provider--native-compaction-item-valid-p (item)
-  "Check standard item fields while preserving unfamiliar typed protocol extensions."
-  (let ((type   (json-get item "type"))
-        (status (json-get item "status")))
-    (and (non-empty-string-p type)
-         (or (null status) (equal status "completed"))
-         (not (provider--native-compaction-refusal-p item))
-         (cond
-           ((equal type "message")
-            (and (member (json-get item "role") '("system" "developer" "user" "assistant")
-                         :test #'equal)
-                 (let ((content (json-get item "content")))
-                   (and (vectorp content) (not (stringp content))
-                        (every (lambda (part)
-                                 (and (json-object-p part)
-                                      (non-empty-string-p (json-get part "type"))
-                                      (or (not (member (json-get part "type")
-                                                       '("input_text" "output_text" "text")
-                                                       :test #'equal))
-                                          (stringp (json-get part "text")))))
-                               content)))
-                 t))
-           ((equal type "function_call")
-            (and (non-empty-string-p (json-get item "call_id"))
-                 (non-empty-string-p (json-get item "name"))
-                 (stringp (json-get item "arguments"))))
-           ((equal type "function_call_output")
-            (and (non-empty-string-p (json-get item "call_id"))
-                 (nth-value 1 (gethash "output" item))))
-           ((equal type "reasoning")
-            (let ((summary (json-get item "summary")))
-              (or (null summary) (and (vectorp summary) (not (stringp summary))))))
-           ((native-compaction-item-p item)
-            (non-empty-string-p (json-get item "encrypted_content")))
-           (t
-            t)))))
-
-(-> provider--native-compaction-window-valid-p (list) boolean)
-(defun provider--native-compaction-window-valid-p (items)
-  "Reject malformed items, orphan results, duplicate correlations and missing results."
-  (handler-case
-      (and (every #'provider--native-compaction-item-valid-p items)
-           (every (lambda (item)
-                    (or (not (clinker-transcript:function-call-output-item-p item))
-                        (find-if (lambda (call)
-                                   (and (clinker-transcript:function-call-item-p call)
-                                        (equal (json-get call "call_id")
-                                               (json-get item "call_id"))))
-                                 items)))
-                  items)
-           (null (clinker-transcript:reconciliation-repairs
-                  (clinker-transcript:reconcile-items items))))
-    (clinker-transcript:projection-error () nil)))
-
-(-> provider--decode-native-compaction-response
-    (codex-subscription-provider t &key (:status integer) (:headers t)
-                                     (:event-callback (option function)))
-    (values (option list) (option json-object)))
-(defun provider--decode-native-compaction-response
-    (provider body &key status headers event-callback)
-  "Decode BODY and return its complete normalized compacted output window.
-
-Emit one completion event before response validation, including when the HTTP
-success body cannot be decoded. Unknown usage and response IDs remain NIL."
-  (let* ((source (provider--error-body-text body))
-         (response
-           (and (non-empty-string-p source)
-                (handler-case (json-decode source)
-                  (error () nil))))
-         (usage  (and (json-object-p response) (json-get response "usage")))
-         (response-id
-           (and (json-object-p response)
-                (or (json-get response "id") (json-get response "response_id")))))
-    (when (functionp event-callback)
-      (funcall event-callback
-               (make-instance 'native-compaction-completed-event
-                              :usage       (and (json-object-p usage) usage)
-                              :response-id (and (stringp response-id) response-id))))
-    (unless (json-object-p response)
-      (provider--signal-invalid-native-compaction provider status headers))
-    (let ((output (json-get response "output")))
-      (unless (and (vectorp output) (every #'json-object-p output))
-        (provider--signal-invalid-native-compaction provider status headers))
-      (handler-case
-          (let ((items
-                  (map 'list
-                       (lambda (item)
-                         (let ((normalized
-                                 (provider-normalize-output-item provider item)))
-                           (when (native-compaction-item-p normalized)
-                             (native-compaction-item-canonicalize normalized))
-                           normalized))
-                       output)))
-            (unless (and (every (lambda (item)
-                                  (and (json-object-p item)
-                                       (non-empty-string-p (json-get item "type"))))
-                                items)
-                         (provider--native-compaction-window-valid-p items))
-              (provider--signal-invalid-native-compaction provider status headers))
-            (values (and (some #'native-compaction-item-p items) items)
-                    (and (json-object-p usage) usage)))
-        (error ()
-          (provider--signal-invalid-native-compaction provider status headers))))))
-
-(defgeneric provider-attempt-native-compaction
-    (provider conversation &key tool-namespaces force-refresh event-callback)
-  (:documentation
-   "Perform one authenticated Codex native compaction request.
-
-   Return the complete normalized compacted window and the response usage as
-   two values. The first value is NIL when the response has no usable opaque
-   checkpoint, while the usage value is still returned."))
-
-(defmethod provider-attempt-native-compaction
-    ((provider codex-subscription-provider)
-     (conversation conversation)
-     &key tool-namespaces force-refresh event-callback)
-  "Perform one native compaction attempt with optional credential refresh."
-  (declare (type vector tool-namespaces)
-           (type boolean force-refresh))
-  (with-credentials (credentials (provider-credential-manager provider)
-                                 :force-refresh force-refresh)
-    (let* ((*provider-active-credential-values*
-             (oauth-credentials-secret-values credentials))
-           (*provider-active-credential-redaction-marker*
-             (safe-redaction-marker
-              *provider-credential-redaction-marker*
-              *provider-active-credential-values*)))
-      (handler-case
-          (handler-case
-              (let ((request
-                      (provider-native-compaction-request-object
-                       provider conversation tool-namespaces)))
-                (multiple-value-bind (body status raw-headers)
-                    (provider--open-native-compaction
-                     provider request :credentials credentials :conversation conversation)
-                  (let ((headers (provider--sanitize-wire-value raw-headers)))
-                    (provider-note-response-headers provider headers)
-                    (unless (= status 200)
-                      (provider--codex-signal-status-failure
-                       provider status :headers headers :raw-body body))
-                    (provider--decode-native-compaction-response
-                     provider body :status status :headers headers
-                     :event-callback event-callback))))
-            ;; Normalized Dexador conditions must reach the attempt's classifier.
-            (dexador.error:http-request-unauthorized (condition)
-              (provider-signal-http-failure provider condition))
-            (http-request-failed (condition)
-              (provider-signal-transport-failure provider condition)))
-        (provider-error (condition)
-          ;; Classify inside the attempt, before mission supervision wraps failures.
-          (if (provider--native-compaction-unavailable-p condition)
-              (values nil (json-object "input_tokens" 0 "output_tokens" 0))
-              (error condition)))))))
-
-(-> provider--native-compaction-unavailable-p (provider-error) boolean)
-(defun provider--native-compaction-unavailable-p (condition)
-  "Return true when CONDITION means this Codex endpoint is not available."
-  (let ((status (provider-error-status condition)))
-    (and (integerp status)
-         (not (null (member status '(404 405 501) :test #'=))))))
-
-(defmethod provider-native-compact-conversation
-    ((provider codex-subscription-provider)
-     (conversation conversation)
-     &key tool-namespaces event-callback)
-  "Compact CONVERSATION through the standard Responses compact endpoint.
-
-  Return the complete compacted window and the request's usage as two values,
-  or NIL when this endpoint is unavailable."
-  (declare (type vector tool-namespaces)
-           (type function event-callback))
-  (handler-case
-      (provider--call-with-bounded-retries
-       provider
-         (lambda (force-refresh attempt-callback)
-           (provider-attempt-native-compaction
-            provider conversation
-            :tool-namespaces tool-namespaces
-            :force-refresh   force-refresh
-            :event-callback  attempt-callback))
-       event-callback)
-    (provider-error (condition)
-      (if (provider--native-compaction-unavailable-p condition)
-          nil
-          (error condition)))))
