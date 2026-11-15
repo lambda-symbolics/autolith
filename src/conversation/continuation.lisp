@@ -119,8 +119,9 @@ conversation identifier with its first and last sequence."
   "Return a checkpoint for records nobody summarized.
 
 It keeps what PRIOR, the previous checkpoint or NIL, holds. EVIDENCE lists the
-records the model was shown, each with its :CONVERSATION and :SEQUENCE; the
-range of them in each conversation joins the unsummarized ranges."
+captured records, each with its :CONVERSATION and :SEQUENCE. The range of
+those that do not stay after the checkpoint, in each conversation, joins the
+unsummarized ranges."
   (make-continuation :intent       (getf prior :intent)
                      :notes        (getf prior :notes)
                      :next         (getf prior :next)
@@ -304,15 +305,18 @@ the same. A completed note that cites nothing is marked unsubstantiated."
 
 (-> continuation--ranges (list) list)
 (defun continuation--ranges (evidence)
-  "Return each conversation EVIDENCE names with the first and last sequence named there."
+  "Return each conversation with the first and last sequence EVIDENCE names there.
+
+An entry that is :RETAINED-P stays after the checkpoint and is left out."
   (let ((ranges nil))
     (dolist (entry evidence (nreverse ranges))
-      (destructuring-bind (&key conversation sequence &allow-other-keys) entry
-        (let ((range (assoc conversation ranges :test #'equal)))
-          (if range
-              (setf (second range) (min sequence (second range))
-                    (third range)  (max sequence (third range)))
-              (push (list conversation sequence sequence) ranges)))))))
+      (destructuring-bind (&key conversation sequence retained-p &allow-other-keys) entry
+        (unless retained-p
+          (let ((range (assoc conversation ranges :test #'equal)))
+            (if range
+                (setf (second range) (min sequence (second range))
+                      (third range)  (max sequence (third range)))
+                (push (list conversation sequence sequence) ranges))))))))
 
 (-> continuation--note (hash-table) list)
 (defun continuation--note (object)

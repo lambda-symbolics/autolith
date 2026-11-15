@@ -74,33 +74,26 @@ original calls so actual arrivals take precedence when publishing."
 
 (-> conversation-compaction-evidence (conversation-compaction) list)
 (defun conversation-compaction-evidence (compaction)
-  "Return the user messages and tool results COMPACTION shows the model, newest first.
+  "Return the user messages and tool results COMPACTION captured, newest first.
 
 Each is the property list that names the item's durable record, extended by
-the item's :TEXT and a tool result's :CALL-ID. Records a previous checkpoint
-carried forward are among them, and so are those an adopted context brought
-from another conversation."
-  (let* ((view    (conversation-compaction-view compaction))
-         (records (conversation-item-records view)))
-    (loop for item in (reverse (conversation-input-items view))
+the item's :TEXT and a tool result's :CALL-ID. :RETAINED-P marks one of the
+tail that stays after the checkpoint, which the model is not shown. Records a
+previous checkpoint carried forward are among them, and so are those an
+adopted context brought from another conversation."
+  (let ((records (conversation-item-records (conversation-compaction--conversation compaction)))
+        (shown   (make-hash-table :test #'eq)))
+    (dolist (item (conversation-input-items (conversation-compaction-view compaction)))
+      (setf (gethash item shown) t))
+    (loop for item in (reverse (conversation-compaction--source-items compaction))
           for record = (gethash item records)
           when record
             collect (list* :text (conversation-item-text item)
                            (append (and (json-get item "call_id")
                                         (list :call-id (json-get item "call_id")))
+                                   (and (not (gethash item shown))
+                                        (list :retained-p t))
                                    record)))))
-
-(-> conversation-compaction-latest-request (conversation-compaction) (option string))
-(defun conversation-compaction-latest-request (compaction)
-  "Return the text of the latest user message COMPACTION captured, or NIL."
-  (let* ((conversation (conversation-compaction--conversation compaction))
-         (records      (conversation-item-records conversation))
-         (item         (find-if (lambda (item)
-                                  (and (gethash item records)
-                                       (json-string= (json-get item "role") "user")))
-                                (conversation-compaction--source-items compaction)
-                                :from-end t)))
-    (and item (conversation-item-text item))))
 
 (-> conversation-compaction--arrivals (conversation conversation-compaction) list)
 (defun conversation-compaction--arrivals (conversation compaction)

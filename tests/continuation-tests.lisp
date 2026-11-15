@@ -188,9 +188,10 @@
                (result  (find ':tool-result offered :key (lambda (reference) (getf reference :kind))))
                (step    (find "parser" offered
                               :key (lambda (reference) (getf reference :step)) :test #'equal)))
-          (test-assert (equal '(:plan-step :plan-step :plan-step :plan-step :tool-result :message)
+          (test-assert (equal '(:plan-step :plan-step :plan-step :plan-step
+                                :message :tool-result :message)
                               (mapcar (lambda (reference) (getf reference :kind)) offered))
-                       "plan steps come first, then the records before the retained tail, newest first")
+                       "plan steps come first, then the captured records, newest first")
           (test-assert (equal '("pending" "done")
                               (mapcar (lambda (reference) (getf reference :observed))
                                       (subseq offered 2 4)))
@@ -224,7 +225,11 @@
           (conversation-append-user-message conversation "And the docs.")
           (dolist (current (list conversation
                                  (conversation-load (conversation-pathname conversation))))
-            (test-assert (equal (list (list :text         "Now the printer."
+            (test-assert (equal (list (list :text         "And the docs."
+                                            :retained-p   t
+                                            :conversation (conversation-identifier conversation)
+                                            :sequence     (1- (conversation-next-sequence current)))
+                                      (list :text         "Now the printer."
                                             :conversation (conversation-identifier conversation)
                                             :sequence     (1+ (getf result :sequence))))
                                 (conversation-compaction-evidence
