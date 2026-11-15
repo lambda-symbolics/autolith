@@ -20,6 +20,103 @@
                      (platform--encode-uri-path (subseq name 2))))))
 
 
+;;;; -- Checkpoint Save Boundary --
+
+(defmethod platform-call-with-checkpoint-save ((platform win32-platform) function)
+  "Use the inspected Windows SBCL timer teardown only for this checkpoint."
+  (declare (ignore platform))
+  (multiple-value-bind (deinit-symbol thread-symbol handle-symbol close-function)
+      (win32--checkpoint-timer-bindings)
+    (win32--call-with-checkpoint-timer function
+                                     :deinit-symbol  deinit-symbol
+                                     :thread-symbol  thread-symbol
+                                     :handle-symbol  handle-symbol
+                                     :close-function close-function)))
+
+(-> win32--checkpoint-timer-bindings () (values symbol symbol symbol function &optional))
+(defun win32--checkpoint-timer-bindings ()
+  "Validate the inspected runtime before detachment and return its timer bindings."
+  (let* ((version       (lisp-implementation-version))
+         (deinit-symbol (find-symbol "ITIMER-EMULATION-DEINIT" "SB-IMPL"))
+         (thread-symbol (find-symbol "*TIMER-THREAD*" "SB-IMPL"))
+         (handle-symbol (find-symbol "*WAITABLE-TIMER-HANDLE*" "SB-IMPL"))
+         (package       (find-package "SB-WIN32"))
+         (close-symbol  (and package (find-symbol "OS-CLOSE-WTIMER" package)))
+         (missing       nil))
+    (unless (and (string= (lisp-implementation-type) "SBCL")
+                 (string= version "2.6.6")
+                 (every (lambda (feature) (member feature *features*)) '(:win32 :sb-thread :x86-64)))
+      (push "Windows x86-64 threaded SBCL 2.6.6" missing))
+    (dolist (symbol (list deinit-symbol close-symbol))
+      (unless (and symbol (fboundp symbol))
+        (push (if symbol (symbol-name symbol) "timer teardown function") missing)))
+    (dolist (symbol (list thread-symbol handle-symbol))
+      (unless (and symbol (boundp symbol))
+        (push (if symbol (symbol-name symbol) "timer state variable") missing)))
+    (unless (and (boundp 'sb-impl::*scheduler-lock*)
+                 (typep sb-impl::*scheduler-lock* 'sb-thread:mutex))
+      (push "timer scheduler mutex" missing))
+    (when missing
+      (error 'win32-checkpoint-runtime-unsupported
+             :version version :missing-bindings missing
+             :message (format nil "Checkpoint timer teardown requires the inspected Windows SBCL 2.6.6 runtime; unavailable: ~{~A~^, ~}."
+                              (reverse missing))))
+    (values deinit-symbol thread-symbol handle-symbol (symbol-function close-symbol))))
+
+(-> win32--call-with-checkpoint-timer
+    (function &key (:deinit-symbol symbol) (:thread-symbol symbol) (:handle-symbol symbol) (:close-function function))
+    t)
+(defun win32--call-with-checkpoint-timer (function &key deinit-symbol thread-symbol handle-symbol close-function)
+  "Scope timer teardown to this requester, preserving FUNCTION's values and unwinds.
+Restore the original definition on entry, before stopping the watchdog, so the
+saved heap and later failures use native SBCL definitions. Keep the timer handle
+open through JOIN and retain SBCL's timer-thread binding and error semantics."
+  (let ((original  (symbol-function deinit-symbol))
+        (requester sb-thread:*current-thread*)
+        (wrapper   nil))
+    (labels ((restore ()
+               "Restore only this scope's installed definition."
+               (sb-ext:without-package-locks
+                 (when (eq (symbol-function deinit-symbol) wrapper)
+                   (setf (symbol-function deinit-symbol) original)))))
+      (setf wrapper
+            (lambda ()
+              (if (eq requester sb-thread:*current-thread*)
+                  (progn
+                    (restore)
+                    (let ((thread (sb-int:with-system-mutex (sb-impl::*scheduler-lock*)
+                                    (let ((thread (symbol-value thread-symbol)))
+                                      (when thread (sb-thread:terminate-thread thread))
+                                      thread))))
+                      (when thread (sb-thread:join-thread thread :default nil))
+                      (sb-int:with-system-mutex (sb-impl::*scheduler-lock*)
+                        (when (symbol-value handle-symbol)
+                          (funcall close-function (symbol-value handle-symbol))
+                          (setf (symbol-value handle-symbol) nil)))))
+                  (funcall original))))
+      (sb-sys:without-interrupts
+        (unwind-protect
+             (progn
+               (sb-ext:without-package-locks
+                 (setf (symbol-function deinit-symbol) wrapper))
+               (sb-sys:with-local-interrupts (funcall function)))
+          (restore))))))
+
+(define-condition win32-checkpoint-runtime-unsupported (platform-error)
+  ((version
+    :initarg       :version
+    :reader        win32-checkpoint-runtime-unsupported-version
+    :type          string
+    :documentation "The unrecognized or incomplete SBCL runtime version.")
+   (missing-bindings
+    :initarg       :missing-bindings
+    :reader        win32-checkpoint-runtime-unsupported-missing-bindings
+    :type          list
+    :documentation "The required runtime profile or bindings that were unavailable."))
+  (:default-initargs :operation ':checkpoint-save :reason ':refused)
+  (:documentation "Checkpoint saving cannot use an uninspected Windows timer teardown."))
+
+
 ;;;; -- Alien Bindings --
 
 (sb-alien:define-alien-type win32-wide-string

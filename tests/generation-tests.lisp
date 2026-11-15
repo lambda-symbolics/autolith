@@ -647,6 +647,184 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> generation-tests--check-platform-save-scope () null)
+(defun generation-tests--check-platform-save-scope ()
+  "Exercise the identity scope and the Windows timer boundary without native teardown."
+  (test-assert (equal (multiple-value-list
+                       (platform-call-with-checkpoint-save (make-instance 'platform)
+                                                           (lambda () (values ':first ':second))))
+                     '(:first :second))
+               "The portable save scope preserves all thunk values")
+  (when (fboundp 'win32--call-with-checkpoint-timer)
+    (generation-tests--check-windows-timer-scope))
+  nil)
+
+(-> generation-tests--check-save-failure-resume (symbol function error) null)
+(defun generation-tests--check-save-failure-resume (symbol original failure)
+  "Observe restoration in the library's real resume callback after preparation fails."
+  (with-test-configuration (configuration)
+    (let* ((resumed-p                                             nil)
+           (backend
+             (make-restart-checkpoint-backend
+              :store               (generation-store-for configuration)
+              :toplevel-function   (lambda () nil)
+              :validate-function   (lambda (value) (declare (ignore value)) ':validated)
+              :fork-guard-function (lambda (function) (checkpoint--call-with-fork-guard nil function))
+              :prepare-function    (lambda (generation) (declare (ignore generation)) (error failure))
+              :resume-function     (lambda (state)
+                                     (setf resumed-p (and (eq state ':validated)
+                                                          (eq (symbol-function symbol) original))))))
+           (exit-tag                                              (gensym "CHECKPOINT-EXIT-"))
+           (sbcl-generations::*checkpoint-in-progress-p*          nil)
+           (sbcl-generations::*checkpoint-core-probe-record*      nil)
+           (sbcl-generations::*checkpoint-core-probe-argument*    nil)
+           (sbcl-generations::*checkpoint-core-toplevel-function* nil))
+      (sb-ext:without-package-locks
+        (test-call-with-function-replacements
+         (list (list 'platform-call-with-checkpoint-save
+                     (lambda (platform function)
+                       (declare (ignore platform))
+                       (funcall (symbol-function 'win32--call-with-checkpoint-timer)
+                                function :deinit-symbol symbol :close-function #'identity)))
+               (list 'sb-ext:exit (lambda (&key code &allow-other-keys) (throw exit-tag code))))
+         (lambda ()
+           (let* ((generation (sbcl-generations:checkpoint-create backend))
+                  (status     (catch exit-tag
+                                (sbcl-generations:checkpoint-restart-save-and-exit backend generation))))
+             (test-assert (and (eql status 1) resumed-p (eq (generation-status generation) ':failed))
+                          "Save failure restores the native definition before library resume and failure exit")))))))
+  nil)
+
+(-> generation-tests--check-windows-timer-scope () null)
+(defun generation-tests--check-windows-timer-scope ()
+  "Check restoration, mutex ordering and original conditions through the real save scope."
+  (let* ((symbol   (gensym "TIMER-INTERRUPTS-"))
+         (original (lambda () nil))
+         (failure  (make-condition 'platform-error :operation ':checkpoint-save
+                                   :message                   "Injected pre-teardown failure.")))
+    (setf (symbol-function symbol) original)
+    (generation-tests--check-save-failure-resume symbol original failure)
+    (labels ((check (enabled-p failure-p)
+               "Preserve the caller's interrupt policy on entry, return and unwind."
+               (let ((result
+                       (handler-case
+                           (multiple-value-list
+                            (funcall (symbol-function 'win32--call-with-checkpoint-timer)
+                                     (lambda ()
+                                       (test-assert (eq sb-sys:*interrupts-enabled* enabled-p)
+                                                    "Save scope preserves the caller's interrupt policy")
+                                       (when failure-p (error failure))
+                                       (values ':first ':second))
+                                     :deinit-symbol symbol :close-function #'identity))
+                         (platform-error (condition) condition))))
+                 (test-assert (and (if failure-p (eq result failure) (equal result '(:first :second)))
+                                   (eq sb-sys:*interrupts-enabled* enabled-p)
+                                   (eq (symbol-function symbol) original))
+                              "Save scope restores definitions and interrupt policy on return and unwind"))))
+      (unwind-protect
+           (dolist (failure-p '(nil t))
+             (sb-sys:with-interrupts (check t failure-p))
+             (sb-sys:without-interrupts (check nil failure-p)))
+        (fmakunbound symbol))))
+  (let ((original-version (symbol-function 'lisp-implementation-version))
+        (original-find    (symbol-function 'find-symbol))
+        (entered-p        nil))
+    (sb-ext:without-package-locks
+      (dolist (scenario '(:version :binding))
+        (test-call-with-function-replacements
+         (list (list 'lisp-implementation-version
+                     (lambda () (if (eq scenario ':version) "2.6.7" (funcall original-version))))
+               (list 'find-symbol
+                     (lambda (name &optional (package *package*))
+                       (if (and (eq scenario ':binding) (string= name "ITIMER-EMULATION-DEINIT"))
+                           nil
+                           (funcall original-find name package)))))
+         (lambda ()
+           (test-assert
+            (typep (handler-case
+                       (platform-call-with-checkpoint-save *platform* (lambda () (setf entered-p t)))
+                     (platform-error (condition) condition))
+                   (find-class 'win32-checkpoint-runtime-unsupported))
+            "An uninspected or incomplete Windows runtime fails before the save thunk"))))
+      (test-assert (not entered-p) "Unsupported timer profiles cannot detach runtime state")))
+  (dolist (scenario '(:normal :early-failure :terminate-failure :join-failure :close-failure :no-thread :no-handle))
+    (let* ((deinit-symbol (gensym "TIMER-DEINIT-"))
+           (thread-symbol (gensym "TIMER-THREAD-"))
+           (handle-symbol (gensym "TIMER-HANDLE-"))
+           (thread        (unless (eq scenario ':no-thread) sb-thread:*current-thread*))
+           (handle        (unless (eq scenario ':no-handle) (list ':handle)))
+           (original      (lambda () ':native))
+           (failure       (make-condition 'platform-error :operation ':checkpoint-save
+                                          :message                   "Injected timer save failure."))
+           (events        nil))
+      (setf (symbol-function deinit-symbol) original)
+      (labels ((observe (phase target expected)
+                 "Record lock ownership and restoration before a teardown step."
+                 (push (list phase
+                             (eq (sb-thread:mutex-owner sb-impl::*scheduler-lock*) sb-thread:*current-thread*)
+                             (eq (symbol-function deinit-symbol) original)
+                             (eq target expected))
+                       events)
+                 (when (eq scenario phase) (error failure))))
+        (unwind-protect
+             (progv (list thread-symbol handle-symbol) (list thread handle)
+               (sb-ext:without-package-locks
+                 (test-call-with-function-replacements
+                  (list (list 'sb-thread:terminate-thread
+                              (lambda (target) (observe ':terminate-failure target thread)))
+                        (list 'sb-thread:join-thread
+                              (lambda (target &key (default nil default-p))
+                                (test-assert (and default-p (null default) (eq (symbol-value handle-symbol) handle))
+                                             "JOIN retains DEFAULT NIL and the open timer handle")
+                                (observe ':join-failure target thread)
+                                (values nil ':abort)))
+                        (list 'platform-call-with-checkpoint-save
+                              (lambda (platform function)
+                                (declare (ignore platform))
+                               (funcall (symbol-function 'win32--call-with-checkpoint-timer)
+                                  function :deinit-symbol deinit-symbol
+                                  :thread-symbol thread-symbol :handle-symbol handle-symbol
+                                  :close-function         (lambda (target) (observe ':close-failure target handle))))))
+                  (lambda ()
+                    (let ((result
+                            (handler-case
+                                (multiple-value-list
+                                 (checkpoint--call-with-fork-guard
+                                  nil (lambda ()
+                                        (when (eq scenario ':early-failure) (error failure))
+                                        (funcall deinit-symbol))))
+                              (platform-error (condition)
+                                (test-assert (eq (symbol-function deinit-symbol) original)
+                                             "The save scope restores before the backend's failure/resume handler")
+                                condition))))
+                      (test-assert
+                       (and (if (member scenario '(:normal :no-thread :no-handle))
+                                (equal result '(nil))
+                                (eq result failure))
+                            (eq (symbol-function deinit-symbol) original)
+                            (eq (symbol-value thread-symbol) thread)
+                            (eq (symbol-value handle-symbol)
+                                (unless (member scenario '(:normal :no-thread :no-handle)) handle)))
+                       (format nil "Timer save ~S preserves state, original condition identity and restoration" scenario))))))
+               (test-assert
+                (equal (reverse events)
+                       (case scenario
+                         (:early-failure
+                          nil)
+                         (:terminate-failure
+                          '((:terminate-failure t t t)))
+                         (:join-failure
+                          '((:terminate-failure t t t) (:join-failure nil t t)))
+                         (:no-thread
+                          '((:close-failure t t t)))
+                         (:no-handle
+                          '((:terminate-failure t t t) (:join-failure nil t t)))
+                         (otherwise
+                          '((:terminate-failure t t t) (:join-failure nil t t) (:close-failure t t t)))))
+                (format nil "Timer save ~S joins outside the lock and closes only after JOIN returns" scenario)))
+          (fmakunbound deinit-symbol)))))
+  nil)
+
 (-> generation-tests--test-checkpoint-worker-detachment () null)
 (defun generation-tests--test-checkpoint-worker-detachment ()
   "Test coordinator and saver processes detach inherited worker state."
@@ -975,6 +1153,7 @@
   "Test generation publication, loading, selection, and compatibility checks."
   (generation-tests--test-checkpoint-open-identity)
   (generation-tests--test-checkpoint-restart-finish-boundary)
+  (generation-tests--check-platform-save-scope)
   (with-platform-capability (':forked-image-saver "checkpoint backend behaviour")
     (generation-tests--test-checkpoint-runtime-resume)
     (generation-tests--test-partial-runtime-quiescence)

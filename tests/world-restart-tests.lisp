@@ -237,7 +237,14 @@ skips the repository check."
   (source-revision (make-source-provenance (config :source-root configuration))))
 (defun checkpoint--revalidate-source (configuration commit &key allow-dirty-p)
   (declare (ignore configuration commit allow-dirty-p))
-  nil)" stream))
+  nil)" stream)
+    (terpri stream)
+    (write '(defparameter *world-restart-test-native-itimer*
+              (let ((symbol (find-symbol "ITIMER-EMULATION-DEINIT" "SB-IMPL")))
+                (when (and symbol (fboundp symbol)) (symbol-function symbol)))
+              "The original timer teardown, retained to check each saved heap.")
+           :stream stream :readably t)
+    (terpri stream))
   (test-call-with-function-replacements
    (list (list 'platform-session-launch-command
                (lambda (platform source-root)
@@ -450,6 +457,32 @@ skips the repository check."
                               "a cleanup error cannot abandon the remaining retained launch")))))))))
   nil)
 
+(-> world-restart-tests--check-resumed-runtime (list) null)
+(defun world-restart-tests--check-resumed-runtime (entry)
+  "Check native timer teardown identity and timer scheduling in the resumed server."
+  (let ((events
+          (world-restart-tests--submit
+           entry
+           "(progn
+  (let ((symbol (find-symbol \"ITIMER-EMULATION-DEINIT\" \"SB-IMPL\")))
+    (assert (if (and symbol (fboundp symbol))
+                (and (functionp *world-restart-test-native-itimer*)
+                     (eq (symbol-function symbol) *world-restart-test-native-itimer*))
+                (null *world-restart-test-native-itimer*))))
+  (let ((timer (sb-ext:make-timer (lambda () nil))))
+    (unwind-protect
+         (progn (sb-ext:schedule-timer timer 3600)
+                (assert (sb-ext:timer-scheduled-p timer)))
+      (sb-ext:unschedule-timer timer)))
+  (+ 40 2))"
+           :until (lambda (events) (find ':work-finished events :key #'first)))))
+    (test-assert (find-if (lambda (event)
+                           (and (eq (first event) ':present)
+                                (search "42" (getf (rest event) :text))))
+                         events)
+                 (format nil "The resumed core retains native teardown and can schedule timers: ~S" events)))
+  nil)
+
 (-> test-world-server-restart-checkpoint () null)
 (defun test-world-server-restart-checkpoint ()
   "Test a world server that cannot fork restarts from its saved heap under its launcher, twice, and serves its channel again."
@@ -483,6 +516,7 @@ skips the repository check."
                                       (world-server-running-p configuration)
                                       (world-restart-tests--conversation-held-p configuration channel))
                                  "the restarted server holds the world and the conversation, and removed its marker")
+                    (world-restart-tests--check-resumed-runtime resumed)
                     ;; The heap was saved holding locks of a thread that
                     ;; is gone; a second checkpoint needs them again.
                     (destructuring-bind (again again-resumed again-events &optional diagnostics)
@@ -492,14 +526,5 @@ skips the repository check."
                                    (format nil "the restarted server checkpoints and restarts again~%~S~%~S~%~A"
                                            again-events diagnostics (world-restart-tests--logs configuration)))
                       (when again-resumed
-                        (let ((evaluated (world-restart-tests--submit
-                                          again-resumed "(+ 40 2)"
-                                          :until (lambda (events)
-                                                   (find ':work-finished events :key #'first)))))
-                          (test-assert (find-if (lambda (event)
-                                                  (and (eq (first event) ':present)
-                                                       (search "42" (getf (rest event) :text))))
-                                                evaluated)
-                                       (format nil "the channel evaluates input after two restarts: ~S"
-                                               evaluated)))))))))))))))
+                        (world-restart-tests--check-resumed-runtime again-resumed)))))))))))))
   nil)

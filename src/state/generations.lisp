@@ -516,7 +516,7 @@ persisted identity, in this process."
        (call-with-secret-use-quiescence
         (lambda ()
           (with-live-mutation
-            (multiple-value-prog1 (funcall thunk)
+            (multiple-value-prog1 (platform-call-with-checkpoint-save *platform* thunk)
               (unless (= parent-pid (checkpoint--process-identifier))
                 ;; The coordinator must stay thread-free until it forks the saver.
                 (telemetry-detach)

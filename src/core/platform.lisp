@@ -95,6 +95,17 @@ A measured zero is distinct from an unavailable or disappeared process."))
 An available empty snapshot returns NIL and T. Failed snapshots return NIL and
 NIL; process creation, exit and reparenting can race with this observation."))
 
+(defgeneric platform-call-with-checkpoint-save (platform function)
+  (:documentation
+   "Call FUNCTION in the host's checkpoint save scope, preserving its values and unwinds.
+The caller owns checkpoint quiescence and the live-mutation lock. Restore temporary
+runtime bindings before a failed save reaches the backend's resume callback."))
+
+(defmethod platform-call-with-checkpoint-save ((platform platform) function)
+  "Call FUNCTION without changing the runtime on hosts with native image saving."
+  (declare (ignore platform))
+  (funcall function))
+
 (defgeneric platform-supports-p (platform capability)
   (:documentation
    "Return true when PLATFORM provides CAPABILITY.
