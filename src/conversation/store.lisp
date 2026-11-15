@@ -17,8 +17,12 @@
 (defparameter *conversation-title-context-maximum-characters* 12000
   "The maximum transcript characters supplied to automatic title generation.")
 
-(defparameter *conversation-title-generation-output-tokens* 64
-  "The provider output-token ceiling for one automatic title request.")
+(defparameter *conversation-title-generation-output-tokens* 4096
+  "The provider output-token ceiling for one automatic title request.
+
+It must leave room for a reasoning model to think and still answer, so one
+request completes instead of returning nothing at a ceiling that only fits the
+title.")
 
 (defparameter *conversation-title-generation-minimum-words* 3
   "The minimum accepted word count for one generated session title.")
