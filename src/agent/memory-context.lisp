@@ -250,6 +250,11 @@ idsmall references for the offered memories."
                    (string= (or (json-get item "role") "") "user")))
             (conversation-input-items conversation)))
 
+(-> memory-context-recall-viewer (conversation) string)
+(defun memory-context-recall-viewer (conversation)
+  "Return the viewer name that remembers which facts CONVERSATION was given."
+  (format nil "recall:~A" (conversation-identifier conversation)))
+
 (-> memory-context--recall-changes
     (configuration conversation &key (:view knowledge-view) (:offered list))
     (option context-contribution))
@@ -265,7 +270,7 @@ each is explained once, retries included."
         (rest cached)
         (let ((advice
                 (knowledge-viewer-update
-                 configuration (format nil "recall:~A" identifier)
+                 configuration (memory-context-recall-viewer conversation)
                  (knowledge-view-workspace view)
                  :time     (knowledge-view-now view)
                  :function (lambda (previous time first-p)
