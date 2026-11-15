@@ -9,7 +9,7 @@
 ;;; the cited ones whose state differs.
 
 (defparameter *continuation-label-characters* 120
-  "Maximum characters of a reference's label.")
+  "Maximum characters of the text a reference's label quotes.")
 
 (defparameter *continuation-context-maximum-changes* 16
   "Maximum changed references one request reports.")
@@ -113,8 +113,13 @@ one thing keeps one handle from checkpoint to checkpoint."
                    (knowledge-digest-identifier (char-downcase (char (symbol-name kind) 0))
                                                 (cons kind identity)))
          :kind   kind
-         :label  (single-line-excerpt label *continuation-label-characters*)
+         :label  label
          identity))
+
+(-> continuation--excerpt ((option string)) string)
+(defun continuation--excerpt (text)
+  "Return the single-line start of TEXT that a reference's label quotes."
+  (single-line-excerpt (or text "") *continuation-label-characters*))
 
 (-> continuation--plan-step-key (plan-step) string)
 (defun continuation--plan-step-key (step)
@@ -151,7 +156,8 @@ current facts only while knowledge is active."
       (append
        (loop for step in (and plan (workspace-plan-steps plan))
              collect (observe ':plan-step
-                              (format nil "plan step ~S" (plan-step-text step))
+                              (format nil "plan step ~S"
+                                      (continuation--excerpt (plan-step-text step)))
                               (list :workspace (getf authorities :workspace)
                                     :step      (continuation--plan-step-key step))))
        (loop for gate in (getf goal :gates)
@@ -170,18 +176,22 @@ current facts only while knowledge is active."
 
 (-> continuation--record-reference (conversation list) list)
 (defun continuation--record-reference (conversation record)
-  "Return a reference to RECORD, a user message or a tool result of CONVERSATION."
+  "Return a reference to RECORD, a user message or a tool result of CONVERSATION.
+
+Its label gives the address the conversation resource reads the record at, so
+the record stays reachable from a conversation that adopts the checkpoint."
   (destructuring-bind (kind &key seq tool call-id status content output &allow-other-keys)
       record
-    (let ((identity (list :conversation (conversation-identifier conversation)
-                          :sequence     seq)))
+    (let* ((identifier (conversation-identifier conversation))
+           (identity   (list :conversation identifier :sequence seq))
+           (address    (format nil "conversation:id/~A sequence ~D" identifier seq)))
       (if (eq kind ':message)
           (continuation--reference
            ':message
-           (format nil "user message, sequence ~D: ~A" seq (or content ""))
+           (format nil "user message at ~A: ~A" address (continuation--excerpt content))
            identity)
           (continuation--reference
            ':tool-result
-           (format nil "~A result, sequence ~D, call ~A, ~(~A~): ~A"
-                   tool seq call-id status (or output ""))
+           (format nil "~A result at ~A, call ~A, ~(~A~): ~A"
+                   tool address call-id status (continuation--excerpt output))
            (append identity (list :call-id call-id)))))))

@@ -2664,7 +2664,7 @@ transcript show automatic INPUT as a short notice."
   nil)
 
 (defparameter *conversation-summary-prefix*
-  "A previous segment of this conversation was compacted. The checkpoint below replaces that segment. Resume its next step and use the results it records while they still apply. Do work again when what it rested on changed, when a completed note is unsubstantiated, or when the user asks for a fresh check. A reference names a durable record by conversation and sequence; read one through the conversation resource when its detail matters."
+  "A previous segment of this conversation was compacted. The checkpoint below replaces that segment. Resume its next step and use the results it records while they still apply. Do work again when what it rested on changed, when a completed note is unsubstantiated, or when the user asks for a fresh check. A reference to a record gives its conversation:id address and sequence; read it there with start-sequence when its detail matters."
   "The bridge text introducing a compaction checkpoint to the model.")
 
 (-> conversation-summary-item (string) json-object)
