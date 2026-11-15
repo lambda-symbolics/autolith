@@ -424,6 +424,10 @@ Compaction would also call the provider outside the frame budget's
 request accounting, so disabling it keeps the budget invariant exact."
   nil)
 
+(defmethod agent-compaction-tool-p ((agent rlm-frame-agent))
+  "Leave compaction.submit out: a frame never compacts in the ordinary course."
+  nil)
+
 (-> rlm--frame-budget-callback
     (rlm-budget string &key (:activity-callback (option function)))
     (values function function function))

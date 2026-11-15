@@ -280,9 +280,10 @@ The test fails for that version and every later version.
   own gate fingerprint and the current knowledge view, and stores no copy of
   their state beyond the short text seen at capture.
 - A compaction request shares the prompt prefix of ordinary requests. Every
-  request that offers tools declares =compaction.submit=; the compaction
-  request repeats the same instructions, tools and history, puts its own
-  instructions after the history and forces that call.
+  request that offers tools declares =compaction.submit=, except in an
+  inference frame, which never compacts. The compaction request repeats the
+  same instructions, tools and history, puts its own instructions after the
+  history and forces that call.
 - =src/conversation/input-history.lisp= maintains complete editable input recall
   in the CACHE namespace above. Missing or invalid indexes rebuild from
   authoritative records, including retired segments. Each new input appends one
