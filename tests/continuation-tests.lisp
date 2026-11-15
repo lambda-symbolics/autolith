@@ -326,14 +326,14 @@
                                                 :quote "it takes half an hour to get there"))
            (conversation (conversation-create configuration))
            (agent        (agent-tests--compaction-agent configuration conversation nil))
-           (view         (knowledge-view-current configuration)))
-      ;; Recall gave the conversation every fact that holds now.
-      (knowledge-viewer-update configuration (memory-context-recall-viewer conversation)
-                               (knowledge-view-workspace view)
-                               :time     (knowledge-view-now view)
-                               :function (lambda (previous time first-p)
-                                           (declare (ignore previous time first-p))
-                                           (values (knowledge-view-snapshot view) nil)))
+           (context      (make-instance 'tool-context :configuration configuration
+                                                      :worker        nil
+                                                      :conversation  conversation))
+           (given        (lambda ()
+                           (mapcar (lambda (entry) (getf entry :claim))
+                                   (knowledge-viewer-snapshot
+                                    configuration (memory-context-recall-viewer conversation)
+                                    (knowledge--workspace configuration))))))
       (flet ((claim (text)
                "Return the reference a checkpoint taken now holds for the fact reading TEXT."
                (find-if (lambda (reference)
@@ -345,6 +345,11 @@
                "Return the state REFERENCE resolves to now."
                (continuation-reference-state
                 ':claim reference (continuation--authorities configuration conversation))))
+        (test-assert (null (claim "travel to review"))
+                     "a fact the conversation was never given is not offered")
+        (memory-resource-tests--call (make-default-tool-registry) context
+                                     :namespace "resource" :name "read"
+                                     :arguments (list "uri" "memory:facts"))
         (let ((asserted (claim "travel to review"))
               (derived  (claim "leave for review")))
           (test-assert (and (equal travel (getf asserted :claim))
@@ -362,6 +367,11 @@
                        "a retracted fact reports that it no longer applies")
           (test-assert (null (state derived))
                        "a fact derived from it can no longer be found")
+          (memory-resource-tests--call (make-default-tool-registry) context
+                                       :namespace "resource" :name "read"
+                                       :arguments (list "uri" (format nil "memory:claim/~A" travel)))
+          (test-assert (member travel (funcall given) :test #'equal)
+                       "a later read keeps what the conversation was given before")
           (setf (config :knowledge-mode configuration) "off")
           (test-assert (and (equal (getf derived :observed) (state derived))
                             (null (claim "travel to review")))

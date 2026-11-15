@@ -376,57 +376,61 @@ Conflicted facts come first, then the rest by predicate and text."
 (-> memory-knowledge-observe
     (memory-knowledge-resource tool-context
      &key (:query (option string)) (:maximum-results (option integer)))
-    memory-observation)
+    (values memory-observation list))
 (defun memory-knowledge-observe (resource context &key query maximum-results)
-  "Return RESOURCE's current rendering as a revisioned memory observation."
+  "Return RESOURCE's current rendering as a revisioned memory observation.
+
+The second value lists the claims the rendering shows as facts."
   (let* ((configuration (tool-context-configuration context))
          (base          (knowledge-base-read configuration))
          (workspace     (knowledge--workspace configuration))
-         (kind          (memory-knowledge-resource-view-kind resource))
-         (content
-           (ecase kind
-             (:facts
-              (memory-knowledge--render-facts
-               (memory-knowledge-view context)
-               :query           query
-               :maximum-results (min (or maximum-results *memory-knowledge-default-results*)
-                                     *memory-knowledge-maximum-results*)))
-             (:claim
-              (memory-knowledge--render-claim (memory-knowledge-view context)
-                                              (memory-knowledge-resource-claim resource)))
-             (:predicates
-              (memory-knowledge--render-predicates base workspace))
-             (:rules
-              (memory-knowledge--render-rules base workspace))
-             (:methods
-              (memory-knowledge--render-methods base workspace))
-             (:contracts
-              (memory-knowledge--render-contracts base workspace))
-             (:procedures
-              (memory-knowledge--render-procedures base workspace))
-             (:recipes
-              (memory-knowledge--render-recipes))
-             (:changes
-              (memory-knowledge--render-changes
-               configuration
-               (format nil "conversation:~A"
-                       (conversation-identifier (tool-context-conversation context)))
-               (memory-knowledge-view context)))))
-         (snapshot      (list :kind       kind
-                              :identifier (memory-resource-identifier resource)
-                              :workspace  workspace
-                              :revision   (knowledge-base-revision base)
-                              :content    content)))
-    (make-instance 'memory-observation
-                   :uri        (resource-uri resource)
-                   :revision   (resource-readable-snapshot-digest
-                                *memory-resource-digest-key* snapshot)
-                   :content    content
-                   :metadata   (list :knowledge kind :query query
-                                     :maximum-results maximum-results)
-                   :identifier (memory-resource-identifier resource)
-                   :kind       kind
-                   :snapshot   snapshot)))
+         (kind          (memory-knowledge-resource-view-kind resource)))
+    (multiple-value-bind (content claims)
+        (ecase kind
+          (:facts
+           (memory-knowledge--render-facts
+            (memory-knowledge-view context)
+            :query           query
+            :maximum-results (min (or maximum-results *memory-knowledge-default-results*)
+                                  *memory-knowledge-maximum-results*)))
+          (:claim
+           (values (memory-knowledge--render-claim (memory-knowledge-view context)
+                                                   (memory-knowledge-resource-claim resource))
+                   (list (memory-knowledge-resource-claim resource))))
+          (:predicates
+           (memory-knowledge--render-predicates base workspace))
+          (:rules
+           (memory-knowledge--render-rules base workspace))
+          (:methods
+           (memory-knowledge--render-methods base workspace))
+          (:contracts
+           (memory-knowledge--render-contracts base workspace))
+          (:procedures
+           (memory-knowledge--render-procedures base workspace))
+          (:recipes
+           (memory-knowledge--render-recipes))
+          (:changes
+           (memory-knowledge--render-changes
+            configuration
+            (format nil "conversation:~A"
+                    (conversation-identifier (tool-context-conversation context)))
+            (memory-knowledge-view context))))
+      (let ((snapshot (list :kind       kind
+                            :identifier (memory-resource-identifier resource)
+                            :workspace  workspace
+                            :revision   (knowledge-base-revision base)
+                            :content    content)))
+        (values (make-instance 'memory-observation
+                               :uri        (resource-uri resource)
+                               :revision   (resource-readable-snapshot-digest
+                                            *memory-resource-digest-key* snapshot)
+                               :content    content
+                               :metadata   (list :knowledge kind :query query
+                                                 :maximum-results maximum-results)
+                               :identifier (memory-resource-identifier resource)
+                               :kind       kind
+                               :snapshot   snapshot)
+                claims)))))
 
 (defmethod resource-observe
     ((resource memory-knowledge-resource) (context tool-context))
@@ -454,12 +458,18 @@ Conflicted facts come first, then the rest by predicate and text."
     (when (and maximum (not (and (integerp maximum) (plusp maximum))))
       (memory-resource--fail "max-results must be a positive integer."))
     (handler-case
-        (tool-success
-         (resource-item-read-result
-          (resource-observation-state-ensure
-           (tool-context-conversation context)
-           (memory-knowledge-observe resource context
-                                     :query query :maximum-results maximum))))
+        (multiple-value-bind (observation claims)
+            (memory-knowledge-observe resource context
+                                      :query query :maximum-results maximum)
+          ;; A later checkpoint may cite the facts read here, and a change to
+          ;; one is then reported.
+          (memory-context-note-given (tool-context-configuration context)
+                                     (tool-context-conversation context)
+                                     claims)
+          (tool-success
+           (resource-item-read-result
+            (resource-observation-state-ensure
+             (tool-context-conversation context) observation))))
       (knowledge-error (condition)
         (memory-resource--fail "~A" (autolith-error-message condition))))))
 
