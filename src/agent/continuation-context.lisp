@@ -39,14 +39,25 @@ AUTHORITIES is the result of CONTINUATION--AUTHORITIES.")
                     :note)))))
 
 (defmethod continuation-reference-state ((kind (eql :gate)) reference authorities)
-  "Return the status of a gate of the conversation's own mission."
+  "Return the status of a gate of the conversation's own mission.
+
+A passed gate whose inputs no longer match the fingerprint it passed on says
+so. The inputs are fingerprinted as the mission does it; the gate is neither
+run nor changed. Inputs that cannot be read leave the status as it is."
   (let* ((mission (getf authorities :mission))
          (gate    (and mission
                        (equal (getf reference :mission) (mission-knowledge--identity mission))
                        (find (getf reference :gate) (getf (mission-context-goal mission) :gates)
                              :key (lambda (gate) (getf gate :id)) :test #'equal))))
     (when gate
-      (string-downcase (getf gate :status)))))
+      (format nil "~(~A~)~:[~;, inputs changed since it was checked~]"
+              (getf gate :status)
+              (and (eq (getf gate :status) ':passed)
+                   (handler-case
+                       (not (equal (getf gate :fingerprint)
+                                   (mission-gate-fingerprint gate (getf authorities :tool-context))))
+                     (error ()
+                       nil)))))))
 
 
 ;;;; -- Public Functions --
@@ -132,14 +143,19 @@ one thing keeps one handle from checkpoint to checkpoint."
   "Return the workspace plan, how its steps read, and CONVERSATION's mission.
 
 Each is read once for all references of a request. The steps are read against
-current facts only while knowledge is active."
+current facts only while knowledge is active. The tool context fingerprints
+gate inputs. It asks nobody for authorization, so it reads no input outside
+the workspace."
   (let ((plan (plan-load configuration)))
-    (list :workspace  (workspace-directory-identifier (config :working-directory configuration))
-          :plan       plan
-          :step-notes (and plan
-                           (knowledge-active-p configuration)
-                           (plan-step-snapshot plan (knowledge-view-current configuration)))
-          :mission    (mission-context-find conversation))))
+    (list :workspace    (workspace-directory-identifier (config :working-directory configuration))
+          :plan         plan
+          :step-notes   (and plan
+                             (knowledge-active-p configuration)
+                             (plan-step-snapshot plan (knowledge-view-current configuration)))
+          :mission      (mission-context-find conversation)
+          :tool-context (make-instance 'tool-context :configuration configuration
+                                                     :conversation  conversation
+                                                     :worker        nil))))
 
 (-> continuation--authority-references (list) list)
 (defun continuation--authority-references (authorities)
