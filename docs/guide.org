@@ -2600,6 +2600,21 @@ OAuth with a local loopback callback.
 Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, OpenAI API, and
 user-registered OpenAI-compatible providers use API keys.
 
+The direct Anthropic catalog includes =claude-fable-5-2=, =claude-opus-5-5=,
+=claude-sonnet-5-5= and =claude-haiku-5-5= with one-million-token context windows.
+For these models, =reasoning-effort= selects =low=, =medium=, =high=, =xhigh= or
+=max= through adaptive thinking. Haiku 5.5 price estimates use its reported
+prompt length: the lower tier applies through 100,000 input tokens.
+
+During an uninterrupted signed-thinking tool loop, Autolith retains the dispatched
+request prefix in memory while context, tools and history match. Fresh user input
+or changed context resets that prefix. For a specifically identified thinking
+prefix-binding HTTP 400, Autolith retries once with Anthropic's binding control.
+The conversation log stores up to 32 rejected signature digests. Later requests
+use the control only while a rejected block is present and the effective thinking
+mode supports it. See Anthropic's [[https://platform.claude.com/docs/en/build-with-claude/preserved-thinking/prefix-checks][prefix checks]]
+and [[https://platform.claude.com/docs/en/build-with-claude/effort][effort guide]].
+
 
 OpenCode Go and Zen have separate provider selections and catalogs. Use
 =(auth "opencode-go")= for Go and =(auth "opencode-zen")= for Zen. The old

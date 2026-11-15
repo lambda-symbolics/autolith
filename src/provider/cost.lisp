@@ -5,18 +5,20 @@
 (defvar *provider-cost-ledger* (make-cost-ledger)
   "The process-wide record of what completed model requests cost.")
 
-(defgeneric provider-model-price (provider configuration)
+(defgeneric provider-model-price (provider configuration &key usage)
   (:documentation
-   "Return the price of CONFIGURATION's model on PROVIDER's route, or NIL when unknown.
+   "Return CONFIGURATION's model price on PROVIDER's route, or NIL when unknown.
 
-Configured model prices take precedence over built-in prices."))
+USAGE supplies normalized request usage for prompt-length tiers. Without usage,
+return NIL for tiered prices. Configured model prices take precedence."))
 
 
 ;;;; -- Methods --
 
-(defmethod provider-model-price ((provider model-provider) (configuration configuration))
+(defmethod provider-model-price
+    ((provider model-provider) (configuration configuration) &key usage)
   "Return the configured model price."
-  (declare (ignore provider))
+  (declare (ignore provider usage))
   (provider--configured-model-price configuration))
 
 
@@ -32,11 +34,11 @@ Configured model prices take precedence over built-in prices."))
 (-> provider-cost-record (t provider-result) list)
 (defun provider-cost-record (provider result)
   "Record RESULT's cost in the process ledger and return the ledger entry."
-  (let ((configuration (provider--cost-configuration provider)))
-    (cost-ledger-record *provider-cost-ledger*
-                        (provider-usage-normalize (provider-result-usage result))
+  (let ((configuration (provider--cost-configuration provider))
+        (usage         (provider-usage-normalize (provider-result-usage result))))
+    (cost-ledger-record *provider-cost-ledger* usage
                         :price (and configuration
-                                    (provider-model-price provider configuration))
+                                    (provider-model-price provider configuration :usage usage))
                         :model (and configuration (config :model configuration))
                         :route (and (typep provider 'model-provider)
                                     (provider-account-label provider)))))

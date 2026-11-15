@@ -389,6 +389,28 @@
         (setf (config :prompt-cache-ttl configuration) "1h")
         (test-assert (= (model-price-cache-write (list-price)) 8)
                      "a one-hour cache lifetime doubles the write price"))
+      (setf (config :model configuration) "claude-haiku-5-5")
+      (let ((anthropic (anthropic-provider-create configuration)))
+        (test-assert (null (provider-model-price anthropic configuration))
+                     "tiered prices require observed prompt usage")
+        (dolist (case '((100000 1/10 1/100 1/2) (100001 1/2 1/20 5/2)))
+          (destructuring-bind (tokens input cached output) case
+            (let ((price (provider-model-price
+                          anthropic configuration
+                          :usage (json-object "input_tokens" tokens))))
+              (test-assert (and (= (model-price-input price) input)
+                                (= (cl-llm-provider-api:model-price-cache-read price) cached)
+                                (= (model-price-cache-write price) (* 2 input))
+                                (= (cl-llm-provider-api:model-price-output price) output))
+                           "Haiku 5.5 selects all rates at the 100k prompt boundary"))))
+        (setf (config :model-prices configuration)
+              "{\"claude-haiku-5-5\": {\"input\": 7, \"cache_read\": 1, \"output\": 9}}")
+        (test-assert (= (model-price-input
+                         (provider-model-price anthropic configuration
+                                               :usage (json-object "input_tokens" 100001)))
+                        7)
+                     "configured rates override prompt-length tiers")
+        (setf (config :model-prices configuration) ""))
       (setf (config :model configuration) "local-model")
       (provider-stream-turn provider conversation)
       (test-assert (equal (getf (cost-ledger-summary *provider-cost-ledger*) :counts)

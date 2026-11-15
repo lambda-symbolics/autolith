@@ -13,6 +13,16 @@
   "Test Anthropic model family resolution and endpoint selection."
   (test-assert (eq (model-family "claude-haiku-4-5-20251001") ':anthropic)
                "Claude identifiers resolve to the Anthropic family")
+  (dolist (model '("claude-fable-5-2" "claude-opus-5-5"
+                   "claude-sonnet-5-5" "claude-haiku-5-5"))
+    (let ((configuration (configuration-copy (test-configuration)
+                                             :model model)))
+      (test-assert
+       (and (eq (model-family model) ':anthropic)
+            (= (config :context-window configuration) 1000000)
+            (equal (provider-model-reasoning-efforts-for model :provider "anthropic")
+                   '("low" "medium" "high" "xhigh" "max")))
+       "current direct Claude models resolve with their context and supported efforts")))
   (let* ((configuration (anthropic-provider-test--configuration))
          (provider      (anthropic-provider-create configuration)))
     (test-assert
@@ -30,6 +40,7 @@
               (= (provider-error-status error) 529)))
           (not (provider-retryable-status-p provider 528 nil)))
      "Anthropic treats its overload status as retryable"))
+  (anthropic-provider-test--effort-controls)
   nil)
 
 (-> anthropic-provider-test--tool-schemas () null)
@@ -114,6 +125,8 @@
                 (equalp redacted (aref content 1))
                 (json-string= (json-get (aref content 2) "type") "text"))
            "signed and opaque thinking replay unchanged before the assistant text")))))
+  (anthropic-provider-test--tool-prefix)
+  (anthropic-provider-test--binding-recovery)
   nil)
 
 (-> anthropic-provider-test--credential-source () null)
@@ -423,4 +436,210 @@
             (string= (response-header validation-headers "anthropic-version")
                      *anthropic-api-version*))
        "API-key validation probes the models endpoint with Anthropic headers")))
+  nil)
+
+(-> anthropic-provider-test--binding-recovery () null)
+(defun anthropic-provider-test--binding-recovery ()
+  "Exercise signature-scoped binding recovery at the request transport boundary."
+  (with-test-configuration (configuration)
+    (setf (config :model configuration) "claude-opus-5-5"
+          (config :reasoning-effort configuration) "high")
+    (let* ((provider         (anthropic-provider-create configuration))
+           (conversation     (conversation-create configuration))
+           (signed           (json-object "type" "thinking" "thinking" "reasoning"
+                                          "signature" "binding-fixture-signature"))
+           (credentials      (make-instance 'oauth-credentials :access-token "fixture-key"))
+           (message          "messages.1.content.0: Invalid signature in thinking block, bound to another conversation. Set thinking.block_binding.prefix_mismatch_behavior to drop_block with thinking-binding-controls-2026-08-01.")
+           (attempts         0)
+           (captured-headers nil))
+      (conversation-append-user-message conversation "Question")
+      (conversation-append-provider-item
+       conversation (json-object "type" "message" "role" "assistant"
+                                 "content" (json-array signed
+                                                       (json-object "type" "output_text" "text" "Answer"))))
+      (conversation-append-user-message conversation "Continue")
+      (let ((request (provider-request-object provider conversation #())))
+        (test-assert (null (json-get (json-get request "thinking") "block_binding"))
+                     "valid signed history has no binding override")
+        (test-call-with-function-replacements
+         (list (list 'provider-post-event-stream
+                     (lambda (url content &key headers)
+                       (declare (ignore url content))
+                       (push headers captured-headers)
+                       (if (= (incf attempts) 1)
+                           (error 'provider-error :status 400 :message message)
+                           (values (make-string-input-stream "") 200 nil)))))
+         (lambda ()
+           (provider-open-response-stream provider request :credentials credentials
+                                          :conversation                 conversation)))
+        (test-assert (and (= attempts 2)
+                          (null (response-header (second captured-headers) "anthropic-beta"))
+                          (equal (response-header (first captured-headers) "anthropic-beta")
+                                 "thinking-binding-controls-2026-08-01")
+                          (= (length (anthropic--request-signatures request)) 1))
+                     "one recognized binding rejection retries with the required beta and signed block")
+        (let* ((loaded  (conversation-load (conversation-pathname conversation)))
+               (resumed (provider-request-object provider loaded #())))
+          (test-assert (equal (json-get (json-get (json-get resumed "thinking") "block_binding")
+                                        "prefix_mismatch_behavior")
+                              "drop_block")
+                       "reopening a conversation recovers only the rejected signed identity")
+          (dolist (mode '("disabled" "between_tools"))
+            (let ((probe (json-object "messages" (json-get resumed "messages")
+                                      "thinking" (json-object "type" mode))))
+              (anthropic--apply-binding-policy probe loaded)
+              (test-assert (null (json-get (json-get probe "thinking") "block_binding"))
+                           "unsupported thinking modes omit binding controls")))
+          (let* ((next-signed (json-object "type" "thinking" "thinking" "next"
+                                           "signature" "valid-next-signature"))
+                 (next        (json-object "thinking" (json-object "type" "adaptive")
+                                           "messages" (json-array
+                                                       (json-object "role" "assistant"
+                                                                    "content" (json-array next-signed))))))
+            (anthropic--apply-binding-policy next loaded)
+            (test-assert (and (null (json-get (json-get next "thinking") "block_binding"))
+                              (equalp next-signed
+                                      (aref (json-get (aref (json-get next "messages") 0)
+                                                     "content") 0)))
+                         "the next valid signed continuation has no generic override")))
+        (dolist (failure (list (make-condition 'provider-error :status 400 :message "Invalid signature")
+                              (make-condition 'provider-error :status 500 :message message)))
+          (test-assert (null (anthropic--binding-rejected-signature failure request))
+                       "unrelated statuses and signature failures are not binding recovery"))
+        (setf attempts 0)
+        (test-call-with-function-replacements
+         (list (list 'provider-post-event-stream
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
+                       (incf attempts)
+                       (error 'provider-error :status 400 :message message))))
+         (lambda ()
+           (test-assert
+            (handler-case
+                (progn (provider-open-response-stream provider request :credentials credentials
+                                                       :conversation                conversation) nil)
+              (provider-error () t))
+            "a rejected recovery attempt propagates")))
+        (test-assert (= attempts 1) "an already recovered request never retries again")
+        (let ((digest (first (conversation-anthropic-rejected-thinking conversation))))
+          (anthropic--note-binding-rejection conversation digest)
+          (test-assert (= 1 (length (conversation-anthropic-rejected-thinking conversation)))
+                       "repeated rejected identities are deduplicated"))
+        (dotimes (index 33)
+          (anthropic--note-binding-rejection
+           conversation (context-anchors--digest (format nil "rejection-~D" index))))
+        (let ((loaded (conversation-load (conversation-pathname conversation))))
+          (test-assert (and (= 32 (length (conversation-anthropic-rejected-thinking loaded)))
+                            (equal (first (conversation-anthropic-rejected-thinking loaded))
+                                   (context-anchors--digest "rejection-32")))
+                       "replay retains only the newest bounded rejection set")))))
+  nil)
+
+(-> anthropic-provider-test--effort-controls () null)
+(defun anthropic-provider-test--effort-controls ()
+  "Check configured effort and effective default thinking at the wire boundary."
+  (with-test-configuration (configuration)
+    (dolist (model '("claude-fable-5-2" "claude-opus-5-5" "claude-sonnet-5-5" "claude-haiku-5-5"))
+      (setf (config :model configuration) model)
+      (dolist (effort '("low" "medium" "high" "xhigh" "max"))
+        (setf (config :reasoning-effort configuration) effort)
+        (let ((request (provider-request-object (anthropic-provider-create configuration)
+                                               (conversation-create configuration) #())))
+          (test-assert (and (equal (json-get (json-get request "thinking") "type") "adaptive")
+                            (equal (json-get (json-get request "output_config") "effort") effort))
+                       "each current model sends its configured supported effort")))
+      (dolist (effort '(nil "" "none" "disabled" "between_tools" "ultra"))
+        (let ((request (json-object "model" model)))
+          (anthropic--configure-effort request effort)
+          (test-assert (and (null (json-get request "thinking"))
+                            (null (json-get request "output_config"))
+                            (anthropic--binding-supported-p request))
+                       "absent or unsupported effort does not override default adaptive thinking")))
+      (dolist (mode '("disabled" "between_tools"))
+        (let ((request (json-object "model" model "thinking" (json-object "type" mode))))
+          (anthropic--configure-effort request "high")
+          (test-assert (and (equal (json-get (json-get request "thinking") "type") mode)
+                            (null (json-get request "output_config"))
+                            (not (anthropic--binding-supported-p request)))
+                       "explicit off modes are preserved and reject binding controls"))))
+    (let ((legacy (json-object "model" "claude-haiku-4-5")))
+      (anthropic--configure-effort legacy "high")
+      (test-assert (null (json-get legacy "thinking")) "legacy effort behavior is unchanged")))
+  nil)
+
+(-> anthropic-provider-test--tool-prefix () null)
+(defun anthropic-provider-test--tool-prefix ()
+  "Retain a dispatched temporary prefix through tools, resetting for fresh context or input."
+  (let ((*context-contributors*        nil)
+        (*context-resolver*            (cl-llm-provider-api:make-context-resolver))
+        (*context-last-deliveries*     (make-hash-table :test #'equal))
+        (*context-last-delivery-order* nil)
+        (body                          "PREFIX-CONTEXT-ONE"))
+    (with-test-configuration (configuration)
+      (setf (config :model configuration) "claude-haiku-5-5")
+      (register-context-contributor
+       "anthropic-tool-prefix-test"
+       (lambda (context)
+         (declare (ignore context))
+         (list (make-context-contribution :identifier "temporary" :instruction body))))
+      (let* ((provider     (anthropic-provider-create configuration))
+             (conversation (conversation-create configuration))
+             (credentials  (make-instance 'oauth-credentials :access-token "fixture-key")))
+        (conversation-append-user-message conversation "Question")
+        (let* ((first  (provider-request-object provider conversation #()))
+               (prefix (json-decode (json-encode (json-get first "messages"))))
+               (sent   nil))
+          (test-call-with-function-replacements
+           (list (list 'provider-post-event-stream
+                       (lambda (url content &key headers)
+                         (declare (ignore url headers))
+                         (setf sent (json-decode
+                                     (babel:octets-to-string content :encoding ':utf-8)))
+                         (values (make-string-input-stream "") 200 nil))))
+           (lambda ()
+             (let ((*provider-mission-output-allowance* 128))
+               (provider-open-response-stream provider first :credentials credentials
+                                              :conversation               conversation))))
+          (test-assert (and (= (json-get sent "max_tokens") 128)
+                            (> (json-get first "max_tokens") 128))
+                       "mission admission dispatches a capped copy without changing the built request")
+          (conversation-append-provider-item
+           conversation (json-object "type" "message" "role" "assistant"
+                                     "content" (json-array
+                                                (json-object "type" "thinking" "thinking" "signed"
+                                                             "signature" "prefix-signature"))))
+          (conversation-append-provider-item
+           conversation (json-object "type" "function_call" "namespace" "shell" "name" "run"
+                                     "call_id" "prefix-call" "arguments" "{}"))
+          (conversation-append-provider-item
+           conversation (json-object "type" "function_call_output" "call_id" "prefix-call"
+                                     "output" "fresh tool result"))
+          (dotimes (index 2)
+            (declare (ignore index))
+            (let* ((*provider-context-request* (list :conversation conversation))
+                   (next                       (provider-request-object provider conversation #()))
+                   (messages                   (json-get next "messages")))
+              (test-assert
+               (cl-llm-provider-api:wire-request-suffix
+                (getf *provider-context-request* :projection))
+               "the internal prefix rebuild does not replace ordinary admission evidence")
+              (test-assert (and (equalp prefix (subseq messages 0 (length prefix)))
+                                (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode next)))
+                                (search "fresh tool result" (json-encode next))
+                                (= 1 (length (anthropic--request-signatures next))))
+                           "the tool continuation preserves the exact prefix once, including signed history")))
+          (setf body "PREFIX-CONTEXT-TWO")
+          (let ((changed (provider-request-object provider conversation #())))
+            (test-assert (and (search body (json-encode changed))
+                              (not (search "PREFIX-CONTEXT-ONE" (json-encode changed))))
+                         "changed context resets the tool-loop snapshot"))
+          (conversation-append-user-message conversation "Fresh steering input")
+          (let ((steered (provider-request-object provider conversation #())))
+            (test-assert (and (search "Fresh steering input" (json-encode steered))
+                              (search body (json-encode steered)))
+                         "fresh user and steering context is not lost"))
+          (let ((loaded (conversation-load (conversation-pathname conversation))))
+            (test-assert (and (null (conversation-anthropic-request-state loaded))
+                              (not (search "PREFIX-CONTEXT" (json-encode (conversation-input-items loaded)))))
+                         "temporary prefixes are neither history nor restart state"))))))
   nil)

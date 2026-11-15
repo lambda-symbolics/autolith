@@ -359,6 +359,16 @@ not yet been told that work from the previous process is gone.")
     :type     (option (integer 0))
     :documentation
     "The user-turn count during which the resume note is being delivered.")
+   (anthropic-request-state
+    :initform      nil
+    :accessor      conversation-anthropic-request-state
+    :type          list
+    :documentation "Transient candidate and dispatched prefix for one uninterrupted Anthropic tool loop.")
+   (anthropic-rejected-thinking
+    :initform      nil
+    :accessor      conversation-anthropic-rejected-thinking
+    :type          list
+    :documentation "At most 32 signature digests specifically rejected by Anthropic prefix binding.")
    (context-usage-sample
     :initform       nil
     :accessor       conversation-context-usage-sample

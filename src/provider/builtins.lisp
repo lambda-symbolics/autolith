@@ -291,7 +291,15 @@ efforts until upstream publishes its entry.")
  :description   "Anthropic API (pay-per-token)"
  :family        ':anthropic
  :protocol      ':messages
- :models        '((:name "claude-opus-5" :context-window 200000
+ :models        '((:name "claude-fable-5-2" :context-window 1000000
+                   :reasoning-efforts ("low" "medium" "high" "xhigh" "max"))
+                  (:name "claude-opus-5-5" :context-window 1000000
+                   :reasoning-efforts ("low" "medium" "high" "xhigh" "max"))
+                  (:name "claude-sonnet-5-5" :context-window 1000000
+                   :reasoning-efforts ("low" "medium" "high" "xhigh" "max"))
+                  (:name "claude-haiku-5-5" :context-window 1000000
+                   :reasoning-efforts ("low" "medium" "high" "xhigh" "max"))
+                  (:name "claude-opus-5" :context-window 200000
                    :reasoning-efforts ("low" "medium" "high"))
                   (:name "claude-sonnet-5" :context-window 200000
                    :reasoning-efforts ("low" "medium" "high"))
