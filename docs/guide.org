@@ -2334,13 +2334,19 @@ strict schema and size bounds, and stores the checkpoint in typed form beside
 its text.
 
 Before the request, Autolith lists what the checkpoint may cite: the user
-messages and tool results it covers, plan steps, mission gates and unfinished
-jobs, at most 64 in all. Each has a short handle. A note cites the handles that
-support it and the checkpoint keeps the cited references. A completed note that
-cites nothing reads =(unsubstantiated)=. A record reference names its
-conversation and sequence, so the record can be read again through the
-=conversation:= resource. When a cited plan step or mission gate changes after
-the checkpoint, later requests say which one changed and what its state is now.
+messages and tool results it covers, plan steps, mission gates, facts the
+conversation was given and unfinished jobs, at most 64 in all. Each has a short
+handle. A note cites the handles that support it and the checkpoint keeps the
+cited references. A completed note that cites nothing reads =(unsubstantiated)=.
+
+A record reference gives its =conversation:id/<id>= address and sequence, and
+a fact reference its =memory:claim/<id>= address, so the evidence can be read
+again, also from a conversation that adopted the checkpoint. When a cited plan
+step, mission gate or fact changes after the checkpoint, later requests say
+which one changed and what its state is now. That covers a passed gate whose
+declared inputs changed since it was checked, and a fact whose support or
+premises were withdrawn. Facts are offered and checked only while structured
+knowledge is active.
 
 If a submission is rejected, Autolith tells the model what to correct and asks
 again, for at most four generations in all. If none of them is usable,
