@@ -48,17 +48,18 @@
       (error "The localgroup attachment closed before its next packet.")))
 
 (-> test-localgroup--attach
-    (localgroup-session keyword &key (:styled-p boolean))
+    (localgroup-session keyword &key (:styled-p boolean) (:client-version (option string)))
     (values sb-bsd-sockets:socket stream list))
-(defun test-localgroup--attach (session mode &key styled-p)
-  "Open one test attachment to SESSION with MODE from a STYLED-P client."
+(defun test-localgroup--attach (session mode &key styled-p client-version)
+  "Open one test attachment to SESSION with MODE and optional CLIENT-VERSION."
   (multiple-value-bind (socket stream)
       (daemon-connect (image-daemon:daemon-runtime-port session))
     (daemon-write-packet stream
                          (list :localgroup-request :version *daemon-protocol-version*
                                :token              (image-daemon:daemon-runtime-token session)
                                :operation ':attach :arguments
-                               (list :mode mode :rows 31 :columns 91 :styled-p styled-p)))
+                               (list :mode mode :rows 31 :columns 91 :styled-p styled-p
+                                     :client-version client-version)))
     (values socket stream (test-localgroup--read-packet stream))))
 
 (-> test-localgroup-message-dispatch () null)
@@ -1336,6 +1337,24 @@
           (lambda ()
             (test-assert (equal (localgroup-attach-record nil '("unused") ':control) result)
                          "the outer attachment loop does not wait after ordinary endings")))))))
+  (let ((versions nil)
+        (calls    0))
+    (test-call-with-function-replacements
+     (list (list 'localgroup--attach-record-once
+                 (lambda (configuration entry mode &key history-position panel screen notice client-version)
+                   (declare (ignore configuration entry mode history-position panel screen notice))
+                   (push client-version versions)
+                   (if (= (incf calls) 1)
+                       '(:checkpoint-reconnect :id "saved" :history-position 0)
+                       '(:detached))))
+           (list 'localgroup--wait-for-checkpoint-entry
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   '("replacement"))))
+     (lambda ()
+       (localgroup-attach-record nil '("initial") ':control :client-version "0.0.0")))
+    (test-assert (equal (reverse versions) '("0.0.0" nil))
+                 "checkpoint reconnection does not repeat the initial version notice"))
   nil)
 
 (-> test-localgroup-checkpoint-source-precheck-order () null)
@@ -1512,6 +1531,14 @@
         (progn
          (configuration-ensure-directories configuration)
          (terminal-start relay)
+         (dolist (client-version (list nil "" *autolith-version* 42))
+           (test-assert (null (localgroup--version-mismatch-notice application client-version))
+                        "matching or absent client versions produce no mismatch note"))
+         (dolist (client-version '("0.0.0" "99.0.0"))
+           (let ((notice (localgroup--version-mismatch-notice application client-version)))
+             (test-assert (and notice
+                               (every (lambda (span) (eq (terminal-span-style span) ':notice)) notice))
+                          "older and newer clients receive informational, non-error notes")))
          (terminal--write relay (format nil "before attachment~%"))
          (setf session (localgroup-start application))
          (multiple-value-bind (read-only-socket read-only-stream response)
@@ -1540,7 +1567,7 @@
           "a detached process can release its original foreground terminal")
          (multiple-value-setq (socket stream)
            (multiple-value-bind (control-socket control-stream response)
-               (test-localgroup--attach session ':control)
+               (test-localgroup--attach session ':control :client-version "0.0.0")
              (test-assert
               (and (eq (first response) ':attached)
                    (eq (image-daemon:relay-attachment-kind relay) ':remote)
@@ -1550,6 +1577,14 @@
                     2))
               "control attaches to a detached terminal relay")
              (values control-socket control-stream)))
+         (test-assert
+          (loop for packet = (test-localgroup--read-packet stream)
+                repeat 10
+                thereis (and (eq (first packet) ':output)
+                             (stringp (second packet))
+                             (search "0.0.0" (second packet))
+                             (search *autolith-version* (second packet))))
+          "the connected channel transcript includes both client and server versions")
          (daemon-write-packet stream (list :event (list :insert "remote")))
          (test-assert
           (task-tests--wait-until

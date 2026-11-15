@@ -1524,15 +1524,16 @@ run once the wake has."
 (defun test-world-client-switch-navigates ()
   "Test a terminal switching channels states no launch options, and stays in its channel when the other refuses it."
   (with-test-configuration (configuration)
-    (let ((opens     nil)
-          (attaches  nil)
-          (refuse-p  nil)
-          (rejects-p nil)
-          (notices   nil)
-          (loading-p nil))
+    (let ((opens           nil)
+          (attaches        nil)
+          (client-versions nil)
+          (refuse-p        nil)
+          (rejects-p       nil)
+          (notices         nil)
+          (loading-p       nil))
       (flet ((run ()
                "Run the client loop for a terminal started with launch options, switching once."
-               (setf opens nil attaches nil loading-p nil)
+               (setf opens nil attaches nil loading-p nil client-versions nil)
                (let ((calls 0))
                  (test-call-with-function-replacements
                   (list (list 'main--open-world-channel
@@ -1544,9 +1545,10 @@ run once the wake has."
                                 (declare (ignore candidate))
                                 (list session-id)))
                         (list 'localgroup-attach-record
-                              (lambda (candidate record mode &key panel screen notice)
+                              (lambda (candidate record mode &key panel screen notice client-version)
                                 (declare (ignore candidate mode panel screen))
                                 (push (first record) attaches)
+                                (push client-version client-versions)
                                 (when notice
                                   (push notice notices))
                                 (cond
@@ -1591,6 +1593,8 @@ run once the wake has."
                      "a switch opens the other channel as a switch, without this start's launch options")
         (test-assert (equal (reverse attaches) '("bfirst1" "bsecnd2"))
                      "the terminal attaches to the channel it switched to")
+        (test-assert (equal (reverse client-versions) (list *autolith-version* nil))
+                     "only the initially loaded channel receives this client's version")
         (setf refuse-p t)
         (run)
         (test-assert (and (equal (reverse attaches) '("bfirst1" "bfirst1"))

@@ -654,9 +654,11 @@ loses a subscription race to another checkpoint."
 
 (-> localgroup-attach-record
     ((option configuration) cons keyword
-     &key (:panel t) (:screen (option localgroup-screen)) (:notice (option string)))
+     &key (:panel t) (:screen (option localgroup-screen)) (:notice (option string))
+          (:client-version (option string)))
     (option list))
-(defun localgroup-attach-record (configuration entry mode &key panel screen notice)
+(defun localgroup-attach-record (configuration entry mode
+                                 &key panel screen notice (client-version *autolith-version*))
   "Attach the terminal, following explicit checkpoint transitions in the same mode.
 
 PANEL, when given, is composed beside a fullscreen session's frames. SCREEN,
@@ -664,7 +666,9 @@ from LOCALGROUP-CLIENT-SCREEN-CREATE, is the client's screen to paint on; the
 caller keeps it after this attachment ends, so a terminal moving to another
 channel keeps its screen. Without SCREEN the attachment makes its own and
 gives the terminal back at the end. NOTICE, when given, is a failure the
-session shows once this terminal is attached, such as why a switch failed. Return an application exit plist, a
+session shows once this terminal is attached, such as why a switch failed.
+CLIENT-VERSION identifies this terminal for a non-fatal version note on its
+first attachment. Return an application exit plist, a
 (:SWITCH :SESSION-ID ID) request from the session, or NIL after a detach or
 connection loss."
   (let ((history-position nil))
@@ -673,7 +677,8 @@ connection loss."
                                                    :history-position history-position
                                                    :panel            panel
                                                    :screen           screen
-                                                   :notice           (shiftf notice nil))))
+                                                    :notice          (shiftf notice nil)
+                                                    :client-version  (shiftf client-version nil))))
         (unless (eq (first result) ':checkpoint-reconnect)
           (return result))
         (setf entry (localgroup--wait-for-checkpoint-entry entry (getf (rest result) :id)
@@ -703,10 +708,10 @@ connection loss."
 (-> localgroup--attach-record-once
     ((option configuration) cons keyword
      &key (:history-position (option integer)) (:panel t) (:screen (option localgroup-screen))
-          (:notice (option string)))
+          (:notice (option string)) (:client-version (option string)))
     (option list))
 (defun localgroup--attach-record-once (configuration entry mode
-                                       &key history-position panel screen notice)
+                                       &key history-position panel screen notice client-version)
   "Run one attachment and release terminal ownership before any reconnect.
 
 The session gets the part of the terminal left beside PANEL as its size. A
@@ -735,6 +740,8 @@ SCREEN the caller lends stays the caller's to release."
                                       (append
                                        (list :mode mode :rows rows :columns columns
                                              :styled-p (terminal-environment-styling-p))
+                                       (when client-version
+                                         (list :client-version client-version))
                                        (when notice
                                          (list :notice notice))))))
          (let ((response (daemon-read-response socket-stream ':attach)))
@@ -757,8 +764,9 @@ SCREEN the caller lends stays the caller's to release."
                                             :token   token
                                             :old-pid old-pid)
                                            ':control
-                                           :panel  panel
-                                           :screen (and (not owned-p) screen)))))
+                                           :panel           panel
+                                           :screen          (and (not owned-p) screen)
+                                            :client-version client-version))))
             ((and response (eq (first response) ':attached))
              (let ((history (getf (rest response) :history)))
                ;; A screen still showing the last channel's frames gets this

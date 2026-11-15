@@ -435,6 +435,19 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
                                 (cons (integer 1 10000)
                                  (cons (integer 1 10000) null))))))))
 
+(-> localgroup--version-mismatch-notice (application t) (option terminal-styled-text))
+(defun localgroup--version-mismatch-notice (application client-version)
+  "Return an informational transcript note when CLIENT-VERSION differs from this server."
+  (when (and (non-empty-string-p client-version)
+             (not (string= client-version *autolith-version*)))
+    (application-notice-line
+     (format nil "Client/server version mismatch: client Autolith ~A; ~A Autolith ~A."
+             (bounded-string client-version :limit 64)
+             (if (application-world-server application)
+                 "world server"
+                 "server")
+             *autolith-version*))))
+
 (-> localgroup--serve-attachment
     (localgroup-session list &key (:socket sb-bsd-sockets:socket) (:stream stream))
     null)
@@ -474,6 +487,10 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
                  (return-from localgroup--serve-attachment nil))
                (application-sync-window-title application)
                (localgroup-terminal-replay-screen terminal attachment)
+               (let ((notice (localgroup--version-mismatch-notice
+                              application (getf arguments :client-version))))
+                 (when notice
+                   (application-present application notice)))
                (unless (eq mode ':read-only)
                  (localgroup--note-controller-attached session)
                  ;; A terminal now controls this channel: that is the

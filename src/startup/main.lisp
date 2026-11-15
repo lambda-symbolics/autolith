@@ -58,8 +58,12 @@
   "Return identity and runtime rows no wider than MAXIMUM-WIDTH."
   (let* ((configuration (application-configuration application))
          (title
-           (list (terminal-span :strong "AUTOLITH")
-                 (terminal-span :dim (format nil " v~A" *autolith-version*))))
+            (list (terminal-span :strong "AUTOLITH")
+                  (terminal-span :dim (format nil " ~Av~A"
+                                              (if (application-world-server application)
+                                                  "world server "
+                                                  "")
+                                              *autolith-version*))))
          (model
            (application--banner-metadata-field
             "model"
@@ -229,8 +233,11 @@ the terminal wraps the semantic spans for both inline and fullscreen tips."
         (list
          (terminal-span
           ':notice
-          (format nil "· update available: Autolith ~A -> ~A~%"
-                  current-version latest-version))
+           (format nil "· ~Aupdate available: Autolith ~A -> ~A~%"
+                   (if (application-world-server application)
+                       "world server "
+                       "")
+                   current-version latest-version))
          (terminal-span
           ':dim
           (if (eq (update-availability-method availability) ':nix)
@@ -1296,6 +1303,7 @@ gives the terminal back in between."
                               (config :boot-screen-p configuration)))
              (loop
               with origin = nil
+               with client-version = *autolith-version*
               with notice = nil
               do
               (let* ((record (localgroup--find-record configuration session-id))
@@ -1317,9 +1325,10 @@ gives the terminal back in between."
                              (progn
                                (setf (world-sidebar-current panel) session-id)
                                (localgroup-attach-record configuration record ':control
-                                                         :panel  panel
-                                                         :screen screen
-                                                         :notice (shiftf notice nil)))
+                                                         :panel           panel
+                                                         :screen          screen
+                                                          :notice         (shiftf notice nil)
+                                                          :client-version (shiftf client-version nil)))
                            (localgroup-error (condition)
                              (close-started)
                              ;; A switch whose channel refuses this terminal, as

@@ -1787,6 +1787,10 @@ and agent. The world lives in =world/= below the data root. One world server
 process hosts the open channels, each with its own endpoint for terminals;
 see Local sessions.
 
+The startup banner and update notice identify the world server's version.
+A client/server version mismatch is reported as an informational note in the
+initially opened channel's transcript, with both versions.
+
 The sidebar and the =(open)= picker show the channels, and the =(move)=
 picker the agents, the parked ones too. Agents are all one kind of
 participant: an agent has a parent and may have children, and any agent,
