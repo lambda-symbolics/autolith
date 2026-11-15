@@ -2339,13 +2339,15 @@ completed work, open work or an uncertainty. Autolith checks the arguments
 against a strict schema and size bounds, and stores the checkpoint in typed
 form beside its text.
 
-Before the request, Autolith lists what the checkpoint may cite: the user
-messages and tool results the request shows, plan steps, mission gates, facts
-the conversation was given or read from =memory:facts= and =memory:claim/<id>=,
-and unfinished jobs, at most 64 in all. Messages and results that an earlier
-checkpoint kept verbatim are among them. Each has a short handle. A note cites
-the handles that support it and the checkpoint keeps the cited references. A
-completed note that cites nothing reads =(unsubstantiated)=.
+Before the request, Autolith lists what the checkpoint may cite: the captured
+user messages and tool results, plan steps, mission gates, facts the
+conversation was given or read from =memory:facts= and =memory:claim/<id>=, and
+unfinished jobs, at most 64 in all. Messages and results that an earlier
+checkpoint kept verbatim are among them. So are those of the recent tail, which
+the request does not show: their catalog lines let the notes and the next step
+agree with what stays after the checkpoint. Each has a short handle. A note
+cites the handles that support it and the checkpoint keeps the cited
+references. A completed note that cites nothing reads =(unsubstantiated)=.
 
 A record reference gives its =conversation:id/<id>= address and sequence, and
 a fact reference its =memory:claim/<id>= address, so the evidence can be read
