@@ -432,8 +432,11 @@ The first SHARED-COUNT durable items also end at their own breakpoint."
          (request-namespaces
           (provider-request-tool-namespaces configuration tool-namespaces))
          (effective-tools (openai-compatible--wire-tools request-namespaces))
+         ;; A compaction request needs context only to repeat what ordinary
+         ;; requests anchored in the history.
          (delivery
-          (unless compaction-p
+          (when (or (not compaction-p)
+                    (openai-compatible-provider-anchored-context-p provider))
             (context-resolve-request configuration conversation request-namespaces
                                      :goal-context goal-context :compaction-p
                                      compaction-p)))
@@ -460,11 +463,11 @@ The first SHARED-COUNT durable items also end at their own breakpoint."
             (make-instance 'cl-llm-provider-api::wire-request :model
                          (config :model configuration) :items items
                          :prefix
-                         (list (system-prompt configuration)
-                               (and compaction-p *compaction-instructions*))
+                         (list (system-prompt configuration))
                          :suffix
-                         (unless compaction-p
-                           (list goal-context context))
+                         (if compaction-p
+                             (list *compaction-instructions*)
+                             (list goal-context context))
                          :options
                          (list :shared-items shared
                                :tool-choice  *provider-tool-choice*
@@ -491,7 +494,7 @@ The first SHARED-COUNT durable items also end at their own breakpoint."
         (openai-compatible--cache-stable-prefix
          request durable cache-fields
          :shared-count (length (provider-shared-items-split durable durable-history)))))
-    (values request delivery)))
+    (values request (and (not compaction-p) delivery))))
 
 
 ;;;; -- Chat Completions Transport --

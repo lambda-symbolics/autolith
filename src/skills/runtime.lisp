@@ -533,9 +533,11 @@ discovered without copying."
 
 (-> skill-context-contributor (request-context) list)
 (defun skill-context-contributor (request)
-  "Return request-local skill contributions for normal provider REQUEST."
-  (unless (or (request-context-compaction-p request)
-              (not (skill--load-tool-visible-p request)))
+  "Return request-local skill contributions for provider REQUEST.
+
+A compaction request gets them too: they are anchored in the history, and a
+request that left them out would not match the prefix ordinary requests cached."
+  (when (skill--load-tool-visible-p request)
     (skill-request-contributions
      (request-context-configuration request)
      (request-context-conversation request))))

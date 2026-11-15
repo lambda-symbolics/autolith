@@ -532,12 +532,17 @@ entry with supports_search_tool."
     ((provider codex-subscription-provider) (tool-namespaces vector))
   "Use native deferred namespaces on capable Codex models, else eager tools.
 
-A request that forces one tool declares its tools eagerly, because a deferred
-tool cannot be forced."
-  (if (and (provider-deferred-tool-loading-p provider)
-           (not (consp *provider-tool-choice*)))
-      (provider-deferred-wire-tools tool-namespaces
-                                    :description *codex-tool-search-description*)
+The compaction namespace is always eager: a compaction request forces its
+tool, and a deferred tool cannot be forced. Every request declares it the
+same way, so ordinary and compaction requests share one cached prefix."
+  (if (provider-deferred-tool-loading-p provider)
+      (flet ((compaction-p (entry)
+               "Return true when ENTRY is the compaction namespace."
+               (json-string= (json-get entry "name") (first *continuation-submit-tool*))))
+        (concatenate 'vector
+                     (provider-deferred-wire-tools (remove-if #'compaction-p tool-namespaces)
+                                                   :description *codex-tool-search-description*)
+                     (call-next-method provider (remove-if-not #'compaction-p tool-namespaces))))
       (call-next-method)))
 
 (defmethod provider-wire-input-item
@@ -638,11 +643,12 @@ NIL leaves the service default in place."))
 
 Return the request and its context delivery. Only anchored contributions keep a
 place inside the history; the goal and every other contribution follow it, so
-changing one never invalidates a provider's cached prefix of earlier history."
+changing one never invalidates a provider's cached prefix of earlier history.
+A compaction request keeps the anchored contributions where ordinary requests
+placed them and ends with the compaction instructions instead of other
+context, so it shares that cached prefix. It delivers no context."
   (let* ((configuration       (provider-configuration provider))
-         (hosted-tools
-           (and (not compaction-p)
-                (provider-responses-hosted-tools provider configuration)))
+         (hosted-tools        (provider-responses-hosted-tools provider configuration))
          (hosted-web-search-p (provider-hosted-web-search-tools-p hosted-tools))
          (request-namespaces
            (provider-request-tool-namespaces configuration tool-namespaces
@@ -652,19 +658,18 @@ changing one never invalidates a provider's cached prefix of earlier history."
                         (provider-responses-request-namespaces provider request-namespaces)
                         (coerce hosted-tools 'vector)))
          (delivery
-           (unless compaction-p
-             (context-resolve-request configuration conversation request-namespaces
-                                      :goal-context goal-context)))
+           (context-resolve-request configuration conversation request-namespaces
+                                    :goal-context goal-context
+                                    :compaction-p compaction-p))
          (history
            (conversation-input-items-for-family
             conversation (provider-family provider)
             :include-ephemeral-p (not compaction-p))))
     (multiple-value-bind (items stable-context volatile-context)
         (context-delivery-project-items delivery conversation history)
-      (let* ((suffix (append (list (and (not compaction-p) goal-context))
-                             stable-context
-                             (list volatile-context
-                                   (and compaction-p *compaction-instructions*))))
+      (let* ((suffix (if compaction-p
+                         (list *compaction-instructions*)
+                         (append (list goal-context) stable-context (list volatile-context))))
              (projection
               (make-instance
                'cl-llm-provider-api:wire-request
@@ -693,7 +698,7 @@ changing one never invalidates a provider's cached prefix of earlier history."
         (values
          (provider-request-object provider projection effective-namespaces
                                   :compaction-p compaction-p)
-         delivery)))))
+         (and (not compaction-p) delivery))))))
 
 
 ;;;; -- Request-Local Output Ceilings --

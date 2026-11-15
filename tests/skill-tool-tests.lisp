@@ -77,11 +77,14 @@
               (not (search body (json-encode
                                  (provider-request-object provider conversation schemas))))
               "requests without skill.load do not receive selected instructions"))
-           (test-assert
-            (not (search body (json-encode
+           (let* ((ordinary   (test-request-history
+                               (provider-request-object provider conversation namespaces)))
+                  (compaction (test-request-history
                                (provider-request-object provider conversation namespaces
-                                                        :compaction-p t))))
-            "compaction excludes selected instructions")))
+                                                        :compaction-p t)))
+                  (shared     (1- (length compaction))))
+             (test-assert (equal (subseq ordinary 0 shared) (subseq compaction 0 shared))
+                          "compaction repeats the history ordinary requests send, anchored instructions included"))))
         (test-assert
          (not (search body (json-encode
                             (provider-request-object provider conversation namespaces))))
@@ -567,9 +570,15 @@
                (test-assert (not (search "UPDATED-ALPHA-BODY" (json-encode (request #()))))
                             "tool restrictions remove skill instructions")
                (request)
-               (let ((compaction (provider-request-object provider conversation schemas :compaction-p t)))
-                 (test-assert (not (search "UPDATED-ALPHA-BODY" (json-encode compaction)))
-                              "compaction side requests omit skill context"))
+               (let ((ordinary   (json-get (request) "input"))
+                     (compaction (json-get (provider-request-object provider conversation schemas
+                                                                    :compaction-p t)
+                                           "input")))
+                 (test-assert (equal (map 'list #'json-encode
+                                          (subseq ordinary 0 (1- (length compaction))))
+                                     (map 'list #'json-encode
+                                          (subseq compaction 0 (1- (length compaction)))))
+                              "a compaction request repeats anchored skill context where ordinary requests placed it"))
                (let ((summary (json-object "role" "user" "content" "Compacted work.")))
                  (setf (conversation-input-items conversation) (list summary))
                  (incf (conversation-log-generation conversation))

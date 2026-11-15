@@ -774,7 +774,10 @@ the one-request contributions together: they change on every delivery."
      &key (:goal-context (option string)) (:compaction-p boolean)) context-delivery)
 (defun context-resolve-request
     (configuration conversation tool-namespaces &key goal-context compaction-p)
-  "Collect product context, resolve generic contributions, and render the request."
+  "Collect product context, resolve generic contributions, and render the request.
+
+A compaction request resolves context only to repeat what ordinary requests
+anchored in the history, so its delivery is not remembered for diagnostics."
   (let ((request (make-instance 'request-context
                                :configuration configuration :conversation conversation
                                :tool-namespaces tool-namespaces
@@ -802,7 +805,8 @@ the one-request contributions together: they change on every delivery."
                 :failures                    failures
                 :rendered                    (context--render
                                               (cl-llm-provider-api:context-selection-contributions selection)))))
-        (context--remember-delivery delivery)
+        (unless compaction-p
+          (context--remember-delivery delivery))
         delivery))))
 
 (-> context-delivery-complete ((option context-delivery)) null)

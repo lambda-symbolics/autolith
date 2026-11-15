@@ -190,11 +190,11 @@
                          (json-encode (conversation-input-items conversation))))
             "request cache annotations never mutate conversation input")
            (test-assert
-            (not (search "cache_control"
-                         (json-encode
-                          (provider-request-object
-                           provider conversation #() :compaction-p t))))
-            "compaction omits every explicit cache breakpoint"))
+            (search "cache_control"
+                    (json-encode
+                     (provider-request-object
+                           provider conversation #() :compaction-p t)))
+            "compaction keeps the cache breakpoints, so it reads what ordinary requests cached"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -328,16 +328,11 @@
         (test-assert (= 1 (length (json-get request "tools")))
                      "compaction requests declare only the submit tool")
         (test-assert
-         (and (loop for block across system
-                    always (null (json-get block "cache_control")))
-              (loop for message across messages
-                    always (loop for block across (json-get message "content")
-                                 always (null (json-get block "cache_control")))))
-         "one-off compaction requests omit cache breakpoints")
-        (test-assert
-         (and (find *compaction-instructions* texts :test #'string=)
-              (not (find "request-local goal" texts :test #'string=)))
-         "compaction includes its instructions but not goal context"))))
+         (and (not (find *compaction-instructions* texts :test #'string=))
+              (test-object-contains-string-p (aref messages (1- (length messages)))
+                                             *compaction-instructions*)
+              (not (test-object-contains-string-p request "request-local goal")))
+         "compaction instructions follow the history, and the goal context stays out"))))
   nil)
 
 (-> anthropic-provider-test--transport () null)

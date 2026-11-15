@@ -1348,13 +1348,11 @@
                  (test-assert
                   (and (null delivery)
                        (string= (json-get system-message "role") "system")
-                       (search *compaction-instructions*
-                               (json-get system-message "content"))
-                       (= 1
-                          (count "system" messages :key
-                                 (lambda (message) (json-get message "role")) :test
-                                 #'string=)))
-                  "compaction also uses one leading system message"))))
+                       (not (search *compaction-instructions*
+                                    (json-get system-message "content")))
+                       (test-object-contains-string-p (aref messages (1- (length messages)))
+                                                      *compaction-instructions*))
+                  "compaction keeps the ordinary system message and ends with its instructions"))))
            (let* ((prompt-provider
                    (openai-compatible-provider-create configuration :name
                                                       "prompt-openai" :family

@@ -391,7 +391,7 @@ credentials and model metadata independently of their cached wire routes."
    "POST REQUEST to PROVIDER's native compaction endpoint and return its body."))
 
 (defparameter *compaction-instructions*
-  (format nil "You are writing the checkpoint that replaces this conversation so far. Call compaction.submit once and write nothing else. Do not call other tools, wait for jobs, or do more work.
+  (format nil "Stop working on the task. You are now writing the checkpoint that replaces this conversation so far. Call compaction.submit once and write nothing else. Do not call other tools, wait for jobs, or do more work.
 
 intent: what the user wants done, in at most ~:D characters.
 notes: at most ~D notes of at most ~:D characters, each holding one fact. Give every note a kind: decision for a choice that was made and why, constraint for a rule or user preference to keep following, completed for finished work, open for unfinished work, and uncertainty for something not yet known.
@@ -404,8 +404,10 @@ The latest user message is quoted below when there is one, and the next step mus
           *continuation-note-maximum-characters*
           *continuation-next-maximum-characters*
           *continuation-row-maximum-references*)
-  "The developer instructions of a compaction request.
+  "The instructions of a compaction request, which follow its history.
 
+The system prompt, the tool declarations and the history before them stay as
+ordinary requests send them, so the provider can read them from its cache.
 The request binds this to the instructions followed by its reference catalog.")
 
 (defparameter *provider-hosted-tools-enabled-p* t

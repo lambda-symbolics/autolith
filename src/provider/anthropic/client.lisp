@@ -107,15 +107,17 @@ A cache write costs 1.25 times input for five minutes and twice input for one ho
     ((provider anthropic-product-provider-mixin) (conversation conversation)
      (tool-namespaces vector) &key goal-context compaction-p)
   "Project product prompts and history into the shared Anthropic wire request.
-Return the encoded request and its unconsumed context delivery."
+Return the encoded request and its unconsumed context delivery. A compaction
+request keeps anchored context in its history, ends with the compaction
+instructions and delivers no context."
   (let* ((configuration   (provider-configuration provider))
          (request-namespaces
            (provider-request-tool-namespaces configuration tool-namespaces))
          (effective-tools (provider-wire-tools provider request-namespaces))
          (delivery
-           (unless compaction-p
-             (context-resolve-request configuration conversation request-namespaces
-                                      :goal-context goal-context)))
+           (context-resolve-request configuration conversation request-namespaces
+                                    :goal-context goal-context
+                                    :compaction-p compaction-p))
          (durable-items
            (conversation-input-items-for-family
             conversation (provider-family provider) :include-ephemeral-p nil))
@@ -136,23 +138,21 @@ Return the encoded request and its unconsumed context delivery."
               'cl-llm-provider-api:wire-request
               :model   (config :model configuration)
               :items   items
-              :prefix  (append
-                        (list (let ((*system-prompt-hosted-web-search-p* nil))
-                                (system-prompt configuration)))
-                        (when compaction-p (list *compaction-instructions*)))
+              :prefix  (list (let ((*system-prompt-hosted-web-search-p* nil))
+                               (system-prompt configuration)))
               :suffix  (remove-if-not
                         #'non-empty-string-p
-                        (list (and (not compaction-p) goal-context)
-                              (context-delivery-rendered-tail delivery)))
+                        (if compaction-p
+                            (list *compaction-instructions*)
+                            (list goal-context (context-delivery-rendered-tail delivery))))
               :options (list :shared-items          shared
                              :ephemeral-items       ephemeral-items
                              :tool-choice           *provider-tool-choice*
                              :maximum-output-tokens *provider-maximum-output-tokens*
-                             :cache-p               (not compaction-p)
                              :cache-ttl             (provider-prompt-cache-ttl
                                                      configuration))))))
     (values (provider-request-object provider projection effective-tools)
-            delivery)))
+            (and (not compaction-p) delivery))))
 
 
 ;;;; -- Anthropic Transport --

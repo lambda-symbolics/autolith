@@ -1645,23 +1645,29 @@ repair either, and a checkpoint without notes would only lose history."
 
 (-> agent--request-checkpoint
     (agent agent-observer conversation
-     &key (:recovery compaction-recovery) (:request-context t) (:latest-request (option string))
-          (:references list) (:unsummarized list) (:request-number (integer 0)))
+     &key (:tool-namespaces vector) (:recovery compaction-recovery) (:request-context t)
+          (:latest-request (option string)) (:references list) (:unsummarized list)
+          (:request-number (integer 0)))
     (values (option list) (integer 0)))
 (defun agent--request-checkpoint
     (agent observer view
-     &key recovery request-context latest-request references unsummarized request-number)
+     &key tool-namespaces recovery request-context latest-request references unsummarized
+          request-number)
   "Ask the model for a checkpoint of VIEW; return it and the number of requests issued.
 
-Each request offers only compaction.submit and forces that call. Its
-instructions quote LATEST-REQUEST, the user message that stays after the
-checkpoint, and list REFERENCES. A rejected submission is shown back to the
+Each request declares TOOL-NAMESPACES, the tools of the ordinary requests
+around it, and forces the compaction.submit call among them. A conversation
+without tools declares that one tool. The instructions follow the history.
+They quote LATEST-REQUEST, the user message that stays after the checkpoint,
+and list REFERENCES. A rejected submission is shown back to the
 model with what to correct. The checkpoint is NIL when
 *AGENT-COMPACTION-MAXIMUM-GENERATIONS* requests produced none. The provider
 layer regenerates nothing by itself here, so every generation counts against
 that maximum. A refusal and a terminal failure are signaled."
   (let ((provider                             (agent-provider agent))
-        (tools                                (continuation-tool-namespaces))
+        (tools                                (if (plusp (length tool-namespaces))
+                                                  tool-namespaces
+                                                  (continuation-tool-namespaces)))
         (issued                               0)
         (*compaction-instructions*
           (format nil "~A~2%~@[The latest user message, which stays after the checkpoint:~%~A~2%~]~A"
@@ -1735,12 +1741,12 @@ that maximum. A refusal and a terminal failure are signaled."
 
 (-> agent--compaction-checkpoint
     (agent agent-observer conversation-compaction
-     &key (:view conversation) (:recovery compaction-recovery) (:request-context t)
-          (:unfinished-work list) (:request-number (integer 0)))
+     &key (:view conversation) (:tool-namespaces vector) (:recovery compaction-recovery)
+          (:request-context t) (:unfinished-work list) (:request-number (integer 0)))
     (values list (integer 0)))
 (defun agent--compaction-checkpoint
     (agent observer compaction
-     &key view recovery request-context unfinished-work request-number)
+     &key view tool-namespaces recovery request-context unfinished-work request-number)
   "Return the checkpoint for COMPACTION and the number of requests it took.
 
 The model writes the checkpoint from VIEW, the history before the retained
@@ -1754,6 +1760,7 @@ as unsummarized."
       (multiple-value-bind (submitted requests)
           (agent--request-checkpoint
            agent observer view
+           :tool-namespaces tool-namespaces
            :recovery        recovery
            :request-context request-context
            :latest-request  (getf (rest (assoc ':message records)) :content)
@@ -1807,6 +1814,28 @@ as unsummarized."
   (let ((value (config :max-output-tokens (agent-configuration agent))))
     (and (integerp value) (plusp value) value)))
 
+(-> agent--tool-namespaces
+    (agent &key (:tools-p boolean) (:tool-restriction-p boolean) (:tool-allowlist (option list)))
+    vector)
+(defun agent--tool-namespaces (agent &key tools-p tool-restriction-p tool-allowlist)
+  "Return the tool namespaces AGENT's requests declare.
+
+A request that offers tools also declares compaction.submit. A compaction
+request then repeats the declarations of the ordinary requests around it and
+only forces that call, so it reads the prompt prefix they cached instead of
+paying for the whole history again."
+  (let ((offered (cond
+                   ((not tools-p)
+                    #())
+                   (tool-restriction-p
+                    (tool-registry-provider-schemas (agent-tool-registry agent)
+                                                    :canonical-names tool-allowlist))
+                   (t
+                    (tool-registry-provider-schemas (agent-tool-registry agent))))))
+    (if (plusp (length offered))
+        (concatenate 'vector offered (continuation-tool-namespaces))
+        offered)))
+
 (-> agent--validate-compaction-projection
     (agent conversation &key (:goal-context (option string))
                       (:tool-restriction-p boolean) (:tool-allowlist (option list))
@@ -1817,16 +1846,11 @@ as unsummarized."
     (agent candidate &key goal-context tool-restriction-p tool-allowlist tools-p
                          (tool-rounds 0) maximum-output-tokens)
   "Reject a candidate checkpoint whose fresh ordinary request cannot fit."
-  (let* ((provider       (agent-provider agent))
-         (tool-namespaces
-           (cond
-             ((not tools-p)
-              #())
-             (tool-restriction-p
-              (tool-registry-provider-schemas
-               (agent-tool-registry agent) :canonical-names tool-allowlist))
-             (t
-              (tool-registry-provider-schemas (agent-tool-registry agent))))))
+  (let* ((provider        (agent-provider agent))
+         (tool-namespaces (agent--tool-namespaces agent
+                                                  :tools-p            tools-p
+                                                  :tool-restriction-p tool-restriction-p
+                                                  :tool-allowlist     tool-allowlist)))
     (let ((*provider-maximum-output-tokens*
             (or maximum-output-tokens
                 (agent--configured-max-output-tokens agent)))
@@ -1890,13 +1914,11 @@ publication. Return issued request count and optional next-request details."
     (setf unfinished-work (task-unfinished-work-snapshot agent))
     (let* ((*provider-hosted-tools-enabled-p* (not tool-restriction-p))
            (provider                          (agent-provider agent))
-           (native-tools
-             (if (not tools-p)
-                 #()
-                 (if tool-restriction-p
-                     (tool-registry-provider-schemas
-                      (agent-tool-registry agent) :canonical-names tool-allowlist)
-                     (tool-registry-provider-schemas (agent-tool-registry agent)))))
+           (tool-namespaces
+             (agent--tool-namespaces agent
+                                     :tools-p            tools-p
+                                     :tool-restriction-p tool-restriction-p
+                                     :tool-allowlist     tool-allowlist))
            (native-window
              (multiple-value-bind (window usage)
                   (values-list
@@ -1909,7 +1931,7 @@ publication. Return issued request count and optional next-request details."
                         request-context candidate
                         (lambda ()
                           (provider-native-compact-conversation
-                           provider candidate :tool-namespaces native-tools
+                           provider candidate :tool-namespaces tool-namespaces
                            :event-callback
                            (lambda (event)
                              (if (typep event 'native-compaction-completed-event)
@@ -1924,7 +1946,7 @@ publication. Return issued request count and optional next-request details."
                                  (agent-observer-status observer :provider-progress nil))))))))
                     :preflight (lambda (candidate)
                                 (provider-check-request-context
-                                 provider (provider-native-compaction-request-object provider candidate native-tools)))
+                                 provider (provider-native-compaction-request-object provider candidate tool-namespaces)))
                     :native-p  t))
                  (unless native-request-accounted-p
                    (setf native-usage usage))
@@ -1951,6 +1973,7 @@ publication. Return issued request count and optional next-request details."
                              (conversation-input-items-for-family
                               captured-view family :include-ephemeral-p nil)
                              family)
+           :tool-namespaces tool-namespaces
            :recovery        recovery
            :request-context request-context
            :unfinished-work unfinished-work
@@ -2055,16 +2078,10 @@ loop, so compaction ahead of the user message shares the turn's budget."
               ;; A restricted turn past its tool rounds keeps its schemas and
               ;; disables calls instead, so its answer reuses the cached prefix.
               (tool-namespaces
-                (cond
-                  ((not tools-p)
-                   #())
-                  (tool-restriction-p
-                   (tool-registry-provider-schemas
-                    (agent-tool-registry agent)
-                    :canonical-names tool-allowlist))
-                  (t
-                   (tool-registry-provider-schemas
-                    (agent-tool-registry agent)))))
+                (agent--tool-namespaces agent
+                                        :tools-p            tools-p
+                                        :tool-restriction-p tool-restriction-p
+                                        :tool-allowlist     tool-allowlist))
               (cache-prefix    nil)
               (context-request nil)
               (result
