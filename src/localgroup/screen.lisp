@@ -185,7 +185,8 @@ The panel shows beside a channel with enough pane columns after subtracting
 its width and divider. Otherwise it opens only after an explicit toggle."
   (let ((panel (localgroup-screen-panel screen)))
     (cond
-      ((or (null panel) (localgroup-screen-whole-screen-p screen))
+      ((or (not (localgroup-screen-active-p screen))
+           (null panel) (localgroup-screen-whole-screen-p screen))
        ':session)
       ((localgroup-screen--compact-p screen)
        (if (localgroup-screen-drawer-open-p screen) ':alone ':session))
@@ -251,6 +252,8 @@ panel they stay on the pane's edge, so selecting never takes the panel's
 text. While the panel takes the whole screen, the hidden session gets no
 keys or drags, and a switch hides the panel to show the channel switched
 to."
+  (unless (localgroup-screen-active-p screen)
+    (return-from localgroup-screen-filter-event event))
   (let* ((pointer-p (typep event '(cons (member :click :drag :release) (cons integer (cons integer null)))))
          (click-p   (and pointer-p (eq (first event) ':click)))
          (geometry  (with-lock-held ((localgroup-screen-lock screen))
@@ -318,7 +321,7 @@ to."
 Store the choice on the screen and, if supported, on the panel for reuse
 across attachments."
   (let ((panel (localgroup-screen-panel screen)))
-    (when panel
+    (when (and panel (localgroup-screen-active-p screen))
       (with-lock-held ((localgroup-screen-lock screen))
         (let ((layout   (localgroup-screen-layout screen))
               (columns  (nth-value 1 (localgroup-screen-pane-size screen)))
@@ -524,9 +527,12 @@ client tells the session, and the next paint rewrites the whole screen."
 (-> localgroup-screen--enter (localgroup-screen) null)
 (defun localgroup-screen--enter (screen)
   "Take the client's screen for the session's frames."
-  (let ((terminal (localgroup-screen-terminal screen)))
+  (let ((terminal (localgroup-screen-terminal screen))
+        (columns (nth-value 1 (localgroup-screen-pane-size screen))))
     (setf (localgroup-screen-token screen) (terminal-screen-enter terminal)
           (localgroup-screen-active-p screen) t)
+    (unless (= columns (nth-value 1 (localgroup-screen-pane-size screen)))
+      (setf (localgroup-screen-resize-pending-p screen) t))
     (terminal-screen-invalidate terminal (localgroup-screen-painter screen)))
   nil)
 
@@ -534,11 +540,14 @@ client tells the session, and the next paint rewrites the whole screen."
 (defun localgroup-screen--leave (screen)
   "Give the client's screen back and forget the session's frame."
   (when (localgroup-screen-active-p screen)
-    (let ((terminal (localgroup-screen-terminal screen)))
+    (let ((terminal (localgroup-screen-terminal screen))
+          (columns (nth-value 1 (localgroup-screen-pane-size screen))))
       (setf (localgroup-screen-active-p screen) nil
             (localgroup-screen-frame screen) nil
             (localgroup-screen-loading screen) nil
             (localgroup-screen-boot-ui screen) nil)
+      (unless (= columns (nth-value 1 (localgroup-screen-pane-size screen)))
+        (setf (localgroup-screen-resize-pending-p screen) t))
       (unwind-protect
            (terminal-screen-leave terminal (shiftf (localgroup-screen-token screen) nil))
         (terminal-screen-invalidate terminal (localgroup-screen-painter screen)))))
