@@ -601,7 +601,9 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
                  :initargs
                  (list :orchestrator         orchestrator
                         :mission-context     (mission--agent-context parent-agent)
-                       :execution-identifier (make-user-identifier)
+                       :execution-identifier (task-execution-identifier-generate
+                                              (agent-configuration parent-agent)
+                                              (task-parent-root-conversation-identifier parent-agent))
                        :session-order        session-order
                        :public-identifier    identifier
                        :completion-owner-conversation
@@ -811,8 +813,9 @@ that check atomic with cascading cancellation."
                         (list :orchestrator          orchestrator
                               :telemetry-run         (unless (getf entry :detached)
                                                        (or (getf entry :telemetry-run) *telemetry-run*))
-                              :execution-identifier  (task-child-identifier-generate
-                                                      (agent-configuration parent-agent))
+                              :execution-identifier  (task-execution-identifier-generate
+                                                      (agent-configuration parent-agent)
+                                                      root-conversation-identifier)
                               :session-order         session-order
                               :definition            (getf entry :definition)
                               :item                  item

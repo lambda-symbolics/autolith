@@ -3300,9 +3300,124 @@ pool must reject the cancelled parent without creating a descendant."
           do (test-assert (string= (task-child-name item definition) expected)
                           (format nil "a child admitted with ~S is named ~A" item expected))))
   (with-test-configuration (configuration)
-    (let ((identifier (task-child-identifier-generate configuration)))
-      (test-assert (and (identifier-p identifier) (< (length identifier) 12))
-                   "a child's identifier is a short identifier, not a UUID")))
+    (let* ((timestamp               3994000000)
+           (generate                #'identifier-generate)
+           (root-identifier         "identity-fixture")
+           (root                    (task--artifact-group-root configuration root-identifier))
+           (*random-index-function* (lambda (limit) (declare (ignore limit)) 0)))
+      (test-call-with-function-replacements
+       (list (list 'identifier-generate
+                   (lambda (&rest arguments)
+                     (apply generate :timestamp timestamp arguments))))
+       (lambda ()
+         (let* ((conversation-id         (identifier-from-seed timestamp 0))
+                (stored-id               (identifier-from-seed timestamp 1))
+                (claim-id                (identifier-from-seed timestamp 2))
+                (partial-id              (identifier-from-seed timestamp 3))
+                (partial-conversation-id (identifier-from-seed timestamp 4))
+                (stored-path             (merge-pathnames (format nil "~A/continuity.sexp" stored-id) root)))
+           (conversation-append-user-message
+            (conversation-create configuration :identifier conversation-id) "Stored identity.")
+           (task-continuity--write
+            stored-path (list :version 1 :kind ':tool :job-id "stored-execution"
+                              :execution-id stored-id :root-conversation root-identifier :owners nil))
+           (test-assert (task-execution--claim-directory
+                         (merge-pathnames (format nil "~A/" claim-id) root))
+                        "a reserved but unpublished execution claims its durable directory")
+           (platform-ensure-directories-exist *platform*
+            (merge-pathnames (format nil "~A/unpublished" partial-id) root))
+           (platform-ensure-directories-exist
+            *platform*
+            (merge-pathnames
+             "unpublished"
+             (conversation-storage-directory-pathname
+              (conversation-pathname-for-id configuration partial-conversation-id))))
+           (let ((stored (uiop:read-file-string stored-path)))
+             (identifier-clear-reservations)
+             (let ((identifier (task-execution-identifier-generate configuration root-identifier)))
+               (test-assert (and (identifier-p identifier)
+                                 (string= identifier (identifier-from-seed timestamp 5)))
+                            "allocation skips stored and partial conversations, executions, claims and directories"))
+             (identifier-clear-reservations)
+             (test-assert
+              (string= (task-execution-identifier-generate configuration root-identifier)
+                       (identifier-from-seed timestamp 6))
+              "restart allocation skips an execution reserved before the restart")
+             (test-assert (string= stored (uiop:read-file-string stored-path))
+                          "new admissions never overwrite prior durable execution identity"))
+           (dolist (reason '(:refused :failed))
+             (let* ((directory (merge-pathnames (format nil "failure-~(~A~)/" reason) root))
+                    (claim     (merge-pathnames "identity.reservation" directory))
+                    (open      #'platform-open-new-file)
+                    (failure   (make-condition 'platform-error :operation ':open :pathname claim
+                                               :reason reason :message "Injected claim failure.")))
+               (test-call-with-function-replacements
+                (list (list 'platform-open-new-file
+                            (lambda (platform path)
+                              (when (eq reason ':failed)
+                                (with-open-stream (stream (funcall open platform path))))
+                              (error failure))))
+                (lambda ()
+                  (test-assert
+                   (handler-case (progn (task-execution--claim-directory directory) nil)
+                     (platform-error (condition) (eq failure condition)))
+                   "genuine filesystem failure propagates even when a claim marker exists")))))
+           (let ((lock        (make-lock "Concurrent identity admission"))
+                 (identifiers nil)
+                 (failures    nil))
+             (let ((threads
+                     (loop repeat 2 collect
+                       (make-thread
+                        (lambda ()
+                          (handler-case
+                              (let* ((*random-index-function*
+                                       (lambda (limit) (declare (ignore limit)) 0))
+                                     (identifier (task-execution-identifier-generate
+                                                  configuration root-identifier)))
+                                (with-lock-held (lock) (push identifier identifiers)))
+                            (error (condition)
+                              (with-lock-held (lock) (push condition failures)))))))))
+               (mapc #'join-thread threads))
+             (test-assert (and (null failures) (= 2 (length identifiers))
+                               (not (equal (first identifiers) (second identifiers))))
+                          "concurrent admissions with identical candidates reserve distinct storage"))
+           (let ((directory  (merge-pathnames "exclusive-claim/" root))
+                 (ensure     #'platform-ensure-directories-exist)
+                 (lock       (make-lock "Exclusive execution claim"))
+                 (condition  (make-condition-variable))
+                 (arrivals   0)
+                 (released-p nil)
+                 (results    nil)
+                 (failures   nil))
+             (test-call-with-function-replacements
+              (list (list 'platform-ensure-directories-exist
+                          (lambda (platform path)
+                            (with-lock-held (lock)
+                              (incf arrivals)
+                              (loop until released-p do (condition-wait condition lock)))
+                            (funcall ensure platform path))))
+              (lambda ()
+                (let ((threads
+                        (loop repeat 2 collect
+                          (make-thread
+                           (lambda ()
+                             (handler-case
+                                 (let ((result (task-execution--claim-directory directory)))
+                                   (with-lock-held (lock) (push result results)))
+                               (error (failure)
+                                 (with-lock-held (lock) (push failure failures)))))))))
+                  (unwind-protect
+                       (test-assert (task-tests--wait-until
+                                     (lambda () (with-lock-held (lock) (= arrivals 2))) 2)
+                                    "both claimants reach the exclusive creation boundary")
+                    (with-lock-held (lock)
+                      (setf released-p t)
+                      (dotimes (index 2)
+                        (condition-notify condition)))
+                    (mapc #'join-thread threads)))))
+             (test-assert (and (null failures) (= 1 (count t results))
+                               (= 1 (count nil results)))
+                          "exclusive durable creation admits exactly one cross-process-style claimant")))))))
   nil)
 
 (-> test-task-children-limit () null)

@@ -236,113 +236,130 @@
 (-> test-agent-compaction-live-child-shell () null)
 (defun test-agent-compaction-live-child-shell ()
   "Retain real running child and async shell identities, then deliver each outcome once after restart."
-  (dolist (native-p '(nil t))
-    (job-completion-tests--fixture
-     (lambda (parent runtime configuration)
-       (let* ((registry       (agent-tool-registry parent))
-              (conversation   (agent-conversation parent))
-              (directory      (config :working-directory configuration))
-              (release        (merge-pathnames "compaction-release" directory))
-              (effects        (merge-pathnames "compaction-effects" directory))
-              (barrier        (make-instance 'task-test-blocking-tool
-                                             :namespace "test" :name "block"
-                                             :description "Wait until compaction has published."
-                                             :parameters  (tool-object-schema (json-object) nil)))
-              (child-provider (make-instance 'task-test-provider :mode ':blocking-tool))
-              (context        (make-instance 'tool-context
-                                             :configuration configuration :conversation conversation
-                                             :registry registry :agent parent :worker nil
-                                             :command-authorization-function
-                                             (lambda (command directory)
-                                               (declare (ignore command directory))
-                                               ':full-access)))
-              (child          nil)
-              (shell          nil))
-         (tool-registry-register registry barrier)
-         (setf (agent-provider parent) child-provider)
-         (unwind-protect
-              (progn
-                (tool-execute (tool-registry-find registry "child" "spawn") context
-                              (json-object "name" "compaction-child" "agent" "task"
-                                           "task" "Enter the blocking ordinary tool."
-                                           "completion-policy" "continue"))
-                (setf child (first (task-orchestrator-list-jobs runtime)))
-                (test-assert
-                 (task-tests--wait-until
-                  (lambda ()
-                    (with-lock-held ((task-test-blocking-tool-lock barrier))
-                      (task-test-blocking-tool-started-p barrier)))
-                  5)
-                 "the actual child reaches its running tool before compaction")
-                (let* ((result
-                         (tool-execute
-                          (tool-registry-find registry "shell" "run") context
-                          (json-object
-                           "command"
-                           (test-fixture-shell-command
-                            *platform*
-                            "while [ ! -f compaction-release ]; do sleep 0.02; done; printf 'shell-once\\n' >> compaction-effects; printf shell-finished"
-                            "while (!(Test-Path compaction-release)) { Start-Sleep -Milliseconds 20 }; Add-Content compaction-effects shell-once; [Console]::Write('shell-finished')")
-                           "async" t "completion-policy" "continue")))
-                       (record (getf (rest (tool-result-details result)) :job)))
-                  (setf shell (task-orchestrator-find-visible-job runtime (getf record :id)
-                                                                  :viewer    parent
-                                                                  :tool-name "job.get")))
-                (test-assert (and child shell (not (job-terminal-p child)) (not (job-terminal-p shell)))
-                             "both real jobs remain outstanding before compaction")
-                (task-completion-watch child parent)
-                (task-completion-watch shell parent)
-                (let* ((identifiers    (mapcar #'session-job-execution-identifier (list child shell)))
-                       (child-requests (task-test-provider-request-count child-provider)))
-                    (setf (agent-provider parent)
-                          (compaction-tests--provider :configuration configuration
-                                                      :native-p      native-p))
-                  (agent-compact-conversation parent (make-instance 'agent-observer))
-                  (let ((snapshot (getf (rest (compaction-tests--checkpoint conversation)) :unfinished-work)))
-                    (test-assert (= 2 (getf snapshot :total)) "checkpoint contains authoritative outstanding-job identities")
-                    (dolist (identifier identifiers)
-                      (test-assert (find identifier (getf snapshot :jobs)
-                                         :key (lambda (row) (getf row :execution-id)) :test #'equal)
-                                   "both child and shell execution identities survive native/portable compaction")))
-                  (test-assert (= child-requests (task-test-provider-request-count child-provider))
-                               "compaction issues no new child request")
-                  (test-assert (not (probe-file effects)) "compaction does not release or reexecute the shell")
-                  (task-tests--release-blocking-tool barrier)
-                  (with-open-file (stream release :direction ':output :if-exists ':supersede)
-                    (write-line "release" stream))
-                  (dolist (job (list child shell))
-                    (multiple-value-bind (snapshot terminal-p) (session-job-await job 10)
-                      (declare (ignore snapshot))
-                      (test-assert terminal-p "the original job completes after test release")))
-                  (cl-jobpond:completion-subscription-refresh
-                   (task-completion-service-subscription (task-completion--service parent)))
-                  (let ((fresh (job-completion-tests--fresh-agent parent configuration)))
-                    (unwind-protect
-                         (progn
-                           (task-completion-restore fresh)
-                           (test-assert (= 2 (length (task-completion-deliver fresh)))
-                                        "restart delivers each original outcome exactly once")
-                           (dolist (identifier identifiers)
-                             (test-assert (task-completion--delivered-p (agent-conversation fresh) identifier)
-                                          "both stable execution receipts are durable"))
-                           (test-assert (null (task-completion-deliver fresh))
-                                        "a repeated safe boundary does not redeliver either outcome")
-                           (conversation-append-summary (agent-conversation fresh) "Delivered both original jobs.")
-                           (let ((again (job-completion-tests--fresh-agent fresh configuration)))
-                             (unwind-protect
-                                  (progn
-                                    (task-completion-restore again)
-                                    (test-assert (null (task-completion-deliver again))
-                                                 "recompaction and another restart retain exactly-once receipts"))
-                               (task-orchestrator-close (task-completion--runtime again)))))
-                      (task-orchestrator-close (task-completion--runtime fresh))))
-                  (test-assert (= 1 (length (uiop:read-file-lines effects)))
-                               "the actual shell side effect ran once across compaction and restarts")))
-           (task-tests--release-blocking-tool barrier)
-           (with-open-file (stream release :direction ':output :if-exists ':supersede)
-             (write-line "cleanup release" stream))
-           (dolist (job (remove nil (list child shell)))
-             (session-job-await job 10)))))))
+  (let ((generate                #'identifier-generate)
+        (*random-index-function* (lambda (limit) (declare (ignore limit)) 0)))
+    (test-call-with-function-replacements
+     (list (list 'identifier-generate
+                 (lambda (&rest arguments)
+                   (apply generate :timestamp 3994000000 arguments))))
+     (lambda ()
+       (dolist (native-p '(nil t))
+        (job-completion-tests--fixture
+         (lambda (parent runtime configuration)
+           (let* ((registry       (agent-tool-registry parent))
+                  (conversation   (agent-conversation parent))
+                  (directory      (config :working-directory configuration))
+                  (release        (merge-pathnames "compaction-release" directory))
+                  (effects        (merge-pathnames "compaction-effects" directory))
+                  (barrier        (make-instance 'task-test-blocking-tool
+                                                 :namespace "test" :name "block"
+                                                 :description "Wait until compaction has published."
+                                                 :parameters  (tool-object-schema (json-object) nil)))
+                  (child-provider (make-instance 'task-test-provider :mode ':blocking-tool))
+                  (context        (make-instance 'tool-context
+                                                 :configuration configuration :conversation conversation
+                                                 :registry registry :agent parent :worker nil
+                                                 :command-authorization-function
+                                                 (lambda (command directory)
+                                                   (declare (ignore command directory))
+                                                   ':full-access)))
+                  (child          nil)
+                  (shell          nil))
+             (tool-registry-register registry barrier)
+             (setf (agent-provider parent) child-provider)
+             (unwind-protect
+                  (progn
+                    (tool-execute (tool-registry-find registry "child" "spawn") context
+                                  (json-object "name" "compaction-child" "agent" "task"
+                                               "task" "Enter the blocking ordinary tool."
+                                               "completion-policy" "continue"))
+                    (setf child (first (task-orchestrator-list-jobs runtime)))
+                    (test-assert
+                     (task-tests--wait-until
+                      (lambda ()
+                        (with-lock-held ((task-test-blocking-tool-lock barrier))
+                          (task-test-blocking-tool-started-p barrier)))
+                      5)
+                     "the actual child reaches its running tool before compaction")
+                    (let* ((result
+                             (tool-execute
+                              (tool-registry-find registry "shell" "run") context
+                              (json-object
+                               "command"
+                               (test-fixture-shell-command
+                                *platform*
+                                "while [ ! -f compaction-release ]; do sleep 0.02; done; printf 'shell-once\\n' >> compaction-effects; printf shell-finished"
+                                "while (!(Test-Path compaction-release)) { Start-Sleep -Milliseconds 20 }; Add-Content compaction-effects shell-once; [Console]::Write('shell-finished')")
+                               "async" t "completion-policy" "continue")))
+                           (record (getf (rest (tool-result-details result)) :job)))
+                      (setf shell (task-orchestrator-find-visible-job runtime (getf record :id)
+                                                                      :viewer    parent
+                                                                      :tool-name "job.get")))
+                    (test-assert (and child shell (not (job-terminal-p child)) (not (job-terminal-p shell)))
+                                 "both real jobs remain outstanding before compaction")
+                    (let ((paths (mapcar (lambda (job) (task-continuity-record-job job parent))
+                                         (list child shell))))
+                      (test-assert
+                       (and (not (equal (session-job-execution-identifier child)
+                                        (session-job-execution-identifier shell)))
+                            (not (equal (first paths) (second paths)))
+                            (equal (mapcar (lambda (path)
+                                             (getf (task-continuity--read path) :kind)) paths)
+                                   '(:task :tool)))
+                       "forced child/tool candidates receive distinct identities and storage"))
+                    (task-completion-watch child parent)
+                    (task-completion-watch shell parent)
+                    (let* ((identifiers    (mapcar #'session-job-execution-identifier (list child shell)))
+                           (child-requests (task-test-provider-request-count child-provider)))
+                        (setf (agent-provider parent)
+                              (compaction-tests--provider :configuration configuration
+                                                          :native-p      native-p))
+                      (agent-compact-conversation parent (make-instance 'agent-observer))
+                      (let ((snapshot (getf (rest (compaction-tests--checkpoint conversation)) :unfinished-work)))
+                        (test-assert (= 2 (getf snapshot :total)) "checkpoint contains authoritative outstanding-job identities")
+                        (dolist (identifier identifiers)
+                          (test-assert (find identifier (getf snapshot :jobs)
+                                             :key (lambda (row) (getf row :execution-id)) :test #'equal)
+                                       "both child and shell execution identities survive native/portable compaction")))
+                      (test-assert (= child-requests (task-test-provider-request-count child-provider))
+                                   "compaction issues no new child request")
+                      (test-assert (not (probe-file effects)) "compaction does not release or reexecute the shell")
+                      (task-tests--release-blocking-tool barrier)
+                      (with-open-file (stream release :direction ':output :if-exists ':supersede)
+                        (write-line "release" stream))
+                      (dolist (job (list child shell))
+                        (multiple-value-bind (snapshot terminal-p) (session-job-await job 10)
+                          (declare (ignore snapshot))
+                          (test-assert terminal-p "the original job completes after test release")))
+                      (cl-jobpond:completion-subscription-refresh
+                       (task-completion-service-subscription (task-completion--service parent)))
+                      (let ((fresh (job-completion-tests--fresh-agent parent configuration)))
+                        (unwind-protect
+                             (progn
+                               (task-completion-restore fresh)
+                               (test-assert (= 2 (length (task-completion-deliver fresh)))
+                                            "restart delivers each original outcome exactly once")
+                               (dolist (identifier identifiers)
+                                 (test-assert (task-completion--delivered-p (agent-conversation fresh) identifier)
+                                              "both stable execution receipts are durable"))
+                               (test-assert (null (task-completion-deliver fresh))
+                                            "a repeated safe boundary does not redeliver either outcome")
+                               (conversation-append-summary (agent-conversation fresh) "Delivered both original jobs.")
+                               (let ((again (job-completion-tests--fresh-agent fresh configuration)))
+                                 (unwind-protect
+                                      (progn
+                                        (task-completion-restore again)
+                                        (test-assert (null (task-completion-deliver again))
+                                                     "recompaction and another restart retain exactly-once receipts"))
+                                   (task-orchestrator-close (task-completion--runtime again)))))
+                          (task-orchestrator-close (task-completion--runtime fresh))))
+                      (test-assert (= 1 (length (uiop:read-file-lines effects)))
+                                   "the actual shell side effect ran once across compaction and restarts")))
+               (task-tests--release-blocking-tool barrier)
+               (with-open-file (stream release :direction ':output :if-exists ':supersede)
+                 (write-line "cleanup release" stream))
+               (dolist (job (remove nil (list child shell)))
+                  (session-job-await job 10))))))))))
   nil)
 
 (-> test-compaction-unfinished-corrupt-replay () null)

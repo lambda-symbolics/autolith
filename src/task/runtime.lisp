@@ -298,19 +298,47 @@ agent refers to its children by names that say what they do."
       (and definition (task-agent-definition-name definition))
       "child"))
 
-(-> task-child-identifier-generate (configuration) string)
-(defun task-child-identifier-generate (configuration)
-  "Return a new child agent's short identifier, which no conversation or child has yet.
+(-> task-execution--claim-directory (pathname) boolean)
+(defun task-execution--claim-directory (directory)
+  "Exclusively claim a new execution DIRECTORY, returning NIL when already occupied.
 
-The child's conversation, its channel and its directory below its root are
-named after it; it shares the conversations' reservations in this process."
-  (let ((root (uiop:ensure-directory-pathname (configuration-conversation-root configuration))))
+Keep the claim after admission failure or a crash: an execution identity with
+possibly published evidence must never be recycled. Existing directories from
+older executions need no claim marker to count as occupied."
+  (block nil
+    (when (probe-file directory)
+      (return nil))
+    (let ((claim (merge-pathnames "identity.reservation" directory)))
+      (platform-ensure-directories-exist *platform* claim)
+      (with-open-stream
+          (stream (handler-case (platform-open-new-file *platform* claim)
+                    (platform-error (condition)
+                      (if (eq (platform-error-reason condition) ':exists)
+                          (return nil)
+                          (error condition)))))
+        (write-byte 1 stream)
+        t))))
+
+(-> task-execution-identifier-generate (configuration non-empty-string) string)
+(defun task-execution-identifier-generate (configuration root-identifier)
+  "Reserve a short child or tool execution identity and its durable directory.
+
+Children also use this identity for their conversation and channel. Share the
+conversation reservation namespace and reject both stored conversations and
+any prior execution directory below ROOT-IDENTIFIER, including partial claims.
+Exclusive marker creation arbitrates concurrent allocators across processes."
+  (let ((namespace (namestring (uiop:ensure-directory-pathname
+                                (configuration-conversation-root configuration))))
+        (root      (task--artifact-group-root configuration root-identifier)))
     (identifier-generate
-     :timestamp  (get-universal-time)
-     :namespace  (namestring root)
-     :occupied-p (lambda (candidate)
-                   (not (null (conversation-storage-active-pathname
-                               (conversation-pathname-for-id configuration candidate))))))))
+     :timestamp (get-universal-time)
+     :namespace namespace
+     :occupied-p
+     (lambda (candidate)
+       (or (conversation-storage-occupied-p
+            (conversation-pathname-for-id configuration candidate))
+           (not (task-execution--claim-directory
+                 (merge-pathnames (format nil "~A/" candidate) root))))))))
 
 (-> task-orchestrator-reserve-session-orders
     (task-orchestrator (integer 1))
