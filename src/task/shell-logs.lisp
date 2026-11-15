@@ -671,12 +671,11 @@ never holds the artifact lock."
           (platform-delete-directory-tree *platform* capture-directory :validate t))
         nil)))
 
-(-> shell-log--trim-tombstones (configuration) null)
-(defun shell-log--trim-tombstones (configuration)
-  "Bound tombstone metadata separately, deleting only already-pruned artifacts."
+(-> shell-log--trim-tombstones (configuration list) null)
+(defun shell-log--trim-tombstones (configuration inventory)
+  "Bound tombstones from INVENTORY collected under the same artifact lock."
   (let* ((entries
-           (loop for directory in (shell-log--directories configuration)
-                 for metadata = (shell-log--scan-manifest configuration directory)
+           (loop for (directory metadata) in inventory
                  when (eq (getf metadata :state) ':pruned)
                    collect (list directory metadata)))
          (count                     (length entries)))
@@ -704,11 +703,14 @@ never holds the artifact lock."
 Keep manifests as tombstones so old references have truthful diagnostics."
   (let* ((*shell-log-receipt-cache*       (make-hash-table :test #'equal))
          (*shell-log-sync-evidence-cache* (make-hash-table :test #'equal))
-         (entries
+         (inventory
            (loop for directory in (shell-log--directories configuration)
                  for metadata = (shell-log--scan-manifest configuration directory)
-                 when (and metadata (not (eq (getf metadata :state) ':pruned)))
+                 when metadata
                    collect (list directory metadata (getf metadata :accounted-bytes 0))))
+         (entries                         (loop for entry in inventory
+                                                unless (eq (getf (second entry) :state) ':pruned)
+                                                  collect entry))
          (total                           (loop for entry in entries sum (third entry)))
          (count                           (length entries)))
     (dolist (entry (sort entries #'< :key (lambda (entry) (getf (second entry) :created-at 0))))
@@ -727,11 +729,12 @@ Keep manifests as tombstones so old references have truthful diagnostics."
           (decf total accounted-bytes)
           (decf count)
           (setf (getf metadata :state) ':pruned
-                (getf metadata :pruned-at) (get-universal-time))
+                (getf metadata :pruned-at) (get-universal-time)
+                (second entry) metadata)
           (shell-log--write-manifest
            (make-instance 'shell-log-artifact :configuration configuration
                           :capture-directory directory :metadata metadata)))))
-    (shell-log--trim-tombstones configuration)
+    (shell-log--trim-tombstones configuration inventory)
     (when (or (> (+ total reservation) *shell-log-retention-byte-limit*)
               (>= count *shell-log-retention-count-limit*))
       (shell-log--fail "Private shell log storage is full; protected captures cannot be pruned.")))
