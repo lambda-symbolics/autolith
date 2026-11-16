@@ -1650,15 +1650,20 @@ In fullscreen mode, an attached terminal can show the world's channels in a
 sidebar on the left. Your inbox appears as =home ~=, with the number of
 messages waiting there unread; that count is kept on disk, so every terminal
 shows the same one. Other channels descend from home and are indented beneath
-it, grouped by workspace, with the current workspace first. Within a workspace,
-the channel whose conversation changed last comes first, and child channels
+it, grouped by repository or workspace, with the current group first. Within a
+group, the channel whose conversation changed last comes first, and child channels
 are nested under their parents. Each channel shows its agent's name, then its title.
 
-The workspaces and channels form a tree. The current workspace starts open,
-and so does each channel the current one nests in; the rest start closed. A
-closed node shows how many channels it hides and their unread counts. Click
-a node's =▸= or =▾= marker, or a workspace's row, to open or close it; the
-sidebar keeps that choice. Click a channel or home to switch to it.
+In the sidebar and =(open)= picker, workspaces from a checkout and its linked
+worktrees share a group under the verified originating checkout. Independent local
+clones form separate groups. Use each workspace's own path when repository
+ownership cannot be established.
+
+The groups and channels form a tree. The current group starts open, and so does
+each channel the current one nests in; the rest start closed. A closed node shows
+how many channels it hides and their unread counts. Click a node's =▸= or =▾=
+marker, or a group's row, to open or close it; the sidebar keeps that choice.
+Click a channel or home to switch to it.
 
 | Marker    | Meaning                         |
 |-----------+---------------------------------|

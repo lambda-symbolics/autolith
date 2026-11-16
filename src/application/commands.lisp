@@ -1535,20 +1535,20 @@ INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT to TERMINAL-UI-SELECT."
 
 (-> application--channel-items (application) list)
 (defun application--channel-items (application)
-  "Return picker items for every channel: the person's inbox, then each workspace's channels, children under their parents.
+  "Return picker items grouped by originating local repository, children under parents.
 
 An item names the channel's agent, or else its title or identifier, and says
-what the channel is about and whether a terminal session serves it. The
-workspace of this channel comes first; within one, the channel changed last
-comes first."
+what the channel is about and whether a terminal session serves it. Resolve
+presentation groups once before building items, using the sidebar's policy."
   (let* ((world   (handler-case (application-world application) (autolith-error nil nil)))
          (current (conversation-identifier (application-conversation application)))
          (served  (world-channel-served-identifiers (application-configuration application))))
     (when world
-      (let ((inbox (world-inbox-channel world))
-            (channels
-             (application--channels-newest-first application world
-              (remove-if #'channel-inbox-p (world-channels world)))))
+      (let* ((inbox  (world-inbox-channel world))
+             (channels
+               (application--channels-newest-first application world
+                (remove-if #'channel-inbox-p (world-channels world))))
+             (groups (world-repository-groups channels current)))
         (labels ((item (channel depth group)
                    "Return the picker item of CHANNEL nested DEPTH deep in GROUP."
                    (let* ((identifier (channel-identifier channel))
@@ -1576,7 +1576,9 @@ comes first."
              (list
               (list :name *world-inbox-designator* :value (channel-identifier inbox) :argument nil
                     :description "messages for you")))
-           (loop for (workspace . members) in (world-channel-groups channels current)
+           (loop for repository in groups
+                 for workspace = (world-repository-group-directory repository)
+                 for members = (world-repository-group-channels repository)
                  for group = (format nil "~A · ~A" (world-workspace-leaf workspace)
                                      (application--abbreviated-directory workspace))
                  append (loop for node in (world-channel-forest members)

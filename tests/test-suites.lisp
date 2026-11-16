@@ -817,6 +817,8 @@
   test-client-protocol-write-failure)
 
 (define-test-suite world-sidebar
+  test-world-repository-groups
+  test-world-repository-group-refresh
   test-world-sidebar-gathers-apart
   test-world-sidebar-rows
   test-world-sidebar-tree

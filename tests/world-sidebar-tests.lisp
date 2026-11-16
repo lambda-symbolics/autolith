@@ -165,6 +165,40 @@
                    "the indented marker folds the channel while Enter opens its selected name")
       (test-assert (equal (screen-panel-click sidebar 10 3) '(:switch :session-id "home"))
                    "the home row opens its channel")))
+  (with-test-configuration (configuration)
+    (let* ((sidebar  (world-sidebar-create configuration))
+           (terminal (make-instance 'recording-terminal :columns 120 :rows 24))
+           (root     (make-instance 'channel :identifier "repo-root" :owner "user"
+                                             :workspace "/repo/" :created-at 1 :updated-at 1))
+           (child    (make-instance 'channel :identifier "repo-child" :owner "user"
+                                             :workspace "/isolated/worktree/" :parent "repo-root"
+                                             :created-at 1 :updated-at 1))
+           (group    (make-instance 'world-repository-group :key      "git:/repo/.git/"
+                                                           :directory "/repo/"
+                                                           :channels  (list root child))))
+      (setf (world-sidebar-current sidebar) "repo-child")
+      (test-call-with-function-replacements
+       (list (list 'world-repository-groups
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     (error "Pure sidebar rebuild attempted repository discovery"))))
+       (lambda ()
+         (world-sidebar--take sidebar (list :channels (list root child) :groups (list group)))
+         (test-assert (equal '("git:/repo/.git/" "repo-root" "repo-child")
+                             (mapcar (lambda (entry) (or (getf entry :id) (getf entry :key)))
+                                     (world-sidebar-entries sidebar)))
+                      "precomputed repository groups nest a child from a distinct worktree")
+         (test-assert (= 1 (getf (third (world-sidebar-entries sidebar)) :depth))
+                      "the isolated child nests beneath its actual parent")
+         (screen-panel-rows sidebar terminal :height 20 :width *world-sidebar-tests-width*)
+         (test-assert (equal (screen-panel-click sidebar 10 4) '(:switch :session-id "repo-root"))
+                      "group headings do not replace the channel switch target")
+         (world-sidebar--toggle sidebar (world-repository-group-key group))
+         (test-assert (= 1 (length (world-sidebar-entries sidebar)))
+                      "folding a resolved repository uses the supplied snapshot without discovery")
+         (test-assert (and (string= (channel-workspace root) "/repo/")
+                           (string= (channel-workspace child) "/isolated/worktree/"))
+                      "presentation grouping preserves both actual execution directories")))))
   nil)
 
 (-> test-world-sidebar-visibility () null)

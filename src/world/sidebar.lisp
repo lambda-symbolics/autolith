@@ -411,14 +411,16 @@ The choice stays when the terminal moves to another channel."
 
 (-> world-sidebar--gather (world-sidebar) list)
 (defun world-sidebar--gather (sidebar)
-  "Return the current catalogue as WORLD-SIDEBAR--ENTRIES arguments."
+  "Return the current catalogue and resolved presentation groups for the UI."
   (let* ((configuration (world-sidebar-configuration sidebar))
          (statuses      (world-sidebar--statuses sidebar))
          (world         (handler-case (world-channel-catalogue configuration :statuses statuses)
                           (autolith-error ()
-                            (make-instance 'world)))))
+                            (make-instance 'world))))
+         (channels      (world-sidebar--channels sidebar world)))
     (list :inbox    (world-inbox-channel world)
-          :channels (world-sidebar--channels sidebar world)
+          :channels channels
+          :groups   (world-repository-groups channels (world-sidebar-current sidebar))
           :names    (world-sidebar--names world)
           :statuses statuses
           :pending  (world-sidebar--pending configuration))))
@@ -471,18 +473,18 @@ A newly hosted channel without durable history sorts by its creation time."
         nil)))
 
 (-> world-sidebar--entries
-    (world-sidebar &key (:inbox (option channel)) (:channels list) (:names list)
-                        (:statuses list) (:pending list))
+    (world-sidebar &key (:inbox (option channel)) (:channels list) (:groups list)
+                       (:names list) (:statuses list) (:pending list))
     list)
-(defun world-sidebar--entries (sidebar &key inbox channels names statuses pending)
+(defun world-sidebar--entries (sidebar &key inbox channels groups names statuses pending)
   "Return the home INBOX entry, then its indented workspace and channel entries.
 
 NAMES pairs channels with their agents' names; STATUSES and PENDING
 deliveries are folded in. The inbox's unread count is what waits in it for
 the person, so it stays true across clients and restarts. CHANNELS arrive
-latest touched first. The workspace of the current channel comes first, then
-the others in that order. Within a workspace, channels nest under their
-parents. The first workspace is open, and a channel when the current one
+latest touched first. The originating repository of the current channel comes
+first, then the others in that order. Within a group, channels nest under their
+parents. The first group is open, and a channel when the current one
 nests below it, unless the person opened or closed them; a closed one counts
 what it hides."
   (let ((current (world-sidebar-current sidebar))
@@ -526,7 +528,10 @@ what it hides."
                      :current-p (equal (channel-identifier inbox) current)
                      :unread    (or (rest (assoc (channel-identifier inbox) pending :test #'string=))
                                     0))))
-       (loop for (workspace . members) in (world-channel-groups channels current)
+       (loop for group in (world-repository-current-groups
+                           (or groups (world-repository-workspace-groups channels current)) current)
+             for workspace = (world-repository-group-directory group)
+             for members = (world-repository-group-channels group)
              for first-p = t then nil
              append (let ((shown nil)
                           (all   nil))
@@ -534,9 +539,10 @@ what it hides."
                         (multiple-value-bind (node-shown node-all) (channel-entries node 0)
                           (setf shown (append shown node-shown)
                                 all   (append all node-all))))
-                      (let ((open-p (world-sidebar--open-p sidebar workspace first-p)))
+                      (let* ((key    (world-repository-group-key group))
+                             (open-p (world-sidebar--open-p sidebar key first-p)))
                         (cons (append (list :kind   ':workspace
-                                            :key    workspace
+                                            :key    key
                                             :name   (world-workspace-leaf workspace)
                                             :path   (world-sidebar--short-path workspace)
                                             :indent (if inbox 2 0))
