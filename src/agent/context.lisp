@@ -542,7 +542,7 @@ stays cached across midnight; this separate block carries the change instead."
     (values (integer 0) boolean))
 (defun context-estimate-known-tokens
     (configuration conversation &key tool-registry hurry-up-p family provider)
-  "Return shared input accounting and whether no unmeasured history was added.
+  "Return shared input accounting and whether all covered input is unchanged.
 
 A matched measurement already includes request-local guidance. Charge only
 new retained history here; admission replaces temporary context when encoding."
@@ -552,18 +552,18 @@ new retained history here; admission replaces temporary context when encoding."
                       (or family (model-family (config :model configuration)
                                                (config :model-provider configuration)))))
          (sample     (conversation-context-usage-sample conversation))
+         (header     (and provider (provider-context--soft-header provider tools)))
          (components (and provider (provider-context--header-components provider tools))))
     (when (and provider
                (null (conversation-ephemeral-input-entries conversation))
                (provider-context--sample-matches-p
-                sample (provider-context--soft-header provider tools)
-                (mapcar #'provider-cache-prefix--entry items) :components components))
+                sample header (mapcar #'provider-cache-prefix--entry items) :components components))
       (let* ((new    (nthcdr (getf sample :history-count) items))
              (charge (if (= 2 (getf sample :format))
                          (provider-context--header-charge sample components) 0)))
         (return-from context-estimate-known-tokens
           (values (+ charge (provider-context--input-tokens sample (and new (coerce new 'vector))))
-                  (and (null new) (zerop charge))))))
+                  (and (null new) (equal header (getf sample :soft-header)))))))
     (values
      (provider-context--input-tokens
       nil (vector (system-prompt configuration)
