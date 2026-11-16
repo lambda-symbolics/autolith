@@ -27,13 +27,15 @@
       role))
    text))
 
-(-> syntax--lisp-parenthesis-roles (string) simple-vector)
-(defun syntax--lisp-parenthesis-roles (source)
-  "Return depth roles for structural parentheses without reading Lisp SOURCE.
+(-> syntax--lisp-parenthesis-roles
+    (string &key (:whitespace-p boolean)) (values simple-vector (option simple-vector)))
+(defun syntax--lisp-parenthesis-roles (source &key whitespace-p)
+  "Return depth roles and, with WHITESPACE-P, safe whitespace positions in SOURCE.
 
 Strings, escaped symbol names, character literals and nested comments do not
-contribute to nesting. Incomplete input is accepted for diagnostic displays."
+contribute to nesting or whitespace breaks. Incomplete input is accepted."
   (let ((roles          (make-array (length source) :initial-element nil))
+        (whitespace     (when whitespace-p (make-array (length source) :initial-element nil)))
         (depth          0)
         (index          0)
         (block-depth    0)
@@ -67,7 +69,9 @@ contribute to nesting. Incomplete input is accepted for diagnostic displays."
                ((char= character #\;)
                 (setf line-comment-p t token-p nil))
                ((find character '(#\Space #\Tab #\Newline #\Return #\Page #\' #\` #\,))
-                (setf token-p nil))
+                (setf token-p nil)
+                (when (and whitespace (find character '(#\Space #\Tab #\Newline #\Return #\Page)))
+                  (setf (aref whitespace index) t)))
                ((and (not token-p) (char= character #\#) (eql next #\|))
                 (setf block-depth 1)
                 (incf index))
@@ -110,7 +114,7 @@ contribute to nesting. Incomplete input is accepted for diagnostic displays."
                (t
                 (setf token-p t)))
              (incf index))
-    roles))
+    (values roles whitespace)))
 
 (-> syntax--parenthesis-spans (list simple-vector (integer 0)) list)
 (defun syntax--parenthesis-spans (spans roles offset)

@@ -1730,9 +1730,146 @@
                         "folded outcome source reflows with its original call and lifecycle state"))))))))
   nil)
 
+(-> fullscreen-test--lisp-input-formatting () null)
+(defun fullscreen-test--lisp-input-formatting ()
+  "Check literal preservation and safe breaks in compact display-only Lisp."
+  (dolist (case
+            (list
+             (list "(let ((start (get-internal-real-time))) (list :start start :message \"(literal)   spaces\" :last :complete))"
+                   '("\"(literal)   spaces\"" ":complete"))
+             (list "(list '#(one two) #'absent-package:item #.(error \"display only\") #1=(shared) #1# #\\( #\\) #\\Space #\\  |symbol (with)   spaces| escaped\\ symbol :complete)"
+                   '("'#(one two)" "#'absent-package:item" "#.(error \"display only\")" "#1=(shared)" "#1#"
+                     "#\\(" "#\\)" "#\\Space" "#\\ " "|symbol (with)   spaces|" "escaped\\ symbol" ":complete"))
+             (list "(list #| comment (with)   spaces #| nested |# |# :first :second :third :complete) ; trailing ((   comment"
+                   '("#| comment (with)   spaces #| nested |# |#" "; trailing ((   comment" ":complete"))))
+    (destructuring-bind (source literals) case
+      (let ((formatted (application--format-lisp-input source 48)))
+        (test-assert (and (find #\Newline formatted)
+                          (every (lambda (literal) (search literal formatted)) literals))
+                     "structural formatting preserves reader prefixes, packages, strings, symbols and comments"))))
+  (dolist (source (list (format nil "(let ((value 42))~%    (list :value value))")
+                       "(list :incomplete (value" "(list :extra))"))
+    (test-assert (string= source (application--format-lisp-input source 16))
+                 "existing multiline formatting and malformed source are displayed verbatim"))
+  nil)
+
+(-> fullscreen-test--lisp-async-input-expansion () null)
+(defun fullscreen-test--lisp-async-input-expansion ()
+  "Click clipped form text and ellipses through live handoff, completion and history."
+  (dolist (mode '(:live :replay :history))
+    (with-test-configuration (configuration)
+      (let* ((terminal     (make-instance 'recording-terminal :columns 100 :rows 48))
+             (ui           (fullscreen-test--ui terminal))
+             (conversation (conversation-create configuration))
+             (application  (make-instance 'application :configuration configuration
+                                          :tool-registry (make-default-tool-registry)
+                                          :conversation conversation :ui ui))
+             (forms        #("(let ((start (get-internal-real-time))) (list :first start :description \"first compact source beyond the visible input preview\" :first-complete t))"
+                             "(let ((start (get-internal-real-time))) (list :second start :description \"second compact source beyond the visible input preview\" :second-complete t))"))
+             (call         (application-tool-outcome-history-tests--append
+                            conversation
+                            (list :provider-item :wire-json
+                                  (json-encode
+                                   (agent-test-call :call-id "async-input" :namespace "lisp" :name "eval"
+                                                    :arguments (json-encode
+                                                                (json-object "forms" forms "async" t
+                                                                             "repl" "startup-profile")))))))
+             (handoff      (list :tool-result :call-id "async-input" :tool "lisp.eval"
+                                 :status ':ok :output "background output"
+                                 :details '(:tool-execution :handed-off-p t
+                                            :job (:id "exec:form-input" :state :running))))
+             (key          (application--tool-outcome-key application ':call "async-input"))
+             (chunk-count  0)
+             (call-tag     nil))
+        (with-terminal-ui (active ui)
+          (terminal-ui-set-input active "draft")
+          (labels ((present (record)
+                     (application-tool-outcome-tests--present application record))
+
+                   (resident ()
+                     (gethash key (fullscreen-terminal-ui-presentation-records active)))
+
+                   (text ()
+                     (clinedi:transcript-viewport-chunk-text
+                      (fullscreen-terminal-ui-viewport active) 0))
+
+                   (click-form (index &key ellipsis-p)
+                     (terminal-ui-process-event active ':scroll-top)
+                     (let* ((frame (map 'list #'clinedi:ansi-strip (fullscreen-test--frame active)))
+                            (rows  (loop for row in frame for number from 1
+                                         when (search "(let" row) collect (list number row)))
+                            (row   (nth index rows)))
+                       (test-assert row "each actual form row is visible")
+                       (when row
+                         (let* ((column (1+ (if ellipsis-p (position #\… (second row))
+                                                (1+ (search "(let" (second row))))))
+                                (action (terminal-ui-fullscreen--click-action active column (first row))))
+                           (test-assert (equal action (list ':toggle-tool-input key))
+                                        "form text and its clipping ellipsis retain the input action")
+                           (fullscreen-test--click active column (first row))))))
+
+                   (assert-expanded ()
+                     (test-assert
+                      (and (getf (resident) :input-expanded-p)
+                           (search ":first-complete" (text)) (search ":second-complete" (text))
+                           (search (format nil "~%  │   (list") (text))
+                           (= chunk-count (fullscreen-test--chunk-count active))
+                           (equal call-tag (getf (resident) :tag))
+                           (string= "draft" (line-editor-text (terminal-ui-editor active))))
+                      (format nil "~A: the complete input is formatted in its original chunk without changing the composer"
+                              mode))))
+            (if (eq mode ':live)
+                (present call)
+                (progn
+                  (setf handoff (application-tool-outcome-history-tests--append conversation handoff))
+                  (if (eq mode ':replay)
+                      (application-render-records application)
+                      (progn
+                        (present handoff)
+                        (setf (application-rendered-sequence application) (application--record-sequence handoff)
+                              (application-history-floor-sequence application) (application--record-sequence handoff))
+                        (application-render-history application)))))
+            (setf chunk-count (fullscreen-test--chunk-count active)
+                  call-tag (getf (resident) :tag))
+            (click-form 0)
+            (assert-expanded)
+            (when (eq mode ':live)
+              (setf handoff (application-tool-outcome-history-tests--append conversation handoff))
+              (present handoff)
+              (assert-expanded))
+            (test-assert (and (eq (getf (resident) :state) ':pending)
+                              (search "job.cancel" (text)))
+                         "the async handoff keeps its pending state and cancellation action")
+            (click-form 0)
+            (test-assert (not (getf (resident) :input-expanded-p)) "the first form collapses the input")
+            (dolist (target '((1 nil) (0 t)))
+              (click-form (first target) :ellipsis-p (second target))
+              (assert-expanded)
+              (click-form (first target))
+              (test-assert (not (getf (resident) :input-expanded-p))
+                           "each form can collapse its input after expansion"))
+            (click-form 1 :ellipsis-p t)
+            (assert-expanded)
+            (dolist (width '(40 100))
+              (terminal-ui-resize active width :rows 48)
+              (assert-expanded))
+            (present (application-tool-outcome-history-tests--append
+                      conversation (application-tool-outcome-tests--completion
+                                    0 "exec:form-input" :outcome ':failure :summary "Failure detail")))
+            (assert-expanded)
+            (test-assert (and (eq (getf (resident) :state) ':failure) (search "Failure detail" (text)))
+                         "job completion preserves the expanded input and displays the failure")
+            (click-form 1)
+            (test-assert (and (not (getf (resident) :input-expanded-p))
+                              (not (search ":second-complete" (text))) (search "Failure detail" (text)))
+                         "the second form collapses the completed input without losing its result"))))))
+  nil)
+
 (-> test-terminal-fullscreen-lisp-input-expansion () null)
 (defun test-terminal-fullscreen-lisp-input-expansion ()
   "Expand Lisp input by clicking its source, then reflow, fold an outcome and collapse."
+  (fullscreen-test--lisp-input-formatting)
+  (fullscreen-test--lisp-async-input-expansion)
   (with-test-configuration (configuration)
     (let* ((terminal    (make-instance 'recording-terminal :columns 100 :rows 48))
            (ui          (fullscreen-test--ui terminal))
@@ -1741,7 +1878,7 @@
                                        :conversation (conversation-create configuration) :ui ui))
            (forms       (concatenate 'vector
                                      (loop for index below 12
-                                           collect (format nil "(let ((value ~D))~%  (list :value value))" index))
+                                            collect (format nil "(let ((value ~D)) (list :value value :complete-source \"the complete compact input extends beyond the visible preview\"))" index))
                                      #("(list :expanded-final #.(error \"display only\") absent-package:item)")))
            (call        (list :provider-item :seq 1 :wire-json
                               (json-encode
@@ -1759,10 +1896,10 @@
           (labels ((toggle-input ()
                      (terminal-ui-process-event active ':scroll-top)
                      (let* ((frame (map 'list #'clinedi:ansi-strip (fullscreen-test--frame active)))
-                            (row   (position-if (lambda (text) (find #\│ text)) frame)))
-                       (test-assert row "the input rail is visible and clickable")
-                       (when row
-                        (fullscreen-test--click active (1+ (position #\│ (nth row frame))) (1+ row))))))
+                             (row   (position-if (lambda (text) (search "(let" text)) frame)))
+                        (test-assert row "the form text is visible and clickable")
+                        (when row
+                         (fullscreen-test--click active (1+ (search "(let" (nth row frame))) (1+ row))))))
             (test-assert (not (search ":expanded-final" preview))
                          "the initial input uses the bounded preview")
             (toggle-input)
