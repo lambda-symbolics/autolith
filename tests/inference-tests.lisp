@@ -350,6 +350,36 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-rlm-refused-item-keeps-usage () null)
+(defun test-rlm-refused-item-keeps-usage ()
+  "Charge the frame budget even when an item of its response is refused."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (budget        (rlm-budget-create :calls 4 :tokens 1000 :depth 1))
+         (call          (agent-test-call :call-id "twice" :arguments "{}"))
+         (conflict      (agent-test-call :call-id   "twice"
+                                         :arguments "{\"value\":1}"))
+         (provider      (make-instance 'scripted-provider
+                                       :results (list (agent-test-result
+                                                       "refused"
+                                                       (list call conflict))))))
+    (unwind-protect
+         (progn
+           (test-assert
+            (handler-case
+                (progn
+                  (rlm-run "charge a refused frame"
+                           :provider      provider
+                           :configuration configuration
+                           :budget        budget)
+                  nil)
+              (conversation-invariant-error () t))
+            "a refused item fails the frame as a conversation invariant error")
+           (test-assert (< (rlm-budget-remaining-tokens budget) 1000)
+                        "the refused frame still settles the usage its provider billed"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (defclass rlm-inference-test-provider (model-provider)
   ((results
     :initarg       :results

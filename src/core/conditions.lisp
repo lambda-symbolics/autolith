@@ -443,19 +443,18 @@ own instead of replacing another in place."))
   ()
   (:documentation "Conversation persistence or replay violated a critical invariant."))
 
-(define-condition provider-call-conflict (autolith-error)
+(define-condition provider-call-conflict (conversation-invariant-error)
   ((call-id
     :initarg       :call-id
     :reader        provider-call-conflict-call-id
-    :documentation "The call identifier the provider reused.")
-   (conversation-id
-    :initarg       :conversation-id
-    :reader        provider-call-conflict-conversation-id
-    :documentation "The conversation whose transcript already names that identifier."))
+    :documentation "The call identifier the provider reused."))
   (:report (lambda (condition stream)
              (format stream "The provider reused call identifier ~S for a different call."
                      (provider-call-conflict-call-id condition))))
-  (:documentation "A provider reused a call identifier that already names another call."))
+  (:documentation "A provider reused a call identifier that already names another call.
+
+A conflict is a transcript invariant, so every recorder of a provider response
+treats it like any other refused item."))
 
 (define-condition conversation-in-use (conversation-error)
   ((identifier

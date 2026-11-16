@@ -1280,6 +1280,39 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-agent-refused-item-keeps-usage () null)
+(defun test-agent-refused-item-keeps-usage ()
+  "Record the response's billed usage even when one of its items is refused."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create configuration
+                                       :identifier "refused-item-keeps-usage"))
+                (agent
+                  (agent-create
+                   :configuration configuration
+                   :provider      (make-instance 'scripted-provider :results nil)
+                   :conversation  conversation
+                   :tool-registry (agent-test-registry)
+                   :worker        ':unused))
+                (call     (agent-test-call :call-id "twice" :arguments "{}"))
+                (conflict (agent-test-call :call-id   "twice"
+                                           :arguments "{\"value\":1}"))
+                (result   (agent-test-result "refused" (list call conflict))))
+           (test-assert
+            (handler-case
+                (progn
+                  (agent--persist-provider-result agent result :request-number 1)
+                  nil)
+              (agent-loop-error () t))
+            "a refused item ends the turn as an agent-loop-error")
+           (test-assert
+            (equal '(1 1) (subseq (conversation-usage conversation) 0 2))
+            "the refused response still records the usage the provider billed"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-agent-malformed-tool-arguments () null)
 (defun test-agent-malformed-tool-arguments ()
   "Test malformed tool arguments fail safely and legacy poison is repaired on replay."

@@ -196,9 +196,9 @@ a child agent."
                                                                           (getf offer :bindings))))
                  (plans (agent--tool-call-plans agent (list call)))
                  (plan  (first plans)))
-            (conversation-append-provider-item (agent-conversation agent) call
-                                               :tool-label  (tool-display-name (getf plan :tool))
-                                               :persistence (getf plan :persistence))
+            (agent--append-provider-item agent call
+                                         :tool-label  (tool-display-name (getf plan :tool))
+                                         :persistence (getf plan :persistence))
             (agent--execute-tool-calls agent plans
                                        (make-instance 'provider-result
                                                       :output-items (list call)

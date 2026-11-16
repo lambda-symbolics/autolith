@@ -1435,6 +1435,7 @@
   test-agent-invalid-call-history
   test-agent-malformed-tool-arguments
   test-agent-duplicate-call-identity
+  test-agent-refused-item-keeps-usage
   test-agent-tool-storm-guard
   test-agent-tool-storm-guard-defaults
   test-agent-tool-retry-guidance
@@ -1494,6 +1495,7 @@
   test-rlm-context-object-adapter
   test-rlm-infer
   test-rlm-frame-shared-prefix
+  test-rlm-refused-item-keeps-usage
   test-rlm-partial-results
   test-rlm-read-partial-results
   test-rlm-incomplete-environment-reuse

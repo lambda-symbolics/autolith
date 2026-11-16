@@ -2777,16 +2777,15 @@ state before rethrowing its failure; a retry uses the same durable receipt."
 (defun conversation--call-status (conversation item)
   "Return :NEW, :RETRY, :PROMOTE or :CONFLICT for the call ITEM names.
 
-Two calls are the same when their identifier, namespace, name and arguments
-agree.  Status, provider identifiers and serialization order are not part of a
+Two calls are the same when their namespace, name and arguments agree.  Status,
+provider identifiers and serialization order are not part of a
 call's identity, so a retry may change them and still be the same call.  A
 durable call is the transcript; a request-local call is promoted when the same
 call is appended durably, because only the durable append is recorded.  The
 transcript is the current projection, so a call removed by compaction is no
 longer named."
   (labels ((same-call-p (left right)
-             (and (equal (json-get left "call_id") (json-get right "call_id"))
-                  (equal (json-get left "namespace") (json-get right "namespace"))
+             (and (equal (json-get left "namespace") (json-get right "namespace"))
                   (equal (json-get left "name") (json-get right "name"))
                   (equal (json-get left "arguments") (json-get right "arguments")))))
     (let ((call-id (json-get item "call_id")))
@@ -2877,16 +2876,18 @@ transcript unable to pair outputs, so it fails instead of poisoning replay."
               (conversation--append-input-item conversation item)
               item)
              (:promote
-              (conversation--promote-ephemeral-call conversation call-id)
               (record-item)
+              (conversation--promote-ephemeral-call conversation call-id)
               item)
              (:retry
               item)
              (:conflict
               (error 'provider-call-conflict
-                     :message         "The provider reused a function call identifier."
-                     :call-id         call-id
-                     :conversation-id (conversation-identifier conversation))))))))))
+                     :message  "The provider reused a function call identifier."
+                     :call-id  call-id
+                     :pathname (conversation-pathname conversation)
+                     :sequence (conversation-next-sequence conversation))))))))))
+
 
 (-> conversation--tool-content-output (list) vector)
 (defun conversation--tool-content-output (blocks)

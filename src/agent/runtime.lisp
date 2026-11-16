@@ -729,52 +729,76 @@ retries stay auditable next to the request they belong to."
     null)
 (defun agent--persist-provider-result
     (agent result &key request-number call-plans)
-  "Append RESULT items in wire order under their per-tool persistence policies."
+  "Append RESULT items in wire order and record the billed usage.
+
+The provider billed the response before it reached this image, so the usage
+record is written even when an item is refused and the turn then fails."
   (let ((conversation (agent-conversation agent)))
-    (dolist (item (provider-result-output-items result))
-      (unless (json-object-p item)
-        (error 'agent-loop-error
-               :message         "The provider returned a completed item that is not a JSON object."
-               :conversation-id (conversation-identifier conversation)
-               :request-number  request-number))
-      (let ((plan
-              (and
-               (function-call-item-p item)
-               (find (json-get item "call_id")
-                     call-plans
-                     :key  (lambda (entry)
-                             (json-get (getf entry :call) "call_id"))
-                     :test #'equal))))
-        (when (and plan (getf plan :argument-error))
-          (setf (gethash "arguments" item) "{}"))
-        (handler-case
-            (conversation-append-provider-item
-             conversation
-             item
-             :tool-label (when (getf plan :tool)
-                           (tool-display-name (getf plan :tool)))
-             :persistence
-             (if plan
-                 (getf plan :persistence)
-                 ':durable))
-          (provider-call-conflict (condition)
-            (error 'agent-loop-error
-                   :message         (princ-to-string condition)
-                   :conversation-id (conversation-identifier conversation)
-                   :request-number  request-number)))))
-    (conversation-append-provider-metadata
-     conversation
-     (append (list :request-number         request-number
-                   :context-usage-pending t
-                   :response-id            (provider-result-response-id result)
-                   :usage                  (agent--portable-value
-                                            (provider-usage-normalize
-                                             (provider-result-usage result)))
-                   :request-identity       (conversation-request-identity conversation))
-             ;; The service's effective retention mode, when it reports one.
-             (let ((context (agent--result-reasoning-context result)))
-               (and context (list :reasoning-context context))))))
+    (unwind-protect
+         (dolist (item (provider-result-output-items result))
+           (unless (json-object-p item)
+             (error 'agent-loop-error
+                    :message         "The provider returned a completed item that is not a JSON object."
+                    :conversation-id (conversation-identifier conversation)
+                    :request-number  request-number))
+           (let ((plan
+                   (and
+                    (function-call-item-p item)
+                    (find (json-get item "call_id")
+                          call-plans
+                          :key  (lambda (entry)
+                                  (json-get (getf entry :call) "call_id"))
+                          :test #'equal))))
+             (when (and plan (getf plan :argument-error))
+               (setf (gethash "arguments" item) "{}"))
+             (agent--append-provider-item
+              agent
+              item
+              :tool-label (when (getf plan :tool)
+                            (tool-display-name (getf plan :tool)))
+              :persistence
+              (if plan
+                  (getf plan :persistence)
+                  ':durable)
+              :request-number request-number)))
+      (conversation-append-provider-metadata
+       conversation
+       (append (list :request-number         request-number
+                     :context-usage-pending t
+                     :response-id            (provider-result-response-id result)
+                     :usage                  (agent--portable-value
+                                              (provider-usage-normalize
+                                               (provider-result-usage result)))
+                     :request-identity       (conversation-request-identity conversation))
+               ;; The service's effective retention mode, when it reports one.
+               (let ((context (agent--result-reasoning-context result)))
+                 (and context (list :reasoning-context context)))))))
   nil)
+
+(-> agent--append-provider-item
+    (agent json-object
+     &key (:tool-label (option string))
+          (:persistence tool-conversation-persistence)
+          (:request-number (option integer)))
+    json-object)
+(defun agent--append-provider-item
+    (agent item &key tool-label (persistence ':durable) request-number)
+  "Append ITEM and report a refused item as an agent-loop-error.
+
+A transcript invariant the store refuses ends this turn.  Translating here keeps
+every provider recorder reporting the same condition type, so callers need no
+knowledge of which store invariant a response broke."
+  (let ((conversation (agent-conversation agent)))
+    (handler-case
+        (conversation-append-provider-item
+         conversation item
+         :tool-label  tool-label
+         :persistence persistence)
+      (conversation-error (condition)
+        (error 'agent-loop-error
+               :message         (princ-to-string condition)
+               :conversation-id (conversation-identifier conversation)
+               :request-number  request-number)))))
 
 (-> agent--answer-tool-searches
     (agent provider-result vector &key (:request-number integer))
@@ -794,9 +818,10 @@ restricted turn cannot discover tools outside its allowlist."
                :message         "The provider returned a tool search without a call_id."
                :conversation-id (conversation-identifier conversation)
                :request-number  request-number))
-      (conversation-append-provider-item
-       conversation
-       (provider-answer-tool-search provider call tool-namespaces))))
+      (agent--append-provider-item
+       agent
+       (provider-answer-tool-search provider call tool-namespaces)
+       :request-number request-number)))
   nil)
 
 (-> agent--note-persisted-assistant-response

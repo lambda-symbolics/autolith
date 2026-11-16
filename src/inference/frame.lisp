@@ -388,13 +388,14 @@ With no activity CALLBACK, return a no-op provider callback."
                                                        (format nil "request ~D · ~D calls left · receiving"
                                                                request-count
                                                                (rlm-budget-remaining-calls budget)))))))
-                        (rlm--record-response conversation result)
-                        (let ((billable (rlm-usage-billable-tokens
-                                         (provider-usage-normalize
-                                          (provider-result-usage result)))))
-                          (incf tokens-spent (or billable 0))
-                          (rlm-budget-settle-output budget tranche billable))
-                        (setf settled-p t)
+                                                (unwind-protect
+                            (rlm--record-response conversation result)
+                          (let ((billable (rlm-usage-billable-tokens
+                                                           (provider-usage-normalize
+                                                            (provider-result-usage result)))))
+                            (incf tokens-spent (or billable 0))
+                            (rlm-budget-settle-output budget tranche billable)
+                            (setf settled-p t)))
                         (multiple-value-bind (value valid-p problem)
                             (rlm--contract-value
                              contract
