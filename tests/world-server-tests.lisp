@@ -67,6 +67,42 @@
     (or (application-localgroup-session (world-host-application host))
         (error "Channel ~A has no session." identifier))))
 
+(-> world-server-tests--call-with-endpoint-failure
+    (image-daemon:daemon-runtime serious-condition function) null)
+(defun world-server-tests--call-with-endpoint-failure (runtime failure function)
+  "Call FUNCTION with an injector for FAILURE inside the captured accept handler.
+
+FUNCTION calls its injector within any hook-release cleanup it needs. A private
+connection wakes an existing wait before the synchronous failure is released.
+Keep the override until the captured thread exits; replacement threads pass through."
+  (let ((thread    (image-daemon:daemon-runtime-server-thread runtime))
+        (connected (sb-thread:make-semaphore))
+        (wait      (symbol-function 'image-daemon::daemon-runtime--wait-for-client)))
+    (test-call-with-function-replacements
+     (list (list 'image-daemon::daemon-runtime--wait-for-client
+                 (lambda (candidate)
+                   (if (and (eq candidate runtime) (eq (current-thread) thread))
+                       (progn
+                         (unless (sb-thread:wait-on-semaphore connected :timeout 10)
+                           (error "The failure injection connection was not established."))
+                         (error failure))
+                       (funcall wait candidate)))))
+     (lambda ()
+       (flet ((inject ()
+                "Wake the listener and release the synchronous failure after socket cleanup."
+                (unwind-protect
+                     (multiple-value-bind (socket stream)
+                         (daemon-connect (image-daemon:daemon-runtime-port runtime))
+                       (unwind-protect (close stream)
+                         (sb-bsd-sockets:socket-close socket)))
+                  (sb-thread:signal-semaphore connected))))
+         (unwind-protect (funcall function #'inject)
+           (sb-thread:signal-semaphore connected)
+           (test-assert
+            (task-tests--wait-until (lambda () (not (thread-alive-p thread))) 10)
+            "the failed accept thread exits without cancelling a healthy listener"))))))
+  nil)
+
 (-> test-world-server-endpoint-recovery () null)
 (defun test-world-server-endpoint-recovery ()
   "Exercise one owner repair, accepted-client survival and repeated-failure shutdown."
@@ -104,18 +140,23 @@
                       (task-tests--wait-until
                        (lambda () (image-daemon:daemon-runtime-client-sockets runtime)) 10)
                       "a request connection is accepted before the listener fails")
-                     (interrupt-thread thread (lambda () (error failure)))
-                     (test-assert (sb-thread:wait-on-semaphore entered :timeout 10)
-                                  "the real accept thread enters its installed owner failure hook")
-                     (world-server--enqueue server (lambda () (sb-thread:signal-semaphore barrier)))
-                     (test-assert (sb-thread:wait-on-semaphore barrier :timeout 10)
-                                  "an exiting handler does not block unrelated owner jobs")
-                     (test-assert
-                      (and (thread-alive-p thread)
-                           (not (world-endpoint-repair-attempted-p runtime))
-                           (eq (world-endpoint-failure runtime) failure))
-                      "duplicate reports coalesce and repair waits for the old handler to exit")
-                     (sb-thread:signal-semaphore release)
+                     (world-server-tests--call-with-endpoint-failure
+                      runtime failure
+                      (lambda (inject)
+                        (unwind-protect
+                             (progn
+                               (funcall inject)
+                               (test-assert (sb-thread:wait-on-semaphore entered :timeout 10)
+                                            "the real accept thread enters its installed owner failure hook")
+                               (world-server--enqueue server (lambda () (sb-thread:signal-semaphore barrier)))
+                               (test-assert (sb-thread:wait-on-semaphore barrier :timeout 10)
+                                            "an exiting handler does not block unrelated owner jobs")
+                               (test-assert
+                                (and (thread-alive-p thread)
+                                     (not (world-endpoint-repair-attempted-p runtime))
+                                     (eq (world-endpoint-failure runtime) failure))
+                                "duplicate reports coalesce and repair waits for the old handler to exit"))
+                          (sb-thread:signal-semaphore release))))
                      (test-assert
                       (task-tests--wait-until
                        (lambda ()
@@ -139,13 +180,15 @@
                       (eq (first (localgroup-query-record (world-client-entry configuration) ':status)) ':ok)
                       "new authenticated connections reach the repaired endpoint")
                      (let ((replacement (image-daemon:daemon-runtime-server-thread runtime)))
-                       (interrupt-thread replacement (lambda () (error failure)))
-                       (test-assert
-                        (task-tests--wait-until (lambda () (world-server-stopping-p server)) 10)
-                        "a failure of the repaired accept thread requests normal world stop")
-                       (test-assert (eq replacement (image-daemon:daemon-runtime-server-thread runtime))
-                                    "the lifetime repair budget forbids a second transport restart")))
-                (sb-thread:signal-semaphore release)
+                       (world-server-tests--call-with-endpoint-failure
+                        runtime failure
+                        (lambda (inject)
+                          (funcall inject)
+                          (test-assert
+                           (task-tests--wait-until (lambda () (world-server-stopping-p server)) 10)
+                           "a failure of the repaired accept thread requests normal world stop")
+                          (test-assert (eq replacement (image-daemon:daemon-runtime-server-thread runtime))
+                                       "the lifetime repair budget forbids a second transport restart")))))
                 (close stream)
                 (sb-bsd-sockets:socket-close socket)))))))))
   nil)
@@ -154,10 +197,8 @@
 (defun world-server-tests--fail-endpoint (runtime failure)
   "Fail the captured accept thread through its installed owner hook and await exit."
   (let ((thread (image-daemon:daemon-runtime-server-thread runtime)))
-    (interrupt-thread thread (lambda () (error failure)))
-    (test-assert
-     (task-tests--wait-until (lambda () (not (thread-alive-p thread))) 10)
-     "the failed accept thread exits without cancelling a healthy listener")
+    (world-server-tests--call-with-endpoint-failure
+     runtime failure (lambda (inject) (funcall inject)))
     (test-assert (and (eq (world-endpoint-failure-thread runtime) thread)
                       (eq (world-endpoint-failure runtime) failure))
                  "the installed owner hook captures the actual endpoint failure"))
