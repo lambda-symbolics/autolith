@@ -1008,6 +1008,8 @@ exits the application.
 During an attached terminal session, Ctrl-Z runs the same detach flow as
 =(detach)=. It releases the foreground terminal while preserving the session and
 any active work, including when a provider turn is running.
+Use =(stop-server)= to stop the current world server and work in all its channels,
+closing its attached clients.
 
 ** Parking and editing queued input
 

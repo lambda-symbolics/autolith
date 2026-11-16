@@ -3846,6 +3846,21 @@ pristine or recovery session runs apart from it."
                 "Detach scheduled; the terminal releases once current work reaches a safe stop."))))))
   ':continue)
 
+(define-application-command application--builtin-stop-server-command
+    (:name              "/stop-server"
+     :argument          nil
+     :description       "stop the current world server and its channels"
+     :tip               "stops work in every channel and closes the world's clients."
+     :busy-behavior     :execute
+     :terminal-behavior :shared
+     :callable          t)
+    (application)
+  (let ((server (application-world-server application)))
+    (unless server
+      (error 'world-error :operation ':stop :message "This client has no world server."))
+    (world-server--dispatch server ':stop nil))
+  ':continue)
+
 (define-application-command application--builtin-close-command
     (:name              "/close"
      :aliases           ("/exit")
