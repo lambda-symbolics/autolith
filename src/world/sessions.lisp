@@ -666,13 +666,13 @@ parent is never left behind its retired children."
          (when (channel-parent inbox)
            (list (world--channel-record
                   (world--copy-channel inbox
-                                       :parent nil
+                                       :parent     nil
                                        :updated-at (max now (channel-updated-at inbox))))))
          (loop for channel in (world-channels world)
                when (and (not (channel-inbox-p channel)) (null (channel-parent channel)))
                  collect (world--channel-record
                           (world--copy-channel channel
-                                               :parent identifier
+                                               :parent     identifier
                                                :updated-at (max now (channel-updated-at channel))))))))))
 
 (-> world-session--handle-base (string) string)

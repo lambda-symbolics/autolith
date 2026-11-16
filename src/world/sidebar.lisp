@@ -535,10 +535,10 @@ what it hides."
                           (setf shown (append shown node-shown)
                                 all   (append all node-all))))
                       (let ((open-p (world-sidebar--open-p sidebar workspace first-p)))
-                        (cons (append (list :kind ':workspace
-                                            :key  workspace
-                                            :name (world-workspace-leaf workspace)
-                                            :path (world-sidebar--short-path workspace)
+                        (cons (append (list :kind   ':workspace
+                                            :key    workspace
+                                            :name   (world-workspace-leaf workspace)
+                                            :path   (world-sidebar--short-path workspace)
                                             :indent (if inbox 2 0))
                                       (world-sidebar--fold all :open-p open-p))
                               (and open-p shown)))))))))
@@ -685,7 +685,7 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
     (:channel
      (append (list :open (getf entry :id))
              (when (getf entry :children-p)
-                (list :toggle (getf entry :id)
+                (list :toggle         (getf entry :id)
                       :marker-columns (+ *world-sidebar-marker-columns* (getf entry :indent 0))))))))
 
 (-> world-sidebar--entry-spans (list) list)

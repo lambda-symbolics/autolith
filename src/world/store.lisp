@@ -874,7 +874,7 @@ Only the matches get sorted, not every channel."
   "Recognize a non-inbox CHANNEL directly under home, or a legacy unparented one."
   (and (not (channel-inbox-p channel))
        (let* ((identifier (channel-parent channel))
-              (parent (and identifier (world-channel-find world identifier))))
+              (parent     (and identifier (world-channel-find world identifier))))
          (or (null identifier) (and parent (channel-inbox-p parent) t)))))
 
 (-> world-participant-children (world string) list)
