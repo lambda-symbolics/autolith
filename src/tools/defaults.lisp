@@ -512,32 +512,52 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
 
 (-> default-tools--register-shell (tool-registry) tool-registry)
 (defun default-tools--register-shell (registry)
-  "Register the authorized external-command tool in REGISTRY."
-  (tool-registry-describe-namespace
-   registry "shell"
-   "Authorized external commands, defaulting to the workspace directory.")
-  (default-tools--register
-   registry
-   (list
-    'shell-run-tool
-    "shell" "run"
-     "Run one authorized external command, synchronously or as an inspectable job. Retain private raw output and return exit/status metadata, a bounded head/tail preview, and shell-log: references for later ranges or search. Use PowerShell syntax on Windows and POSIX shell syntax elsewhere."
-    (tool-object-schema
-     (json-object
-      "command" (tool-string-property "The shell command line to execute.")
-      "description"
-      (tool-string-property
-       "An optional short description used to label the live command row.")
-      "directory" (tool-string-property
-                   "The working directory; defaults to the workspace.")
-      "timeout-seconds" (tool-integer-property
-                         "Seconds before the command is stopped; defaults to 60 with no maximum.")
-       "separate-output" (tool-boolean-property
-                          "Capture stdout/stderr separately; defaults to false (merged output). Separate streams have no reconstructed interleaving.")
-      "completion-policy" (tool-completion-policy-property)
-      "async" (tool-boolean-property
-               "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))
-     '("command"))))
+  "Register external commands and supported owner-local reusable shells."
+  (tool-registry-describe-namespace registry "shell"
+                                    "Authorized external commands, defaulting to the workspace directory.")
+  (let* ((supported-p (platform-shell-sessions-p *platform*))
+         (pool (when supported-p
+                 (or (tool-registry-runtime-binding registry 'shell-session-pool)
+                     (tool-registry-bind-runtime registry 'shell-session-pool
+                                                 (make-instance 'shell-session-pool)))))
+         (description "Run one authorized external command, synchronously or as an inspectable job. Retain private raw output and return exit/status metadata, a bounded head/tail preview, and shell-log: references for later ranges or search. Use PowerShell syntax on Windows and POSIX shell syntax elsewhere.")
+         (properties
+           (json-object
+            "command" (tool-string-property "The shell command line to execute.")
+            "description" (tool-string-property "An optional short description used to label the live command row.")
+            "directory" (tool-string-property "The working directory; defaults to the workspace.")
+            "timeout-seconds" (tool-integer-property "Seconds before the command is stopped; defaults to 60 with no maximum.")
+            "separate-output" (tool-boolean-property "Capture stdout/stderr separately; defaults to false (merged output). Separate streams have no reconstructed interleaving.")
+            "completion-policy" (tool-completion-policy-property)
+            "async" (tool-boolean-property "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))))
+    (when supported-p
+      (setf (gethash "session" properties)
+            (tool-string-property "Optional owner-local persistent shell name. Variables, functions and cwd survive commands. After exit, timeout or cancellation, explicitly shell.reset before reuse.")
+            (gethash "directory" properties)
+            (tool-string-property "The working directory; defaults to the workspace, or the current named shell directory.")
+            description (concatenate 'string description
+                                     " Supply session to reuse one shell process; omit it for a one-shot command.")))
+    (default-tools--register
+     registry (list 'shell-run-tool "shell" "run" description
+                    (tool-object-schema properties '("command")) :session-pool pool))
+    (when supported-p
+      (dolist (operation '(:sessions :reset :close))
+        (default-tools--register
+         registry
+         (list 'shell-session-tool "shell" (string-downcase (symbol-name operation))
+               (ecase operation
+                 (:sessions "List this agent's named shell sessions, live/dead state and current directories.")
+                 (:reset "Stop and replace one named shell. Discard variables/functions and recreate it in the workspace or supplied directory.")
+                 (:close "Stop and forget one named shell and all its descendant processes."))
+               (if (eq operation ':sessions)
+                   (tool-object-schema (json-object) nil)
+                   (tool-object-schema
+                    (if (eq operation ':reset)
+                        (json-object "session" (tool-string-property "The owner-local shell name.")
+                                     "directory" (tool-string-property "The initial working directory; defaults to the workspace."))
+                        (json-object "session" (tool-string-property "The owner-local shell name.")))
+                    '("session")))
+               :operation operation :session-pool pool)))))
   registry)
 
 (-> default-tools--register-web (tool-registry) tool-registry)

@@ -3376,6 +3376,30 @@ default 3, is how many levels of child agents may sit below a top-level
 agent; a child at the last level cannot create children. Child jobs have no
 deadline unless =AUTOLITH_TASK_MAX_RUNTIME_MS= is set positive.
 
+** Reusable shell sessions
+
+On Linux and macOS, supply =session= to =shell.run= to reuse a named Bash
+shell. Run =eval "$(nix print-dev-env)"= once, then run later commands in that
+same shell with its variables, functions and working directory intact. Omit
+=session= for an independent one-shot command. Shell names are private to the
+requesting agent and conversation.
+
+Use =shell.sessions= to inspect live and dead shells, =shell.close= to stop and
+forget one, and =shell.reset= to replace one with a fresh shell. An explicit
+=directory= changes the shell's directory before the command; otherwise reuse
+its current directory. Each command receives separate retained logs and ordinary
+command authorization at its observed directory. Commands in one shell execute
+serially.
+
+After exit, timeout or cancellation, reset the dead shell explicitly. No command
+is replayed. Reset also applies after permission modes, workspace or writable
+scopes change. Closing the owning runtime stops its shells and descendants;
+shell state lasts only for that runtime, not across daemon restarts.
+For sandboxed sessions, keep temporary storage outside writable workspace roots.
+
+Reusable shells are unavailable on Windows; use one-shot PowerShell commands
+there.
+
 ** Retained command output
 
 Use =shell.run= for synchronous commands, detached commands and command mission

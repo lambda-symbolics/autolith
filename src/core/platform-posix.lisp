@@ -468,6 +468,18 @@ Conflicts require an explicit choice. Rename failures warn and retry next lookup
                (lambda () (sb-posix:unlink (posix--namestring pathname))))
   nil)
 
+(defmethod platform-shell-session-delete-directory ((platform posix-platform) pathname)
+  "Unlink substituted roots; recursively remove only an observed real directory."
+  (let* ((name (string-right-trim "/" (posix--namestring pathname)))
+         (path (uiop:parse-native-namestring name))
+         (status (platform-path-status platform path :follow-links-p nil)))
+    (when status
+      (if (eq (platform-file-status-kind status) ':directory)
+          (platform-delete-directory-tree platform (uiop:ensure-directory-pathname path)
+                                          :validate t :if-does-not-exist ':ignore)
+          (platform-delete-file platform path))))
+  nil)
+
 (defmethod platform-copy-file-permissions ((platform posix-platform)
                                            source target)
   "Copy SOURCE's permission bits onto TARGET."
@@ -537,6 +549,92 @@ Conflicts require an explicit choice. Rename failures warn and retry next lookup
 (defmethod platform-shell-command-line ((platform posix-platform) command)
   "Run COMMAND through the POSIX shell."
   (list "/bin/sh" "-c" command))
+
+(-> posix--shell-session-program (string) string)
+(defun posix--shell-session-program (name)
+  "Resolve an executable through native POSIX PATH before starting the shell."
+  (or (loop for directory in (uiop:split-string (or (uiop:getenv "PATH") "") :separator ":")
+            for root = (if (string= directory "") (uiop:getcwd)
+                           (uiop:ensure-directory-pathname directory))
+            for candidate = (merge-pathnames name root)
+            when (and (uiop:file-exists-p candidate)
+                      (handler-case
+                          (zerop (sb-posix:access (posix--namestring candidate) sb-posix:x-ok))
+                        (sb-posix:syscall-error () nil)))
+              return (uiop:native-namestring (platform-truename *platform* candidate)))
+      (error 'platform-capability-unavailable :capability ':shell-sessions
+             :message (format nil "Reusable shells require ~A on PATH." name))))
+
+(defmethod platform-shell-session-programs ((platform posix-platform))
+  "Snapshot native PATH resolution before commands can change shell state."
+  (loop for name in '("bash" "mkfifo" "sleep" "rm" "mv" "cat" "printf" "pwd" "head")
+        collect (list name (posix--shell-session-program name))))
+
+(defmethod platform-shell-session-read-record ((platform posix-platform) pathname limit)
+  "Reject links and special files at native open, then bound reads from the opened regular file."
+  (posix--call
+   ':shell-session-read pathname
+   (lambda ()
+     (let ((descriptor (sb-posix:open (posix--namestring pathname)
+                                      (logior sb-posix:o-rdonly sb-posix:o-nofollow sb-posix:o-nonblock))))
+       (unwind-protect
+            (progn
+              (unless (sb-posix:s-isreg (sb-posix:stat-mode (sb-posix:fstat descriptor)))
+                (error 'platform-error :operation ':shell-session-read :reason ':invalid-record
+                       :message "Shell protocol records must be regular files."))
+              (with-open-stream (stream (sb-sys:make-fd-stream descriptor :input t :auto-close t
+                                                                         :element-type '(unsigned-byte 8)))
+                (setf descriptor nil)
+                (let* ((bytes (make-array (1+ limit) :element-type '(unsigned-byte 8)))
+                       (count (read-sequence bytes stream)))
+                  (when (> count limit)
+                    (error 'platform-error :operation ':shell-session-read :reason ':invalid-record
+                           :message "Shell protocol record exceeded its byte limit."))
+                  (utf8-octets-to-string (subseq bytes 0 count)))))
+         (when descriptor (sb-posix:close descriptor)))))))
+
+(defmethod platform-shell-session-command-line ((platform posix-platform) directory &key programs)
+  "Use Bash for Nix environment declarations while leaving one-shot shells unchanged."
+  (list (second (assoc "bash" programs :test #'string=)) "--noprofile" "--norc" "-c"
+        (platform-shell-session-start-command platform directory :programs programs)))
+
+(defmethod platform-shell-sessions-p ((platform posix-platform))
+  "Support reusable shells with bounded FIFO output transport."
+  t)
+
+(defmethod platform-shell-session-start-command ((platform posix-platform) directory &key programs)
+  "Run a persistent shell, sourcing complete private command frames serially."
+  (let ((root (uiop:escape-sh-token (uiop:native-namestring directory)))
+        (fifo (uiop:escape-sh-token (second (assoc "mkfifo" programs :test #'string=))))
+        (pause (uiop:escape-sh-token (second (assoc "sleep" programs :test #'string=))))
+        (remove (uiop:escape-sh-token (second (assoc "rm" programs :test #'string=)))))
+    (format nil "umask 077; ~A ~A/output ~A/error || exit; : > ~A/ready; while :; do while [ ! -f ~A/go ]; do ~A 0.02; done; ~A -f ~A/go; . ~A/frame; done"
+            fifo root root root root pause remove root root)))
+
+(defmethod platform-shell-session-frame
+    ((platform posix-platform) control-directory directory &key merge-output-p programs)
+  "Source the command in the same shell and report completion outside its output."
+  (let ((root (uiop:escape-sh-token (uiop:native-namestring control-directory)))
+        (move (uiop:escape-sh-token (second (assoc "mv" programs :test #'string=))))
+        (print (uiop:escape-sh-token (second (assoc "printf" programs :test #'string=))))
+        (pwd (uiop:escape-sh-token (second (assoc "pwd" programs :test #'string=)))))
+    (format nil "{ ~A. ~A/command; } > ~A/output ~A~%~A '%s' \"$?\" > ~A/status.pending~%~A -P > ~A/cwd~%~A ~A/status.pending ~A/status~%"
+            (if directory
+                (format nil "\\builtin cd ~A && "
+                        (uiop:escape-sh-token (uiop:native-namestring directory)))
+                "")
+            root root (if merge-output-p "2>&1" (format nil "2> ~A/error" root))
+            print root pwd root move root root)))
+
+(defmethod platform-shell-session-reader-command
+    ((platform posix-platform) directory &key merge-output-p programs)
+  "Drain FIFOs with backpressure while the normal capture supervisor enforces limits."
+  (let ((root (uiop:escape-sh-token (uiop:native-namestring directory)))
+        (cat (uiop:escape-sh-token (second (assoc "cat" programs :test #'string=))))
+        (pause (uiop:escape-sh-token (second (assoc "sleep" programs :test #'string=))))
+        (head (uiop:escape-sh-token (second (assoc "head" programs :test #'string=)))))
+    (format nil "~A ~A/output & ~A wait; while [ ! -f ~A/status ]; do ~A 0.02; done; status=$(~A -c 4 ~A/status); case $status in ''|*[!0-9]*) exit 125;; esac; [ \"$status\" -le 255 ] || exit 125; exit \"$status\""
+            cat root (if merge-output-p "" (format nil "~A ~A/error >&2 &" cat root)) root pause head root)))
 
 (defmethod platform-open-url ((platform posix-platform) url)
   "Hand URL to the desktop launcher: open on macOS, xdg-open elsewhere."

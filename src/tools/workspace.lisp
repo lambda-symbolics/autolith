@@ -12,7 +12,8 @@
   (:documentation "Attach one local image to the model for visual inspection."))
 
 (defclass shell-run-tool (workspace-tool)
-  ()
+  ((session-pool :initarg :session-pool :initform nil :reader shell-run-session-pool
+                 :documentation "Optional registry-owned reusable shell pool."))
   (:documentation "Run one external command in an authorized directory."))
 
 (defmethod tool-child-safe-p ((tool fs-view-image-tool))
@@ -238,6 +239,8 @@ Other paths require full access through WORKSPACE-TOOL-AUTHORIZE-OUTSIDE-PATH."
                          (context tool-context)
                          (arguments hash-table))
   "Authorize one command, then run it once directly or as an inspectable job."
+  (when (tool-argument arguments "session")
+    (return-from tool-execute (shell-session-run context arguments)))
   (let* ((command            (tool-argument arguments "command" :required t))
          (description
            (let ((value (tool-argument arguments "description")))

@@ -452,6 +452,41 @@ interrupt context and must do no more than record the event."))
   (:documentation
    "Return the program and arguments that run shell COMMAND on this host."))
 
+(defgeneric platform-shell-sessions-p (platform)
+  (:documentation "Return whether this host supports supervised reusable shell sessions."))
+
+(defmethod platform-shell-sessions-p ((platform platform))
+  "Withhold reusable shells where the bounded pipe transport is unavailable."
+  nil)
+
+(defgeneric platform-shell-session-programs (platform)
+  (:documentation "Resolve all reusable shell executables once, before entering its sandbox."))
+
+(defgeneric platform-shell-session-read-record (platform pathname limit)
+  (:documentation "Read at most LIMIT bytes from a regular protocol file without following links or blocking on special files."))
+
+(defgeneric platform-shell-session-delete-directory (platform pathname)
+  (:documentation "Delete an owned session root without traversing a top-level symbolic link."))
+
+(defgeneric platform-shell-session-start-command (platform directory &key programs)
+  (:documentation "Return the lifetime supervisor command using private DIRECTORY."))
+
+(defgeneric platform-shell-session-command-line (platform directory &key programs)
+  (:documentation "Return the resolved reusable shell executable and lifetime supervisor arguments."))
+
+(defgeneric platform-shell-session-frame (platform control-directory directory &key merge-output-p programs)
+  (:documentation "Frame one sourced command with out-of-band completion and cwd records."))
+
+(defgeneric platform-shell-session-reader-command (platform directory &key merge-output-p programs)
+  (:documentation "Return the trusted command draining session pipes into retained bounded capture."))
+
+(defmethod platform-shell-session-start-command ((platform platform) directory &key programs)
+  "Refuse reusable shells before allocating host resources."
+  (declare (ignore directory programs))
+  (error 'platform-capability-unavailable
+         :capability ':shell-sessions
+         :message "Reusable shell sessions are unavailable on this host."))
+
 (defgeneric platform-open-url (platform url)
   (:documentation
    "Hand web URL to the host's default browser without waiting for it.

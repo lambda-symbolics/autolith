@@ -237,6 +237,16 @@
   test-shell-retained-timeout
   test-shell-log-export-boundary)
 
+(define-test-suite shell-session
+  test-shell-session-platform-discovery
+  test-shell-session-state-and-logs
+  test-shell-session-death-reset-and-scopes
+  test-shell-session-timeout-and-bounds
+  test-shell-session-serialization
+  test-shell-session-cancellation
+  test-shell-session-sandbox
+  test-shell-session-protocol-boundaries)
+
 (define-test-suite shell-log-resource
   test-shell-log-delivery-backfill
   test-shell-log-delivery-backfill-removal

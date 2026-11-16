@@ -87,11 +87,13 @@
 (-> workspace-tool-run-shell-command
     (string pathname
      &key (:policy t) (:timeout (integer 1)) (:output-limit (integer 0))
-          (:environment list) (:context tool-context) (:merge-output-p boolean))
+           (:environment list) (:context tool-context) (:merge-output-p boolean)
+           (:cancel-function (option function)) (:result-function (option function)))
     tool-result)
 (defun workspace-tool-run-shell-command
     (command directory
-     &key policy timeout output-limit environment context (merge-output-p t))
+     &key policy timeout output-limit environment context (merge-output-p t)
+       cancel-function result-function)
   "Run one authorized command after allocating its private execution-owned capture.
 
 Allocate the capture with interrupts enabled. Transfer ownership at publication,
@@ -115,7 +117,11 @@ so cleanup can release every published capture."
                            :capture-directory  (shell-log-capture-directory artifact)
                            :retain-output-p    t
                            :capture-byte-limit (shell-log-capture-byte-limit artifact)
-                           :cancel-function    (when job (lambda () (job-cancellation-requested-p job)))
+                           :cancel-function
+                           (when (or job cancel-function)
+                             (lambda ()
+                               (or (and job (job-cancellation-requested-p job))
+                                   (and cancel-function (funcall cancel-function)))))
                            :capture-created-function
                            (lambda (capture-result)
                              (shell-log-record-capture artifact capture-result :closed-p nil))
@@ -139,6 +145,7 @@ so cleanup can release every published capture."
                         (or (cl-exec-sandbox:sandbox-execution-error-result condition)
                             (return-from workspace-tool-run-shell-command
                               (tool-failure diagnostic)))))))
+            (when result-function (funcall result-function result))
              (shell-command-result
               (shell-output--render-result result artifact output-limit :diagnostic diagnostic)
               (list :exit-code          (sandbox-result-exit-code result)
