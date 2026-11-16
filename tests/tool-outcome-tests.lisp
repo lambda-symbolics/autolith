@@ -347,18 +347,18 @@
 (defun test-fullscreen-origin-reverse-search ()
   "Recover nearby origins without reading older segments, and exhaust genuine misses."
   (with-test-configuration (configuration)
-    (let* ((application (application-tool-outcome-tests--application configuration))
+    (let* ((application  (application-tool-outcome-tests--application configuration))
            (conversation (application-conversation application)))
       (dotimes (index 2)
         (conversation-append-record
          conversation (list :message :role ':user :content (format nil "old segment ~D" index)))
         (conversation-append-summary conversation (make-continuation :intent "older checkpoint")))
-      (let* ((call (application-tool-outcome-history-tests--append
-                    conversation (application-tool-outcome-tests--call 0 "nearby")))
-             (handoff (application-tool-outcome-tests--result 0 "nearby"))
-             (active (conversation-storage-active-pathname (conversation-pathname conversation)))
+      (let* ((call        (application-tool-outcome-history-tests--append
+                           conversation (application-tool-outcome-tests--call 0 "nearby")))
+             (handoff     (application-tool-outcome-tests--result 0 "nearby"))
+             (active      (conversation-storage-active-pathname (conversation-pathname conversation)))
              (segment-map (fdefinition 'sexp-store:segment-map))
-             (reads 0))
+             (reads       0))
         (setf (getf (rest handoff) :details)
               '(:tool-execution :handed-off-p t :job (:id "exec:nearby")))
         (setf handoff (application-tool-outcome-history-tests--append conversation handoff))
@@ -383,7 +383,7 @@
            (lambda ()
              (dolist (outcome (list handoff completion))
                (let* ((presentation (application--record-presentation application outcome))
-                      (origin (funcall (getf (third presentation) :origin-function))))
+                      (origin       (funcall (getf (third presentation) :origin-function))))
                  (test-assert (equal (first origin)
                                      (application--record-presentation-identifier application call))
                               "result and job completion recover the same durable invocation")))
@@ -402,12 +402,12 @@
 (defun test-fullscreen-origin-chronology ()
   "Resolve reused call and job identifiers at the outcome's historical position."
   (with-test-configuration (configuration)
-    (let* ((application (application-tool-outcome-tests--application configuration))
+    (let* ((application  (application-tool-outcome-tests--application configuration))
            (conversation (application-conversation application))
-           (pairs nil))
+           (pairs        nil))
       (dotimes (index 2)
-        (let* ((call (application-tool-outcome-history-tests--append
-                      conversation (application-tool-outcome-tests--call 0 "reused")))
+        (let* ((call    (application-tool-outcome-history-tests--append
+                         conversation (application-tool-outcome-tests--call 0 "reused")))
                (handoff (application-tool-outcome-tests--result 0 "reused")))
           (setf (getf (rest handoff) :details)
                 '(:tool-execution :handed-off-p t :job (:id "exec:0")))
@@ -423,7 +423,7 @@
       (dolist (pair pairs)
         (dolist (outcome (rest pair))
           (let* ((presentation (application--record-presentation application outcome))
-                 (origin (funcall (getf (third presentation) :origin-function))))
+                 (origin       (funcall (getf (third presentation) :origin-function))))
             (test-assert
              (equal (first origin) (application--record-presentation-identifier application (first pair)))
              "historical outcomes cannot attach to a later reused call or job identifier"))))))
@@ -434,9 +434,9 @@
   "Select lifecycle metadata without decoding a supplied item or formatting failure bodies."
   (with-test-configuration (configuration)
     (let* ((application (application-tool-outcome-tests--application configuration))
-           (call (application-tool-outcome-tests--call 1 "raw"))
-           (item (json-decode (getf (rest call) :wire-json)))
-           (completion (application-tool-outcome-tests--completion 2 "exec:raw" :outcome ':failure)))
+           (call        (application-tool-outcome-tests--call 1 "raw"))
+           (item        (json-decode (getf (rest call) :wire-json)))
+           (completion  (application-tool-outcome-tests--completion 2 "exec:raw" :outcome ':failure)))
       (test-call-with-function-replacements
        (list (list 'json-decode
                    (lambda (&rest arguments)

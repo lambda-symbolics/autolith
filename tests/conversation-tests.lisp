@@ -659,7 +659,7 @@
            (conversation-append-user-message conversation "before checkpoint")
            (conversation-append-summary conversation (make-continuation :intent "checkpoint"))
            (conversation-append-user-message conversation "after checkpoint")
-           (let ((forward nil)
+           (let ((forward  nil)
                  (backward nil))
              (conversation-map-records
               conversation (lambda (record) (push (getf (rest record) :seq) forward)))

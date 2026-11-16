@@ -345,11 +345,11 @@
   "Count cold page traversals and recover tentative pages without retaining skipped inputs."
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
-           (identity (conversation-pathname conversation))
-           (sidecar (conversation-input-history-pathname identity))
-           (inputs (loop for index below 12
-                         collect (format nil "input ~D ~A" index
-                                         (make-string 16384 :initial-element #\x))))
+           (identity     (conversation-pathname conversation))
+           (sidecar      (conversation-input-history-pathname identity))
+           (inputs       (loop for index below 12
+                               collect (format nil "input ~D ~A" index
+                                               (make-string 16384 :initial-element #\x))))
            (original-map (symbol-function 'log-map)))
       (loop for input in inputs
             for index from 0
@@ -386,15 +386,18 @@
           (sexp-store:log-write
            sidecar
            (case damage
-             (:torn (butlast forms 2))
-             (:torn-duplicate (butlast forms))
-             (:stale (subseq forms 0 2))
+             (:torn
+              (butlast forms 2))
+             (:torn-duplicate
+              (butlast forms))
+             (:stale
+              (subseq forms 0 2))
              (otherwise
               (append (subseq forms 0 4) (list '(:input :seq 0 :source "invalid"))))))
           (when (member damage '(:torn :torn-duplicate))
             (with-open-file (stream sidecar :direction ':output :if-exists ':append)
               (write-string "(:input" stream)))
-          (let* ((loaded (conversation-load identity))
+          (let* ((loaded         (conversation-load identity))
                  (original-write (symbol-function 'log-write-streaming))
                  (replacements
                    (when (eq damage ':publication-failure)

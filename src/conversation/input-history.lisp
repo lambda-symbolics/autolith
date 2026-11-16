@@ -83,11 +83,11 @@ pass, keeping only the requested page and one preceding input in memory."
     (call-with-file-lock
      (conversation-picker-source-lock-pathname (conversation-pathname conversation))
      (lambda ()
-       (let ((total 0)
+       (let ((total    0)
              (previous nil)
-             (page nil)
-             (tail nil)
-             (size 0))
+             (page     nil)
+             (tail     nil)
+             (size     0))
          (labels ((reset-page ()
                     (setf total 0 previous nil page nil tail nil size 0))
 
@@ -109,7 +109,7 @@ pass, keeping only the requested page and one preceding input in memory."
            (conversation-input-history--map-page-inputs
             conversation #'collect-input #'reset-page)
            (when (and (not start) (plusp skip) (plusp limit))
-             (let* ((end (- total skip))
+             (let* ((end   (- total skip))
                     (begin (max 0 (- end limit)))
                     (index 0))
                (setf previous nil)
@@ -201,8 +201,8 @@ each validated input; its caller must discard tentative results if validation fa
                                   (< next (conversation-next-sequence conversation))
                                   (non-empty-string-p input))
                        (return-from conversation-input-history--read (values 0 nil)))
-                      (setf sequence next)
-                      (when input-function (funcall input-function input)))))
+                     (setf sequence next)
+                     (when input-function (funcall input-function input)))))
              pathname)
           (declare (ignore position))
           (when (zerop count)
@@ -230,8 +230,8 @@ Records stream straight into the new sidecar, so rebuilding holds no history."
           (let ((input (conversation-input-history--record-input record)))
             (when input
               (setf sequence (getf (rest record) :seq))
-                (funcall emit (list :input :seq sequence :source input))
-                (when input-function (funcall input-function input))))))))
+              (funcall emit (list :input :seq sequence :source input))
+              (when input-function (funcall input-function input))))))))
     (setf (conversation-input-history-indexed-sequence conversation) sequence
           (conversation-input-history-last-sequence conversation)
           (max sequence (conversation-input-history-last-sequence conversation))
@@ -285,7 +285,7 @@ Flush it before rotating the active segment so crash recovery never needs a
 retired segment unless the complete sidecar itself is missing or corrupt.
 Return true when all current inputs were streamed to INPUT-FUNCTION during loading."
   (let ((current-p nil)
-        (mapped-p nil))
+        (mapped-p  nil))
     (unwind-protect
          (handler-case
              (progn
