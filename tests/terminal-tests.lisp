@@ -121,8 +121,9 @@
                       (format nil "~C[122;5u" #\Escape)
                       (format nil "~C[90;5u" #\Escape)))
     (let ((terminal (make-instance 'stream-terminal
-                                   :input-stream  (make-string-input-stream text)
-                                   :output-stream (make-string-output-stream))))
+                                   :input-stream          (make-string-input-stream text)
+                                   :output-stream         (make-string-output-stream)
+                                   :input-file-descriptor -1)))
       (setf (terminal-interactive-p terminal) t)
       (test-assert (eq (terminal-read-event terminal) ':detach)
                    "raw and enhanced Ctrl-Z have the same detach event")))
