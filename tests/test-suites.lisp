@@ -1754,6 +1754,8 @@
   test-cancellation-completion-clears-interrupt-state
   test-failed-turn-publishes-durable-wreckage
   test-transcript-entries
+  test-transcript-schema-coalescing
+  test-transcript-schema-interruptions
   test-tool-call-inline-arguments
   test-native-tool-result-presentation
   test-native-role-and-continuity-presentation

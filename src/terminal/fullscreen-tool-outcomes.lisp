@@ -200,32 +200,88 @@
         (setf (getf record key) (getf metadata key))))
   record)
 
+(-> terminal-ui-fullscreen--publish-replacement (fullscreen-terminal-ui list t) boolean)
+(defun terminal-ui-fullscreen--publish-replacement (ui next identifier)
+  "Replace NEXT's resident chunk and finalize its additional IDENTIFIER."
+  (multiple-value-bind (text display regions)
+      (terminal-ui-fullscreen--record-content
+       ui next (clinedi:transcript-viewport-width (fullscreen-terminal-ui-viewport ui)))
+    (when (getf next :body-layout)
+      (setf (getf next :body) nil))
+    ;; Index before replacement can evict this chunk and release its sources.
+    (terminal-ui-fullscreen--index-record ui next)
+    (if (clinedi:transcript-viewport-replace
+         (fullscreen-terminal-ui-viewport ui) (getf next :tag)
+         :text text :display display :regions regions
+         :layout-function   (terminal-ui-fullscreen--record-layout-function ui next)
+         :source-characters (terminal-ui-fullscreen--record-source-characters next))
+        (progn
+          (when (gethash (getf next :identifier) (fullscreen-terminal-ui-presentation-records ui))
+            (terminal-ui--remember-finalized ui (list identifier) :note-output-p nil))
+          t)
+        (progn
+          (terminal-ui-fullscreen--forget-evicted ui (list (getf next :identifier)))
+          nil))))
+
 (-> terminal-ui-fullscreen--replace-record
     (fullscreen-terminal-ui list &key (:identifier t) (:metadata list)) boolean)
 (defun terminal-ui-fullscreen--replace-record (ui record &key identifier metadata)
   "Replace RECORD's invocation with its latest source-backed outcome."
   (let ((next (copy-list record)))
     (setf (getf next :identifiers) (cons identifier (getf record :identifiers)))
-    (setf next (terminal-ui-fullscreen--apply-outcome next metadata))
-    (multiple-value-bind (text display regions)
-        (terminal-ui-fullscreen--record-content
-         ui next (clinedi:transcript-viewport-width (fullscreen-terminal-ui-viewport ui)))
-      (when (getf next :body-layout)
-        (setf (getf next :body) nil))
-      ;; Index before replacement can evict this chunk and release its sources.
-      (terminal-ui-fullscreen--index-record ui next)
-      (if (clinedi:transcript-viewport-replace
-           (fullscreen-terminal-ui-viewport ui) (getf record :tag)
-           :text text :display display :regions regions
-           :layout-function   (terminal-ui-fullscreen--record-layout-function ui next)
-           :source-characters (terminal-ui-fullscreen--record-source-characters next))
-          (progn
-            (when (gethash (getf record :identifier) (fullscreen-terminal-ui-presentation-records ui))
-              (terminal-ui--remember-finalized ui (list identifier) :note-output-p nil))
-            t)
-          (progn
-            (terminal-ui-fullscreen--forget-evicted ui (list (getf record :identifier)))
-            nil)))))
+    (terminal-ui-fullscreen--publish-replacement
+     ui (terminal-ui-fullscreen--apply-outcome next metadata) identifier)))
+
+(-> terminal-ui-fullscreen--merge-schema-record
+    (fullscreen-terminal-ui t list) boolean)
+(defun terminal-ui-fullscreen--merge-schema-record (ui identifier metadata)
+  "Merge schema names only into the actual last visible schema chunk."
+  (when (and (eq (getf metadata :entry-kind) ':tool-schemas)
+             (or (not (terminal-ui-started-p ui))
+                 (terminal-interactive-p (terminal-ui-terminal ui))
+                 (not (terminal-plain-output-p (terminal-ui-terminal ui)))))
+    (let* ((tag    (clinedi:transcript-viewport-last-tag (fullscreen-terminal-ui-viewport ui)))
+           (index  (fullscreen-terminal-ui-presentation-records ui))
+           (record (loop for key in tag thereis (gethash key index))))
+      (when (and record (equal tag (getf record :tag))
+                 (eq (getf record :entry-kind) ':tool-schemas)
+                 (not (getf record :schema-interrupted-p)))
+        (let* ((next        (copy-list record))
+               (names       (remove-duplicates
+                             (append (getf record :schema-names) (getf metadata :schema-names))
+                             :test #'string= :from-end t))
+               (layout      (getf metadata :schema-layout))
+               (identifiers (getf record :identifiers)))
+          (setf (getf next :identifiers)
+                (cons identifier (subseq identifiers 0 (min (length identifiers)
+                                                           (max 0 (1- *terminal-ui-finalized-identifier-limit*)))))
+                (getf next :schema-names) names
+                (getf next :entry-layout) (lambda (columns) (funcall layout names columns))
+                ;; Charge merged identities even when no new namespace is exposed.
+                (getf next :source-characters)
+                (+ (loop for name in names sum (length name))
+                   (* 64 (length (getf next :identifiers)))))
+          (terminal-ui-fullscreen--publish-replacement ui next identifier))))))
+
+(defmethod terminal-ui--present-live :after
+    ((ui fullscreen-terminal-ui) &key status-now appended-text appended-display appended-regions)
+  "Fence schema grouping after an unfinished streamed tail has been painted."
+  (declare (ignore status-now appended-text appended-display appended-regions))
+  (when (and (terminal-ui-started-p ui)
+             (terminal-interactive-p (terminal-ui-terminal ui))
+             (not (terminal-ui-live-output-suspended-p ui))
+             (some (lambda (row)
+                     (plusp (length (terminal-ui--row-content (terminal-ui-terminal ui) row))))
+                   (terminal-ui--stream-tail-rows
+                    (terminal-ui-terminal ui) (terminal-ui-stream-tail ui)
+                    (clinedi:transcript-viewport-width (fullscreen-terminal-ui-viewport ui)))))
+    (let* ((tag    (clinedi:transcript-viewport-last-tag (fullscreen-terminal-ui-viewport ui)))
+           (index  (fullscreen-terminal-ui-presentation-records ui))
+           (record (loop for key in tag thereis (gethash key index))))
+      (when (and record (eq (getf record :entry-kind) ':tool-schemas))
+        (let ((next (copy-list record)))
+          (setf (getf next :schema-interrupted-p) t)
+          (terminal-ui-fullscreen--index-record ui next))))))
 
 (-> terminal-ui-fullscreen--restore-outcome (fullscreen-terminal-ui t list) (option string))
 (defun terminal-ui-fullscreen--restore-outcome (ui identifier metadata)
@@ -252,9 +308,10 @@
           (let* ((index  (fullscreen-terminal-ui-presentation-records ui))
                  (record (or (gethash (getf metadata :call-key) index)
                              (gethash (getf metadata :job-key) index))))
-            (unless (and record (member (getf metadata :kind) '(:result :completion :annotation))
-                         (terminal-ui-fullscreen--replace-record
-                          ui record :identifier identifier :metadata metadata))
+            (unless (or (terminal-ui-fullscreen--merge-schema-record ui identifier metadata)
+                        (and record (member (getf metadata :kind) '(:result :completion :annotation))
+                             (terminal-ui-fullscreen--replace-record
+                              ui record :identifier identifier :metadata metadata)))
               (let ((restored (when (member (getf metadata :kind) '(:result :completion :annotation))
                                 (terminal-ui-fullscreen--restore-outcome ui identifier metadata))))
                 (cond

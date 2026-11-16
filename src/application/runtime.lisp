@@ -2654,38 +2654,45 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
                      (push safe-name names)))))
     (nreverse names)))
 
-(-> application--tool-search-entry
-    (application json-object)
-    (option list))
+(-> application--tool-search-display-names (application json-object) list)
+(defun application--tool-search-display-names (application item)
+  "Return ITEM's short namespace names in first-seen display order."
+  (remove-duplicates
+   (mapcar (lambda (namespace)
+             (sanitize-text
+              (application--tool-namespace-display-name application namespace)
+              :single-line-p t))
+           (application--tool-search-namespaces item))
+   :test #'string= :from-end t))
+
+(-> application--tool-schema-entry (application list) (option list))
+(defun application--tool-schema-entry (application names)
+  "Return one width-bounded schema row for ordered namespace NAMES."
+  (when names
+    (let* ((maximum-width
+             (max 1
+                  (1- (application--transcript-columns application))))
+           (row
+             (append
+              (list (terminal-span ':tool "▸ tool schemas: "))
+              (loop for namespace in names
+                    for first-name-p = t then nil
+                    append
+                    (append
+                     (unless first-name-p
+                       (list (terminal-span ':dim ", ")))
+                     (list (terminal-span ':syntax-function namespace)))))))
+      (if (<= (terminal--spans-width row) maximum-width)
+          row
+          (append
+           (terminal--clip-spans row (max 0 (1- maximum-width)))
+           (list (terminal-span ':dim "…")))))))
+
+(-> application--tool-search-entry (application json-object) (option list))
 (defun application--tool-search-entry (application item)
   "Return one compact row naming namespaces expanded by tool search ITEM."
-  (let ((names (remove-duplicates
-                (mapcar (lambda (namespace)
-                          (sanitize-text
-                           (application--tool-namespace-display-name
-                            application namespace)
-                           :single-line-p t))
-                        (application--tool-search-namespaces item))
-                :test #'string=)))
-    (when names
-      (let* ((maximum-width
-               (max 1
-                     (1- (application--transcript-columns application))))
-             (row
-               (append
-                (list (terminal-span ':tool "▸ tool schemas: "))
-                (loop for namespace in names
-                      for first-name-p = t then nil
-                      append
-                      (append
-                       (unless first-name-p
-                         (list (terminal-span ':dim ", ")))
-                       (list (terminal-span ':syntax-function namespace)))))))
-        (if (<= (terminal--spans-width row) maximum-width)
-            row
-            (append
-             (terminal--clip-spans row (max 0 (1- maximum-width)))
-             (list (terminal-span ':dim "…"))))))))
+  (application--tool-schema-entry
+   application (application--tool-search-display-names application item)))
 
 (-> application--visible-assistant-text (json-object) (option string))
 (defun application--visible-assistant-text (item)
@@ -3086,6 +3093,8 @@ The channel's structured clients receive its text as a :PRESENT event."
                   group (if single-row-p
                             (or (function-call-canonical-name item) "web search")
                             ':call)))
+           ((equal type "tool_search_output")
+            (setf kind ':tool-schemas))
            ((equal type "reasoning")
             (setf kind ':reasoning))
            (t
@@ -3182,6 +3191,18 @@ The channel's structured clients receive its text as a :PRESENT event."
       (when (getf metadata :expandable-input-p)
         (setf (getf metadata :expanded-entry-layout)
               (application--record-layout application record :expanded-input-p t))))
+    (when (and entry (terminal-ui-fullscreen-p (application-ui application))
+               (eq (getf metadata :entry-kind) ':tool-schemas))
+      (let* ((item   (application--transcript-json (getf (rest record) :wire-json)))
+             (names  (application--tool-search-display-names application item))
+             (layout (lambda (names columns)
+                       (let ((*application-transcript-layout-columns* columns))
+                         (application--tool-schema-entry application names)))))
+        (setf (getf metadata :schema-names) names
+              (getf metadata :schema-layout) layout
+              (getf metadata :entry-layout) (lambda (columns) (funcall layout names columns))
+              (getf metadata :source-characters)
+              (loop for name in names sum (length name)))))
     (when resolved
       (let ((resolved (application--history-outcome-presentation application resolved)))
         (dolist (key '(:state :job-key :retain-output-p :body :body-layout :body-source-characters))

@@ -58,6 +58,139 @@
   "Present RECORDS through the application batch presentation path."
   (application--present-conversation-records application records))
 
+(-> application-tool-outcome-tests--schemas (integer list) list)
+(defun application-tool-outcome-tests--schemas (sequence names)
+  "Build a provider schema lookup with namespace NAMES in discovery order."
+  (list :provider-item :seq sequence :time 0
+        :wire-json (json-encode
+                    (json-object
+                     "type" "tool_search_output"
+                     "tools" (coerce (loop for name in names
+                                           collect (json-object "type" "namespace" "name" name))
+                                     'vector)))))
+
+(-> test-transcript-schema-coalescing () null)
+(defun test-transcript-schema-coalescing ()
+  "Coalesce adjacent resident schema lookups across batches, styles and relayout."
+  (dolist (style '(:labels :repl))
+    (dolist (batch-p '(nil t))
+      (with-test-configuration (configuration)
+        (setf (config :transcript-style configuration) style)
+        (let* ((application (application-tool-outcome-tests--application configuration))
+               (ui          (application-ui application))
+               (viewport    (fullscreen-terminal-ui-viewport ui))
+               (records     (list (application-tool-outcome-tests--schemas 1 '("web" "search"))
+                                  (application-tool-outcome-tests--schemas 2 nil)
+                                  (application-tool-outcome-tests--schemas
+                                   3 '("skill" "search" "shodan"))
+                                  (application-tool-outcome-tests--schemas 4 '("web")))))
+          (if batch-p
+              (application--present-conversation-records application records)
+              (dolist (record records)
+                (application--present-conversation-record application record)))
+          (test-assert (= 1 (clinedi:transcript-viewport-chunk-count viewport))
+                       "consecutive visible lookups share one resident chunk")
+          (test-assert (search "web, search, skill, shodan"
+                               (application-tool-outcome-tests--text application))
+                       "merged namespaces retain first discovery order without repeats")
+          (application--present-conversation-records application records)
+          (test-assert (= 1 (clinedi:transcript-viewport-chunk-count viewport))
+                       "replayed merged identifiers do not produce duplicate chunks")
+          (clinedi:transcript-viewport-resize viewport 28)
+          (test-assert (every (lambda (row) (<= (text-cell-width row) 28))
+                              (application-tool-outcome-tests--rows application))
+                       "merged schema rows respect the resized viewport")
+          (clinedi:transcript-viewport-resize viewport 100)
+          (test-assert (search "web, search, skill, shodan"
+                               (application-tool-outcome-tests--text application))
+                       "widening recovers all merged names from semantic sources")))))
+  (with-test-configuration (configuration)
+    (let* ((application (application-tool-outcome-tests--application configuration))
+           (terminal    (localgroup-terminal-create :rows 24 :columns 100))
+           (ui          (terminal-ui-create :terminal terminal :fullscreen-p t)))
+      (setf (application-ui application) ui)
+      (with-terminal-ui (ui ui)
+        (test-assert (and (not (terminal-interactive-p terminal))
+                          (not (terminal-plain-output-p terminal)))
+                     "a started client-less relay retains a resident viewport without an append-only sink")
+        (application-tool-outcome-tests--present
+         application (application-tool-outcome-tests--schemas 1 '("web" "search")))
+        (application-tool-outcome-tests--present
+         application (application-tool-outcome-tests--schemas 2 '("skill" "shodan")))
+        (test-assert (and (= 1 (clinedi:transcript-viewport-chunk-count
+                                (fullscreen-terminal-ui-viewport ui)))
+                          (search "web, search, skill, shodan"
+                                  (application-tool-outcome-tests--text application)))
+                     "client-less relay viewports coalesce schema rows before a client attaches"))))
+  (with-test-configuration (configuration)
+    (let* ((application (application-tool-outcome-tests--application configuration))
+           (ui          (application-ui application))
+           (terminal    (terminal-ui-terminal ui)))
+      (with-terminal-ui (ui ui)
+        (setf (terminal-interactive-p terminal) nil)
+        (application-tool-outcome-tests--present
+         application (application-tool-outcome-tests--schemas 1 '("web" "search"))
+                     (application-tool-outcome-tests--schemas 2 '("skill" "shodan")))
+        (test-assert (and (search "web, search" (recording-terminal-output terminal))
+                          (search "skill, shodan" (recording-terminal-output terminal)))
+                     "append-only terminal output includes every lookup's namespaces"))))
+  (let ((*terminal-ui-finalized-identifier-limit* 64))
+    (with-test-configuration (configuration)
+      (let* ((application (application-tool-outcome-tests--application configuration))
+             (ui          (application-ui application)))
+        (loop for sequence from 1 to 200
+              do (application-tool-outcome-tests--present
+                  application (application-tool-outcome-tests--schemas sequence '("web"))))
+        (test-assert (and (<= (hash-table-count (terminal-ui-finalized-identifiers ui)) 64)
+                          (loop for record being the hash-values of (fullscreen-terminal-ui-presentation-records ui)
+                                always (<= (length (getf record :identifiers)) 64)))
+                     "duplicate namespace lookups cannot retain unlimited merged identities"))))
+  nil)
+
+(-> test-transcript-schema-interruptions () null)
+(defun test-transcript-schema-interruptions ()
+  "Keep schema groups separate when any visible entry interrupts discovery."
+  (dolist (style '(:labels :repl))
+    (dolist (interruption '(:side-status :message :call :stream :tail :cleared-tail))
+      (with-test-configuration (configuration)
+        (setf (config :transcript-style configuration) style)
+        (let* ((application (application-tool-outcome-tests--application configuration))
+               (ui          (application-ui application))
+               (viewport    (fullscreen-terminal-ui-viewport ui)))
+          (setf (terminal-interactive-p (terminal-ui-terminal ui)) t)
+          (with-terminal-ui (ui ui)
+            (application-tool-outcome-tests--present
+             application (application-tool-outcome-tests--schemas 1 '("web" "search")))
+            (case interruption
+              (:side-status
+               (application-tool-outcome-tests--present
+                application (list :side-status :seq 2 :spans (list (terminal-span ':notice "child note")))))
+              (:message
+               (application-tool-outcome-tests--present
+                application (list :message :seq 2 :role ':user :content "interruption" :time 0)))
+              (:call
+               (application-tool-outcome-tests--present
+                application (application-tool-outcome-tests--call 2 "ordinary-call")))
+              (:stream
+               (terminal-ui-stream-update
+                ui :rows (list (list (terminal-span ':plain "streamed text")))))
+              ((:tail :cleared-tail)
+               (terminal-ui-stream-update ui :tail "unfinished streamed text")
+               (when (eq interruption ':cleared-tail)
+                 (terminal-ui-stream-update ui :tail nil))))
+            (let ((before (clinedi:transcript-viewport-chunk-count viewport)))
+              (application-tool-outcome-tests--present
+               application (application-tool-outcome-tests--schemas 3 '("skill" "shodan")))
+              (application-tool-outcome-tests--present
+               application (application-tool-outcome-tests--schemas 4 '("skill")))
+              (test-assert (= (+ before (if (eq interruption ':tail) 2 1))
+                              (clinedi:transcript-viewport-chunk-count viewport))
+                           "only uninterrupted visible lookups share the next schema chunk")
+              (test-assert (not (search "search, skill"
+                                       (application-tool-outcome-tests--text application)))
+                           "an interruption prevents merging back into an earlier schema row")))))))
+  nil)
+
 (-> test-application-resource-edit-failure-placement () null)
 (defun test-application-resource-edit-failure-placement ()
   "Present a short failed operation before its proposed diff, including after resize."
