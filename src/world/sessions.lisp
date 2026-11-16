@@ -283,15 +283,19 @@ session never gets a second agent."
               (sort (world-channel-residents world channel-identifier) #'<
                     :key #'participant-created-at)))))
 
-(-> world-session-participant (configuration conversation) (option participant))
-(defun world-session-participant (configuration conversation)
+(-> world-session-participant
+    (configuration conversation &key (:create-inbox-p boolean))
+    (option participant))
+(defun world-session-participant (configuration conversation &key (create-inbox-p t))
   "Return the agent participant CONVERSATION was migrated onto, or NIL before it has one.
 
 A persisted conversation is reconciled first, so a fresh session that has
-its first message finds its participant on the first call."
+its first message finds its participant on the first call. CREATE-INBOX-P may
+be NIL when registering a private task without creating a public inbox."
   (when (conversation-persisted-p conversation)
     (world-reconcile-sessions configuration
-                              :identities (list (conversation-pathname conversation))))
+                              :identities     (list (conversation-pathname conversation))
+                              :create-inbox-p create-inbox-p))
   (let ((mapping (find (conversation-identifier conversation)
                        (world-session-mappings configuration)
                        :key #'world-session-mapping-conversation :test #'string=)))
@@ -730,10 +734,11 @@ identifier as an initial handle, so every participant can be mentioned by name."
         (push name names)))))
 
 (-> world-reconcile-sessions
-    (configuration &key (:identities list) (:prune-p boolean) (:now timestamp))
+    (configuration &key (:identities list) (:prune-p boolean) (:now timestamp)
+                        (:create-inbox-p boolean))
     (values world (integer 0)))
 (defun world-reconcile-sessions (configuration &key (identities nil identities-p) (prune-p t)
-                                                    (now (get-universal-time)))
+                                                   (now (get-universal-time)) (create-inbox-p t))
   "Reconcile conversation mappings and return the world and change count.
 
 IDENTITIES limits the work to those conversation identity pathnames; otherwise
@@ -742,7 +747,8 @@ matching source token usually avoids rereading the conversation header. With
 PRUNE-P, mappings whose conversation no longer exists retire their
 participant and, once empty, their channel. A world that has anything in it
 gets the person's inbox: the first reconciliation without one examines every
-conversation and creates an inbox conversation when none is found."
+conversation and, with CREATE-INBOX-P, creates an inbox conversation when none
+is found. Private task registration can defer that public conversation."
   (with-recursive-lock-held (*world-sessions-lock*)
     (let* ((discovery  (world-load configuration))
            (mappings   (world-session--current-mappings configuration))
@@ -767,7 +773,7 @@ conversation and creates an inbox conversation when none is found."
                                                                   (world-channel-find discovery root))
                                                               t))))))
             (multiple-value-bind (changes vanished) (changes identities)
-              (if (and all-p
+              (if (and create-inbox-p all-p
                        (or changes (world-human-participant discovery))
                        (null (world-inbox-channel discovery))
                        (notany (lambda (change)

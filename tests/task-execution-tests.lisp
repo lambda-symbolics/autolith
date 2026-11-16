@@ -817,7 +817,8 @@
            (progn
              (conversation-append-user-message (agent-conversation parent) "Parent assignment.")
              (setf (participant-state-identity (agent-participant-state parent))
-                   (world-session-participant configuration (agent-conversation parent)))
+                   (world-session-participant configuration (agent-conversation parent)
+                                              :create-inbox-p nil))
              (setf (slot-value job 'completion-owner-conversation)
                    (conversation-identifier (agent-conversation parent)))
              (with-lock-held ((cl-jobpond::job--lock job))
@@ -893,6 +894,11 @@
                                (typep (participant-state-conversation state) 'conversation)
                                (eq definition (task-job-definition job)))
                           "pooled task setup shares the factory's actual state, keeping assignment metadata on the job")
+             (test-assert
+              (and (null (world-inbox-channel (world-load configuration)))
+                   (equal (mapcar #'pathname-name (conversation-list configuration))
+                          (list (conversation-identifier (agent-conversation parent)))))
+              "private child registration leaves the public conversation list unchanged")
              (let* ((identity       (participant-state-identity state))
                     (owner          (participant-identifier identity))
                     (*memory-owner* owner)
@@ -901,7 +907,8 @@
                 (and (typep identity 'participant)
                      (equal owner (participant-identifier
                                    (world-session-participant
-                                    configuration (participant-state-conversation state))))
+                                    configuration (participant-state-conversation state)
+                                    :create-inbox-p nil)))
                      (equal owner (participant-identifier (first (last context-owners)))))
                 "the first spawned provider context has the child's durable participant identity")
                (test-assert
@@ -912,7 +919,27 @@
                 (format nil "First child owner ~S, personal ~S, tool principals ~S, results ~S"
                         owner (and personal (memory-owner personal)) tool-owners
                         (mapcar (lambda (result) (list (tool-result-error-code result)
-                                                      (tool-result-content result))) tool-results))))
+                                                      (tool-result-content result))) tool-results)))
+               (world-reconcile-sessions configuration)
+               (let* ((world    (world-load configuration))
+                      (reloaded (world-participant-find world owner))
+                      (context  (make-instance
+                                 'tool-context :configuration configuration :worker nil
+                                 :agent (make-instance
+                                         'agent :configuration configuration
+                                         :participant-state
+                                         (make-instance 'participant-state :identity reloaded)))))
+                 (test-assert
+                  (and (world-inbox-channel world)
+                       (= 2 (length (conversation-list configuration)))
+                       (equal (participant-parent reloaded)
+                              (participant-identifier
+                               (participant-state-identity (agent-participant-state parent))))
+                       (equal owner (memory-owner (first (memory-list configuration :visibility ':personal)))))
+                  "normal world bootstrap creates its inbox without changing child identity or personal ownership")
+                 (multiple-value-bind (reloaded-owner shared-write-p) (memory-resource--principal context)
+                   (test-assert (and (equal owner reloaded-owner) (not shared-write-p))
+                                "child shared-write restrictions survive world bootstrap and runtime reconstruction"))))
              (test-assert
               (equal (goal-record->goal
                       (conversation-latest-goal-record
