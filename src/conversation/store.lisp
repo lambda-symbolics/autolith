@@ -2390,6 +2390,242 @@ transcript show automatic INPUT as a short notice."
                   (conversation-title-source conversation) previous-title-source)
             (conversation--delete-image-attachments attachments)))))))
 
+(-> conversation--automatic-message-error (conversation string) null)
+(defun conversation--automatic-message-error (conversation message)
+  "Report an automatic receipt with ambiguous durable or projected identity."
+  (error 'conversation-invariant-error
+         :message  message
+         :pathname (conversation-pathname conversation)
+         :sequence (conversation-next-sequence conversation)))
+
+(-> conversation--automatic-message-state (conversation) list)
+(defun conversation--automatic-message-state (conversation)
+  "Capture the projection and bookkeeping a plain automatic message can change."
+  (let* ((source     (conversation-projection conversation))
+         (projection (clinker-transcript:make-projection
+                      :items (clinker-transcript:projection-items source))))
+    (clinker-transcript:projection-copy-metadata source projection)
+    (list :projection        projection
+          :next-sequence     (conversation-next-sequence conversation)
+          :persisted-p       (conversation-persisted-p conversation)
+          :log-pathname      (conversation-log-pathname conversation)
+          :incomplete-tail-p (conversation-incomplete-tail-p conversation)
+          :working-seconds   (conversation-working-seconds conversation)
+          :user-turn-count   (conversation-user-turn-count conversation)
+          :last-activity-at  (conversation-last-activity-at conversation)
+          :message-count     (conversation-message-count conversation)
+          :picker-preview    (conversation-picker-preview conversation)
+          :picker-count      (conversation-picker-search-message-count conversation)
+          :identifiers       (conversation-pending-input-identifiers conversation)
+          :mentions          (loop for key being the hash-keys of (conversation-channel-mention-counts conversation)
+                                     using (hash-value value)
+                                   collect (cons key value)))))
+
+(-> conversation--restore-automatic-message-state (conversation list) null)
+(defun conversation--restore-automatic-message-state (conversation state)
+  "Restore the receipt baseline before resolving an uncertain append."
+  (setf (slot-value conversation 'projection) (getf state :projection)
+        (conversation-next-sequence conversation) (getf state :next-sequence)
+        (conversation-persisted-p conversation) (getf state :persisted-p)
+        (conversation-log-pathname conversation) (getf state :log-pathname)
+        (conversation-incomplete-tail-p conversation) (getf state :incomplete-tail-p)
+        (conversation-working-seconds conversation) (getf state :working-seconds)
+        (conversation-user-turn-count conversation) (getf state :user-turn-count)
+        (conversation-last-activity-at conversation) (getf state :last-activity-at)
+        (conversation-message-count conversation) (getf state :message-count)
+        (conversation-picker-preview conversation) (getf state :picker-preview)
+        (conversation-picker-search-message-count conversation) (getf state :picker-count))
+  (conversation--restore-pending-input-identifiers conversation (getf state :identifiers))
+  (let ((mentions (conversation-channel-mention-counts conversation)))
+    (clrhash mentions)
+    (dolist (entry (getf state :mentions))
+      (setf (gethash (first entry) mentions) (rest entry))))
+  nil)
+
+(-> conversation--find-automatic-message (conversation string) (values list boolean integer))
+(defun conversation--find-automatic-message (conversation identifier)
+  "Read IDENTIFIER from storage, returning its record, torn-tail flag and last sequence."
+  (let ((found         nil)
+        (last-sequence 0)
+        (incomplete-p  nil))
+    (when (conversation-storage-occupied-p (conversation-pathname conversation))
+      (setf incomplete-p
+            (conversation-map-records
+             conversation
+             (lambda (record)
+               (let ((sequence (getf (rest record) :seq)))
+                 (when (integerp sequence)
+                   (setf last-sequence (max last-sequence sequence))))
+               (when (equal identifier (getf (rest record) :pending-input-identifier))
+                 (when found
+                   (conversation--automatic-message-error
+                    conversation "A pending-input identity has multiple durable receipts."))
+                 (setf found record))))))
+    (values found incomplete-p last-sequence)))
+
+(-> conversation--validate-automatic-message
+    (conversation list &key (:message string) (:operation-request list)) null)
+(defun conversation--validate-automatic-message (conversation record &key message operation-request)
+  "Require RECORD to be the exact requested plain automatic user receipt."
+  (unless (and (eq (first record) ':message)
+               (eq (getf (rest record) :role) ':user)
+               (eq (getf (rest record) :automatic-p) t)
+               (typep (getf (rest record) :seq) '(integer 1))
+               (equal (getf (rest record) :content) message)
+               (equal (getf (rest record) :operation-request) operation-request)
+               (not (getf (rest record) :images))
+               (equal (getf (rest record) :wire-json)
+                      (json-encode (user-message-item message nil))))
+    (conversation--automatic-message-error
+     conversation "A pending-input identity names a different automatic receipt."))
+  nil)
+
+(-> conversation--project-automatic-message
+    (conversation list &key (:source clinker-transcript:projection) (:fresh-p boolean))
+    (values clinker-transcript:projection json-object))
+(defun conversation--project-automatic-message (conversation record &key source fresh-p)
+  "Build a detached projection with RECORD once and unrelated item identities intact."
+  (let* ((sequence    (getf (rest record) :seq))
+         (wire        (getf (rest record) :wire-json))
+         (item        (json-decode wire))
+         (records     (clinker-transcript:projection-metadata-table source ':record))
+         (items       (clinker-transcript:projection-items source))
+         (projected-p nil)
+         (placed-p    nil)
+         (result      nil))
+    (labels ((receipt-p (candidate)
+               (let ((origin (gethash candidate records)))
+                 (and (equal (getf origin :conversation) (conversation-identifier conversation))
+                      (eql (getf origin :sequence) sequence)))))
+      (setf projected-p (not (null (find-if #'receipt-p items))))
+      (let ((existing (find-if (lambda (candidate)
+                                 (and (receipt-p candidate)
+                                      (equal (json-encode candidate) wire)))
+                               items)))
+        (when existing
+          (setf item existing)))
+      (unless (or fresh-p projected-p)
+        (when (find-if (lambda (candidate)
+                        (and (null (gethash candidate records))
+                             (equal (json-encode candidate) wire)))
+                      items)
+          (conversation--automatic-message-error
+           conversation "An uncorrelated provider item makes receipt reconciliation ambiguous.")))
+      (dolist (candidate items)
+        (let ((origin (gethash candidate records)))
+          (cond
+            ((receipt-p candidate)
+             (unless placed-p
+               (push item result)
+               (setf placed-p t)))
+            (t
+             (when (and (not projected-p) (not placed-p)
+                        (equal (getf origin :conversation) (conversation-identifier conversation))
+                        (integerp (getf origin :sequence))
+                        (> (getf origin :sequence) sequence))
+               (push item result)
+               (setf placed-p t))
+             (push candidate result)))))
+      (unless placed-p
+        (push item result)))
+    (let ((projection (clinker-transcript:make-projection :items (nreverse result))))
+      (clinker-transcript:projection-copy-metadata source projection)
+      (setf (gethash item (clinker-transcript:projection-metadata-table projection ':record))
+            (list :conversation (conversation-identifier conversation) :sequence sequence))
+      (let ((model (conversation-model conversation)))
+        (when (non-empty-string-p model)
+          (setf (gethash item (clinker-transcript:projection-metadata-table projection ':family))
+                (model-family model (conversation-model-provider conversation)))))
+      (values projection item))))
+
+(-> conversation--install-automatic-message
+    (conversation list &key (:state list) (:account-p boolean) (:incomplete-p boolean))
+    (values json-object list))
+(defun conversation--install-automatic-message (conversation record &key state account-p incomplete-p)
+  "Prepare RECORD's projection before atomically accounting and installing it."
+  (let ((active-pathname (conversation-storage-active-pathname (conversation-pathname conversation))))
+    (multiple-value-bind (projection item)
+        (conversation--project-automatic-message
+         conversation record :source (getf state :projection) :fresh-p account-p)
+      (sb-sys:without-interrupts
+        (let ((completed-p nil))
+          (unwind-protect
+               (progn
+                 (when account-p
+                   (conversation--note-activity conversation record)
+                   (conversation--note-pending-input-identifier conversation record)
+                   (setf (conversation-next-sequence conversation) (1+ (getf (rest record) :seq))))
+                 (setf (conversation-persisted-p conversation) t
+                       (conversation-log-pathname conversation) active-pathname
+                       (conversation-incomplete-tail-p conversation) incomplete-p
+                       (slot-value conversation 'projection) projection
+                       completed-p t))
+            (unless completed-p
+              (conversation--restore-automatic-message-state conversation state)))))
+      (values item record))))
+
+(-> conversation-ensure-automatic-user-message
+    (conversation string &key (:pending-input-identifier non-empty-string) (:operation-request list))
+    (values json-object list))
+(defun conversation-ensure-automatic-user-message
+    (conversation message &key pending-input-identifier operation-request)
+  "Ensure one durable receipt and current provider item before acknowledging its input.
+
+Return the provider item and sequenced record. Repair an uncertain append's memory
+state before rethrowing its failure; a retry uses the same durable receipt."
+  (unless (and (non-empty-string-p message) (non-empty-string-p pending-input-identifier))
+    (error 'configuration-error :message "An automatic receipt requires text and a stable pending-input identity."))
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (multiple-value-bind (record incomplete-p last-sequence)
+        (conversation--find-automatic-message conversation pending-input-identifier)
+      (sb-sys:without-interrupts
+        (setf (conversation-incomplete-tail-p conversation) incomplete-p))
+      (let* ((state       (conversation--automatic-message-state conversation))
+             (accounted-p (conversation-pending-input-identifier-p conversation pending-input-identifier)))
+        (when record
+          (conversation--validate-automatic-message
+           conversation record :message message :operation-request operation-request)
+          (unless (or accounted-p
+                      (and (= (conversation-next-sequence conversation) (getf (rest record) :seq))
+                           (= last-sequence (getf (rest record) :seq))))
+            (conversation--automatic-message-error
+             conversation "The receipt's accounting cannot be established from this live prefix."))
+          (return-from conversation-ensure-automatic-user-message
+            (conversation--install-automatic-message
+             conversation record :state state :account-p (not accounted-p) :incomplete-p incomplete-p)))
+        (when accounted-p
+          (conversation--automatic-message-error
+           conversation "The remembered receipt is unavailable for exact reconciliation."))
+        (let ((item              nil)
+              (durable-record    nil)
+              (append-returned-p nil))
+          (unwind-protect
+               (progn
+                 (conversation-append-user-message
+                  conversation message :automatic-p t
+                  :pending-input-identifier pending-input-identifier :operation-request operation-request)
+                 (setf append-returned-p t))
+            (sb-sys:without-interrupts
+              (conversation--restore-automatic-message-state conversation state))
+            (multiple-value-bind (found torn-p tail-sequence)
+                (conversation--find-automatic-message conversation pending-input-identifier)
+              (sb-sys:without-interrupts
+                (setf (conversation-incomplete-tail-p conversation) torn-p))
+              (when found
+                (conversation--validate-automatic-message
+                 conversation found :message message :operation-request operation-request)
+                (unless (and (= (getf (rest found) :seq) (getf state :next-sequence))
+                             (= tail-sequence (getf (rest found) :seq)))
+                  (conversation--automatic-message-error
+                   conversation "Another durable append crossed receipt reconciliation."))
+                (setf (values item durable-record)
+                      (conversation--install-automatic-message
+                       conversation found :state state :account-p t :incomplete-p torn-p)))
+              (when (and append-returned-p (not found))
+                (conversation--automatic-message-error
+                 conversation "An append returned without a durable automatic receipt."))))
+          (values item durable-record))))))
+
 (-> conversation--validate-provider-item (conversation json-object) json-object)
 (defun conversation--validate-provider-item (conversation item)
   "Return ITEM after rejecting provider calls that would poison durable replay."
