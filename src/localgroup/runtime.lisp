@@ -454,7 +454,7 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
     (localgroup-session list &key (:socket sb-bsd-sockets:socket) (:stream stream))
     null)
 (defun localgroup--serve-attachment (session request &key socket stream)
-  "Attach REQUEST's persistent SOCKET while coordinating the application reader."
+  "Attach REQUEST's persistent SOCKET while preserving the application reader's lifecycle."
   (unless (localgroup--valid-request-p request session)
     (daemon-write-packet
      stream (list :error :message "The localgroup request was rejected."))
@@ -478,7 +478,7 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
              (let ((attached-p
                      (if (eq mode ':read-only)
                          (attach)
-                         (application-input-controller-call-with-reader-paused
+                         (application-input-controller-call-with-exclusive-input
                           controller
                           (lambda ()
                             (let ((attached-p (attach)))

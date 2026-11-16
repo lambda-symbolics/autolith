@@ -575,6 +575,7 @@
                                           (:file "onboarding-state-tests")
                                           (:file "onboarding-ui-tests")
                                           (:file "localgroup-tests")
+                                          (:file "localgroup-startup-tests")
                                           (:file "localgroup-handoff-tests")
                                           (:file "localgroup-handoff-boundary-tests")
                                           (:file "session-cli-tests")

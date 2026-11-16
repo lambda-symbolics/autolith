@@ -1628,6 +1628,7 @@
              (ignore-errors (sb-bsd-sockets:socket-close read-only-socket))))
          (test-assert (image-daemon:relay-release-direct relay)
           "a detached process can release its original foreground terminal")
+         (application-input-controller--start-reader controller)
          (multiple-value-setq (socket stream)
            (multiple-value-bind (control-socket control-stream response)
                (test-localgroup--attach session ':control :client-version "0.0.0")
