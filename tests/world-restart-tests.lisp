@@ -512,10 +512,17 @@ skips the repository check."
                     (test-assert (directory (merge-pathnames "generations/*/autolith.core"
                                                              (config :data-root configuration)))
                                  "the launcher published the saved heap as a generation")
-                    (test-assert (and (not (probe-file (world-server-restart-pathname configuration)))
-                                      (world-server-running-p configuration)
-                                      (world-restart-tests--conversation-held-p configuration channel))
-                                 "the restarted server holds the world and the conversation, and removed its marker")
+                    (let* ((marker-present    (not (null (probe-file (world-server-restart-pathname configuration)))))
+                           (world-running     (not (null (world-server-running-p configuration))))
+                           (conversation-held (world-restart-tests--conversation-held-p configuration channel))
+                           (ready             (and (not marker-present) world-running conversation-held)))
+                      (test-assert
+                       ready
+                       (if ready
+                           "the restarted server holds the world and the conversation, and removed its marker"
+                           (format nil "the restarted server holds the world and the conversation, and removed its marker~%marker-present=~S world-running=~S conversation-held=~S~%~A"
+                                   marker-present world-running conversation-held
+                                   (world-restart-tests--logs configuration)))))
                     (world-restart-tests--check-resumed-runtime resumed)
                     ;; The heap was saved holding locks of a thread that
                     ;; is gone; a second checkpoint needs them again.
