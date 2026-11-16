@@ -621,15 +621,18 @@ Never evaluate demo input."
                     (case (exercise)
                       (:authentication
                        (terminal-ui-onboarding--reset-exercise ui)
-                       (setf stage
-                             (case (funcall authentication-function)
-                               ((:authenticated :skipped)
-                                ':result)
-                               (:cancelled
-                                ':cancelled)
-                               (otherwise
-                                ':failed))
-                             scroll-offset 0)
+                       (let ((authentication-outcome (funcall authentication-function)))
+                         (if (eq authentication-outcome ':interrupted)
+                             (setf outcome ':interrupted)
+                             (setf stage
+                                   (case authentication-outcome
+                                     ((:authenticated :skipped)
+                                      ':result)
+                                     (:cancelled
+                                      ':cancelled)
+                                     (otherwise
+                                      ':failed))))
+                         (setf scroll-offset 0))
                        (terminal-ui-onboarding--reset-exercise ui))
                       (:settings
                        (terminal-ui-onboarding--reset-exercise ui)

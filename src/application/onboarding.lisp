@@ -50,12 +50,16 @@
 (defun application-onboarding--authenticate (application)
   "Pick a provider and method, then use the normal authentication boundary.
 
-Skipping keeps the existing account and model. Picker cancellation returns to
-its caller; cancelling the method picker returns to provider selection. Restore
-the tour's output suspension even when provider authentication fails. Never
-retain provider output or condition details in onboarding state."
+Skipping keeps the existing account and model. Escape cancels provider selection
+or returns from method selection to the providers. Ctrl-C interrupts the tour.
+Restore output suspension even when provider authentication fails. Never retain
+provider output or condition details in onboarding state."
   (let* ((ui          (application-ui application))
-         (suspended-p (terminal-ui-live-output-suspended-p ui)))
+         (suspended-p (terminal-ui-live-output-suspended-p ui))
+         (on-event    (lambda (event selector)
+                        (declare (ignore selector))
+                        (when (eq event ':interrupt)
+                          (return-from application-onboarding--authenticate ':interrupted)))))
     (unwind-protect
          (progn
            (with-terminal-ui-locked (ui)
@@ -70,7 +74,7 @@ retain provider output or condition details in onboarding state."
                                                    :description (onboarding-source-text "auth-skip"))
                                              (application--authentication-provider-items application))
                         :visible-count (application--authentication-provider-visible-count application)
-                        :initial-name "skip" :search-p t)))
+                        :initial-name "skip" :search-p t :on-event on-event)))
                  (unless name
                    (return-from selection ':cancelled))
                  (when (string= name "skip")
@@ -87,7 +91,7 @@ retain provider output or condition details in onboarding state."
                                          :description (onboarding-source-text "auth-browser"))
                                    (list :name "device-code" :argument nil
                                          :description (onboarding-source-text "auth-device-code")))
-                             :initial-name "browser"))))
+                             :initial-name "browser" :on-event on-event))))
                    (when (or (not chatgpt-p) method)
                      (return-from selection
                        (handler-case
