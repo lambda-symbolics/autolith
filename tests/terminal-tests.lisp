@@ -116,12 +116,16 @@
 
 (-> test-terminal-control-z-decodes-as-detach () null)
 (defun test-terminal-control-z-decodes-as-detach ()
-  "Decode the terminal's Ctrl-Z byte as the semantic detach event."
-  (test-assert
-   (eq ':detach
-       (terminal--decode-editing-event
-        (make-string-input-stream (string (code-char 26)))))
-   "Ctrl-Z is decoded without invoking terminal suspend")
+  "Decode legacy and enhanced Ctrl-Z through the real terminal transport."
+  (dolist (text (list (string (code-char 26))
+                      (format nil "~C[122;5u" #\Escape)
+                      (format nil "~C[90;5u" #\Escape)))
+    (let ((terminal (make-instance 'stream-terminal
+                                   :input-stream  (make-string-input-stream text)
+                                   :output-stream (make-string-output-stream))))
+      (setf (terminal-interactive-p terminal) t)
+      (test-assert (eq (terminal-read-event terminal) ':detach)
+                   "raw and enhanced Ctrl-Z have the same detach event")))
   nil)
 
 (-> terminal-tests--substring-count (string string) (integer 0))

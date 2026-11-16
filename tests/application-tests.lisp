@@ -1346,15 +1346,15 @@
             (application-input-controller-active-p controller) active-p)
       (test-call-with-function-replacements
        (list
-        (list 'application-command
-              (lambda (received input &key interactive-p)
-                (declare (ignore interactive-p))
+        (list 'application-input-controller--handle-submission
+              (lambda (received input &key steer-p)
+                (declare (ignore steer-p))
                 (setf called (list received input))
-                ':continue)))
+                nil)))
        (lambda ()
          (application-input-controller--process-event controller ':detach)))
-      (test-assert (equal called (list application "/detach"))
-                   "Ctrl-Z dispatches the existing detach command while idle and active")
+      (test-assert (equal called (list controller "(detach)"))
+                   "Ctrl-Z submits the existing detach operation while idle and active")
       (terminal-ui-stop ui)))
   nil)
 

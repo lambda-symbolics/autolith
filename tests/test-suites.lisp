@@ -739,6 +739,7 @@
   test-world-server-child-maintenance
   test-world-server-wake-channel
   test-world-server-stop-reason
+  test-world-server-control-z-detach
   test-world-server-status-line
   test-world-client-stop-outcomes
   test-world-client-exit-observation

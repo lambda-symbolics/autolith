@@ -28,4 +28,7 @@
        (terminal--read-control-v-paste stream))
       (t
        (unread-char character stream)
-       (read-event :stream stream :escape-delay escape-delay)))))
+       (let ((event (read-event :stream stream :escape-delay escape-delay)))
+         (if (equal event '(:control #\z))
+             ':detach
+             event))))))

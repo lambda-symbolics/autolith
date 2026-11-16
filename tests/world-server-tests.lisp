@@ -235,6 +235,85 @@ run once the wake has."
                            "the attached terminal is told the server was stopped by autolith stop")))))))
     nil))
 
+(-> test-world-server-control-z-detach () null)
+(defun test-world-server-control-z-detach ()
+  "Detach a controlling client through Ctrl-Z while its channel's work completes."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     ;; Startup animation and lingering tips precede the host work loop.
+     (setf (config :boot-screen-p configuration) nil
+           (config :boot-screen-linger-p configuration) nil)
+     (dolist (fullscreen-p '(nil t))
+       (let* ((entry       (world-client-entry configuration))
+              (identifier  (getf (rest (world-server-tests--open
+                                        entry (world-tests--workspace root
+                                                                      (if fullscreen-p "detach-fullscreen" "detach-repl"))
+                                        :fullscreen-p fullscreen-p))
+                                 :session-id))
+              (host        (world-server--find-host server identifier))
+              (application (world-host-application host))
+              (controller  (application-input-controller application))
+              (ui          (application-ui application)))
+         (test-assert (eq (typep ui 'fullscreen-terminal-ui) fullscreen-p)
+                      "the requested REPL or fullscreen view is constructed before attachment")
+         (dolist (text (list (string (code-char 26))
+                             (format nil "~C[122;5u" #\Escape)
+                             (format nil "~C[90;5u" #\Escape)))
+           (multiple-value-bind (socket stream response)
+               (test-localgroup--attach (application-localgroup-session application) ':control)
+              (let ((gate      (sb-thread:make-semaphore :count 0))
+                    (started   (sb-thread:make-semaphore :count 0))
+                    (completed (sb-thread:make-semaphore :count 0))
+                    (runner    nil)
+                    (run-input (symbol-function 'application-run-lisp-input))
+                    (source    "(world-server-detach-test-work)"))
+                (unwind-protect
+                     (test-call-with-function-replacements
+                      (list
+                       (list 'application-run-lisp-input
+                             (lambda (candidate input &rest arguments)
+                               (if (and (eq candidate application) (string= input source))
+                                   (progn
+                                     (setf runner sb-thread:*current-thread*)
+                                     (sb-thread:signal-semaphore started)
+                                     (sb-thread:wait-on-semaphore gate)
+                                     (conversation-append-user-message
+                                      (application-conversation application) "completed after detach")
+                                     (sb-thread:signal-semaphore completed)
+                                     :continue)
+                                   (apply run-input candidate input arguments)))))
+                      (lambda ()
+                        (test-assert (eq (first response) ':attached) "the controlling client attaches")
+                        ;; Compile cold native highlighting before timing the detach event.
+                        (application-input-controller--handle-submission controller "(values)" :steer-p nil)
+                        (test-assert (task-tests--wait-until
+                                      (lambda () (not (application-input-controller-busy-p controller))) 60)
+                                     "the host completes its initial Lisp presentation before timed input")
+                        (application-input-controller--handle-submission controller source :steer-p nil)
+                        (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
+                                     "the host runner starts the queued work")
+                        (daemon-write-packet
+                         stream (list :event (terminal--decode-editing-event
+                                              (make-string-input-stream text))))
+                        (test-assert (task-tests--wait-until
+                                      (lambda () (not (world-host-attached-p host))) 5)
+                                     "Ctrl-Z releases its client in REPL and fullscreen")
+                        (test-assert (and runner (thread-alive-p runner)
+                                          (application-input-controller-busy-p controller)
+                                          (not (world-server-stopping-p server))
+                                          (eq host (world-server--find-host server identifier)))
+                                     "detachment does not cancel ongoing work or close its channel")
+                        (sb-thread:signal-semaphore gate)
+                        (test-assert (sb-thread:wait-on-semaphore completed :timeout 5)
+                                     "the same work completes after its client detached")
+                        (test-assert (task-tests--wait-until
+                                      (lambda () (not (application-input-controller-busy-p controller))) 5)
+                                     "the host runner returns to idle after completing its work")))
+                  (sb-thread:signal-semaphore gate)
+                  (close stream)
+                  (sb-bsd-sockets:socket-close socket)))))))))
+  nil)
+
 (-> test-world-server-status-line () null)
 (defun test-world-server-status-line ()
   "Test status leads with the world server's process and version while a server runs."
