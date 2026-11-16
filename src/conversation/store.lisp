@@ -3179,9 +3179,22 @@ ordinary responses replace it."
        (every (lambda (character) (digit-char-p character 16)) (first value))
        t))
 
+(-> conversation--context-header-text-p (t list list) boolean)
+(defun conversation--context-header-text-p (value prompt-fingerprint tool-fingerprint)
+  "Validate VALUE's raw prompt and canonical tool text against their fingerprints."
+  (flet ((matches-p (text fingerprint)
+           (and (= (length text) (second fingerprint))
+                (string-equal
+                 (ironclad:byte-array-to-hex-string
+                  (ironclad:digest-sequence ':sha256 (utf8-string-to-octets text)))
+                 (first fingerprint)))))
+    (and (typep value '(cons string (cons string null)))
+         (matches-p (json-encode (first value)) prompt-fingerprint)
+         (matches-p (second value) tool-fingerprint))))
+
 (-> conversation-context-usage-sample-p (t) boolean)
 (defun conversation-context-usage-sample-p (sample)
-  "Validate bounded fingerprint-only measured context evidence loaded from storage."
+  "Validate portable measured context evidence and any retained header text."
   (and (proper-list-p sample)
        (evenp (length sample))
        (loop for tail on sample by (partial #'nthcdr 2)
@@ -3190,14 +3203,19 @@ ordinary responses replace it."
          (1
           (member (length sample) '(16 18)))
          (2
-          (and (= 26 (length sample))
+          (and (member (length sample) '(26 28))
                (every (lambda (key) (get-properties sample (list key)))
                       '(:format :soft-header :policy :prompt :tool-header
                         :history-count :history-digest :wire-fields :encoder-fields
                         :wire-count :wire-digest :tokens :temporary-characters))
                (every #'conversation--context-fingerprint-p
                       (list (getf sample :policy) (getf sample :prompt)
-                            (getf sample :tool-header))))))
+                            (getf sample :tool-header)))
+               (or (= 26 (length sample))
+                   (and (conversation--property-present-p sample :header-text)
+                        (conversation--context-header-text-p
+                         (getf sample :header-text)
+                         (getf sample :prompt) (getf sample :tool-header)))))))
        (typep (getf sample :temporary-characters 0) '(integer 0))
        (typep (getf sample :tokens) '(integer 1))
        (typep (getf sample :history-count) '(integer 0))
@@ -3216,12 +3234,29 @@ ordinary responses replace it."
                   (list (getf sample :wire-fields))))
        t))
 
+(-> conversation-context-usage-resolve (t t) (option list))
+(defun conversation-context-usage-resolve (sample previous)
+  "Validate SAMPLE, inheriting only omitted header text from matching valid PREVIOUS.
+
+Both component fingerprints must match. Numeric evidence always comes from SAMPLE;
+malformed current evidence returns NIL. Legacy format-one samples are unchanged."
+  (when (conversation-context-usage-sample-p sample)
+    (if (and (= 2 (getf sample :format))
+             (not (conversation--property-present-p sample :header-text))
+             (conversation-context-usage-sample-p previous)
+             (= 2 (getf previous :format))
+             (getf previous :header-text)
+             (every (lambda (key) (equal (getf sample key) (getf previous key)))
+                    '(:prompt :tool-header)))
+        (append sample (list :header-text (copy-list (getf previous :header-text))))
+        sample)))
+
 (defmethod conversation--project-record
     ((kind (eql :context-usage)) conversation properties)
-  "Restore portable evidence without treating its historical token count as verified."
-  (let ((sample (getf properties :sample)))
-    (setf (conversation-context-usage-sample conversation)
-          (when (conversation-context-usage-sample-p sample) sample))))
+  "Restore validated evidence, retaining matching header text from earlier samples."
+  (setf (conversation-context-usage-sample conversation)
+        (conversation-context-usage-resolve
+         (getf properties :sample) (conversation-context-usage-sample conversation))))
 
 (defmethod conversation--project-record
     ((kind (eql :message)) conversation properties)

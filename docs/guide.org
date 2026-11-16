@@ -2437,14 +2437,19 @@ Before transport, admission checks the encoded request, including current tools
 and temporary context, with output headroom. Set
 =(settings :context-output-reserve 8192)= to reserve at least 8,192 tokens, or use
 =AUTOLITH_CONTEXT_OUTPUT_RESERVE=. A larger explicit generation cap takes precedence.
-When the provider, policy, and covered prompt match a measured response, shared
+When provider policy and covered history match a measured response, shared
 accounting uses its input and output occupancy, then adds new input. Cached input
-counts at its full token count. Request-local context is already included;
-admission replaces its previous contribution when encoding the next request.
-Verified anchors survive resume. Changed projections use a local text estimate
-with separate image allowances. Candidate checkpoints
-are admitted with arrivals before publication; a rejected candidate leaves the
-previous projection intact.
+counts at its full token count. Prompt and tool-schema edits cost one token per
+inserted or replacement UTF-8 byte, with no deletion credits. The text comparison
+preserves unchanged regions; if its work bound is exceeded, the unmatched middle
+is counted as a replacement. Header text is stored with the first measurement,
+a header change, or a reset, then inherited by later samples during replay.
+Older samples without text use full current component bytes until remeasured.
+Request-local context is already included; admission replaces its previous
+contribution when encoding the next request. Verified anchors survive resume and
+unmeasured responses. Other changed projections use a local text estimate with
+separate image allowances. Candidate checkpoints are admitted with arrivals before
+publication; a rejected candidate leaves the previous projection intact.
 
 Set =ANALYTICS_EVENTS_FILE= to export completed streaming calls as UTF-8 JSONL
 usage events. =ANALYTICS_ACTOR= overrides the operating-system username. Each

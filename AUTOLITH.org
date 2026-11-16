@@ -49,6 +49,10 @@ a user-local init.lisp change, or a private image commit.
   produced valid format-two evidence. Active checks covered persistence reload,
   history and policy validation, component charging, admission and tamper
   rejection. Clean-process private replay passed.
+- Tracked follow-up: price prompt and tool edits by inserted or replacement UTF-8
+  bytes, with no deletion credits. Persist optional header text once per measured
+  epoch and hydrate it through the existing sample slot. This follow-up is
+  source-only; no private image definitions were changed.
 - Removal condition: discard the private accounting definitions after booting
   the equivalent tracked implementation.
 

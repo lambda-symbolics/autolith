@@ -40,6 +40,7 @@
   test-context-admission-measured-invalidation
   test-context-admission-measured-high-usage
   test-context-admission-measured-resume
+  test-context-admission-header-byte-diff
   test-context-admission-measured-header-resume
   test-context-admission-measured-header-identity
   test-context-admission-final-request
