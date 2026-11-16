@@ -787,6 +787,9 @@ Live executions retain their pool ownership and remain inspectable after return.
              nil)
            :status-callback
            (lambda (status details)
+             (when (eq status ':user-message-persisted)
+               (setf (participant-state-identity (agent-participant-state child))
+                     (world-session-participant configuration conversation)))
              (task-job-note-agent-status job status details))
            :steering-callback
            (lambda ()

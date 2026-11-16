@@ -57,11 +57,16 @@
       (t
        nil))))
 
+(defmethod memory-resource--editable-p
+    ((resource memory-knowledge-resource) (context tool-context))
+  "Allow shared structured knowledge writes only for authorized participants."
+  (and (eq (memory-knowledge-resource-view-kind resource) ':facts)
+       (nth-value 1 (memory-resource--principal context))))
+
 (defmethod resource-capabilities
     ((resource memory-knowledge-resource) (context tool-context))
-  "Accept edits only on memory:facts."
-  (declare (ignore context))
-  (if (eq (memory-knowledge-resource-view-kind resource) ':facts)
+  "Accept edits on memory:facts only for participants with shared-write authority."
+  (if (memory-resource--editable-p resource context)
       '(:read :edit)
       '(:read)))
 
@@ -71,7 +76,8 @@
 (-> memory-knowledge-view (tool-context &key (:goals list)) knowledge-view)
 (defun memory-knowledge-view (context &key goals)
   "Return CONTEXT's structured knowledge evaluated from its workspace now."
-  (let ((configuration (tool-context-configuration context)))
+  (let ((configuration  (tool-context-configuration context))
+        (*memory-owner* nil))
     (if goals
         (knowledge-evaluate (knowledge-base-read configuration)
                             :workspace (knowledge--workspace configuration)
@@ -1023,6 +1029,14 @@ until the user admits it."
        (memory-knowledge--use-recipe context operation))
       (t
        (memory-resource--fail "memory:facts accepts predicate-define, fact-assert, fact-retract, rule-propose, method-define, contract-define, and recipe-use.")))))
+
+(defmethod resource-tool-edit :around
+    ((resource memory-knowledge-resource) (tool resource-edit-tool)
+     (context tool-context) (arguments hash-table))
+  "Refuse shared writes before generic capability and revision dispatch."
+  (unless (nth-value 1 (memory-resource--principal context))
+    (error 'resource-access-denied :uri (resource-uri resource)))
+  (call-next-method))
 
 (defmethod resource-tool-edit
     ((resource memory-knowledge-resource) (tool resource-edit-tool)

@@ -107,6 +107,106 @@
   *memory-resource-maximum-observations*)
 
 
+;;;; -- Participant Authority --
+
+(-> memory-resource--principal (tool-context) (values (option string) boolean))
+(defun memory-resource--principal (context)
+  "Return the durable owner and shared-write authority carried by CONTEXT.
+
+Local user calls without an agent retain shared access. An agent without a
+registered identity cannot write. Residency and runtime role confer no authority."
+  (let ((agent (tool-context-agent context)))
+    (if (null agent)
+        (values nil t)
+        (let* ((identity    (and (typep agent 'agent)
+                               (slot-boundp agent 'participant-state)
+                               (participant-state-identity (agent-participant-state agent))))
+               (world       (and identity (world-load (tool-context-configuration context))))
+               (participant (and (typep identity 'participant)
+                                 (world-participant-find world (participant-identifier identity)))))
+          (if (and participant (eq (participant-kind participant) ':agent))
+              (let* ((parent-id (participant-parent participant))
+                     (parent    (and parent-id (world-participant-find world parent-id))))
+                (values (participant-identifier participant)
+                        (or (null parent-id)
+                            (and parent (eq (participant-kind parent) ':human) t))))
+              (values nil nil))))))
+
+(defgeneric memory-resource--editable-p (resource context)
+  (:documentation "Return whether CONTEXT may mutate RESOURCE's ownership domain."))
+
+(defmethod memory-resource--editable-p
+    ((resource memory-collection-resource) (context tool-context))
+  "Allow own personal writes and authorized shared collection writes."
+  (multiple-value-bind (owner shared-write-p) (memory-resource--principal context)
+    (case (memory-collection-resource-visibility resource)
+      (:personal
+       (and owner t))
+      ((:global :workspace)
+       shared-write-p))))
+
+(defmethod memory-resource--editable-p
+    ((resource memory-item-resource) (context tool-context))
+  "Allow own personal item writes and authorized shared item writes."
+  (multiple-value-bind (owner shared-write-p) (memory-resource--principal context)
+    (let* ((*memory-owner* owner)
+           (memory         (memory-find (tool-context-configuration context)
+                                        (memory-resource-identifier resource))))
+      (if (and memory (eq (memory-scope memory) ':personal))
+          (and owner t)
+          shared-write-p))))
+
+(-> memory-resource--call-with-context
+    (memory-resource tool-context function &key (:write-p boolean)) t)
+(defun memory-resource--call-with-context (resource context function &key write-p)
+  "Call FUNCTION with the explicit owner after checking operation authority."
+  (multiple-value-bind (owner shared-write-p) (memory-resource--principal context)
+    (declare (ignore shared-write-p))
+    (when (or (and (typep resource 'memory-collection-resource)
+                   (eq (memory-collection-resource-visibility resource) ':personal)
+                   (null owner))
+              (and write-p
+                   (not (and (typep resource 'memory-collection-resource)
+                             (member (memory-collection-resource-visibility resource) '(:all :relevant))))
+                   (not (memory-resource--editable-p resource context))))
+      (error 'resource-access-denied :uri (resource-uri resource)))
+    (let ((*memory-owner* owner))
+      (funcall function))))
+
+(defmethod resource-resolver-child-safe-p ((resolver memory-resolver) context)
+  "Admit memory resources; enforce participant authority at each operation."
+  (declare (ignore resolver context))
+  t)
+
+(defmethod resource-resolver-resolve :around
+    ((resolver memory-resolver) identifier (context tool-context))
+  "Confine exact and short-identifier resolution to accessible memories."
+  (multiple-value-bind (owner shared-write-p) (memory-resource--principal context)
+    (declare (ignore shared-write-p))
+    (let ((*memory-owner* owner))
+      (call-next-method))))
+
+(defmethod resource-observe :around ((resource memory-resource) (context tool-context))
+  "Confine observations and dependent notices to the requesting participant."
+  (memory-resource--call-with-context resource context (lambda () (call-next-method))))
+
+(defmethod resource-tool-read :around
+    ((resource memory-resource) (tool resource-read-tool) (context tool-context) (arguments hash-table))
+  "Confine filtered collection reads to the requesting participant."
+  (memory-resource--call-with-context resource context (lambda () (call-next-method))))
+
+(defmethod resource-tool-edit :around
+    ((resource memory-resource) (tool resource-edit-tool) (context tool-context) (arguments hash-table))
+  "Refuse unauthorized mutations before generic capability and revision dispatch."
+  (memory-resource--call-with-context resource context (lambda () (call-next-method)) :write-p t))
+
+(defmethod resource-apply-operations :around
+    ((resource memory-resource) (context tool-context) &key base-revision operations)
+  "Check ownership before revision validation or mutation side effects."
+  (declare (ignore base-revision operations))
+  (memory-resource--call-with-context resource context (lambda () (call-next-method)) :write-p t))
+
+
 ;;;; -- URI Resolution --
 
 (-> memory-resource--collection-visibility
@@ -117,6 +217,8 @@
   (cond
     ((string= identifier "relevant")
      ':relevant)
+    ((string= identifier "personal")
+     ':personal)
     ((string= identifier "workspace")
      ':workspace)
     ((string= identifier "global")
@@ -135,12 +237,12 @@
 
 (defmethod resource-resolver-read-documentation ((resolver memory-resolver))
   "Document memory: reads, with structured knowledge views when they are offered."
-  (format nil "memory: exposes revisioned persistent memories, always read in full: memory:relevant, memory:all, or a canonical memory:id/<percent-encoded-stable-id> URI.~:[~; Structured knowledge: memory:facts lists facts holding now (query and max-results narrow it), memory:claim/<id> explains why one holds, memory:predicates, memory:rules, memory:methods, and memory:contracts list the vocabulary, rules, task methods, and tool contracts, memory:procedures lists learned procedures, memory:recipes lists starter vocabularies for common work, and memory:changes reports what changed since this conversation last read it.~]"
+  (format nil "memory: exposes revisioned persistent memories, always read in full: memory:personal selects your own memories; memory:relevant and memory:all include shared memories and your own personal memories. Exact items use memory:id/<percent-encoded-stable-id>.~:[~; Structured knowledge: memory:facts lists facts holding now (query and max-results narrow it), memory:claim/<id> explains why one holds, memory:predicates, memory:rules, memory:methods, and memory:contracts list the vocabulary, rules, task methods, and tool contracts, memory:procedures lists learned procedures, memory:recipes lists starter vocabularies for common work, and memory:changes reports what changed since this conversation last read it.~]"
           (memory-resolver-knowledge-p resolver)))
 
 (defmethod resource-resolver-edit-documentation ((resolver memory-resolver))
   "Document memory: edits, with structured knowledge operations when they are offered."
-  (format nil "memory:workspace and memory:global create with memory-remember, canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget, and memory:relevant is read-only. When a memory restates a file, a web page, or the user's words, cite them as sources; when it is derived from other memories, name them as premises.~:[~; memory:facts accepts up to 16 operations per edit: predicate-define, fact-assert, fact-retract, rule-propose, method-define, contract-define, and recipe-use. Record a value you will need again as a fact with its source, and propose a rule when the same calculation from facts recurs: rules recompute it locally whenever its inputs change. Before designing a vocabulary, see whether a starter recipe in memory:recipes fits, such as appointments or service dependencies; recipe-use defines its predicates and proposes its rules in one operation.~]"
+  (format nil "Create your own personal memory by reading memory:personal and editing it with memory-remember. Top-level agents may also create shared memories through memory:workspace and memory:global; children have read-only shared access. Exact memory:id/<percent-encoded-stable-id> items accept memory-replace or memory-forget when you may write that memory. Personal ownership cannot change through replacement. When a memory restates a file, a web page, or the user's words, cite them as sources; when derived from other memories, name them as premises.~:[~; Top-level agents may edit memory:facts with up to 16 operations: predicate-define, fact-assert, fact-retract, rule-propose, method-define, contract-define, and recipe-use. Record reusable values as facts with sources and recurring calculations as rules. Check memory:recipes before designing vocabulary.~]"
           (memory-resolver-knowledge-p resolver)))
 
 (defmethod resource-resolver-resolve
@@ -180,16 +282,10 @@
 
 (defmethod resource-capabilities
     ((resource memory-resource) (context tool-context))
-  "Expose only capabilities implemented by RESOURCE's concrete memory kind."
-  (declare (ignore context))
-  (etypecase resource
-    (memory-item-resource
-     '(:read :edit))
-    (memory-collection-resource
-     (if (member (memory-collection-resource-visibility resource)
-                 '(:relevant :all))
-         '(:read)
-         '(:read :edit)))))
+  "Expose reads and only the edits authorized for this participant."
+  (if (memory-resource--editable-p resource context)
+      '(:read :edit)
+      '(:read)))
 
 
 ;;;; -- Exact Memory Observations --
@@ -197,9 +293,13 @@
 (-> memory-resource--scope-label (memory) string)
 (defun memory-resource--scope-label (memory)
   "Return a concise scope label for MEMORY."
-  (if (eq (memory-scope memory) ':global)
-      "global"
-      (format nil "workspace ~A" (memory-workspace memory))))
+  (case (memory-scope memory)
+    (:personal
+     (format nil "personal ~A" (memory-owner memory)))
+    (:global
+     "global")
+    (:workspace
+     (format nil "workspace ~A" (memory-workspace memory)))))
 
 (-> memory-resource--status-line (memory-assessment) string)
 (defun memory-resource--status-line (assessment)
@@ -359,7 +459,7 @@ returns a fresh observation instead of the earlier rendering."
 (defun memory-resource--collection-workspace-identity (resource context)
   "Return the workspace identity that contributes to RESOURCE's observations."
   (unless (member (memory-collection-resource-visibility resource)
-                  '(:global :all))
+                  '(:personal :global :all))
     (memory-resource--workspace-identity context)))
 
 (-> memory-resource--collection-observation
@@ -385,10 +485,11 @@ returns a fresh observation instead of the earlier rendering."
                  (subseq available 0 (min maximum-results (length available)))
                  available))
            (snapshot
-             (list :kind       ':collection
-                   :identifier (memory-resource-identifier resource)
-                   :workspace  workspace-identity
-                   :records    (mapcar #'memory--record snapshot-memories))))
+             (append (list :kind       ':collection
+                           :identifier (memory-resource-identifier resource)
+                           :workspace  workspace-identity
+                           :records    (mapcar #'memory--record snapshot-memories))
+                     (when *memory-owner* (list :owner *memory-owner*)))))
      (let* ((assessor    (memory-assessor-create configuration))
             (assessments (mapcar (lambda (memory)
                                    (memory-assess assessor memory))
@@ -475,7 +576,7 @@ returns a fresh observation instead of the earlier rendering."
               :message   "Memory resource tags must be an array of strings."
               :tool-name "resource.edit")))))
 
-(-> memory-resource--operation-scope (json-object) (option memory-scope))
+(-> memory-resource--operation-scope (json-object) (option prose-memory-scope))
 (defun memory-resource--operation-scope (operation)
   "Return OPERATION's optional validated replacement scope."
   (multiple-value-bind (scope supplied-p)
@@ -483,14 +584,16 @@ returns a fresh observation instead of the earlier rendering."
     (cond
       ((not supplied-p)
        nil)
-      ((and (stringp scope) (string-equal scope "global"))
-       ':global)
-      ((and (stringp scope) (string-equal scope "workspace"))
-       ':workspace)
-      (t
-       (error 'tool-error
-              :message   "Memory resource scope must be global or workspace."
-              :tool-name "resource.edit")))))
+     ((and (stringp scope) (string-equal scope "personal"))
+      ':personal)
+     ((and (stringp scope) (string-equal scope "global"))
+      ':global)
+     ((and (stringp scope) (string-equal scope "workspace"))
+      ':workspace)
+     (t
+      (error 'tool-error
+            :message    "Memory resource scope must be personal, global or workspace."
+             :tool-name "resource.edit")))))
 
 (-> memory-resource--fail (string &rest t) nil)
 (defun memory-resource--fail (control &rest arguments)
@@ -695,9 +798,9 @@ in one of the user's own inputs to this conversation."
     (memory-collection-resource
      (unless (and (eq (getf operation :kind) ':remember)
                   (member (memory-collection-resource-visibility resource)
-                          '(:workspace :global)))
+                        '(:personal :workspace :global)))
        (error 'tool-error
-              :message   "Only memory:workspace and memory:global accept memory-remember."
+             :message    "Only memory:personal, memory:workspace and memory:global accept memory-remember."
               :code      ':operation-unsupported
               :tool-name "resource.edit")))
     (memory-item-resource
@@ -739,7 +842,7 @@ in one of the user's own inputs to this conversation."
 
 (-> memory-resource--remember
     (configuration &key (:identifier (option string)) (:title string)
-                        (:content string) (:scope (option memory-scope))
+                        (:content string) (:scope (option prose-memory-scope))
                         (:tags list) (:source-conversation (option string))
                         (:evidence-arguments list))
     memory)
@@ -817,6 +920,8 @@ them, so a replacement that omits them keeps the recorded versions."
               (:remember
                (let* ((scope
                         (ecase (memory-collection-resource-visibility resource)
+                          (:personal
+                           ':personal)
                           (:workspace
                            ':workspace)
                           (:global

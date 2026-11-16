@@ -29,6 +29,9 @@ names such as release-prod or config.toml keep their inner punctuation.")
 (defvar *memory-lock* (make-recursive-lock "Autolith persistent memories")
   "Serialize same-process memory reads, appends, and guarded transactions.")
 
+(defparameter *memory-owner* nil
+  "The durable participant whose personal memories are visible in this operation.")
+
 (defclass memory ()
   ((identifier
     :initarg       :identifier
@@ -48,13 +51,19 @@ names such as release-prod or config.toml keep their inner punctuation.")
    (scope
     :initarg       :scope
     :reader        memory-scope
-    :type          memory-scope
-    :documentation "Whether the memory is global or local to one workspace.")
+    :type          prose-memory-scope
+    :documentation "Whether the memory is personal, global, or workspace-local.")
    (workspace
     :initarg       :workspace
     :reader        memory-workspace
     :type          (option string)
     :documentation "The workspace owning a workspace-scoped memory.")
+   (owner
+    :initarg       :owner
+    :initform      nil
+    :reader        memory-owner
+    :type          (option string)
+    :documentation "The durable participant owning a personal memory; NIL for shared memories.")
    (title
     :initarg       :title
     :reader        memory-title
@@ -167,6 +176,8 @@ them, so other memories keep their exact earlier record form."
          :content             (memory-content memory)
          :tags                (memory-tags memory)
          :source-conversation (memory-source-conversation memory))
+   (when (memory-owner memory)
+     (list :owner (memory-owner memory)))
    (when (memory-sources memory)
      (list :sources (copy-tree (memory-sources memory))))
    (when (memory-premises memory)
@@ -181,6 +192,7 @@ them, so other memories keep their exact earlier record form."
         (updated-at          (getf (rest record) :updated-at))
         (scope               (getf (rest record) :scope))
         (workspace           (getf (rest record) :workspace))
+        (owner               (getf (rest record) :owner))
         (title               (getf (rest record) :title))
         (content             (getf (rest record) :content))
         (tags                (getf (rest record) :tags))
@@ -192,7 +204,10 @@ them, so other memories keep their exact earlier record form."
                  (typep created-at 'timestamp)
                  (typep updated-at 'timestamp)
                  (<= created-at updated-at)
-                 (typep scope 'memory-scope)
+                 (typep scope 'prose-memory-scope)
+                 (if (eq scope ':personal)
+                     (non-empty-string-p owner)
+                     (null owner))
                  (if (eq scope :workspace)
                      (non-empty-string-p workspace)
                      (null workspace))
@@ -214,6 +229,7 @@ them, so other memories keep their exact earlier record form."
                        :updated-at          updated-at
                        :scope               scope
                        :workspace           workspace
+                       :owner               owner
                        :title               (memory--validate-text
                                              title "title" *memory-title-limit*)
                        :content             (memory--validate-text
@@ -302,23 +318,32 @@ them, so other memories keep their exact earlier record form."
 
 ;;;; -- Selection and Mutation --
 
+(-> memory--accessible-p (memory) boolean)
+(defun memory--accessible-p (memory)
+  "Return true for shared memories and this operation's own personal memories."
+  (or (not (eq (memory-scope memory) ':personal))
+      (and *memory-owner* (equal (memory-owner memory) *memory-owner*) t)))
+
 (-> memory--visible-p (memory configuration memory-visibility) boolean)
 (defun memory--visible-p (memory configuration visibility)
-  "Return true when MEMORY belongs to CONFIGURATION under VISIBILITY."
-  (let ((current-workspace
-          (namestring (config :working-directory configuration))))
-    (case visibility
-      (:all
-       t)
-      (:global
-       (eq (memory-scope memory) :global))
-      (:workspace
-       (and (eq (memory-scope memory) :workspace)
-            (string= (memory-workspace memory) current-workspace)))
-      (:relevant
-       (or (eq (memory-scope memory) :global)
-           (and (eq (memory-scope memory) :workspace)
-                (string= (memory-workspace memory) current-workspace)))))))
+  "Return true when MEMORY belongs to this owner and CONFIGURATION under VISIBILITY."
+  (and (memory--accessible-p memory)
+       (let ((current-workspace (namestring (config :working-directory configuration))))
+         (case visibility
+           (:all
+            t)
+           (:personal
+            (eq (memory-scope memory) ':personal))
+           (:global
+            (eq (memory-scope memory) ':global))
+           (:workspace
+            (and (eq (memory-scope memory) ':workspace)
+                 (string= (memory-workspace memory) current-workspace)))
+           (:relevant
+            (or (member (memory-scope memory) '(:personal :global))
+                (and (eq (memory-scope memory) ':workspace)
+                     (string= (memory-workspace memory) current-workspace))))))
+       t))
 
 (-> memory-list
     (configuration &key (:visibility memory-visibility))
@@ -338,17 +363,21 @@ them, so other memories keep their exact earlier record form."
 
 (-> memory-find (configuration string) (option memory))
 (defun memory-find (configuration identifier)
-  "Return active memory IDENTIFIER, regardless of its scope."
+  "Return active accessible memory IDENTIFIER across shared scopes and this owner."
   (find identifier
         (memory-list configuration :visibility ':all)
         :test #'string=
         :key  #'memory-identifier))
 
-(-> memory--premise-visible-p (memory memory-scope (option string)) boolean)
+(-> memory--premise-visible-p (memory prose-memory-scope (option string)) boolean)
 (defun memory--premise-visible-p (premise scope workspace)
-  "Return true when PREMISE applies wherever a SCOPE memory in WORKSPACE does."
-  (and (or (eq (memory-scope premise) ':global)
+  "Return true when PREMISE is accessible throughout the target memory's reach."
+  (and (memory--accessible-p premise)
+       (or (eq (memory-scope premise) ':global)
+           (and (eq scope ':personal)
+                (eq (memory-scope premise) ':personal))
            (and (eq scope ':workspace)
+                (eq (memory-scope premise) ':workspace)
                 (equal (memory-workspace premise) workspace)))
        t))
 
@@ -377,7 +406,7 @@ them, so other memories keep their exact earlier record form."
 (-> memory--resolve-premises
     (configuration list
      &key (:identifier (option string)) (:premises list)
-          (:scope memory-scope) (:workspace (option string)))
+          (:scope prose-memory-scope) (:workspace (option string)))
     list)
 (defun memory--resolve-premises
     (configuration active &key identifier premises scope workspace)
@@ -443,7 +472,7 @@ being written."
                                                              (memory-content premise))))))
 
 (-> memory--keep-premises
-    (configuration list list &key (:scope memory-scope) (:workspace (option string)))
+    (configuration list list &key (:scope prose-memory-scope) (:workspace (option string)))
     list)
 (defun memory--keep-premises (configuration active premises &key scope workspace)
   "Return recorded PREMISES unchanged after checking they suit SCOPE and WORKSPACE.
@@ -604,7 +633,7 @@ Exclude active identities and their legacy aliases across every workspace."
      (:identifier (option string))
      (:title string)
      (:content string)
-     (:scope (option memory-scope))
+     (:scope (option prose-memory-scope))
      (:tags list)
      (:source-conversation (option string))
      (:sources list)
@@ -632,9 +661,9 @@ evidence as it is now."
              :message    "A replacement memory identifier must be non-empty."
              :pathname   (configuration-memory-path configuration)
              :identifier nil))
-    (unless (or (null scope) (typep scope 'memory-scope))
+    (unless (or (null scope) (typep scope 'prose-memory-scope))
       (error 'memory-error
-             :message    "Memory scope must be GLOBAL or WORKSPACE."
+             :message    "Memory scope must be PERSONAL, GLOBAL or WORKSPACE."
              :pathname   (configuration-memory-path configuration)
              :identifier identifier))
     (with-recursive-lock-held (*memory-lock*)
@@ -645,70 +674,79 @@ evidence as it is now."
                               (find identifier active
                                     :test #'string=
                                     :key  #'memory-identifier))))
-           (when (and identifier (null existing))
+          (when (and identifier (or (null existing) (not (memory--accessible-p existing))))
              (error 'memory-error
                     :message    (format nil "Memory ~A does not exist." identifier)
                     :pathname   (configuration-memory-path configuration)
                     :identifier identifier))
-           (let* ((now            (get-universal-time))
-                  (selected-scope (or scope
-                                      (and existing (memory-scope existing))
-                                      :workspace))
-                  (workspace
-                    (if (eq selected-scope :workspace)
-                        (if (and existing
-                                 (null scope)
-                                 (eq (memory-scope existing) :workspace))
-                            (memory-workspace existing)
-                            (namestring
-                             (config :working-directory configuration)))
-                        nil))
-                  (placed-sources
-                    (memory--place-sources
-                     configuration
-                     (cond
-                       (sources-p
-                        sources)
-                       (existing
-                        (memory-sources existing))
-                       (t
-                        nil))
-                     :from (if sources-p
-                               workspace
-                               (and existing (memory-workspace existing)))
-                     :to   workspace))
-                  (premise-records
+          (when (or (and (eq scope ':personal) (null *memory-owner*))
+                    (and existing scope
+                         (not (eq (eq (memory-scope existing) ':personal)
+                                  (eq scope ':personal)))))
+            (error 'memory-error
+                   :message    "Personal ownership cannot be introduced or removed by replacement."
+                   :pathname   (configuration-memory-path configuration)
+                   :identifier identifier))
+          (let* ((now            (get-universal-time))
+                 (selected-scope (or scope
+                                     (and existing (memory-scope existing))
+                                     :workspace))
+                 (workspace
+                   (if (eq selected-scope :workspace)
+                       (if (and existing
+                                (null scope)
+                                (eq (memory-scope existing) :workspace))
+                           (memory-workspace existing)
+                           (namestring
+                            (config :working-directory configuration)))
+                       nil))
+                 (placed-sources
+                   (memory--place-sources
+                    configuration
                     (cond
-                      (premises-p
-                       (memory--resolve-premises
-                        configuration active
-                        :identifier identifier
-                        :premises   premises
-                        :scope      selected-scope
-                        :workspace  workspace))
+                      (sources-p
+                       sources)
                       (existing
-                       (memory--keep-premises
-                        configuration active (memory-premises existing)
-                        :scope     selected-scope
-                        :workspace workspace))
+                       (memory-sources existing))
                       (t
-                       nil)))
-                  (memory
-                    (make-instance
-                     'memory
-                     :identifier          (or identifier
-                                              (memory--generate-identifier configuration active))
-                     :created-at          (if existing (memory-created-at existing) now)
-                     :updated-at          now
-                     :scope               selected-scope
-                     :workspace           workspace
-                     :title               validated-title
-                     :content             validated-content
-                     :tags                validated-tags
-                     :source-conversation source-conversation
-                     :sources             placed-sources
-                     :premises            premise-records)))
-             (values (list (memory--record memory)) memory t))))))))
+                       nil))
+                    :from (if sources-p
+                              workspace
+                              (and existing (memory-workspace existing)))
+                    :to   workspace))
+                 (premise-records
+                   (cond
+                     (premises-p
+                      (memory--resolve-premises
+                       configuration active
+                       :identifier identifier
+                       :premises   premises
+                       :scope      selected-scope
+                       :workspace  workspace))
+                     (existing
+                      (memory--keep-premises
+                       configuration active (memory-premises existing)
+                       :scope     selected-scope
+                       :workspace workspace))
+                     (t
+                      nil)))
+                 (memory
+                   (make-instance
+                    'memory
+                    :identifier          (or identifier
+                                             (memory--generate-identifier configuration active))
+                    :created-at          (if existing (memory-created-at existing) now)
+                    :updated-at          now
+                    :scope               selected-scope
+                    :workspace           workspace
+                    :owner               (and (eq selected-scope ':personal) *memory-owner*)
+                    :title               validated-title
+                    :content             validated-content
+                    :tags                validated-tags
+                    :source-conversation source-conversation
+                    :sources             placed-sources
+                    :premises            premise-records)))
+            (values (list (memory--record memory)) memory t))))))))
 
 (-> memory-forget
     (configuration string &key (:source-conversation (option string)))
@@ -728,7 +766,7 @@ evidence as it is now."
        (let ((memory (find identifier active
                            :test #'string=
                            :key  #'memory-identifier)))
-         (unless memory
+         (unless (and memory (memory--accessible-p memory))
            (error 'memory-error
                   :message    (format nil "Memory ~A does not exist." identifier)
                   :pathname   (configuration-memory-path configuration)

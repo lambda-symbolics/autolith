@@ -48,6 +48,9 @@
 
 ;;;; -- Request and Contribution Values --
 
+(defparameter *request-context-participant* nil
+  "The durable participant explicitly supplied by the requesting agent.")
+
 (defclass request-context ()
   ((configuration
     :initarg       :configuration
@@ -59,6 +62,9 @@
     :reader        request-context-conversation
     :type          conversation
     :documentation "The durable conversation projected by this request.")
+   (participant
+    :initarg :participant :initform nil :reader request-context-participant
+    :documentation "The durable requesting participant, independent of channel residence.")
    (tool-namespaces
     :initarg       :tool-namespaces
     :reader        request-context-tool-namespaces
@@ -771,9 +777,10 @@ the one-request contributions together: they change on every delivery."
 
 (-> context-resolve-request
     (configuration conversation vector
-     &key (:goal-context (option string)) (:compaction-p boolean)) context-delivery)
+     &key (:goal-context (option string)) (:compaction-p boolean) (:participant t)) context-delivery)
 (defun context-resolve-request
-    (configuration conversation tool-namespaces &key goal-context compaction-p)
+    (configuration conversation tool-namespaces
+     &key goal-context compaction-p (participant *request-context-participant*))
   "Collect product context, resolve generic contributions, and render the request.
 
 A compaction request resolves context only to repeat what ordinary requests
@@ -781,6 +788,7 @@ anchored in the history, so its delivery is not remembered for diagnostics."
   (let ((request (make-instance 'request-context
                                :configuration configuration :conversation conversation
                                :tool-namespaces tool-namespaces
+                               :participant     participant
                                :goal-context goal-context :compaction-p compaction-p)))
     (multiple-value-bind (contributions failures)
         (context--invoke-contributors request (context-contributor-registrations))

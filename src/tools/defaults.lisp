@@ -108,10 +108,10 @@ KNOWLEDGE-P adds structured knowledge operations on memory:facts."
                (setf (gethash "maxItems" schema) *memory-tag-count-limit*)
                schema))
 
-           (memory-scope-property ()
+           (memory-scope-property (&optional personal-p)
              "Return the closed persistent-memory replacement scope schema."
              (cl-llm-provider-api:provider-enum-schema
-              '("global" "workspace")
+              (if personal-p '("personal" "global" "workspace") '("global" "workspace"))
               "Optional complete replacement scope."))
 
            (memory-sources-property ()
@@ -365,7 +365,7 @@ KNOWLEDGE-P adds structured knowledge operations on memory:facts."
          "content" (tool-string-property
                     (format nil "Complete replacement memory content, at most ~:D characters." *memory-content-limit*))
          "tags" (memory-tags-property)
-         "scope" (memory-scope-property)
+         "scope" (memory-scope-property t)
          "sources" (memory-sources-property)
          "premises" (memory-premises-property))
         '("title" "content"))

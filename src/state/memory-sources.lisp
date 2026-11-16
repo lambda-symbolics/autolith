@@ -142,7 +142,7 @@ A premise is another memory, or with :KIND :CLAIM a structured knowledge claim."
                 (<= (length (getf record :text)) *memory-content-limit*)))
        t))
 
-(-> memory-sources-valid-p (t memory-scope) boolean)
+(-> memory-sources-valid-p (t prose-memory-scope) boolean)
 (defun memory-sources-valid-p (sources scope)
   "Return true when SOURCES is a bounded source list valid for SCOPE.
 

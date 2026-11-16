@@ -2033,6 +2033,8 @@ loop, so compaction ahead of the user message shares the turn's budget."
                                         (agent-provider agent) conversation
                                         (tool-registry-provider-schemas (agent-tool-registry agent)))))
                                (*provider-context-request*       context-request)
+                               (*request-context-participant*
+                                 (participant-state-identity (agent-participant-state agent)))
                                (*provider-hosted-tools-enabled-p*
                                  (not tool-restriction-p))
                                (*provider-tool-choice*

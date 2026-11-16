@@ -343,7 +343,10 @@ each is explained once, retries included."
 Memories are offered as before, with status when their evidence changed.
 Facts are complete and current, so the model can use them without rereading.
 Changes to facts this conversation was given earlier are explained once."
-  (let* ((user-input (request-context-latest-user-text request))
+  (let* ((*memory-owner*
+           (let ((participant (request-context-participant request)))
+             (and (typep participant 'participant) (participant-identifier participant))))
+         (user-input (request-context-latest-user-text request))
          (query      (and (non-empty-string-p user-input)
                           (memory-context--query user-input))))
     (when (and (not (request-context-compaction-p request))

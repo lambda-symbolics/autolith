@@ -790,21 +790,36 @@
 (defun test-task-participant-state ()
   "Exercise real task setup through the shared execution factory and goal persistence."
   (with-test-configuration (configuration)
-    (let* ((definition   (task-agent-definition-create
-                          :name "state" :description "Check participant setup."
-                          :instructions "Yield this assignment." :source ':test))
-           (orchestrator (task-tests--orchestrator))
-           (provider     (make-instance 'task-test-provider :mode ':concurrent))
-           (parent       (agent-create :configuration configuration :provider provider
-                                       :tool-registry (make-instance 'tool-registry)))
-           (job          (task-tests--make-job orchestrator :identifier "participant-task"
-                                              :definition definition :parent-agent parent
-                                              :item                     (list :task "Do the assignment.")))
-           (factory      (fdefinition 'agent-create))
-           (state        nil)
-           (result       nil))
+    (let* ((definition        (task-agent-definition-create
+                               :name "state" :description "Check participant setup."
+                               :instructions "Yield this assignment."
+                               :tools '("resource.read" "resource.edit") :source ':test))
+           (orchestrator      (task-tests--orchestrator))
+           (provider          (make-instance 'task-test-provider :mode ':concurrent))
+           (parent            (agent-create :configuration configuration :provider provider
+                                            :tool-registry (make-default-tool-registry)))
+           (job               (task-tests--make-job orchestrator :identifier "participant-task"
+                                                   :definition definition :parent-agent parent
+                                                   :item                     (list :task "Do the assignment.")))
+           (factory           (fdefinition 'agent-create))
+           (stream-turn       (fdefinition 'provider-stream-turn))
+           (invoke-context    (fdefinition 'context--invoke-contributors))
+           (principal         (fdefinition 'memory-resource--principal))
+           (execute-call      (fdefinition 'tool-registry-execute-call))
+           (observations-lock (make-lock "First child memory observations"))
+           (state             nil)
+           (request-count     0)
+           (context-owners    nil)
+           (tool-owners       nil)
+           (tool-results      nil)
+           (result            nil))
       (unwind-protect
            (progn
+             (conversation-append-user-message (agent-conversation parent) "Parent assignment.")
+             (setf (participant-state-identity (agent-participant-state parent))
+                   (world-session-participant configuration (agent-conversation parent)))
+             (setf (slot-value job 'completion-owner-conversation)
+                   (conversation-identifier (agent-conversation parent)))
              (with-lock-held ((cl-jobpond::job--lock job))
                (setf (job-state job) ':running))
              (test-call-with-function-replacements
@@ -816,13 +831,88 @@
                                       (participant-state-goal state)
                                       '(:objective "ordinary participant goal" :status :active
                                         :continuations 0 :created-at 1)))
-                              child))))
+                              child)))
+                    (list 'context--invoke-contributors
+                          (lambda (request registrations)
+                            (push (request-context-participant request) context-owners)
+                            (funcall invoke-context request registrations)))
+                    (list 'memory-resource--principal
+                          (lambda (context)
+                            (multiple-value-bind (owner shared-write-p) (funcall principal context)
+                              (with-lock-held (observations-lock)
+                                (push (list owner shared-write-p) tool-owners))
+                              (values owner shared-write-p))))
+                    (list 'tool-registry-execute-call
+                          (lambda (&rest arguments)
+                            (let ((result (apply execute-call arguments)))
+                              (with-lock-held (observations-lock)
+                                (push result tool-results))
+                              result)))
+                    (list 'provider-stream-turn
+                          (lambda (provider conversation &rest arguments)
+                            (incf request-count)
+                            (context-resolve-request configuration conversation #())
+                            (labels ((call (uri name arguments)
+                                       "Return one scripted memory tool call."
+                                       (agent-test-call :call-id   (format nil "~A-~D" uri request-count)
+                                                        :namespace "resource" :name name
+                                                        :arguments (json-encode arguments)))
+
+                                     (revision (uri)
+                                       "Read the revision from the preceding actual tool result."
+                                       (let* ((content (loop for result in tool-results
+                                                             for text = (tool-result-content result)
+                                                             when (search (format nil "URI: ~A~%" uri) text)
+                                                               return text))
+                                              (start   (+ (search "Revision: " content) 10)))
+                                         (subseq content start (position #\Newline content :start start)))))
+                              (case request-count
+                                (1
+                                 (agent-test-result
+                                  "memory-first-read"
+                                  (loop for uri in '("memory:personal" "memory:global")
+                                        collect (call uri "read" (json-object "uri" uri)))))
+                                (2
+                                 (agent-test-result
+                                  "memory-first-write"
+                                  (loop for uri in '("memory:personal" "memory:global")
+                                        collect
+                                        (call uri "edit"
+                                              (json-object
+                                               "uri" uri "base-revision" (revision uri)
+                                               "operations"
+                                               (json-array
+                                                (json-object "op" "memory-remember"
+                                                             "title" "First-turn personal memory"
+                                                             "content" "Personal state from the first child turn.")))))))
+                                (otherwise
+                                 (apply stream-turn provider conversation arguments)))))))
               (lambda () (setf result (task-run-child job))))
              (test-assert (and (eq (getf result :status) ':success)
                                (eq state (task-job-participant-state job))
                                (typep (participant-state-conversation state) 'conversation)
                                (eq definition (task-job-definition job)))
                           "pooled task setup shares the factory's actual state, keeping assignment metadata on the job")
+             (let* ((identity       (participant-state-identity state))
+                    (owner          (participant-identifier identity))
+                    (*memory-owner* owner)
+                    (personal       (first (memory-list configuration :visibility ':personal))))
+               (test-assert
+                (and (typep identity 'participant)
+                     (equal owner (participant-identifier
+                                   (world-session-participant
+                                    configuration (participant-state-conversation state))))
+                     (equal owner (participant-identifier (first (last context-owners)))))
+                "the first spawned provider context has the child's durable participant identity")
+               (test-assert
+                (and personal (equal owner (memory-owner personal))
+                     (every (lambda (entry) (and (equal owner (first entry)) (null (second entry))))
+                            tool-owners)
+                     (= 1 (count ':access-denied tool-results :key #'tool-result-error-code)))
+                (format nil "First child owner ~S, personal ~S, tool principals ~S, results ~S"
+                        owner (and personal (memory-owner personal)) tool-owners
+                        (mapcar (lambda (result) (list (tool-result-error-code result)
+                                                      (tool-result-content result))) tool-results))))
              (test-assert
               (equal (goal-record->goal
                       (conversation-latest-goal-record

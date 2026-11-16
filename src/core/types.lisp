@@ -14,9 +14,13 @@
   "The global or workspace-local reach of one persistent memory."
   '(member :global :workspace))
 
+(deftype prose-memory-scope ()
+  "The shared or participant-personal reach of one prose memory."
+  '(member :personal :global :workspace))
+
 (deftype memory-visibility ()
   "The subset of persistent memories selected for one operation."
-  '(member :relevant :global :workspace :all))
+  '(member :personal :relevant :global :workspace :all))
 
 (deftype tool-conversation-persistence ()
   "The lifetime of one tool call and its correlated provider result."

@@ -93,9 +93,139 @@
 
 ;;;; -- Memory Resource Tests --
 
+(-> test-memory-personal-resources () null)
+(defun test-memory-personal-resources ()
+  "Exercise durable personal ownership and shared authority through resource tools."
+  (with-test-configuration (configuration root)
+    (let* ((registry (make-default-tool-registry))
+           (human    (world-participant-create configuration :kind ':human :name "person"
+                                               :home (list :workspace (namestring root))))
+           (top      (world-participant-create configuration :kind ':agent :name "primary"
+                                             :home     (list :workspace (namestring root))
+                                               :parent (participant-identifier human)))
+           (child    (world-participant-create configuration :kind ':agent :name "helper"
+                                             :home     (list :workspace (namestring root))
+                                               :parent (participant-identifier top)))
+           (sibling  (world-participant-create configuration :kind ':agent :name "sibling"
+                                             :home     (list :workspace (namestring root))
+                                               :parent (participant-identifier top))))
+      (labels ((context (participant &key (configuration configuration))
+                 "Reconstruct an ordinary runtime for a durable participant."
+                 (make-instance 'tool-context :configuration configuration :worker nil
+                                :conversation (conversation-create configuration)
+                                :agent        (make-instance 'agent :configuration configuration
+                                                             :participant-state
+                                                             (make-instance 'participant-state :identity participant))))
+
+               (read-resource (context uri)
+                 "Read one memory through ordinary lookup and invocation."
+                 (memory-resource-tests--call registry context :namespace "resource" :name "read"
+                                              :arguments (list "uri" uri)))
+
+               (edit-resource (context uri operation)
+                 "Read then mutate one resource using its exact observed revision."
+                 (let ((read (read-resource context uri)))
+                   (test-assert (tool-result-success-p read) (tool-result-content read))
+                   (memory-resource-tests--edit
+                    registry context :uri uri :operation operation
+                    :revision (memory-resource-tests--field (tool-result-content read) "Revision: "))))
+
+               (remember (context uri title)
+                 "Create one test memory through the public resource boundary."
+                 (edit-resource context uri (json-object "op" "memory-remember"
+                                                        "title" title "content" title))))
+        (let* ((top-context     (context top))
+               (child-context   (context child))
+               (sibling-context (context sibling)))
+          (dolist (uri '("memory:global" "memory:workspace"))
+            (test-assert (tool-result-success-p (remember top-context uri "shared guidance"))
+                         "top-level agents may create shared memories")
+            (let ((denied (remember child-context uri "forbidden shared write")))
+              (test-assert (and (not (tool-result-success-p denied))
+                                (eq (tool-result-error-code denied) ':access-denied))
+                           "a durable child served as an ordinary agent has read-only shared access")))
+          (test-assert (tool-result-success-p (remember child-context "memory:personal" "private quartz"))
+                       "child agents may create their own personal memories")
+          (test-assert (tool-result-success-p (remember top-context "memory:personal" "primary personal"))
+                       "top-level agents also have personal memories")
+          (let* ((*memory-owner*  (participant-identifier child))
+                 (personal        (first (memory-list configuration :visibility ':personal)))
+                 (identifier      (memory-identifier personal))
+                 (uri             (resource-item-uri "memory" identifier))
+                 (short-uri       (resource-item-uri "memory" (memory-short-identifier personal)))
+                 (moved-directory (merge-pathnames "moved/" root)))
+            (test-assert (equal (memory-owner personal) (participant-identifier child))
+                         "personal records store the durable participant identifier")
+            (dolist (other (list top-context sibling-context))
+              (dolist (reference (list uri short-uri))
+                (test-assert (not (tool-result-success-p (read-resource other reference)))
+                           "foreign personal records are unavailable through exact and short IDs")))
+            (test-assert (not (search "private quartz"
+                                     (tool-result-content (read-resource sibling-context "memory:all"))))
+                         "shared collections do not disclose another participant's personal memory")
+            (ensure-directories-exist (merge-pathnames "marker" moved-directory))
+            (let* ((moved-configuration (configuration-copy configuration :working-directory moved-directory))
+                   (reloaded            (world-participant-find (world-load configuration) (participant-identifier child)))
+                   (new-context         (context reloaded :configuration moved-configuration)))
+              (test-assert (tool-result-success-p (read-resource new-context uri))
+                           "personal ownership survives runtime reconstruction, a new conversation and workspace move")
+              (test-assert (tool-result-success-p
+                            (edit-resource new-context uri
+                                           (json-object "op" "memory-replace" "title" "quartz revised"
+                                                        "content" "private quartz revised")))
+                           "the reconstructed owner may replace its memory")
+              (let ((promotion (edit-resource new-context uri
+                                               (json-object "op" "memory-replace" "title" "promoted"
+                                                            "content" "promoted" "scope" "global"))))
+                (test-assert (not (tool-result-success-p promotion))
+                             "replacement cannot publish personal memories into a shared scope")))
+            (let* ((global     (first (memory-list configuration :visibility ':global)))
+                   (shared-uri (resource-item-uri "memory" (memory-identifier global)))
+                   (denied     (edit-resource child-context shared-uri
+                                               (json-object "op" "memory-forget"))))
+              (test-assert (eq (tool-result-error-code denied) ':access-denied)
+                           "children cannot delete exact shared items")
+              (test-assert
+               (handler-case
+                   (progn (memory-remember configuration :title "shared derivation" :content "shared"
+                                                         :scope ':global :premises (list identifier))
+                          nil)
+                 (memory-error () t))
+               "shared records cannot depend on personal premises")
+              (let ((dependent (memory-remember configuration :title "personal derivation" :content "derived"
+                                                              :scope    ':personal
+                                                              :premises (list (memory-identifier global)))))
+                (test-assert (eq (memory-assessment-status
+                                  (memory-assess (memory-assessor-create configuration) dependent)) ':current)
+                             "personal records may cite shared global premises")))
+            (let ((facts (edit-resource child-context "memory:facts"
+                                         (json-object "op" "predicate-define" "predicate" "private.attempt"
+                                                      "arguments" #()))))
+              (test-assert (eq (tool-result-error-code facts) ':access-denied)
+                           "children cannot mutate shared structured knowledge"))
+            (let* ((conversation (tool-context-conversation child-context))
+                   (request      (make-instance 'request-context :configuration  configuration
+                                                                :conversation conversation :participant child
+                                                                :tool-namespaces #())))
+              (conversation-append-user-message conversation "private quartz")
+              (test-assert (memory-related-context request)
+                           "automatic recall includes the requesting participant's personal records")
+              (test-assert
+               (null (memory-related-context
+                      (make-instance 'request-context :configuration configuration :conversation conversation
+                                                      :participant sibling :tool-namespaces #())))
+               "automatic recall does not expose another participant's personal records"))
+            (test-assert (tool-result-success-p
+                          (edit-resource child-context uri (json-object "op" "memory-forget")))
+                         "owners may forget their personal memory")
+            (test-assert (null (memory-find configuration identifier))
+                         "forget appends a durable tombstone")))))
+    nil))
+
 (-> test-memory-resources () null)
 (defun test-memory-resources ()
   "Test scoped and exact memory resource reads and compatibility."
+  (test-memory-personal-resources)
   (let* ((base-configuration   (test-configuration))
          (root                 (test-configuration-root base-configuration))
          (first-workspace      (merge-pathnames "memory-first/" root))
@@ -456,21 +586,14 @@
                   (and (not (tool-result-success-p missing-read))
                        (search "does not exist" (tool-result-content missing-read)))
                   "missing exact memory identifiers fail clearly")))
-             (let ((collection-denied
-                     (read-resource child-context "memory:relevant"))
-                   (item-denied
-                     (read-resource
-                      child-context
-                      (format nil "memory:~A" (memory-identifier global-memory)))))
-               (test-assert
-                (and (not (tool-result-success-p collection-denied))
-                     (eq (tool-result-error-code collection-denied)
-                         ':access-denied))
-                "memory collections remain denied to task child agents")
-               (test-assert
-                (and (not (tool-result-success-p item-denied))
-                     (eq (tool-result-error-code item-denied) ':access-denied))
-                "exact memory resources remain denied to task child agents"))
+             (let ((collection-read (read-resource child-context "memory:relevant"))
+                   (item-read       (read-resource
+                                     child-context
+                                     (format nil "memory:~A" (memory-identifier global-memory)))))
+               (test-assert (tool-result-success-p collection-read)
+                            "child agents may read shared memory collections")
+               (test-assert (tool-result-success-p item-read)
+                            "child agents may read exact shared memories"))
              (let ((sample (merge-pathnames "sample.lisp" first-workspace)))
                (with-open-file (stream sample
                                        :direction         ':output
@@ -955,11 +1078,11 @@
                        (json-object
                         "op" "memory-remember"
                         "title" "Denied child memory"
-                        "content" "Task children cannot mutate memory resources."))))
+                        "content" "Child agents read shared memories without modifying them."))))
                (test-assert
                 (and (not (tool-result-success-p denied))
                      (eq (tool-result-error-code denied) ':access-denied))
-                "task child agents remain denied memory resource mutation"))
+                "child agents cannot modify shared memories"))
              (let* ((edit-tool (tool-registry-find registry "resource" "edit"))
                     (operations
                       (json-get

@@ -1103,9 +1103,14 @@ Channels use read-only resource URIs with the same history arguments:
 
 ** Memories
 
-Autolith remembers durable facts, preferences, and decisions per workspace or
-globally, and offers the related ones with each request. A memory can record
-where it came from:
+Each agent has personal memories tied to its durable participant identity,
+including after it changes channels or reloads. Agents read and write their own
+personal memories through =memory:personal=. Related recall includes those
+memories alongside shared workspace and global memories.
+
+Children of another agent may read shared memories and structured knowledge.
+Top-level agents may also modify them. Personal ownership cannot change through
+replacement. A memory can record where it came from:
 
 - a quoted passage of a file, or the whole file;
 - your own words in the conversation;
