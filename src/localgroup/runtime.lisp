@@ -469,11 +469,19 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
          (terminal    (localgroup--terminal session)))
     (let ((attachment (image-daemon:attachment-create socket stream mode)))
       (labels ((attach ()
-                 (with-lock-held ((image-daemon:daemon-runtime-lock session))
-                   (when (localgroup-session-admits-attachment-p session)
-                     (image-daemon:relay-attach
-                      terminal attachment :rows rows :columns columns :styled-p styled-p
-                      :session-id (image-daemon:daemon-runtime-identifier session))))))
+                 (let ((previous nil))
+                   (unwind-protect
+                        (with-lock-held ((image-daemon:daemon-runtime-lock session))
+                          (when (localgroup-session-admits-attachment-p session)
+                            (multiple-value-bind (attached-p direct-p replaced)
+                                (image-daemon:relay-attach
+                                 terminal attachment :rows rows :columns columns :styled-p styled-p
+                                 :session-id (image-daemon:daemon-runtime-identifier session)
+                                 :defer-revocation-p t)
+                              (setf previous replaced)
+                              (values attached-p direct-p))))
+                     (when previous
+                       (image-daemon:attachment-finish previous '(:revoked)))))))
         (unwind-protect
              (let ((attached-p
                      (if (eq mode ':read-only)
