@@ -6,6 +6,209 @@
 ;; their portable payload has no snapshot or conversation identity. Controllers
 ;; own locks and publication, while this model owns classification and codecs.
 
+(defclass command-message-input (user-message-input)
+  ((identifier
+    :initarg       :identifier
+    :initform      nil
+    :accessor      command-message-input-identifier
+    :type          (option string)
+    :documentation "The pending-input identity retained through promotion and retry.")
+   (invocation
+    :initarg       :invocation
+    :reader        command-message-input-invocation
+    :type          application-command-invocation
+    :documentation "The resolved invocation with its original native arguments.")
+   (prepared-arguments
+    :initarg       :prepared-arguments
+    :initform      nil
+    :accessor      command-message-input-prepared-arguments
+    :type          list
+    :documentation "The arguments prepared for execution at the steering boundary.")
+   (phase
+    :initarg       :phase
+    :initform      ':pending
+    :accessor      command-message-input-phase
+    :type          (member :pending :prepared :committed :failed)
+    :documentation "The durable preparation and commit phase of this command.")
+   (notification
+    :initarg       :notification
+    :initform      nil
+    :accessor      command-message-input-notification
+    :type          (option string)
+    :documentation "The notification prepared for publication after commit."))
+  (:documentation "A command-bearing user submission in the durable steering lane."))
+
+(-> input-work--copy-native-value (t) t)
+(defun input-work--copy-native-value (value)
+  "Copy bounded native literal trees, retaining pathname and string types."
+  (portable-value-map
+   value
+   (lambda (item child)
+     (declare (ignore child))
+     (typecase item
+       (string
+        (copy-seq item))
+       ((or pathname number character)
+        item)
+       (symbol
+        (if (symbol-package item)
+            item
+            (error 'configuration-error :message "A command value requires an interned symbol.")))
+       (t
+        (error 'configuration-error :message "A command value must be readable native data."))))))
+
+(-> command-message-input--copy-invocation
+    (application-command-invocation) application-command-invocation)
+(defun command-message-input--copy-invocation (invocation)
+  "Detach INVOCATION's values while retaining its immutable command definition."
+  (make-instance
+   'application-command-invocation
+   :input                   (copy-seq (application-command-invocation-input invocation))
+   :syntax                  (application-command-invocation-syntax invocation)
+   :name                    (copy-seq (application-command-invocation-name invocation))
+   :remainder               (copy-seq (application-command-invocation-remainder invocation))
+   :argument                (let ((argument (application-command-invocation-argument invocation)))
+                              (when argument (copy-seq argument)))
+   :arguments               (input-work--copy-native-value
+                             (application-command-invocation-arguments invocation))
+   :supplied-argument-count (application-command-invocation-supplied-argument-count invocation)
+   :command                 (application-command-invocation-command invocation)))
+
+(-> command-message-input-create
+    ((or string user-message-input) application-command-invocation) command-message-input)
+(defun command-message-input-create (input invocation)
+  "Capture INPUT and the actual INVOCATION without reparsing its display text."
+  (make-instance 'command-message-input
+                 :text            (copy-seq (user-message-input-text input))
+                 :image-pathnames (copy-list (user-message-input-image-pathnames input))
+                 :submission      (input-work--copy-native-value (user-message-input-submission input))
+                 :invocation      (command-message-input--copy-invocation invocation)))
+
+(defmethod user-message-input-copy ((input command-message-input))
+  "Detach INPUT's invocation, prepared arguments and mutable publication state."
+  (let ((copy (command-message-input-create input (command-message-input-invocation input))))
+    (setf (command-message-input-identifier copy)
+          (when (command-message-input-identifier input)
+            (copy-seq (command-message-input-identifier input))))
+    (setf (command-message-input-prepared-arguments copy)
+          (input-work--copy-native-value (command-message-input-prepared-arguments input))
+          (command-message-input-phase copy) (command-message-input-phase input)
+          (command-message-input-notification copy)
+          (when (command-message-input-notification input)
+            (copy-seq (command-message-input-notification input))))
+    copy))
+
+(-> input-work--invocation->form (application-command-invocation) list)
+(defun input-work--invocation->form (invocation)
+  "Encode every invocation field and its canonical registered command name."
+  (let ((command (application-command-invocation-command invocation)))
+    (unless command
+      (error 'configuration-error :message "A durable command requires a resolved command definition."))
+    (list :application-command-invocation :version 1
+          :input                          (copy-seq (application-command-invocation-input invocation))
+          :syntax                         (application-command-invocation-syntax invocation)
+          :name                           (copy-seq (application-command-invocation-name invocation))
+          :remainder                      (copy-seq (application-command-invocation-remainder invocation))
+          :argument                       (let ((argument (application-command-invocation-argument invocation)))
+                                            (when argument (copy-seq argument)))
+          :arguments                      (input-work--copy-native-value
+                                           (application-command-invocation-arguments invocation))
+          :supplied-argument-count        (application-command-invocation-supplied-argument-count invocation)
+          :command                        (copy-seq (application-command-name command)))))
+
+(-> input-work--invocation-from-form (t) (option application-command-invocation))
+(defun input-work--invocation-from-form (form)
+  "Restore native invocation fields against the current canonical command registry."
+  (when (and (record-check
+              form :tag ':application-command-invocation :allow-other-keys nil
+              :fields '((:indicator :version :required t) (:indicator :input :required t)
+                        (:indicator :syntax :required t) (:indicator :name :required t)
+                        (:indicator :remainder :required t) (:indicator :argument :required t)
+                        (:indicator :arguments :required t)
+                        (:indicator :supplied-argument-count :required t)
+                        (:indicator :command :required t)))
+             (eql (record-version form) 1))
+    (let* ((properties (rest form))
+           (name       (getf properties :command))
+           (arguments  (getf properties :arguments))
+           (count      (getf properties :supplied-argument-count))
+           (command    (and (non-empty-string-p name) (application-command-find name))))
+      (when (and command (string= name (application-command-name command))
+                 (stringp (getf properties :input))
+                 (member (getf properties :syntax) '(:slash :lisp))
+                 (non-empty-string-p (getf properties :name))
+                 (stringp (getf properties :remainder))
+                 (typep (getf properties :argument) '(or null string))
+                 (proper-list-p arguments) (typep count '(integer 0))
+                 (= count (length arguments)))
+        (make-instance
+         'application-command-invocation
+         :input                   (copy-seq (getf properties :input))
+         :syntax                  (getf properties :syntax)
+         :name                    (copy-seq (getf properties :name))
+         :remainder               (copy-seq (getf properties :remainder))
+         :argument                (let ((argument (getf properties :argument)))
+                                    (when argument (copy-seq argument)))
+         :arguments               (input-work--copy-native-value arguments)
+         :supplied-argument-count count
+         :command                 command)))))
+
+(-> input-work--command->form (command-message-input) list)
+(defun input-work--command->form (input)
+  "Encode a command-bearing submission and its durable execution phase."
+  (list :command-message-input :version 1
+        :identifier            (when (command-message-input-identifier input)
+                                 (copy-seq (command-message-input-identifier input)))
+        :text                  (copy-seq (user-message-input-text input))
+        :image-pathnames       (mapcar #'namestring (user-message-input-image-pathnames input))
+        :submission            (input-work--copy-native-value (user-message-input-submission input))
+        :invocation            (input-work--invocation->form (command-message-input-invocation input))
+        :prepared-arguments    (input-work--copy-native-value
+                                (command-message-input-prepared-arguments input))
+        :phase                 (command-message-input-phase input)
+        :notification          (when (command-message-input-notification input)
+                                 (copy-seq (command-message-input-notification input)))))
+
+(-> input-work--command-from-form (t) (option command-message-input))
+(defun input-work--command-from-form (form)
+  "Restore a validated command submission, rejecting malformed native values."
+  (handler-case
+      (when (and (record-check
+                  form :tag ':command-message-input :allow-other-keys nil
+                  :fields '((:indicator :version :required t) (:indicator :text :required t)
+                            (:indicator :identifier :required t)
+                            (:indicator :image-pathnames :required t)
+                            (:indicator :submission :required t)
+                            (:indicator :invocation :required t)
+                            (:indicator :prepared-arguments :required t)
+                            (:indicator :phase :required t) (:indicator :notification :required t)))
+                 (eql (record-version form) 1))
+        (let* ((properties (rest form))
+               (invocation (input-work--invocation-from-form (getf properties :invocation)))
+               (identifier (getf properties :identifier))
+               (text       (getf properties :text))
+               (images     (getf properties :image-pathnames))
+               (prepared   (getf properties :prepared-arguments))
+               (phase      (getf properties :phase))
+               (notice     (getf properties :notification)))
+          (when (and invocation (stringp text) (proper-list-p images) (every #'stringp images)
+                     (or (null identifier) (non-empty-string-p identifier))
+                     (proper-list-p prepared) (member phase '(:pending :prepared :committed :failed))
+                     (typep notice '(or null string)))
+            (let ((input (command-message-input-create
+                          (user-message-input-create
+                           :text text :image-pathnames (mapcar #'pathname images)
+                           :submission (getf properties :submission))
+                          invocation)))
+              (setf (command-message-input-identifier input)
+                    (when identifier (copy-seq identifier)))
+              (setf (command-message-input-prepared-arguments input)
+                    (input-work--copy-native-value prepared)
+                    (command-message-input-phase input) phase
+                    (command-message-input-notification input) (when notice (copy-seq notice)))
+              input))))
+    (error ()
+      nil)))
 
 (-> input-lisp-p (string) boolean)
 (defun input-lisp-p (text)
@@ -34,9 +237,11 @@
     ((or string user-message-input))
     (option (or string user-message-input)))
 (defun input-message (input)
-  "Return INPUT's model message, or NIL for empty, Lisp, or slash input."
+  "Return INPUT's model message, or NIL for commands, empty, Lisp, or slash input."
   (let ((text (user-message-input-text input)))
     (cond
+      ((typep input 'command-message-input)
+       nil)
       ((and (not (non-empty-string-p text))
             (null (user-message-input-image-pathnames input)))
        nil)
@@ -73,6 +278,8 @@
   (let* ((message (input-message input))
          (text    (user-message-input-text input))
          (work    (cond
+                    ((typep input 'command-message-input)
+                     (list ':command (user-message-input-copy input)))
                     ((or (input-lisp-p text)
                          (input-async-lisp-p text))
                      (list ':lisp (copy-seq text)))
@@ -92,6 +299,8 @@
   (etypecase input
     (string
      (copy-seq input))
+    (command-message-input
+     (input-work--command->form input))
     (user-message-input
      (list :user-message-input
            :version 1
@@ -109,6 +318,8 @@
   (cond
     ((stringp form)
      (copy-seq form))
+    ((and (consp form) (eq (first form) ':command-message-input))
+     (input-work--command-from-form form))
     ((and (listp form)
           (eq (first form) ':user-message-input)
           (= (or (getf (rest form) :version) 0) 1))
@@ -161,7 +372,8 @@
   "Return one validated in-memory work item restored from durable FORM."
   (when (input-work--form-shape-p form)
     (let ((input (input-value-from-form (second form))))
-      (when input
+      (when (and input (or (not (typep input 'command-message-input))
+                           (eq (first form) ':command)))
         (append (list (first form) input) (copy-tree (nthcdr 2 form)))))))
 
 (-> input-steering->form
@@ -169,22 +381,32 @@
     list)
 (defun input-steering->form (entry)
   "Return the durable form for identified in-flight steering ENTRY."
-  (list :identifier (copy-seq (agent-steering-input-identifier entry))
-        :input      (input-value->form
-                     (agent-steering-input-content entry))))
+  (append (list :identifier (copy-seq (agent-steering-input-identifier entry))
+                :input      (input-value->form (agent-steering-input-content entry)))
+          (when (agent-steering-input-operation-request entry)
+            (list :operation-request
+                  (input-work--copy-native-value (agent-steering-input-operation-request entry))))))
 
 (-> input-steering-from-form
     (t)
     (option agent-steering-input))
 (defun input-steering-from-form (form)
   "Return one validated identified steering entry restored from FORM."
-  (when (listp form)
-    (let ((identifier (getf form :identifier))
-          (input      (input-value-from-form (getf form :input))))
-      (when (and (non-empty-string-p identifier) input)
-        (agent-steering-input-create
-         :identifier (copy-seq identifier)
-         :content    input)))))
+  (handler-case
+      (when (record-check form :properties-p t :allow-other-keys nil
+                         :fields '((:indicator :identifier :required t)
+                                   (:indicator :input :required t)
+                                   (:indicator :operation-request)))
+        (let ((identifier (getf form :identifier))
+              (input      (input-value-from-form (getf form :input)))
+              (request    (getf form :operation-request)))
+          (when (and (non-empty-string-p identifier) input (proper-list-p request))
+            (agent-steering-input-create
+             :identifier        (copy-seq identifier)
+             :content           input
+             :operation-request (input-work--copy-native-value request)))))
+    (error ()
+      nil)))
 
 (-> input-work--native-entry-p (t) boolean)
 (defun input-work--native-entry-p (form)
@@ -332,16 +554,14 @@
          (active-work-identifier (getf state :active-work-identifier))
          (active-survives-p
            (and active-work
-                (not
-                 (member active-work-identifier
-                         persisted-identifiers
-                         :test #'string=))))
+                (or (typep (second active-work) 'command-message-input)
+                    (not (member active-work-identifier persisted-identifiers :test #'string=)))))
          (in-flight
            (remove-if
             (lambda (entry)
-              (member (agent-steering-input-identifier entry)
-                      persisted-identifiers
-                      :test #'string=))
+              (and (not (typep (agent-steering-input-content entry) 'command-message-input))
+                   (member (agent-steering-input-identifier entry)
+                           persisted-identifiers :test #'string=)))
             (getf state :steering-in-flight-items)))
          (steering               (getf state :steering-items))
          (work                   (getf state :work-items))
@@ -349,13 +569,11 @@
            (min (getf state :steering-promotion-prefix-count)
                 (length work)))
          (promoted-work
-           (append
-            (mapcar (lambda (entry)
-                      (list ':message (agent-steering-input-content entry)))
-                    in-flight)
-            (mapcar (lambda (input)
-                      (list ':message input))
-                    steering))))
+           (mapcar (lambda (input)
+                     (if (typep input 'command-message-input)
+                         (input-work-from-input input)
+                         (list ':message input)))
+                   (append (mapcar #'agent-steering-input-content in-flight) steering))))
     (list :snapshot-identifier      (getf state :snapshot-identifier)
           :active-work              (and active-survives-p active-work)
           :active-work-identifier
