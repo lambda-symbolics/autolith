@@ -2205,7 +2205,9 @@
 
 (-> test-world-parent-mention () null)
 (defun test-world-parent-mention ()
-  "Test @parent reaches the sender's parent, passes parked ancestors on to the next one, and ends with the person."
+  "Test @parent reaches the sender's parent, passes parked ancestors on to the next one, and ends with the person.
+
+A parent that writes @parent to its own child reaches nobody but the child."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "broot11" 1000)
     (world-tests--child-conversation configuration "exec-one"
@@ -2228,6 +2230,20 @@
                        :channels))))
         (test-assert (equal (reached "@parent done") '("exec-one"))
                      "@parent reaches the sender's parent agent")
+        (flet ((told (sender channel)
+                 "Have SENDER say @parent in CHANNEL and return the channels that reached."
+                 (getf (world-message-send configuration
+                                           :sender   (participant-identifier sender)
+                                           :channel  channel
+                                           :text     "Report to @parent when done."
+                                           :notify-p nil)
+                       :channels)))
+          (test-assert (equal (told root "exec-one") '("exec-one"))
+                       "a parent telling its child to report to @parent does not reach the person")
+          (test-assert (equal (told planner "exec-two") '("exec-two"))
+                       "nor does it reach the agent above that parent")
+          (test-assert (equal (told root "broot11") (list (participant-residence human)))
+                       "said anywhere else, a top agent's @parent still reaches the person"))
         (world-park-agent configuration planner)
         (test-assert (equal (reached "@parent done again") '("broot11"))
                      "with the parent parked, @parent reaches the grandparent")

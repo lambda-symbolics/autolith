@@ -548,14 +548,26 @@ For example, alice@bob.com is not a mention."
                        text :start (1+ at))
       (length text)))
 
-(-> world-message-mentions (world string &key (:sender (option participant))) list)
-(defun world-message-mentions (world text &key sender)
+(-> world-message--to-child-p (world participant string) boolean)
+(defun world-message--to-child-p (world sender channel-identifier)
+  "Return true when a child of SENDER resides in CHANNEL-IDENTIFIER."
+  (not (null (find (participant-identifier sender)
+                   (world-channel-residents world channel-identifier)
+                   :key #'participant-parent :test #'equal))))
+
+(-> world-message-mentions
+    (world string &key (:sender (option participant)) (:channel (option string))) list)
+(defun world-message-mentions (world text &key sender channel)
   "Return the identifiers of the participants TEXT mentions as @name or @identifier.
 
 An @ immediately after a letter or digit, as in alice@bob.com, mentions
 nobody. With SENDER, @parent mentions the participant its message to its
-parent reaches."
-  (let ((mentions nil) (start 0))
+parent reaches. Said in CHANNEL where a child of SENDER resides, @parent
+mentions nobody: the child reads it as SENDER's own name, as in an instruction
+to report to @parent, so it must not reach SENDER's parent or the person."
+  (let ((mentions   nil)
+        (start      0)
+        (to-child-p (and sender channel (world-message--to-child-p world sender channel))))
     (loop
       (let ((at (position #\@ text :start start)))
         (unless at (return))
@@ -563,6 +575,7 @@ parent reaches."
                (designator  (subseq text (1+ at) end))
                (participant (and (world-mention-boundary-p text at)
                                  (plusp (length designator))
+                                 (not (and to-child-p (world-handle-reserved-p designator)))
                                  (world-message-participant world designator :sender sender))))
           (when (and participant
                      (not (member (participant-identifier participant) mentions
@@ -738,7 +751,9 @@ whose serving process was reached)."
                            text)))
          (paths       (mapcar #'image-input-validate-pathname images))
          (identifier  (make-identifier))
-         (mentioned   (append (world-message-mentions world text :sender participant)
+         (mentioned   (append (world-message-mentions world text
+                                                      :sender  participant
+                                                      :channel (channel-identifier target))
                               (loop for designator in mentions
                                     for found = (world-message-participant world designator
                                                                           :sender participant)
