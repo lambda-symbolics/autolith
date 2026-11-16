@@ -64,6 +64,55 @@
                                        (when pid-supplied-p (list :client-pid client-pid)))))
     (values socket stream (test-localgroup--read-packet stream))))
 
+(-> test-localgroup-endpoint-failure-isolation () null)
+(defun test-localgroup-endpoint-failure-isolation ()
+  "Exercise the installed daemon failure hook, pending storage and hosted-channel isolation."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry       (world-client-entry configuration))
+            (failed-id
+              (getf (rest (world-server-tests--open
+                           entry (world-tests--workspace root "failed-endpoint"))) :session-id))
+            (healthy-id
+              (getf (rest (world-server-tests--open
+                           entry (world-tests--workspace root "healthy-endpoint"))) :session-id))
+            (host        (world-server--find-host server failed-id))
+            (application (world-host-application host))
+            (controller  (application-input-controller application))
+            (session     (application-localgroup-session application))
+            (healthy     (world-server-tests--session server healthy-id))
+            (runtime     (world-server-runtime server))
+            (failure     (make-condition 'simple-error :format-control "Injected channel accept failure.")))
+       (with-lock-held ((image-daemon:daemon-runtime-lock session))
+         (setf (localgroup-session-paused-p session) t))
+       (test-assert (and (application-input-controller--enqueue controller ':message "accepted before failure")
+                         (application-input-controller--enqueue controller ':command "help"))
+                    "the paused channel accepts input before its endpoint fails")
+       (interrupt-thread (image-daemon:daemon-runtime-server-thread session)
+                         (lambda () (error failure)))
+       (test-assert
+        (task-tests--wait-until
+         (lambda () (null (world-server--find-host server failed-id))) 10)
+        "the installed endpoint hook ends its failed channel")
+       (test-assert
+        (and (eq (application-input-controller-failure controller) failure)
+             (application-input-controller-failure-backtrace controller)
+             (eq runtime (world-server-runtime server))
+             (not (world-server-stopping-p server))
+             (world-server-running-p configuration)
+             (eq (first (localgroup-query-record
+                         (cons (image-daemon:daemon-runtime-registry-pathname healthy)
+                               (image-daemon:daemon-runtime-record healthy)) ':status)) ':ok))
+        "failure keeps its original condition and frames while the other channel and owner answer")
+       (let ((restored (make-instance 'application-input-controller
+                                      :application application :main-thread (current-thread))))
+         (application-input-controller--load-pending restored)
+         (test-assert
+          (equal (application-input-controller--state restored :work-items)
+                 '((:message "accepted before failure") (:command "help")))
+          "a fresh controller restores accepted pending input once and in order")))))
+  nil)
+
 (-> test-localgroup-message-dispatch () null)
 (defun test-localgroup-message-dispatch ()
   "Test daemon messages reach a channel's inbox or its mission events, and nothing else is accepted."

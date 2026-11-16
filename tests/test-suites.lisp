@@ -1649,6 +1649,7 @@
   test-terminal-non-tty-fallback)
 
 (define-test-suite localgroup
+  test-localgroup-endpoint-failure-isolation
   test-localgroup-message-dispatch
   test-localgroup-conversation-identity
   test-localgroup-terminal-restart

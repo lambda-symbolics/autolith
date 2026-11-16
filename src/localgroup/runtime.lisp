@@ -640,8 +640,7 @@ last controlling client vanishes."
                                           :linger-p                linger-p)
                   :request-function #'localgroup--handle-request
                   :error-function   (lambda (condition)
-                                      (format *error-output*
-                                              "~&Localgroup endpoint failed: ~A~%" condition)))
+                                      (localgroup--endpoint-failed session condition)))
                  (application-localgroup-session application) session)
            (let ((terminal   (terminal-ui-terminal (application-ui application)))
                  (controller (application-input-controller application)))
@@ -669,6 +668,22 @@ last controlling client vanishes."
       (unless completed-p
         (setf (application-localgroup-session application) nil)
         (when session (image-daemon:daemon-runtime-stop session))))))
+
+(-> localgroup--endpoint-failed (localgroup-session serious-condition) null)
+(defun localgroup--endpoint-failed (session condition)
+  "End SESSION through its application's fatal path, preserving accepted input.
+
+A failed scheduling callback is not retried. Other channels in the world
+continue independently while this application's normal teardown releases its lease."
+  (let* ((application (localgroup-session-application session))
+         (controller  (application-input-controller application)))
+    (when (and (eq session (application-localgroup-session application))
+               (not (image-daemon:daemon-runtime-stopping-p session)))
+      (if controller
+          (application-input-controller--record-failure
+           controller condition (application-safe-backtrace))
+          (format *error-output* "~&Localgroup endpoint failed: ~A~%" condition))))
+  nil)
 
 (-> localgroup--message-dispatch (application list) t)
 (defun localgroup--message-dispatch (application envelope)
