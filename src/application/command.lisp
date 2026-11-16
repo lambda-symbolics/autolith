@@ -13,7 +13,7 @@
     "The command metadata keys every defining form must state explicitly.")
 
   (defparameter *application-command-busy-behaviors*
-    '(:hold :inspect :execute :apply :cancel)
+    '(:hold :inspect :execute :apply :steer :cancel)
     "The supported command policies while application work is active.")
 
   (defparameter *application-command-terminal-behaviors*
@@ -848,6 +848,9 @@ without changing the registry."
 
 ;;;; -- Invocation and Dispatch --
 
+(defvar *application-command-source-input* nil
+  "The original user input supplying an evaluated local command's provenance.")
+
 (defvar *application-command-presentation-invocation* nil
   "The command invocation whose next presentation receives a visible heading.")
 
@@ -1069,21 +1072,19 @@ without changing the registry."
 
 (defgeneric application-command-busy-action (command invocation)
   (:documentation
-   "Return :HOLD, :EXECUTE, :APPLY, or :CANCEL for COMMAND during active work.
+   "Return :HOLD, :EXECUTE, :APPLY, :STEER, or :CANCEL during active work.
 
-:EXECUTE runs immediately on the terminal reader, :APPLY runs at the active
-turn's next safe provider boundary, and :HOLD waits for the idle queue."))
+:EXECUTE runs immediately, :APPLY runs before steering at the next safe provider
+boundary, :STEER shares the ordered steering lane, and :HOLD waits for idle."))
 
 (defmethod application-command-busy-action
     ((command application-command)
      (invocation application-command-invocation))
   "Resolve COMMAND's declared busy policy for INVOCATION.
 
-With no arguments, :INSPECT executes immediately. :APPLY waits for the idle queue
-if it requires exclusive terminal input; otherwise it executes immediately.
-
-With arguments, :APPLY defers the change to the next safe provider boundary,
-and :INSPECT waits for the idle queue."
+Argument-free :INSPECT queries execute immediately. Argument-free :APPLY and
+:STEER queries do likewise unless they require exclusive terminal ownership.
+With arguments, :APPLY and :STEER defer through their respective boundary lanes."
   (ecase (application-command-busy-behavior command)
     (:hold
      ':hold)
@@ -1091,11 +1092,10 @@ and :INSPECT waits for the idle queue."
      (if (application-command-invocation-argument-free-p command invocation)
          ':execute
          ':hold))
-    (:apply
+    ((:apply :steer)
      (cond
-       ((not (application-command-invocation-argument-free-p
-              command invocation))
-        ':apply)
+       ((not (application-command-invocation-argument-free-p command invocation))
+        (application-command-busy-behavior command))
        ((application-command-terminal-owner-p command invocation)
         ':hold)
        (t
@@ -1104,6 +1104,20 @@ and :INSPECT waits for the idle queue."
      ':execute)
     (:cancel
      ':cancel)))
+
+(defgeneric application-command-prepare-steering (definition application input)
+  (:documentation
+   "Return prepared native arguments and model notification for command INPUT.
+
+DEFINITION is its registered defining symbol. Preparation must not change the
+runtime; the controller persists both returned values before applying the entry."))
+
+(defgeneric application-command-apply-steering (definition application input)
+  (:documentation
+   "Apply prepared command INPUT and mark its phase :COMMITTED at the commit point.
+
+DEFINITION is its registered defining symbol. The commit observation must only
+update bounded in-memory state, atomically against cancellation."))
 
 (defgeneric application-command-terminal-owner-p (command invocation)
   (:documentation

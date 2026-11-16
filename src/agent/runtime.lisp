@@ -38,6 +38,12 @@
     :type     (option function)
     :documentation
     "The optional function acknowledging one identified durable steering message.")
+   (steering-entry-callback
+    :initarg       :steering-entry-callback
+    :initform      nil
+    :reader        callback-agent-observer-steering-entry-callback
+    :type          (option function)
+    :documentation "The optional function persisting one command entry in steering order.")
    (pending-operations-callback
     :initarg  :pending-operations-callback
     :initform nil
@@ -213,6 +219,31 @@ needs the few most recent calls to recognize an oscillation."
 (defgeneric agent-observer-steering-persisted (observer identifier)
   (:documentation
    "Acknowledge that steering input IDENTIFIER is durable through OBSERVER."))
+
+(defgeneric agent-observer-apply-steering-entry (observer agent entry)
+  (:documentation
+   "Persist command ENTRY for AGENT in steering order; return true when handled.
+
+Return only after its model notification is durable and projected. Ordinary user
+messages return NIL and use the agent's normal append path."))
+
+(defmethod agent-observer-apply-steering-entry ((observer agent-observer) agent entry)
+  "Leave ordinary steering entries to the agent's message append path."
+  (declare (ignore observer agent entry))
+  nil)
+
+(defmethod agent-observer-apply-steering-entry
+    ((observer callback-agent-observer) agent entry)
+  "Persist command ENTRY through OBSERVER's optional per-entry callback."
+  (let ((callback (callback-agent-observer-steering-entry-callback observer)))
+    (and callback (not (null (funcall callback agent entry))))))
+
+(defmethod agent-observer-apply-steering-entry
+    ((observer serialized-agent-observer) agent entry)
+  "Apply ENTRY through the delegate under OBSERVER's callback lock."
+  (with-recursive-lock-held ((serialized-agent-observer-lock observer))
+    (agent-observer-apply-steering-entry
+     (serialized-agent-observer-delegate observer) agent entry)))
 
 (defgeneric agent-observer-apply-pending-operations (observer agent)
   (:documentation
@@ -440,25 +471,26 @@ recorded as automatic input that the transcript shows as that operation."
      (:status-callback (option function))
      (:steering-callback (option function))
      (:steering-persisted-callback (option function))
+     (:steering-entry-callback (option function))
      (:pending-operations-callback (option function))
      (:command-authorization-callback (option function))
      (:tool-authorization-callback (option function)))
     callback-agent-observer)
 (defun callback-agent-observer-create
     (&key text-callback reasoning-callback status-callback steering-callback
-      steering-persisted-callback pending-operations-callback
+      steering-persisted-callback steering-entry-callback pending-operations-callback
       command-authorization-callback tool-authorization-callback)
   "Create an observer backed by optional presentation callbacks."
   (make-instance 'callback-agent-observer
-                 :text-callback               text-callback
-                 :reasoning-callback          reasoning-callback
-                 :status-callback             status-callback
-                 :steering-callback           steering-callback
-                 :steering-persisted-callback steering-persisted-callback
-                 :pending-operations-callback pending-operations-callback
-                 :command-authorization-callback
-                 command-authorization-callback
-                 :tool-authorization-callback tool-authorization-callback))
+                 :text-callback                  text-callback
+                 :reasoning-callback             reasoning-callback
+                 :status-callback                status-callback
+                 :steering-callback              steering-callback
+                 :steering-persisted-callback    steering-persisted-callback
+                 :steering-entry-callback        steering-entry-callback
+                 :pending-operations-callback    pending-operations-callback
+                 :command-authorization-callback command-authorization-callback
+                 :tool-authorization-callback    tool-authorization-callback))
 
 (-> agent-create
     (&key (:configuration configuration) (:provider (option model-provider))
@@ -1503,15 +1535,16 @@ tool registry reaches the very next provider request."
                  :message         "The agent observer returned an empty steering message."
                  :conversation-id (conversation-identifier conversation)
                  :request-number  request-number))
-        (conversation-append-user-message
-         conversation
-         message
-         :pending-input-identifier identifier
-         :automatic-p              (not (null request))
-         :operation-request        request)
+        (unless (agent-observer-apply-steering-entry observer agent entry)
+          (conversation-append-user-message
+           conversation
+           message
+           :pending-input-identifier identifier
+           :automatic-p              (not (null request))
+           :operation-request        request)
+          (skill-record-steering-input message))
         (when identifier
-          (agent-observer-steering-persisted observer identifier))
-        (skill-record-steering-input message)))
+          (agent-observer-steering-persisted observer identifier))))
     (when messages
       (agent-observer-status
        observer

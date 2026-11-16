@@ -1016,6 +1016,12 @@ fullscreen views. Only the current client disconnects; ongoing work continues.
 Use =(stop-server)= to stop the current world server and work in all its channels,
 closing its attached clients.
 
+During an active response, submit =(cwd PATH)= to change workspace at its position
+among steering inputs. The model receives a durable notice before its next
+request, and connected clients receive the committed workspace state. Relative
+paths resolve at that steering position. Use =(cwd)= to read the current path
+immediately.
+
 ** Parking and editing queued input
 
 Run =(vault-store)= to move queued work and unconsumed steering into the recovery

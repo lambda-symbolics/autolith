@@ -89,6 +89,17 @@ policy, including safe-boundary scheduling. A scheduled reply is acceptance only
        (case (application-operation-active-turn-action operation arguments)
          (:execute
           (values (application-client-operation--invoke-presented operation application arguments) nil))
+         (:steer
+          (let* ((invocation
+                   (application-operation--command-invocation
+                    (application-operation-backend operation) arguments))
+                 (*application-command-presentation-capture-p* t)
+                 (*application-command-presentation-text*      nil))
+            (unless (application-input-controller--schedule-steering-command
+                     controller (application-command-invocation-input invocation) invocation)
+              (error 'application-client-operation-busy))
+            (values (format nil "~{~A~^~%~}" (nreverse *application-command-presentation-text*))
+                    "scheduled")))
          (:apply
           (let ((*application-command-presentation-capture-p* t)
                 (*application-command-presentation-text*      nil))

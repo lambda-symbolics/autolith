@@ -5443,6 +5443,8 @@
                     ("/mcp refresh" :apply)
                     ("/permissions full" :apply)
                     ("/hurry-up on" :apply)
+                    ("/cwd one/" :steer)
+                    ("/cwd" :execute)
                     ("/goal pause" :hold)
                     ("/mcp" :execute)
                     ("/hurry-up" :execute)
@@ -5564,6 +5566,327 @@
         (platform-delete-directory-tree
          *platform*
          root :validate t :if-does-not-exist ':ignore))))
+  (labels ((call-with-busy-workspace (function)
+             "Call FUNCTION with an active controller and isolated real workspace runtime."
+             (let* ((configuration      (test-configuration))
+                    (root               (test-configuration-root configuration))
+                    (previous-directory (uiop:getcwd))
+                    (previous-defaults  *default-pathname-defaults*)
+                    (extensions         (application--extension-registry-snapshot))
+                    (application        nil)
+                    (controller         nil))
+               (ensure-directories-exist (merge-pathnames "one/two/" root))
+               (unwind-protect
+                    (let* ((configuration (configuration-copy configuration :working-directory root))
+                           (conversation  (conversation-create configuration))
+                           (provider      (provider-create configuration))
+                           (registry      (make-default-tool-registry))
+                           (agent         (agent-create :configuration configuration
+                                                        :provider      provider
+                                                        :conversation  conversation
+                                                        :tool-registry registry
+                                                        :worker        nil))
+                           (ui            (terminal-ui-create
+                                           :terminal (make-instance 'waiting-recording-terminal :columns 80))))
+                      (setf application
+                            (make-instance 'application
+                                           :configuration configuration
+                                           :conversation  conversation
+                                           :provider      provider
+                                           :tool-registry registry
+                                           :worker        nil
+                                           :agent         agent
+                                           :ui            ui))
+                      (uiop:chdir root)
+                      (setf *default-pathname-defaults* root)
+                      (with-terminal-ui (active-ui ui)
+                        (setf controller
+                              (application-input-controller-create application :start-reader-p nil))
+                        (application-input-controller--enqueue controller ':message "active turn")
+                        (application-input-controller--next-work controller)
+                        (funcall function :application application :controller controller
+                                          :agent agent :root root)))
+                 (when controller
+                   (application-input-controller-stop controller))
+                 (when application
+                   (ignore-errors
+                     (tool-registry-close-runtime-state (application-tool-registry application))))
+                 (uiop:chdir previous-directory)
+                 (setf *default-pathname-defaults* previous-defaults)
+                 (application--extension-registry-restore extensions)
+                 (platform-delete-directory-tree *platform* root
+                                                 :validate t :if-does-not-exist ':ignore))))
+
+           (steering-observer (application controller)
+             "Build the application's real per-entry observer and durable acknowledger."
+             (application-agent-observer
+              application
+              :steering-function
+              (lambda () (application-input-controller--take-steering controller))
+              :steering-persisted-function
+              (lambda (identifier)
+                (application-input-controller--acknowledge-steering controller identifier))))
+
+           (user-records (application)
+             "Return durable user records in publication order."
+             (remove-if-not
+              (lambda (record)
+                (and (eq (first record) ':message)
+                     (eq (getf (rest record) :role) ':user)))
+              (application-tests--conversation-records (application-conversation application)))))
+    (call-with-busy-workspace
+     (lambda (&key application controller agent root)
+       (application-input-controller--handle-submission controller "/cwd")
+       (application-input-controller--handle-submission controller "(cwd)")
+       (test-assert
+        (and (deque-empty-p (application-input-controller-steering-items controller))
+             (null (application-input-controller--state controller :work-items))
+             (search (namestring root)
+                     (recording-terminal-output (terminal-ui-terminal (application-ui application)))))
+        "busy argument-free workspace queries report immediately without queueing")
+       (application-input-controller--handle-submission controller "prose-before-cwd" :steer-p t)
+       (application-input-controller--handle-submission controller "/cwd one/")
+       (application-input-controller--handle-submission controller "prose-after-cwd" :steer-p t)
+       (agent--apply-steering-input agent (steering-observer application controller) 1)
+       (let* ((records   (user-records application))
+              (contents  (mapcar (lambda (record) (getf (rest record) :content)) records))
+              (directory (platform-truename *platform* (merge-pathnames "one/" root)))
+              (request   (provider-request-object (agent-provider agent)
+                                                  (agent-conversation agent) #()))
+              (wire      (test-request-history request))
+              (before    (position-if (lambda (item) (search "prose-before-cwd" item)) wire))
+              (receipt   (position-if (lambda (item) (search (json-encode (second contents)) item)) wire))
+              (after     (position-if (lambda (item) (search "prose-after-cwd" item)) wire)))
+         (test-assert
+          (and (= (length contents) 3)
+               (equal (first contents) "prose-before-cwd")
+               (search (namestring directory) (second contents))
+               (equal (third contents) "prose-after-cwd")
+               (getf (rest (second records)) :automatic-p))
+          "prose, workspace receipt and later prose persist in steering order")
+         (test-assert (and before receipt after (< before receipt after))
+                      "the next encoded request contains prose, committed workspace and prose in order")
+         (test-assert
+          (and (eq (agent-configuration agent) (application-configuration application))
+               (eq (agent-provider agent) (application-provider application))
+               (eq (agent-tool-registry agent) (application-tool-registry application))
+               (equal (config :working-directory (agent-configuration agent)) directory))
+          "the running agent adopts the workspace runtime before its next request"))))
+    (call-with-busy-workspace
+     (lambda (&key application controller agent root)
+       (application-input-controller--handle-submission controller "/cwd one/")
+       (application-input-controller--handle-submission controller "/cwd two/")
+       (test-assert
+        (every (lambda (input) (eq (command-message-input-phase input) ':pending))
+               (deque->list (application-input-controller-steering-items controller)))
+        "queued relative workspace arguments are not prepared at acceptance time")
+       (agent--apply-steering-input agent (steering-observer application controller) 1)
+       (test-assert
+        (and (equal (config :working-directory (application-configuration application))
+                    (platform-truename *platform* (merge-pathnames "one/two/" root)))
+             (= (length (user-records application)) 2))
+        "each relative workspace entry resolves against the directory active at execution")))
+    (call-with-busy-workspace
+     (lambda (&key application controller agent root)
+       (let* ((directory  (merge-pathnames "one/" root))
+              (operation  (application-operation-find application "cwd"))
+              (invocation (application-operation--command-invocation
+                           (application-operation-backend operation) (list directory))))
+         (application-input-controller--schedule-steering-command controller "(cwd)" invocation)
+         (let* ((entries  (application-input-controller--take-steering controller))
+                (input    (agent-steering-input-content (first entries)))
+                (argument (first (application-command-invocation-arguments
+                                  (command-message-input-invocation input)))))
+           (test-assert (and (pathnamep argument) (equal argument directory))
+                        "typed steering retains the native pathname rather than reparsing its display label")
+           (agent--persist-steering-input agent (steering-observer application controller)
+                                          :messages entries :request-number 1)
+           (test-assert
+            (equal (config :working-directory (application-configuration application))
+                   (platform-truename *platform* directory))
+            "a native workspace invocation executes its retained argument")))))
+    (call-with-busy-workspace
+     (lambda (&key application controller agent root)
+       (declare (ignore agent root))
+       (application-input-controller--handle-submission controller "/cwd one/")
+       (let* ((entry      (first (application-input-controller--take-steering controller)))
+              (identifier (agent-steering-input-identifier entry)))
+         (application-input-controller--finish-work controller)
+         (let* ((work  (application-input-controller--next-work controller))
+                (input (second work)))
+           (test-assert
+            (and (eq (first work) ':command)
+                 (typep input 'command-message-input)
+                 (equal (command-message-input-identifier input) identifier))
+            "in-flight command promotion retains typed invocation and identifier")
+           (application-input-controller--run-steering-command controller input)
+           (test-assert
+            (and (= (length (user-records application)) 1)
+                 (equal (getf (rest (first (user-records application))) :pending-input-identifier)
+                        identifier))
+            "a promoted command publishes one receipt under its original identity")))))
+    (call-with-busy-workspace
+     (lambda (&key application controller agent root)
+       (application-input-controller--handle-submission controller "/cwd one/")
+       (let* ((entry      (first (application-input-controller--take-steering controller)))
+              (identifier (agent-steering-input-identifier entry)))
+         (application-input-controller--apply-command-steering controller agent entry)
+         (application-input-controller--persist-pending controller :error-p t)
+         (let* ((receipt          (copy-tree (first (user-records application))))
+                (directory
+                  (first (command-message-input-prepared-arguments
+                          (agent-steering-input-content entry))))
+                (configuration
+                  (configuration-copy (application-configuration application)
+                                      :working-directory (merge-pathnames "one/two/" root)))
+                (conversation     (conversation-load (conversation-pathname (application-conversation application))))
+                (provider         (provider-create configuration))
+                (registry         (make-default-tool-registry))
+                (fresh-agent      (agent-create :configuration configuration
+                                                :provider      provider
+                                                :conversation  conversation
+                                                :tool-registry registry
+                                                :worker        nil))
+                (fresh-application
+                  (make-instance 'application :configuration configuration
+                                              :conversation  conversation
+                                              :provider      provider
+                                              :tool-registry registry
+                                              :worker        nil
+                                              :agent         fresh-agent
+                                              :ui            (application-ui application)))
+                (fresh-controller nil))
+           (application-input-controller-stop controller)
+           (uiop:chdir (config :working-directory configuration))
+           (setf *default-pathname-defaults* (config :working-directory configuration))
+           (unwind-protect
+                (progn
+                  (setf fresh-controller
+                        (application-input-controller-create fresh-application :start-reader-p nil))
+                  (let* ((entries   (application-input-controller--take-steering fresh-controller))
+                         (recovered (first entries))
+                         (input     (and recovered (agent-steering-input-content recovered))))
+                    (test-assert
+                     (and (= (length entries) 1)
+                          (typep input 'command-message-input)
+                          (equal (agent-steering-input-identifier recovered) identifier)
+                          (eq (command-message-input-phase input) ':committed)
+                          (pathnamep directory)
+                          (eq (first (pathname-directory directory)) ':absolute)
+                          (equal (command-message-input-prepared-arguments input) (list directory))
+                          (not (equal (config :working-directory configuration) directory)))
+                     "reloading a durable receipt retains committed command ownership and its absolute target")
+                    (when (typep input 'command-message-input)
+                      (let ((original-setter (symbol-function 'application-set-working-directory))
+                            (setter-count    0)
+                            (received        nil))
+                        (test-call-with-function-replacements
+                         (list
+                          (list 'application-set-working-directory
+                                (lambda (candidate location &key on-commit)
+                                  (incf setter-count)
+                                  (setf received location)
+                                  (funcall original-setter candidate location :on-commit on-commit))))
+                         (lambda ()
+                           (application-input-controller--apply-command-steering
+                            fresh-controller fresh-agent recovered)
+                           (test-assert
+                            (and (= setter-count 1)
+                                 (equal received directory)
+                                 (equal (config :working-directory
+                                                (application-configuration fresh-application)) directory)
+                                 (equal (uiop:getcwd) directory)
+                                 (eq (agent-configuration fresh-agent)
+                                     (application-configuration fresh-application))
+                                 (eq (agent-provider fresh-agent) (application-provider fresh-application))
+                                 (eq (agent-tool-registry fresh-agent)
+                                     (application-tool-registry fresh-application)))
+                            "committed recovery restores the recorded target and adopts the fresh runtime once")
+                           (agent--persist-steering-input
+                            fresh-agent (steering-observer fresh-application fresh-controller)
+                            :messages entries :request-number 2)
+                           (test-assert
+                            (and (= setter-count 1)
+                                 (deque-empty-p
+                                  (application-input-controller-steering-in-flight-items fresh-controller))
+                                 (equal (user-records fresh-application) (list receipt))
+                                 (= (length (conversation-input-items conversation)) 1))
+                            "same-target retry acknowledges recovery without repeating cwd or its receipt projection")))))))
+             (when fresh-controller
+               (application-input-controller-stop fresh-controller))
+             (tool-registry-close-runtime-state (application-tool-registry fresh-application)))))))
+    (dolist (failure-stage '(:prepared :committed :state :title))
+      (call-with-busy-workspace
+       (lambda (&key application controller agent root)
+         (declare (ignore root))
+         (application-input-controller--handle-submission controller "/cwd one/")
+         (let* ((entry            (first (application-input-controller--take-steering controller)))
+                (input            (agent-steering-input-content entry))
+                (original-persist (symbol-function 'application-input-controller--persist-pending))
+                (original-setter  (symbol-function 'application-set-working-directory))
+                (original-state   (symbol-function 'application-clients-publish-state))
+                (original-title   (symbol-function 'application-sync-window-title))
+                (failure          (make-condition 'simple-error :format-control "Injected publication failure."))
+                (fail-once-p      t)
+                (setter-count     0)
+                (strict-p         nil)
+                (caught           nil))
+           (test-call-with-function-replacements
+            (list
+             (list 'application-input-controller--persist-pending
+                   (lambda (candidate &key error-p (sync-vault-p t))
+                     (when (and fail-once-p
+                                (member failure-stage '(:prepared :committed))
+                                (eq (command-message-input-phase input) failure-stage))
+                       (setf fail-once-p nil strict-p error-p)
+                       (error failure))
+                     (funcall original-persist candidate :error-p error-p :sync-vault-p sync-vault-p)))
+             (list 'application-set-working-directory
+                   (lambda (candidate directory &key on-commit)
+                     (incf setter-count)
+                     (funcall original-setter candidate directory :on-commit on-commit)))
+             (list 'application-clients-publish-state
+                   (lambda (candidate)
+                     (when (and fail-once-p (eq failure-stage ':state))
+                       (setf fail-once-p nil)
+                       (error failure))
+                     (funcall original-state candidate)))
+             (list 'application-sync-window-title
+                   (lambda (candidate)
+                     (when (and fail-once-p (eq failure-stage ':title))
+                       (setf fail-once-p nil)
+                       (error failure))
+                     (funcall original-title candidate))))
+            (lambda ()
+              (handler-case
+                  (agent--persist-steering-input agent (steering-observer application controller)
+                                                 :messages (list entry) :request-number 1)
+                (simple-error (condition)
+                  (setf caught condition)))
+              (if (member failure-stage '(:prepared :committed))
+                  (test-assert
+                   (and (eq caught failure) strict-p
+                        (= setter-count (if (eq failure-stage ':prepared) 0 1))
+                        (null (user-records application))
+                        (= (deque-count (application-input-controller-steering-in-flight-items controller)) 1))
+                   "strict phase publication failures retain command ownership and stop before acknowledgment")
+                  (test-assert
+                   (= (length (user-records application)) 1)
+                   "post-commit client and title failures preserve the successful workspace receipt"))
+              (when caught
+                (agent--persist-steering-input agent (steering-observer application controller)
+                                               :messages (list entry) :request-number 1))
+              (test-assert
+               (and (= setter-count 1)
+                    (eq (command-message-input-phase input) ':committed)
+                    (= (length (user-records application)) 1)
+                    (not (search "failed" (getf (rest (first (user-records application))) :content)
+                                 :test #'char-equal))
+                    (deque-empty-p (application-input-controller-steering-in-flight-items controller))
+                    (eq (agent-configuration agent) (application-configuration application))
+                    (eq (agent-provider agent) (application-provider application))
+                    (eq (agent-tool-registry agent) (application-tool-registry application)))
+               "retry reconciles one successful receipt and adopts the runtime without repeating cwd"))))))))
   nil)
 
 (-> test-input-reader-quiescence () null)
@@ -6897,14 +7220,14 @@
     (unwind-protect
          (let* ((conversation
                   (conversation-create configuration :identifier "working-directory"))
-                (provider    (provider-create configuration))
-                (registry    (make-default-tool-registry))
-                (worker-pool (lisp-worker-pool-create configuration))
-                (agent       (agent-create :configuration configuration
-                                           :provider      provider
-                                           :conversation  conversation
-                                           :tool-registry registry
-                                           :worker        worker-pool))
+                (provider          (provider-create configuration))
+                (registry          (make-default-tool-registry))
+                (worker-pool       (lisp-worker-pool-create configuration))
+                (agent             (agent-create :configuration configuration
+                                                 :provider      provider
+                                                 :conversation  conversation
+                                                 :tool-registry registry
+                                                 :worker        worker-pool))
                 (application
                   (make-instance 'application
                                  :configuration configuration
@@ -6917,7 +7240,9 @@
                                  (terminal-ui-create
                                   :terminal
                                   (make-instance 'recording-terminal :columns 80))))
-                (worker      nil))
+                (worker            nil)
+                (commit-events     nil)
+                (committed-runtime nil))
            (setf pool worker-pool
                  closable-application application
                  worker (lisp-worker-pool-start pool "workspace" "pristine"))
@@ -6925,7 +7250,41 @@
             worker :eval '(:forms ("(defparameter *workspace-marker* 73)")))
            (uiop:chdir old-workspace)
            (setf *default-pathname-defaults* old-workspace)
-           (let ((selected (application-set-working-directory application workspace)))
+           (let ((selected
+                   (test-call-with-function-replacements
+                    (list
+                     (list 'application-clients-publish-state
+                           (lambda (application)
+                             (declare (ignore application))
+                             (push ':state commit-events))))
+                    (lambda ()
+                      (application-set-working-directory
+                       application workspace
+                       :on-commit
+                       (lambda (directory)
+                         (setf committed-runtime
+                               (list directory
+                                     (application-configuration application)
+                                     (agent-configuration (application-agent application))
+                                     (provider-configuration (application-provider application))
+                                     (application-agent application)
+                                     *default-pathname-defaults*
+                                     (terminal-ui-context-used (application-ui application))))
+                         (push ':on-commit commit-events)))))))
+            (test-assert (equal (reverse commit-events) '(:on-commit :state))
+                         "workspace state is published once after the commit observer")
+            (destructuring-bind (directory active agent-configuration provider-configuration
+                                 active-agent defaults context-used)
+                committed-runtime
+              (test-assert
+               (and (equal directory (platform-truename *platform* workspace))
+                    (equal (config :working-directory active) directory)
+                    (equal defaults directory)
+                    (eq agent-configuration active)
+                    (eq provider-configuration active)
+                    (not (eq active-agent agent))
+                    (plusp context-used))
+               "the commit observer sees the prepared runtime and normalized directory"))
             (test-assert (equal selected (truename workspace))
                          "workspace switching returns the selected directory")
             (test-assert
@@ -7016,17 +7375,29 @@
              (test-mcp-configuration--write
               (configuration-directory-mcp-path broken-workspace)
               "(:version 99 :servers ())")
-             (test-assert
-              (handler-case
-                  (progn
-                    (application-set-working-directory
-                     application broken-workspace)
-                    nil)
-                (working-directory-error (condition)
-                  (eq (working-directory-error-stage condition) ':tools)))
-              "malformed inherited MCP prevents a workspace switch")
+             (setf commit-events nil)
+             (test-call-with-function-replacements
+              (list
+               (list 'application-clients-publish-state
+                     (lambda (application)
+                       (declare (ignore application))
+                       (push ':state commit-events))))
+              (lambda ()
+                (test-assert
+                 (handler-case
+                     (progn
+                       (application-set-working-directory
+                        application broken-workspace
+                        :on-commit (lambda (directory)
+                                     (declare (ignore directory))
+                                     (push ':on-commit commit-events)))
+                       nil)
+                   (working-directory-error (condition)
+                     (eq (working-directory-error-stage condition) ':tools)))
+                 "malformed inherited MCP prevents a workspace switch")))
              (test-assert
               (and
+               (null commit-events)
                (eq (application-configuration application)
                    active-configuration)
                (equal (uiop:getcwd) (truename workspace))
@@ -7035,7 +7406,88 @@
                  (test-directory-configuration--registration
                   "workspace-scoped"))
                 :directory))
-              "failed inherited configuration restores the prior runtime")))
+              "failed preparation restores the runtime without announcing a commit"))
+           (dolist (failure-stage '(:on-commit :state :title :interrupt))
+             (let* ((target               (if (member failure-stage '(:state :interrupt))
+                                              workspace
+                                              old-workspace))
+                    (active-configuration (application-configuration application))
+                    (active-provider      (application-provider application))
+                    (active-registry      (application-tool-registry application))
+                    (active-agent         (application-agent application))
+                    (failure              (make-condition 'simple-error
+                                                          :format-control "Post-commit failure."))
+                    (events               nil)
+                    (observed-directory   nil))
+               (test-call-with-function-replacements
+                (list
+                 (list 'application-clients-publish-state
+                       (lambda (application)
+                         (declare (ignore application))
+                         (push ':state events)
+                         (when (eq failure-stage ':state)
+                           (error failure))))
+                 (list 'application-sync-window-title
+                       (lambda (application)
+                         (declare (ignore application))
+                         (push ':title events)
+                         (when (eq failure-stage ':title)
+                           (error failure)))))
+                (lambda ()
+                  (test-assert
+                   (handler-case
+                       (progn
+                         (application-set-working-directory
+                          application target
+                          :on-commit (lambda (directory)
+                                       (when (eq failure-stage ':interrupt)
+                                         (sb-thread:interrupt-thread
+                                          sb-thread:*current-thread*
+                                          (lambda ()
+                                            (push ':interrupt events)
+                                            (error failure))))
+                                       (setf observed-directory directory)
+                                       (push ':on-commit events)
+                                       (when (eq failure-stage ':on-commit)
+                                         (error failure))))
+                         nil)
+                     (simple-error (condition)
+                       (eq condition failure)))
+                   "post-commit observer and presentation failures propagate directly")))
+               (test-assert
+                (equal observed-directory (platform-truename *platform* target))
+                "the commit observer retains the absolute target before cancellation")
+               (test-assert
+                (equal (reverse events)
+                       (case failure-stage
+                         (:on-commit
+                          '(:on-commit))
+                         (:state
+                          '(:on-commit :state))
+                         (:title
+                          '(:on-commit :state :title))
+                         (:interrupt
+                          '(:on-commit :interrupt))))
+                "the commit observer runs before fallible state and title publication")
+               (test-assert
+                (and (not (eq (application-configuration application) active-configuration))
+                     (not (eq (application-provider application) active-provider))
+                     (not (eq (application-tool-registry application) active-registry))
+                     (not (eq (application-agent application) active-agent))
+                     (equal (config :working-directory (application-configuration application))
+                            (platform-truename *platform* target))
+                     (equal (uiop:getcwd) (platform-truename *platform* target))
+                     (equal *default-pathname-defaults* (platform-truename *platform* target)))
+                "post-commit failures retain the new application and process runtime")
+               (let ((worker-state
+                       (lisp-worker-request
+                        worker :eval
+                        '(:forms ("(list *workspace-marker* (namestring (uiop:getcwd)))")))))
+                 (test-assert
+                  (and (search "73" (first (getf (rest worker-state) :values)))
+                       (search (namestring target)
+                               (first (getf (rest worker-state) :values))))
+                  "post-commit failures retain the worker heap and selected directory")))))
       (when pool
         (lisp-worker-pool-stop-all pool))
       (when closable-application
@@ -8945,13 +9397,20 @@
            (let ((received nil))
              (test-call-with-function-replacements
               (list (list 'application-set-working-directory
-                          (lambda (target location)
+                          (lambda (target location &key on-commit)
                             (test-assert (eq target application) "CWD uses the current application")
-                            (setf received location)
-                            lisp-workspace)))
+                            (setf received location
+                                  (application-configuration target)
+                                  (configuration-copy (application-configuration target)
+                                                      :working-directory location))
+                            (let ((directory
+                                    (config :working-directory (application-configuration target))))
+                              (when on-commit
+                                (funcall on-commit directory))
+                              directory))))
               (lambda ()
                 (application-operation-call application "cwd" lisp-workspace)
-                (test-assert (eq received lisp-workspace)
+                (test-assert (and (pathnamep received) (equal received lisp-workspace))
                              "a native workspace pathname reaches workspace switching intact")
                 (setf received nil)
                 (test-assert
@@ -9013,7 +9472,75 @@
               (equal (config :working-directory
                       (application-configuration application))
                      (truename lisp-workspace))
-              "a canonical CWD pathname switches workspaces")))
+              "a canonical CWD pathname switches workspaces"))
+           (let ((controller
+                   (application-input-controller-create application :start-reader-p nil)))
+             (unwind-protect
+                  (dolist (syntax '(:literal :computed))
+                    (let* ((directory       (if (eq syntax ':literal) workspace lisp-workspace))
+                           (original-setter (symbol-function 'application-set-working-directory))
+                           (original-receipt
+                             (symbol-function 'conversation-ensure-automatic-user-message))
+                           (failure         (make-condition 'simple-error
+                                                            :format-control "Receipt publication failure."))
+                           (fail-once-p     t)
+                           (setter-count    0))
+                      (test-call-with-function-replacements
+                       (list
+                        (list 'application-set-working-directory
+                              (lambda (candidate location &key on-commit)
+                                (incf setter-count)
+                                (funcall original-setter candidate location :on-commit on-commit)))
+                        (list 'conversation-ensure-automatic-user-message
+                              (lambda (&rest arguments)
+                                (when fail-once-p
+                                  (setf fail-once-p nil)
+                                  (error failure))
+                                (apply original-receipt arguments))))
+                       (lambda ()
+                         (handler-case
+                             (ecase syntax
+                               (:literal
+                                (application-command
+                                 application (format nil "/cwd ~S" (namestring directory))))
+                               (:computed
+                                (application-lisp-evaluate
+                                 (format nil "(cwd (merge-pathnames ~S #P~S))"
+                                         "lisp command workspace/" (namestring root))
+                                 :application application)))
+                           (error (condition)
+                             (unless (eq condition failure)
+                               (error condition))))
+                         (let* ((entry
+                                  (first
+                                   (deque->list
+                                    (application-input-controller-steering-in-flight-items controller))))
+                                (input      (and entry (agent-steering-input-content entry)))
+                                (identifier (and entry (agent-steering-input-identifier entry))))
+                           (test-assert
+                            (and (not fail-once-p)
+                                 (= setter-count 1)
+                                 (typep input 'command-message-input)
+                                 (eq (command-message-input-phase input) ':committed)
+                                 (equal (config :working-directory
+                                                (application-configuration application))
+                                        (platform-truename *platform* directory)))
+                            "idle literal and computed cwd retain committed ownership after receipt failure")
+                           (when (typep input 'command-message-input)
+                             (application-input-controller--run-steering-command controller input))
+                           (test-assert
+                            (and (= setter-count 1)
+                                 identifier
+                                 (deque-empty-p
+                                  (application-input-controller-steering-in-flight-items controller))
+                                 (= 1
+                                    (count identifier
+                                           (application-tests--conversation-records conversation)
+                                           :key  (lambda (record)
+                                                   (getf (rest record) :pending-input-identifier))
+                                           :test #'equal)))
+                            "idle receipt retry preserves command identity without repeating cwd"))))))
+               (application-input-controller-stop controller))))
       (ignore-errors (terminal-ui-stop ui))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:chdir previous-process-directory)
@@ -9929,6 +10456,82 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> application-tests--pending-publication-durability (application-input-controller) null)
+(defun application-tests--pending-publication-durability (controller)
+  "Test stale publication after snapshot and vault failures, followed by recovery."
+  (labels ((capture (text sync-vault-p)
+             (with-lock-held ((application-input-controller-lock controller))
+               (deque-clear (application-input-controller-work-items controller))
+               (deque-append (application-input-controller-work-items controller)
+                             (list (list ':message text)))
+               (application-input-controller--capture-pending-publication-locked
+                controller
+                (application-input-controller--next-publication-generation-locked controller)
+                sync-vault-p))))
+    (dolist (failure-kind '(:snapshot-write :vault-sync))
+      (let* ((durable-before (application-input-controller-durable-pending-generation controller))
+             (older          (capture "prepared state" nil))
+             (newer          (capture "newer state" (eq failure-kind ':vault-sync)))
+             (writer         (symbol-function 'snapshot-write))
+             (writes         0)
+             (fail-p         t))
+        (test-call-with-function-replacements
+         (list
+          (list 'snapshot-write
+                (lambda (&rest arguments)
+                  (incf writes)
+                  (when (and fail-p (eq failure-kind ':snapshot-write))
+                    (error 'configuration-error :message "Injected pending snapshot failure."))
+                  (apply writer arguments)))
+          (list 'application-recovery-input-vault--sync-pending-locked
+                (lambda (&rest arguments)
+                  (declare (ignore arguments))
+                  (error 'configuration-error :message "Injected pending vault failure."))))
+         (lambda ()
+           (test-assert
+            (null (application-input-controller--publish-pending-publication controller newer nil))
+            "a failed newer publication reports failure")
+           (test-assert
+            (and (= (application-input-controller-published-pending-generation controller)
+                    (getf newer :generation))
+                 (= (application-input-controller-durable-pending-generation controller)
+                    durable-before))
+            "a partial publication advances only the attempted frontier")
+           (test-assert
+            (null (application-input-controller--publish-pending-publication controller older nil))
+            "an uncovered stale non-strict publication reports failure")
+           (test-assert
+            (handler-case
+                (progn
+                  (application-input-controller--publish-pending-publication controller older t)
+                  nil)
+              (configuration-error ()
+                t))
+            "an uncovered stale strict publication signals a typed failure")
+           (test-assert (= writes 1) "uncovered stale state is never rewritten")
+           (setf fail-p nil)
+           (let ((fresh (capture "fresh durable state" nil)))
+             (test-assert
+              (application-input-controller--publish-pending-publication controller fresh t)
+              "a fresh generation can publish after a partial failure")
+             (test-assert
+              (= (application-input-controller-durable-pending-generation controller)
+                 (getf fresh :generation))
+              "successful publication advances the durable frontier")
+             (test-assert
+              (and (application-input-controller--publish-pending-publication controller older t)
+                   (application-input-controller--publish-pending-publication controller newer t)
+                   (= writes 2))
+              "covered stale publications succeed without rewriting state")
+             (multiple-value-bind (form complete-p) (snapshot-read (getf fresh :pathname))
+               (test-assert
+                (and complete-p (equal (getf (rest form) :work)
+                                       '((:message "fresh durable state"))))
+                "the fresh snapshot survives delayed stale publications")))))))
+    (with-lock-held ((application-input-controller-lock controller))
+      (deque-clear (application-input-controller-work-items controller))))
+  nil)
+
 (-> test-pending-publication-lock-boundaries () null)
 (defun test-pending-publication-lock-boundaries ()
   "Test external publication releases the controller lock and rejects stale state."
@@ -9960,6 +10563,7 @@
            (setf controller
                  (application-input-controller-create
                   application :load-pending-p nil :start-reader-p nil))
+           (application-tests--pending-publication-durability controller)
            (with-lock-held ((application-input-controller-lock controller))
              (deque-append
               (application-input-controller-work-items controller)

@@ -1894,14 +1894,23 @@ searches every task directory."
 
 (-> application-working-directory-command (application (or pathname string null)) null)
 (defun application-working-directory-command (application location)
-  "Show APPLICATION's workspace, or change it to the native pathname LOCATION."
+  "Show APPLICATION's workspace, or commit LOCATION and its durable model receipt."
   (when (and (stringp location) (not (non-empty-string-p location)))
     (error 'configuration-error :message "A workspace pathname must not be empty."))
   (if location
-      (let ((directory (application-set-working-directory application location)))
-        (application-present
-         application
-         (format nil "Working directory is now ~A" (namestring directory))))
+      (let* ((controller (or (application-input-controller application)
+                             (application-input-controller-create
+                              application :start-reader-p nil :load-pending-p nil)))
+             (invocation (or *application-command-presentation-invocation*
+                             (application-operation--command-invocation
+                              (application-command-find "/cwd") (list location))))
+             (input      (or (application-input-controller-active-command-input controller)
+                             (command-message-input-create
+                              (or *application-command-source-input*
+                                  (application-command-invocation-input invocation))
+                              invocation))))
+        (application-input-controller--run-steering-command controller input)
+        (application-present application (command-message-input-notification input)))
       (application-present
        application
        (format nil "Working directory: ~A"
@@ -1909,6 +1918,45 @@ searches every task directory."
                 (config :working-directory
                         (application-configuration application))))))
   nil)
+
+(defmethod application-command-prepare-steering
+    ((definition (eql 'application--builtin-working-directory-command)) application input)
+  "Resolve INPUT's workspace against the directory active at its steering position."
+  (let* ((invocation (command-message-input-invocation input))
+         (command    (application-command-invocation-command invocation))
+         (arguments  (application-command-invocation-arguments invocation)))
+    (application-command--validate-invocation-arity command arguments)
+    (let ((location (first arguments)))
+      (when (and (stringp location) (not (non-empty-string-p location)))
+        (error 'configuration-error :message "A workspace pathname must not be empty."))
+      (let ((directory
+              (config :working-directory
+                      (if location
+                          (configuration-copy (application-configuration application)
+                                              :working-directory location)
+                          (application-configuration application)))))
+        (values (and location (list directory))
+                (format nil "Working directory~A ~A"
+                        (if location " is now" ":") (namestring directory)))))))
+
+(defmethod application-command-apply-steering
+    ((definition (eql 'application--builtin-working-directory-command)) application input)
+  "Commit or restore INPUT's absolute workspace, skipping an already active runtime."
+  (let ((directory (first (command-message-input-prepared-arguments input))))
+    (cond
+      ((and directory
+            (or (not (eq (command-message-input-phase input) ':committed))
+                (not (equal directory (config :working-directory
+                                               (application-configuration application))))))
+       (application-set-working-directory
+        application directory
+        :on-commit (lambda (committed-directory)
+                     (declare (ignore committed-directory))
+                     (setf (command-message-input-phase input) ':committed))))
+      ((null directory)
+       (sb-sys:without-interrupts
+         (setf (command-message-input-phase input) ':committed)))))
+  ':continue)
 
 
 ;;;; -- Authentication and Checkpoint Commands --
@@ -3231,7 +3279,7 @@ pristine or recovery session runs apart from it."
      :argument          "[PATH]"
      :description       "show or change the active workspace"
      :tip               "Use `(cwd pathname)` to change the active workspace, or `(cwd)` to inspect it."
-     :busy-behavior     :inspect
+     :busy-behavior     :steer
      :terminal-behavior :shared
      :callable          t)
     (application &optional pathname)

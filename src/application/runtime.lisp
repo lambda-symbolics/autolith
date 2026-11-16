@@ -1876,10 +1876,14 @@ retiring the old registry."
       (terminal-write-window-title (terminal-ui-terminal ui) title))))
 
 (-> application-set-working-directory
-    (application (or pathname string))
+    (application (or pathname string) &key (:on-commit (option function)))
     pathname)
-(defun application-set-working-directory (application location)
-  "Atomically replace APPLICATION's runtime in existing directory LOCATION."
+(defun application-set-working-directory (application location &key on-commit)
+  "Atomically replace APPLICATION's runtime in existing directory LOCATION.
+
+Call ON-COMMIT with the normalized directory at the commit point, with interrupts
+deferred. The observer must only update bounded in-memory state. Publish client
+state and update the title afterward; later failures do not roll back the runtime."
   (let* ((previous-configuration      (application-configuration application))
          (configuration
            (configuration-copy previous-configuration :working-directory location))
@@ -1950,9 +1954,14 @@ retiring the old registry."
                  (application-refresh-context-meter application)
                  (application-connect-task-presentation application)
                  (context-runtime-reset)
-                 (setf committed-p t))
+                 (sb-sys:without-interrupts
+                   (setf committed-p t)
+                   (when on-commit
+                     (funcall on-commit directory))))
              (serious-condition (condition)
-               (setf failure condition)))
+               (if committed-p
+                   (error condition)
+                   (setf failure condition))))
         (unless committed-p
           (handler-case
               (application--extension-registry-restore
@@ -2009,6 +2018,7 @@ retiring the old registry."
          :stage              failure-stage
          :cause              failure
          :rollback-cause     (nreverse rollback-failures)))
+      (application-clients-publish-state application)
       (application-sync-window-title application)
       directory)))
 
@@ -4602,6 +4612,11 @@ clients as :TEXT, :REASONING and :STATUS events."
               (application-set-activity application nil))))))
        :steering-callback           steering-function
        :steering-persisted-callback steering-persisted-function
+       :steering-entry-callback
+       (lambda (agent entry)
+         (let ((controller (application-input-controller application)))
+           (and controller
+                (application-input-controller--apply-command-steering controller agent entry))))
        :pending-operations-callback pending-operations-function
        :command-authorization-callback
        (lambda (command directory)

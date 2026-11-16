@@ -804,7 +804,7 @@ argument objects to construct a label; only the outer argument list is copied."
 
 (-> application-operation-source-active-turn-action
     (application string)
-    (member :apply :cancel :execute :hold))
+    (member :apply :steer :cancel :execute :hold))
 (defun application-operation-source-active-turn-action (application source)
   "Classify one complete explicit Lisp SOURCE beside APPLICATION's active turn.
 

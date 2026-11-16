@@ -25,7 +25,7 @@
                         (application-operation-backend operation)))
          (active-p (and own-turn-p command
                         (member (application-command-busy-behavior command)
-                                '(:inspect :execute :apply)))))
+                                '(:inspect :execute :apply :steer)))))
     (agentcomms:json-object
      "name" (application-operation-name operation)
      "kind" (string-downcase (symbol-name (application-operation-kind operation)))

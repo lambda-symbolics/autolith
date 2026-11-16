@@ -155,11 +155,13 @@
                                       :outcome :done :idle-p t))
                          (list :busy-p busy-p)))
                  (list 'acp-session-flush (lambda (recipient) (declare (ignore recipient)) nil))
-                 (list 'condition-wait
-                       (lambda (condition-variable lock &rest arguments)
-                         (when (eq condition-variable (channel-subscription-condition-variable session))
-                           (sb-thread:signal-semaphore waiting))
-                         (apply original-wait condition-variable lock arguments))))
+                (list 'acp-extension-notify
+                      (lambda (&rest arguments) (declare (ignore arguments)) nil))
+                (list 'condition-wait
+                      (lambda (condition-variable lock &rest arguments)
+                        (when (eq condition-variable (channel-subscription-condition-variable session))
+                          (sb-thread:signal-semaphore waiting))
+                        (apply original-wait condition-variable lock arguments))))
            (lambda ()
              (unwind-protect
                   (progn
@@ -178,17 +180,30 @@
                     (with-lock-held ((channel-subscription-lock session))
                       (test-assert (null (channel-subscription-submission-result session))
                                    "the unrelated work has no outcome for this prompt"))
-                    (channel-subscription-event session
-                                       (list :work-finished :sequence 1 :kind ':message
-                                             :submission submission :outcome work-outcome :idle-p nil))
-                    (test-assert (sb-thread:wait-on-semaphore finished :timeout 5)
-                                 "a matching outcome completes without requiring channel idleness")
-                    (test-assert (eq expected result) "the matching submission supplies the stop reason")
-                    (channel-subscription-event session
-                                       (list :work-finished :sequence 1 :kind ':message
-                                             :submission submission :outcome ':done :idle-p t))
-                    (test-assert (= 1 (channel-subscription-event-sequence session))
-                                 "replayed completion cursors are consumed once"))
+                   (channel-subscription-event
+                    session (list :work-started :sequence 1 :kind ':message :submission submission))
+                   (let ((turn (acp-session-turn session)))
+                     (channel-subscription-event
+                      session '(:work-finished :sequence 2 :kind :steering
+                                :submission (:id "steering" :client "terminal")
+                                :outcome :done :idle-p nil))
+                     (test-assert
+                      (and turn (eq turn (acp-session-turn session))
+                           (null (channel-subscription-submission-result session))
+                           (not (sb-thread:wait-on-semaphore finished :timeout 0.05)))
+                      "steering completion preserves the active editor turn and pending prompt"))
+                   (channel-subscription-event session
+                                     (list :work-finished :sequence 3 :kind ':message
+                                            :submission submission :outcome work-outcome :idle-p nil))
+                   (test-assert (sb-thread:wait-on-semaphore finished :timeout 5)
+                                "a matching outcome completes without requiring channel idleness")
+                   (test-assert (and (eq expected result) (null (acp-session-turn session)))
+                                "the primary completion retires its editor turn and supplies the stop reason")
+                   (channel-subscription-event session
+                                     (list :work-finished :sequence 3 :kind ':message
+                                            :submission submission :outcome ':done :idle-p t))
+                   (test-assert (= 3 (channel-subscription-event-sequence session))
+                                "replayed completion cursors are consumed once"))
                (with-lock-held ((channel-subscription-lock session))
                  (setf (channel-subscription-closed-p session) t)
                  (sb-thread:condition-broadcast (channel-subscription-condition-variable session)))
