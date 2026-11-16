@@ -1323,10 +1323,16 @@
            (conversation-append-user-message conversation "run the check")
            (conversation-append-provider-item conversation call)
            (let ((next-sequence (conversation-next-sequence conversation)))
-             (conversation-append-provider-item conversation call)
+             (test-assert
+              (handler-case
+                  (progn
+                    (conversation-append-provider-item conversation call)
+                    nil)
+                (provider-call-conflict () t))
+              "an identical repeated call is refused")
              (test-assert
               (= (conversation-next-sequence conversation) next-sequence)
-              "an identical repeated call is a retry that adds no record")
+              "a refused repeated call adds no record")
              (test-assert
               (handler-case
                   (progn

@@ -2775,12 +2775,13 @@ state before rethrowing its failure; a retry uses the same durable receipt."
 (-> conversation--validate-provider-item (conversation json-object) json-object)
 (-> conversation--call-status (conversation json-object) symbol)
 (defun conversation--call-status (conversation item)
-  "Return :NEW, :RETRY, :PROMOTE or :CONFLICT for the call ITEM names.
+  "Return :NEW, :PROMOTE or :CONFLICT for the call ITEM names.
 
 Two calls are the same when their namespace, name and arguments agree.  Status,
-provider identifiers and serialization order are not part of a
-call's identity, so a retry may change them and still be the same call.  A
-durable call is the transcript; a request-local call is promoted when the same
+provider identifiers and serialization order are not part of a call's identity.
+A durable call identifier names exactly one call: repeating it, even verbatim,
+is :CONFLICT because the call would be executed again and a second output
+appended for one identifier.  A request-local call is promoted when the same
 call is appended durably, because only the durable append is recorded.  The
 transcript is the current projection, so a call removed by compaction is no
 longer named."
@@ -2797,16 +2798,14 @@ longer named."
                               conversation :include-ephemeral-p nil)
                         when (and (function-call-item-p candidate)
                                   (equal call-id (json-get candidate "call_id")))
-                          return candidate))
+                        return candidate))
                 (ephemeral
                   (loop for entry in (conversation-ephemeral-input-entries conversation)
                         for candidate = (getf entry :item)
                         when (and (function-call-item-p candidate)
                                   (equal call-id (json-get candidate "call_id")))
-                          return candidate)))
+                        return candidate)))
             (cond
-              ((and durable (same-call-p durable item))
-               ':retry)
               ((and ephemeral (same-call-p ephemeral item))
                ':promote)
               ((or durable ephemeral)
@@ -2853,9 +2852,9 @@ longer named."
     (conversation item &key (persistence ':durable) tool-label)
   "Append one authoritative provider ITEM with the requested PERSISTENCE.
 
-A durable call identifier names exactly one call.  Repeating the same call is a
-retry and adds no record; reusing the identifier for a different call leaves the
-transcript unable to pair outputs, so it fails instead of poisoning replay."
+A durable call identifier names exactly one call.  Repeating it, even with the
+same name and arguments, would execute the call again and append a second
+output for one identifier, so it fails instead of poisoning replay."
   (ecase persistence
     (:next-response
      (conversation--validate-provider-item conversation item)
@@ -2878,8 +2877,6 @@ transcript unable to pair outputs, so it fails instead of poisoning replay."
              (:promote
               (record-item)
               (conversation--promote-ephemeral-call conversation call-id)
-              item)
-             (:retry
               item)
              (:conflict
               (error 'provider-call-conflict

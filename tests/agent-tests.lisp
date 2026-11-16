@@ -1234,7 +1234,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
 
 (-> test-agent-duplicate-call-identity () null)
 (defun test-agent-duplicate-call-identity ()
-  "Treat a reused call identifier as a retry or a priced failure, never a crash."
+  "Refuse a reused call identifier without corrupting the transcript."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration)))
     (unwind-protect
@@ -1255,8 +1255,19 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                                            "namespace" "test")))
            (conversation-append-provider-item conversation call)
            (let ((records (conversation-next-sequence conversation)))
-             (conversation-append-provider-item conversation call)
-             (conversation-append-provider-item conversation reordered)
+             (test-assert (handler-case
+                              (progn
+                                (conversation-append-provider-item conversation call)
+                                nil)
+                            (provider-call-conflict () t))
+                          "repeating the same call is refused")
+             (test-assert (handler-case
+                              (progn
+                                (conversation-append-provider-item
+                                 conversation reordered)
+                                nil)
+                            (provider-call-conflict () t))
+                          "repeating the same call in another serialization is refused")
              (test-assert (= records (conversation-next-sequence conversation))
                           "a repeated call adds no record")
              (test-assert (= 1 (count-if #'function-call-item-p
