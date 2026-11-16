@@ -185,7 +185,21 @@ the process could fork, and a new thread serves the application again."))
     :initarg       :server
     :reader        world-endpoint-server
     :type          world-server
-    :documentation "The server answering at this endpoint."))
+    :documentation "The server answering at this endpoint.")
+   (failure-thread
+    :initform      nil
+    :accessor      world-endpoint-failure-thread
+    :documentation "The exact failed accept thread waiting for owner recovery.")
+   (failure
+    :initform      nil
+    :accessor      world-endpoint-failure
+    :type          (option serious-condition)
+    :documentation "The pending accept-loop failure, protected by the server lock.")
+   (repair-attempted-p
+    :initform      nil
+    :accessor      world-endpoint-repair-attempted-p
+    :type          boolean
+    :documentation "Whether this endpoint already used its one automatic transport repair."))
   (:documentation "The authenticated endpoint through which clients open channels."))
 
 (defmethod management-repl-owner-configuration ((owner world-server))
@@ -309,21 +323,78 @@ instead of starting a second server."
     null)
 (defun world-server--runtime-start (server &key token created-at)
   "Publish SERVER's endpoint under TOKEN and CREATED-AT, or under the ones clients already hold."
-  (let ((runtime (image-daemon:daemon-runtime-create
-                  :directory        (localgroup-world-directory (world-server-configuration server))
-                  :identifier       *world-server-identifier*
-                  :token            (or token (world-server-token server))
-                  :created-at       (or created-at (world-server-created-at server))
-                  :class            'world-endpoint
-                  :initargs         (list :server server)
-                  :request-function #'world-server--handle-request
-                  :error-function   (lambda (condition)
-                                      (format *error-output*
-                                              "~&World endpoint failed: ~A~%" condition)))))
+  (let ((runtime nil))
+    (setf runtime
+          (image-daemon:daemon-runtime-create
+           :directory        (localgroup-world-directory (world-server-configuration server))
+           :identifier       *world-server-identifier*
+           :token            (or token (world-server-token server))
+           :created-at       (or created-at (world-server-created-at server))
+           :class            'world-endpoint
+           :initargs         (list :server server)
+           :request-function #'world-server--handle-request
+           :error-function   (lambda (condition)
+                               (world-server--endpoint-failed server runtime condition))))
     (image-daemon:daemon-runtime-start runtime)
     (setf (world-server-runtime server) runtime
           (world-server-token server) (image-daemon:daemon-runtime-token runtime)
           (world-server-created-at server) (image-daemon:daemon-runtime-created-at runtime)))
+  nil)
+
+(-> world-server--endpoint-failed (world-server world-endpoint serious-condition) null)
+(defun world-server--endpoint-failed (server runtime condition)
+  "Coalesce RUNTIME's failure and ask its owner to recover after this thread exits."
+  (let ((enqueue-p
+          (with-lock-held ((world-server-lock server))
+            (unless (world-endpoint-failure runtime)
+              (setf (world-endpoint-failure-thread runtime) (current-thread)
+                    (world-endpoint-failure runtime) condition)
+              t))))
+    (when enqueue-p
+      (world-server--enqueue server
+                             (lambda () (world-server--recover-endpoint server runtime)))))
+  nil)
+
+(-> world-server--recover-endpoint (world-server world-endpoint) null)
+(defun world-server--recover-endpoint (server runtime)
+  "Repair RUNTIME once after its failed accept thread exits, or stop SERVER normally.
+
+The existing sweep revisits a handler still exiting; no recovery job requeues
+itself. A stopped, checkpointed or superseded endpoint is never restarted.
+Known timer failures are escalated without invoking their callbacks again."
+  (let ((failure nil))
+    (with-lock-held ((world-server-lock server))
+      (let ((thread    (world-endpoint-failure-thread runtime))
+            (condition (world-endpoint-failure runtime)))
+        (when condition
+          (cond
+            ((or (world-server-stopping-p server)
+                 (not (eq runtime (world-server-runtime server)))
+                 (image-daemon:daemon-runtime-stopping-p runtime)
+                 (not (eq thread (image-daemon:daemon-runtime-server-thread runtime))))
+             (setf (world-endpoint-failure runtime) nil
+                   (world-endpoint-failure-thread runtime) nil))
+            ((or (world-server-checkpointing-p server)
+                 (world-server-holding-p server)
+                 (and thread (thread-alive-p thread)))
+             nil)
+            (t
+             (setf (world-endpoint-failure runtime) nil
+                   (world-endpoint-failure-thread runtime) nil)
+             (if (or (world-endpoint-repair-attempted-p runtime)
+                     (and (typep condition 'image-daemon:daemon-error)
+                          (eq (image-daemon:daemon-error-operation condition) ':timer)))
+                 (setf failure condition)
+                 (progn
+                   (setf (world-endpoint-repair-attempted-p runtime) t)
+                   (handler-case
+                       (image-daemon:daemon-runtime-start runtime)
+                     (error (condition)
+                       (setf failure condition))))))))))
+    (when failure
+      (format *error-output* "~&World endpoint failed: ~A~%" failure)
+      (world-server-stop
+       server :reason "The world's control endpoint failed; stopping the world so it can be opened again.")))
   nil)
 
 (-> world-server-run
@@ -355,6 +426,9 @@ Return the launcher status a hosted session asked for, or NIL."
          (due      (+ (get-internal-real-time) interval))
          (sweep    (lambda ()
                      (setf due (+ (get-internal-real-time) interval))
+                     (let ((runtime (world-server-runtime server)))
+                       (when runtime
+                         (world-server--recover-endpoint server runtime)))
                      (world-server--unload-cold-hosts server))))
     (loop
       (let ((job (with-lock-held (lock)

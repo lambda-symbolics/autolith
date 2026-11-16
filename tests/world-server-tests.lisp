@@ -31,9 +31,13 @@
   (test-call-with-function-replacements
    (world-server-tests--stubs)
    (lambda ()
-     (let* ((server (world-server-create configuration :permission-mode permission-mode))
-            (main   (make-thread (lambda () (world-server-serve server))
-                                 :name "Autolith world server test main")))
+      (let* ((server        (world-server-create configuration :permission-mode permission-mode))
+             (sweep-seconds *world-server-sweep-seconds*)
+             (main          (make-thread
+                             (lambda ()
+                               (let ((*world-server-sweep-seconds* sweep-seconds))
+                                 (world-server-serve server)))
+                             :name "Autolith world server test main")))
        (unwind-protect
             (funcall function server)
          (world-server-stop server)
@@ -62,6 +66,220 @@
       (error "Channel ~A is not hosted." identifier))
     (or (application-localgroup-session (world-host-application host))
         (error "Channel ~A has no session." identifier))))
+
+(-> test-world-server-endpoint-recovery () null)
+(defun test-world-server-endpoint-recovery ()
+  "Exercise one owner repair, accepted-client survival and repeated-failure shutdown."
+  (let ((*world-server-sweep-seconds* 1/100))
+    (world-server-tests--call
+     (lambda (server configuration root)
+       (declare (ignore root))
+       (let* ((runtime    (world-server-runtime server))
+              (thread     (image-daemon:daemon-runtime-server-thread runtime))
+              (token      (image-daemon:daemon-runtime-token runtime))
+              (created-at (image-daemon:daemon-runtime-created-at runtime))
+              (hook       (image-daemon:daemon-runtime-error-function runtime))
+              (entered    (sb-thread:make-semaphore))
+              (release    (sb-thread:make-semaphore))
+              (barrier    (sb-thread:make-semaphore))
+              (failure    (make-condition 'simple-error :format-control "Injected accept failure.")))
+         (test-call-with-function-replacements
+          (list (list 'image-daemon:daemon-runtime-error-function
+                      (let ((reader (symbol-function 'image-daemon:daemon-runtime-error-function)))
+                        (lambda (candidate)
+                          (if (eq candidate runtime)
+                              (lambda (condition)
+                                (funcall hook condition)
+                                (when (eq (current-thread) thread)
+                                  (funcall hook condition)
+                                  (sb-thread:signal-semaphore entered)
+                                  (sb-thread:wait-on-semaphore release)))
+                              (funcall reader candidate))))))
+          (lambda ()
+            (multiple-value-bind (socket stream)
+                (daemon-connect (image-daemon:daemon-runtime-port runtime))
+              (unwind-protect
+                   (progn
+                     (test-assert
+                      (task-tests--wait-until
+                       (lambda () (image-daemon:daemon-runtime-client-sockets runtime)) 10)
+                      "a request connection is accepted before the listener fails")
+                     (interrupt-thread thread (lambda () (error failure)))
+                     (test-assert (sb-thread:wait-on-semaphore entered :timeout 10)
+                                  "the real accept thread enters its installed owner failure hook")
+                     (world-server--enqueue server (lambda () (sb-thread:signal-semaphore barrier)))
+                     (test-assert (sb-thread:wait-on-semaphore barrier :timeout 10)
+                                  "an exiting handler does not block unrelated owner jobs")
+                     (test-assert
+                      (and (thread-alive-p thread)
+                           (not (world-endpoint-repair-attempted-p runtime))
+                           (eq (world-endpoint-failure runtime) failure))
+                      "duplicate reports coalesce and repair waits for the old handler to exit")
+                     (sb-thread:signal-semaphore release)
+                     (test-assert
+                      (task-tests--wait-until
+                       (lambda ()
+                         (let ((replacement (image-daemon:daemon-runtime-server-thread runtime)))
+                           (and (not (eq thread replacement))
+                                (thread-alive-p replacement)))) 10)
+                      "the ordinary sweep starts a replacement accept thread")
+                     (test-assert
+                      (and (eq runtime (world-server-runtime server))
+                           (equal token (image-daemon:daemon-runtime-token runtime))
+                           (eql created-at (image-daemon:daemon-runtime-created-at runtime))
+                           (world-endpoint-repair-attempted-p runtime)
+                           (world-client-entry configuration))
+                      "repair preserves runtime identity and discoverability")
+                     (daemon-write-packet
+                      stream (list :localgroup-request :version *daemon-protocol-version*
+                                   :token token :operation ':status :arguments nil))
+                     (test-assert (eq (first (test-localgroup--read-packet stream)) ':ok)
+                                  "a previously accepted connection completes after listener repair")
+                     (test-assert
+                      (eq (first (localgroup-query-record (world-client-entry configuration) ':status)) ':ok)
+                      "new authenticated connections reach the repaired endpoint")
+                     (let ((replacement (image-daemon:daemon-runtime-server-thread runtime)))
+                       (interrupt-thread replacement (lambda () (error failure)))
+                       (test-assert
+                        (task-tests--wait-until (lambda () (world-server-stopping-p server)) 10)
+                        "a failure of the repaired accept thread requests normal world stop")
+                       (test-assert (eq replacement (image-daemon:daemon-runtime-server-thread runtime))
+                                    "the lifetime repair budget forbids a second transport restart")))
+                (sb-thread:signal-semaphore release)
+                (close stream)
+                (sb-bsd-sockets:socket-close socket)))))))))
+  nil)
+
+(-> test-world-server-endpoint-precedence () null)
+(defun test-world-server-endpoint-precedence ()
+  "Exercise stop, checkpoint deferral and superseded-runtime precedence over repair."
+  (with-test-configuration (configuration)
+    (test-call-with-function-replacements
+     (world-server-tests--stubs)
+     (lambda ()
+       (let* ((server  (world-server-create configuration :permission-mode ':auto))
+              (runtime (world-server-runtime server))
+              (thread  (image-daemon:daemon-runtime-server-thread runtime))
+              (failure (make-condition 'simple-error :format-control "Deferred accept failure."))
+              (starts  0))
+         (unwind-protect
+              (progn
+                (image-daemon:daemon-stop-thread thread)
+                (test-call-with-function-replacements
+                 (list (list 'image-daemon:daemon-runtime-start
+                             (lambda (candidate)
+                               (test-assert (eq candidate runtime) "only the captured runtime is repaired")
+                               (incf starts)
+                               candidate)))
+                 (lambda ()
+                   (flet ((pending ()
+                            "Install the captured failure of the now-dead accept thread."
+                            (setf (world-endpoint-failure-thread runtime) thread
+                                  (world-endpoint-failure runtime) failure)))
+                     (dolist (state '(:holding :checkpointing))
+                       (pending)
+                       (setf (world-server-holding-p server) (eq state ':holding)
+                             (world-server-checkpointing-p server) (eq state ':checkpointing))
+                       (world-server--recover-endpoint server runtime)
+                       (test-assert (and (zerop starts) (eq failure (world-endpoint-failure runtime)))
+                                    "checkpoint ownership defers rather than loses the pending failure"))
+                     (setf (world-server-holding-p server) nil
+                           (world-server-checkpointing-p server) nil)
+                     (world-server--recover-endpoint server runtime)
+                     (test-assert (= starts 1) "cancelling a drain permits the deferred repair")
+                     (pending)
+                     (setf (world-server-runtime server) nil)
+                     (world-server--recover-endpoint server runtime)
+                     (test-assert (and (= starts 1) (null (world-endpoint-failure runtime))
+                                       (not (world-server-stopping-p server)))
+                                  "a checkpoint-superseded runtime cannot repair or stop its owner")
+                     (setf (world-server-runtime server) runtime)
+                     (pending)
+                     (world-server-stop server)
+                     (world-server--recover-endpoint server runtime)
+                     (test-assert (and (= starts 1) (null (world-endpoint-failure runtime)))
+                                  "STOP wins over a queued recovery")))))
+           (setf (world-server-runtime server) runtime)
+           (world-server--shutdown server))))))
+  nil)
+
+(-> test-world-server-endpoint-escalation () null)
+(defun test-world-server-endpoint-escalation ()
+  "Exercise repeated, timer and repair failures through normal shutdown and lease release."
+  (dolist (mode '(:repeated :timer :repair))
+    (with-test-configuration (configuration root)
+      (let ((finished    nil)
+            (timer-calls 0))
+        (world-server-tests--call-with-server
+         configuration
+         (lambda (server)
+           (let* ((runtime     (world-server-runtime server))
+                  (thread      (image-daemon:daemon-runtime-server-thread runtime))
+                  (identifier
+                    (getf (rest (world-server-tests--open
+                                 (world-client-entry configuration)
+                                 (world-tests--workspace root "endpoint-failure"))) :session-id))
+                  (application (world-host-application (world-server--find-host server identifier)))
+                  (attachment  (make-instance 'image-daemon:attachment
+                                              :socket nil :stream (make-broadcast-stream) :mode ':control))
+                  (starts      0)
+                  (done        (sb-thread:make-semaphore)))
+             (image-daemon:relay-attach
+              (terminal-ui-terminal (application-ui application)) attachment
+              :rows 24 :columns 80 :styled-p nil :session-id identifier)
+             (unless (eq mode ':timer)
+               (image-daemon:daemon-stop-thread thread))
+             (setf (world-endpoint-repair-attempted-p runtime) (eq mode ':repeated))
+             (test-call-with-function-replacements
+              (list (list 'image-daemon:daemon-runtime-start
+                          (lambda (candidate)
+                            (declare (ignore candidate))
+                            (incf starts)
+                            (error "Injected transport repair failure.")))
+                    (list 'image-daemon:attachment-finish
+                          (let ((finish (symbol-function 'image-daemon:attachment-finish)))
+                            (lambda (candidate packet)
+                              (push packet finished)
+                              (funcall finish candidate packet)))))
+              (lambda ()
+                (if (eq mode ':timer)
+                    (progn
+                      (image-daemon:daemon-runtime-set-timer
+                       runtime
+                       :next-deadline-function (lambda (candidate)
+                                                 (declare (ignore candidate))
+                                                 (get-universal-time))
+                       :wake-function          (lambda (candidate)
+                                                (declare (ignore candidate))
+                                                (incf timer-calls)
+                                                (error 'image-daemon:daemon-error
+                                                       :message   "Injected timer failure."
+                                                       :operation ':timer)))
+                      (test-assert
+                       (task-tests--wait-until (lambda () (not (thread-alive-p thread))) 10)
+                       "a due callback fails on the real endpoint thread"))
+                    (setf (world-endpoint-failure-thread runtime) thread
+                          (world-endpoint-failure runtime)
+                          (make-condition 'image-daemon:daemon-error
+                                          :message   "Injected endpoint failure."
+                                          :operation ':accept)))
+                (world-server--enqueue
+                 server (lambda ()
+                          (unwind-protect (world-server--recover-endpoint server runtime)
+                            (sb-thread:signal-semaphore done))))
+                (test-assert (sb-thread:wait-on-semaphore done :timeout 10)
+                             "escalation returns through the normal owner job boundary")
+                (test-assert (and (world-server-stopping-p server)
+                                  (= starts (if (eq mode ':repair) 1 0))
+                                  (= timer-calls (if (eq mode ':timer) 1 0))
+                                  (some (lambda (packet)
+                                          (non-empty-string-p (getf (rest packet) :message)))
+                                        finished))
+                             "unrepairable failure stops normally and tells attached terminals why"))))))
+        (test-assert (and (not (world-server-running-p configuration))
+                          (null (world-client-entry configuration)))
+                     "normal final shutdown releases the lease and unpublishes discovery"))))
+  nil)
 
 (-> test-world-server-cold-channels () null)
 (defun test-world-server-cold-channels ()
