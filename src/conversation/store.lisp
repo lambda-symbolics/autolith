@@ -2812,6 +2812,7 @@ longer named."
                ':conflict)
               (t
                ':new)))))))
+
 (-> conversation--promote-ephemeral-call (conversation string) null)
 (defun conversation--promote-ephemeral-call (conversation call-id)
   "Drop the request-local entry for CALL-ID now that a durable append owns it."
@@ -2884,7 +2885,6 @@ output for one identifier, so it fails instead of poisoning replay."
                      :call-id  call-id
                      :pathname (conversation-pathname conversation)
                      :sequence (conversation-next-sequence conversation))))))))))
-
 
 (-> conversation--tool-content-output (list) vector)
 (defun conversation--tool-content-output (blocks)

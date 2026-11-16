@@ -754,8 +754,8 @@ record is written even when an item is refused and the turn then fails."
              (agent--append-provider-item
               agent
               item
-              :tool-label (when (getf plan :tool)
-                            (tool-display-name (getf plan :tool)))
+              :tool-label     (when (getf plan :tool)
+                                (tool-display-name (getf plan :tool)))
               :persistence
               (if plan
                   (getf plan :persistence)
@@ -763,13 +763,13 @@ record is written even when an item is refused and the turn then fails."
               :request-number request-number)))
       (conversation-append-provider-metadata
        conversation
-       (append (list :request-number         request-number
+       (append (list :request-number        request-number
                      :context-usage-pending t
-                     :response-id            (provider-result-response-id result)
-                     :usage                  (agent--portable-value
-                                              (provider-usage-normalize
-                                               (provider-result-usage result)))
-                     :request-identity       (conversation-request-identity conversation))
+                     :response-id           (provider-result-response-id result)
+                     :usage                 (agent--portable-value
+                                             (provider-usage-normalize
+                                              (provider-result-usage result)))
+                     :request-identity      (conversation-request-identity conversation))
                ;; The service's effective retention mode, when it reports one.
                (let ((context (agent--result-reasoning-context result)))
                  (and context (list :reasoning-context context)))))))

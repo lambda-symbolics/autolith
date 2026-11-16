@@ -1392,6 +1392,7 @@
               "replay retains history produced after the selected output")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
 (-> test-conversation-ephemeral-then-durable-call () null)
 (defun test-conversation-ephemeral-then-durable-call ()
   "Test a request-local call does not swallow a later durable append."
