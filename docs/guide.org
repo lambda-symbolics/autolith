@@ -973,9 +973,15 @@ continue using the session while the form runs. =??= and =?text= are chat;
 spaces, tabs, and line breaks after =?= select asynchronous Lisp. Continue an
 incomplete form on another line as with ordinary Lisp input.
 
-Inspect or cancel the returned =exec:N= job with =job.get=, =job.wait=, or
-=job.cancel=. The bare number works too, as in =(job.cancel :id 1)=, if
-exactly one visible job ends in =:1=; otherwise the error lists the candidates.
+The submission line names the =exec:N= job and shows its =job.cancel= call. In
+fullscreen, click the call to insert it into the composer. A tool you call
+yourself that goes to the background, such as
+=(shell.run :command "make" :async t)=, shows the same line as a background
+tool call of the model.
+
+Inspect the job with =job.get= or =job.wait=. The bare number works too, as in
+=(job.cancel :id 1)=, if exactly one visible job ends in =:1=; otherwise the
+error lists the candidates.
 Standard output, error output, and Lisp diagnostic streams are
 captured with bounded retention and rate-limited, sanitized terminal display.
 On completion, receive all returned values or the error, together with captured
