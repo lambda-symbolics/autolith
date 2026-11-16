@@ -659,20 +659,29 @@
            (conversation-append-user-message conversation "before checkpoint")
            (conversation-append-summary conversation (make-continuation :intent "checkpoint"))
            (conversation-append-user-message conversation "after checkpoint")
-           (let ((failure
-                   (make-condition 'store-error :pathname  identity
-                                                :operation ':callback
-                                                :message   "Record visitor failed.")))
-             (test-assert
-              (handler-case
-                  (conversation-map-records
-                   conversation
-                   (lambda (record)
-                     (declare (ignore record))
-                     (error failure)))
-                (store-error (condition)
-                  (eq failure condition)))
-              "record visitor failures are not translated into conversation corruption"))
+           (let ((forward nil)
+                 (backward nil))
+             (conversation-map-records
+              conversation (lambda (record) (push (getf (rest record) :seq) forward)))
+             (conversation-map-records-reverse
+              conversation (lambda (record) (push (getf (rest record) :seq) backward)))
+             (test-assert (equal (nreverse backward) forward)
+                          "reverse conversation mapping follows exact descending sequence order"))
+           (dolist (mapper (list #'conversation-map-records #'conversation-map-records-reverse))
+             (let ((failure
+                     (make-condition 'store-error :pathname  identity
+                                                  :operation ':callback
+                                                  :message   "Record visitor failed.")))
+               (test-assert
+                (handler-case
+                    (funcall mapper
+                             conversation
+                             (lambda (record)
+                               (declare (ignore record))
+                               (error failure)))
+                  (store-error (condition)
+                    (eq failure condition)))
+                "record visitor failures are not translated into conversation corruption")))
            (let* ((pathnames (conversation-storage-pathnames identity))
                   (active    (second pathnames))
                   (active-forms
