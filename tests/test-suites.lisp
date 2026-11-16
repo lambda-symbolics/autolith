@@ -1662,6 +1662,7 @@
   test-localgroup-query-keeps-slow-endpoint
   test-localgroup-protocol
   test-localgroup-orphan-reconciliation
+  test-localgroup-client-pids
   test-localgroup-startup-reader
   test-localgroup-attachments)
 

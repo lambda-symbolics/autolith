@@ -205,6 +205,8 @@ conversation transaction can roll back before releasing either lease."
   (let* ((application       (localgroup-session-application session))
          (configuration     (application-configuration application))
          (conversation      (application-conversation application))
+         (terminal          (terminal-ui-terminal (application-ui application)))
+         (client-pids       (multiple-value-list (localgroup-terminal-client-pids terminal)))
          (controller        (application-input-controller application))
          (paused-p          (application-localgroup-paused-p application))
          (active-p          nil)
@@ -259,6 +261,7 @@ conversation transaction can roll back before releasing either lease."
                    ':starting))))
       (list :localgroup-status :version *daemon-protocol-version* :session-id
             (conversation-identifier conversation) :pid (current-process-id)
+            :terminal-client-pid (first client-pids) :observer-client-pids (second client-pids)
             :autolith-version *autolith-version* :state state :idle-p (not (null idle-p))
             :waiting-for-input-p (not (null waiting-for-input-p)) :paused-p
               (not (null paused-p)) :cwd
@@ -467,7 +470,8 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
          (application (localgroup-session-application session))
          (controller  (application-input-controller application))
          (terminal    (localgroup--terminal session)))
-    (let ((attachment (image-daemon:attachment-create socket stream mode)))
+    (let ((attachment (localgroup-attachment-create socket stream mode
+                                                  :client-pid (getf arguments :client-pid))))
       (labels ((attach ()
                  (let ((previous nil))
                    (unwind-protect

@@ -48,18 +48,20 @@
       (error "The localgroup attachment closed before its next packet.")))
 
 (-> test-localgroup--attach
-    (localgroup-session keyword &key (:styled-p boolean) (:client-version (option string)))
+    (localgroup-session keyword
+     &key (:styled-p boolean) (:client-version (option string)) (:client-pid t))
     (values sb-bsd-sockets:socket stream list))
-(defun test-localgroup--attach (session mode &key styled-p client-version)
-  "Open one test attachment to SESSION with MODE and optional CLIENT-VERSION."
+(defun test-localgroup--attach (session mode &key styled-p client-version (client-pid nil pid-supplied-p))
+  "Open one test attachment to SESSION with MODE and optional client metadata."
   (multiple-value-bind (socket stream)
       (daemon-connect (image-daemon:daemon-runtime-port session))
     (daemon-write-packet stream
                          (list :localgroup-request :version *daemon-protocol-version*
                                :token              (image-daemon:daemon-runtime-token session)
                                :operation ':attach :arguments
-                               (list :mode mode :rows 31 :columns 91 :styled-p styled-p
-                                     :client-version client-version)))
+                               (append (list :mode mode :rows 31 :columns 91 :styled-p styled-p
+                                             :client-version client-version)
+                                       (when pid-supplied-p (list :client-pid client-pid)))))
     (values socket stream (test-localgroup--read-packet stream))))
 
 (-> test-localgroup-message-dispatch () null)
@@ -1001,7 +1003,7 @@
   (let* ((timestamp     (encode-universal-time 5 4 3 2 1 2025 0))
          (status
           (list :localgroup-status :session-id (identifier-from-seed timestamp 0) :pid
-                41234 :state ':idle :created-at timestamp :conversation-display-id
+                41234 :terminal-client-pid 51234 :state ':idle :created-at timestamp :conversation-display-id
                 "n-ew1234" :queued-input-count 0 :steering-input-count 0 :task-live-count
                 0 :cwd "/tmp/example"))
          (titled-status (append status (list :conversation-title "Named local session")))
@@ -1027,7 +1029,7 @@
                                        :columns 24))))
     (test-assert
      (and (search (identifier-display (getf (rest status) :session-id)) plain-output)
-          (search "41234" plain-output) (search "/tmp/example" plain-output)
+          (search "51234" plain-output) (search "/tmp/example" plain-output)
           (not (search (string #\Esc) plain-output)))
      "localgroup status renders session fields without ANSI controls")
     (test-assert
@@ -1273,6 +1275,10 @@
                              (= (length (image-daemon:relay-observers relay)) 1))))
                     10)
                    "controller and observer attach before each checkpoint")
+                  (test-assert
+                   (equal (multiple-value-list (localgroup-terminal-client-pids relay))
+                          (list (current-process-id) (list (current-process-id))))
+                   "the actual terminal clients send their PIDs on initial attach and reconnect")
                   (let ((image-daemon:*relay-history-character-limit* 8))
                     (terminal--write relay (format nil "old-~D" iteration))
                     (test-assert
@@ -1300,6 +1306,11 @@
                     10)
                    "both clients reconnect to the parent endpoint")
                   (setf session (application-localgroup-session application))
+                  (let ((snapshot (localgroup-status-snapshot session)))
+                    (test-assert
+                     (and (= (getf (rest snapshot) :terminal-client-pid) (current-process-id))
+                          (equal (getf (rest snapshot) :observer-client-pids) (list (current-process-id))))
+                     "successful and failed checkpoints restore both attached clients' PIDs"))
                   (test-assert
                    (equal (localgroup--wait-for-checkpoint-entry
                            entry (localgroup-session-checkpoint-reconnect-id session))
@@ -1564,6 +1575,117 @@
       (application-release-conversation-lease application)
       (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
                                              ':ignore)))
+  nil)
+
+(-> test-localgroup-client-pids () null)
+(defun test-localgroup-client-pids ()
+  "Exercise client PID reporting through observation, takeover, detach and connection loss."
+  (with-test-configuration (configuration)
+    (let* ((terminal    (localgroup-terminal-create))
+           (application (make-instance 'application :configuration configuration
+                                                    :conversation (conversation-create configuration)
+                                                    :ui (terminal-ui-create :terminal terminal)))
+           (main-thread (test-localgroup--make-main-thread))
+           (controller  (make-instance 'application-input-controller :application application
+                                                                    :main-thread main-thread))
+           (session     nil)
+           (clients     nil))
+      (setf (application-input-controller application) controller)
+      (labels ((attach (mode &rest arguments)
+                 "Attach a test terminal and retain its connection for cleanup."
+                 (multiple-value-bind (socket stream response)
+                     (apply #'test-localgroup--attach session mode arguments)
+                   (push (cons socket stream) clients)
+                   (test-assert (eq (first response) ':attached) "the terminal attaches")
+                   stream))
+
+               (status ()
+                 "Query the published endpoint's current status."
+                 (getf (rest (daemon-call (image-daemon:daemon-runtime-port session)
+                                         (image-daemon:daemon-runtime-token session) ':status))
+                       :status))
+
+               (reported-p (pid observers)
+                 "Check the controlling PID, observer PIDs and CLI projection together."
+                 (let ((snapshot (status)))
+                   (and (eql (getf (rest snapshot) :terminal-client-pid) pid)
+                        (equal (getf (rest snapshot) :observer-client-pids) observers)
+                        (string= (localgroup--status-field-text snapshot ':pid)
+                                 (if pid (princ-to-string pid) "-")))))
+
+               (await-report (pid observers)
+                 "Wait for attachment teardown and check its published PID state."
+                 (test-assert (task-tests--wait-until (lambda () (reported-p pid observers)) 5)
+                              "status reports exactly the active controlling and observing clients")))
+        (unwind-protect
+             (progn
+               (configuration-ensure-directories configuration)
+               (terminal-start terminal)
+               (application-input-controller--start-reader controller)
+               (setf session (localgroup-start application :linger-p t))
+               (await-report nil nil)
+               (let ((observer (attach ':read-only :client-pid 1201)))
+                 (await-report nil '(1201))
+                 (attach ':read-only :client-pid 1202)
+                 (await-report nil '(1201 1202))
+                 (attach ':control :client-pid 2201)
+                 (await-report 2201 '(1201 1202))
+                 (test-assert
+                  (and (= (getf (rest (status)) :pid) (current-process-id))
+                       (eq (localgroup-owner-reachability
+                            (image-daemon:daemon-runtime-registry-pathname session)
+                            (image-daemon:daemon-runtime-identifier session) (current-process-id))
+                           ':reachable))
+                  "the endpoint's process identity and owner reachability use the server PID")
+                 (let ((control (attach ':take-over)))
+                   (daemon-write-packet control '(:resize :rows 43 :columns 117 :styled-p nil))
+                   (test-assert
+                    (task-tests--wait-until
+                     (lambda ()
+                       (and (= (terminal-rows terminal) 43) (= (terminal-columns terminal) 117)
+                            (getf (rest (status)) :terminal-attached-p)))
+                     5)
+                    "a legacy client keeps terminal control and processes input after takeover")
+                   (await-report nil '(1201 1202)))
+                 (let ((control (attach ':take-over :client-pid 3301)))
+                   (await-report 3301 '(1201 1202))
+                   (daemon-write-packet control '(:detach))
+                   (await-report nil '(1201 1202)))
+                 (attach ':control :client-pid 4401)
+                 (await-report 4401 '(1201 1202))
+                 (localgroup--detach-terminal session)
+                 (await-report nil '(1201 1202))
+                 (let ((control (attach ':control :client-pid 5501)))
+                   (await-report 5501 '(1201 1202))
+                   (close control)
+                   (await-report nil '(1201 1202)))
+                 (daemon-write-packet observer '(:detach))
+                 (await-report nil '(1202)))
+               (dolist (pid '(0 -1 "123" 1.5))
+                 (multiple-value-bind (socket stream response)
+                     (test-localgroup--attach session ':control :client-pid pid)
+                   (push (cons socket stream) clients)
+                   (test-assert (eq (first response) ':error)
+                                "an invalid client PID is rejected before terminal ownership changes")))
+               (await-report nil '(1202))
+               (let ((closed (make-instance 'localgroup-attachment :socket nil :stream nil
+                                                                 :mode ':read-only :client-pid 9999)))
+                 (with-lock-held ((image-daemon:relay-lock terminal))
+                   (push closed (image-daemon:relay-observers terminal))
+                   (with-lock-held ((image-daemon:attachment-lock closed))
+                     (setf (image-daemon:attachment-closed-p closed) t)))
+                 (await-report nil '(1202))
+                 (image-daemon:relay-detach terminal closed)))
+          (dolist (client clients)
+            ; mallet:suppress no-ignore-errors -- test cleanup closes connections already revoked or lost
+            (ignore-errors (close (rest client)))
+            ; mallet:suppress no-ignore-errors -- closing the stream may already have closed its socket
+            (ignore-errors (sb-bsd-sockets:socket-close (first client))))
+          (when session (localgroup-stop application))
+          (application-input-controller-stop controller)
+          (image-daemon:daemon-stop-thread main-thread)
+          (terminal-stop terminal)
+          (application-release-conversation-lease application)))))
   nil)
 
 (-> test-localgroup-attachments () null)

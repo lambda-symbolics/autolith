@@ -2,6 +2,29 @@
 
 ;;;; -- Product Terminal Adapter --
 
+(defclass localgroup-attachment (image-daemon:attachment)
+  ((client-pid
+    :initarg       :client-pid
+    :initform      nil
+    :reader        localgroup-attachment-client-pid
+    :type          (option (integer 1))
+    :documentation "The attaching terminal process's reported PID, when supplied."))
+  (:documentation "A terminal attachment with Autolith's client process identity."))
+
+(-> localgroup-attachment-create
+    (t stream keyword &key (:client-pid t))
+    localgroup-attachment)
+(defun localgroup-attachment-create (socket stream mode &key client-pid)
+  "Validate CLIENT-PID and start a terminal attachment over SOCKET and STREAM.
+
+An omitted PID supports clients that predate terminal process reporting."
+  (unless (or (null client-pid) (typep client-pid '(integer 1)))
+    (error 'localgroup-error :message "The terminal client PID must be a positive integer."
+                            :operation ':attach))
+  (image-daemon:attachment-start
+   (make-instance 'localgroup-attachment :socket socket :stream stream :mode mode
+                                        :client-pid client-pid)))
+
 (defclass localgroup-terminal (terminal image-daemon:relay)
   ((screen-active-p
     :initform      nil
@@ -67,6 +90,36 @@ startup record's :STYLED-P is non-NIL."
                    (if direct-terminal
                        (terminal-styled-p direct-terminal)
                        (not (null (or styled-p (getf startup-values :styled-p))))))))
+
+(-> localgroup-attachment-active-client-pid
+    ((option image-daemon:attachment))
+    (option (integer 1)))
+(defun localgroup-attachment-active-client-pid (attachment)
+  "Return ATTACHMENT's reported PID while it admits output, or NIL."
+  (when (typep attachment 'localgroup-attachment)
+    (with-lock-held ((image-daemon:attachment-lock attachment))
+      (unless (image-daemon:attachment-closed-p attachment)
+        (localgroup-attachment-client-pid attachment)))))
+
+(-> localgroup-terminal-client-pids (terminal) (values (option (integer 1)) list))
+(defun localgroup-terminal-client-pids (terminal)
+  "Return TERMINAL's controlling client PID and distinct read-only client PIDs.
+
+Take the relay lock before inspecting attachments, excluding closed or detached
+clients. A direct interactive terminal belongs to the current process."
+  (if (typep terminal 'localgroup-terminal)
+      (with-lock-held ((image-daemon:relay-lock terminal))
+        (values
+         (if (and (image-daemon:relay-direct-terminal terminal)
+                  (terminal-interactive-p (image-daemon:relay-direct-terminal terminal)))
+             (current-process-id)
+             (localgroup-attachment-active-client-pid (image-daemon:relay-controller terminal)))
+         (sort (remove-duplicates
+                (loop for attachment in (image-daemon:relay-observers terminal)
+                      for pid = (localgroup-attachment-active-client-pid attachment)
+                      when pid collect pid))
+               #'<)))
+      (values (when (terminal-interactive-p terminal) (current-process-id)) nil)))
 
 (-> localgroup-terminal-resize
     (localgroup-terminal &key (:rows integer) (:columns integer) (:styled-p t))

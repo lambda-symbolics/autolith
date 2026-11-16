@@ -278,10 +278,10 @@ Ambiguous or parked targets select nothing."
       (:session
        (session-identifier-display (getf values :session-id)))
       (:pid
-       (let ((pid (getf values :pid)))
+       (let ((pid (getf values :terminal-client-pid)))
          (if (typep pid '(integer 1))
              (format nil "~D" pid)
-             "unknown")))
+             "-")))
       (:state
        (localgroup--status-state-text status))
       (:started
@@ -753,6 +753,7 @@ SCREEN the caller lends stays the caller's to release."
                                       :arguments
                                       (append
                                        (list :mode mode :rows rows :columns columns
+                                             :client-pid (current-process-id)
                                              :styled-p (terminal-environment-styling-p))
                                        (when client-version
                                          (list :client-version client-version))

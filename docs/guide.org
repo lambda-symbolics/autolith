@@ -1684,6 +1684,12 @@ autolith status
 autolith status --sexp
 #+END_SRC
 
+The =PID= column identifies the controlling terminal client, or =-= when no
+client PID is available. Read-only observers do not occupy that column; multiple
+terminals may observe a channel, but only one may control it. In =--sexp= output,
+=:terminal-client-pid= identifies the controller and =:observer-client-pids= lists
+the distinct observer PIDs. The endpoint's =:pid= identifies its hosting process.
+
 =idle= means that the process is at input with no active work of any kind.
 
 Start an unattended session, or resume one by conversation ID or a part of it:
