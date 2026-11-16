@@ -1433,6 +1433,7 @@
   test-agent-provider-request-limit
   test-agent-invalid-call-history
   test-agent-malformed-tool-arguments
+  test-agent-duplicate-call-identity
   test-agent-tool-storm-guard
   test-agent-tool-storm-guard-defaults
   test-agent-tool-retry-guidance

@@ -1232,6 +1232,32 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-agent-duplicate-call-identity () null)
+(defun test-agent-duplicate-call-identity ()
+  "Treat a reused call identifier as a retry or a priced failure, never a crash."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation (conversation-create configuration
+                                                  :identifier "duplicate-call-identity"))
+                (call         (agent-test-call :call-id "reused"))
+                (conflict     (agent-test-call :call-id   "reused"
+                                               :arguments "{\"value\":1}")))
+           (conversation-append-provider-item conversation call)
+           (conversation-append-provider-item conversation call)
+           (test-assert (= 1 (count-if #'function-call-item-p (conversation-input-items conversation)))
+                        "an identical repeated call is persisted once")
+           (test-assert (handler-case
+                            (progn
+                              (conversation-append-provider-item conversation conflict)
+                              nil)
+                          (provider-call-conflict () t))
+                        "a reused identifier that names another call is refused")
+           (test-assert (= 1 (count-if #'function-call-item-p (conversation-input-items conversation)))
+                        "a conflicting call is never persisted"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-agent-malformed-tool-arguments () null)
 (defun test-agent-malformed-tool-arguments ()
   "Test malformed tool arguments fail safely and legacy poison is repaired on replay."

@@ -1324,14 +1324,19 @@
            (conversation-append-provider-item conversation call)
            (let ((next-sequence (conversation-next-sequence conversation)))
              (test-assert
-              (and (handler-case
-                       (progn
-                         (conversation-append-provider-item conversation call)
-                         nil)
-                     (conversation-invariant-error ()
-                       t))
-                   (= (conversation-next-sequence conversation) next-sequence))
-              "provider append rejects duplicate tool call identifiers before persistence"))
+              (= (conversation-next-sequence conversation) next-sequence)
+              "an identical repeated call is a retry that adds no record")
+             (test-assert
+              (handler-case
+                  (progn
+                    (conversation-append-provider-item
+                     conversation
+                     (json-object "type" "function_call" "status" "completed"
+                                  "arguments" "{}" "call_id" "call-duplicate"
+                                  "name" "other" "namespace" "shell"))
+                    nil)
+                (provider-call-conflict () t))
+              "a reused identifier that names another call is refused"))
            (conversation-append-tool-result
             conversation
             "call-duplicate"

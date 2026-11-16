@@ -2773,6 +2773,14 @@ state before rethrowing its failure; a retry uses the same durable receipt."
           (values item durable-record))))))
 
 (-> conversation--validate-provider-item (conversation json-object) json-object)
+(-> conversation--persisted-call (conversation string) (option json-object))
+(defun conversation--persisted-call (conversation call-id)
+  "Return the projected function call that CALL-ID already names, if any."
+  (loop for item in (conversation-input-items conversation)
+        when (and (function-call-item-p item)
+                  (equal call-id (json-get item "call_id")))
+          return item))
+
 (defun conversation--validate-provider-item (conversation item)
   "Return ITEM after rejecting provider calls that would poison durable replay."
   (when (function-call-item-p item)
@@ -2800,18 +2808,34 @@ state before rethrowing its failure; a retry uses the same durable receipt."
     json-object)
 (defun conversation-append-provider-item
     (conversation item &key (persistence ':durable) tool-label)
-  "Append one authoritative provider ITEM with the requested PERSISTENCE."
-  (conversation--validate-provider-item conversation item)
-  (ecase persistence
-    (:durable
-     (conversation-append-record
-      conversation
-      (list :provider-item
-            :wire-json (json-encode item)
-            :tool-label tool-label))
-     (conversation--append-input-item conversation item))
-    (:next-response
-     (conversation--append-ephemeral-input-item conversation item))))
+  "Append one authoritative provider ITEM with the requested PERSISTENCE.
+
+A provider may reuse a call identifier across turns.  Repeating the same call is
+a retry and adds no record; reusing the identifier for a different call leaves
+the transcript unable to pair outputs, so it fails instead of poisoning replay."
+  (let ((existing (and (function-call-item-p item)
+                       (conversation--persisted-call conversation (json-get item "call_id")))))
+    (cond
+      ((null existing)
+       (conversation--validate-provider-item conversation item)
+       (ecase persistence
+         (:durable
+          (conversation-append-record
+           conversation
+           (list :provider-item
+                 :wire-json (json-encode item)
+                 :tool-label tool-label))
+          (conversation--append-input-item conversation item))
+         (:next-response
+          (conversation--append-ephemeral-input-item conversation item)))
+       item)
+      ((equal (json-encode existing) (json-encode item))
+       existing)
+      (t
+       (error 'provider-call-conflict
+              :message         "The provider reused a function call identifier."
+              :call-id         (json-get item "call_id")
+              :conversation-id (conversation-identifier conversation))))))
 
 (-> conversation--tool-content-output (list) vector)
 (defun conversation--tool-content-output (blocks)
