@@ -176,7 +176,7 @@
 
 (-> world-restart-tests--checkpoint (configuration cons &key (:process t)) list)
 (defun world-restart-tests--checkpoint (configuration entry &key process)
-  "Return the resumed world and channel entries, events, and timeout diagnostics when unavailable."
+  "Return the resumed world and channel entries after marker removal, events, and timeout diagnostics when unavailable."
   (let* ((channel (getf (rest (rest entry)) :session-id))
          (old-pid (getf (rest (rest (world-client-entry configuration))) :pid))
          (events  (world-restart-tests--submit
@@ -190,7 +190,9 @@
                  resumed (localgroup--find-record-or-nil configuration channel))
            (and world resumed
                 (/= (getf (rest (rest world)) :pid) old-pid)
-                (eql (getf (rest (rest resumed)) :pid) (getf (rest (rest world)) :pid))))
+                (eql (getf (rest (rest resumed)) :pid) (getf (rest (rest world)) :pid))
+                ;; Endpoints precede process services and marker removal.
+                (not (probe-file (world-server-restart-pathname configuration)))))
          180)
         (list world resumed events)
         (list nil nil events
