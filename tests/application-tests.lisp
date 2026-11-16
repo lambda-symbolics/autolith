@@ -3859,9 +3859,127 @@
                                              :if-does-not-exist   ':ignore))))
   nil)
 
+(-> application-tests--history-selection-work () null)
+(defun application-tests--history-selection-work ()
+  "Bound formatting and decoded source retention by the final selected page."
+  (with-test-configuration (configuration)
+    (let* ((application   (application-tool-outcome-tests--application configuration))
+           (raw-records
+             (loop for index from 1 to 100
+                   for call-id = (format nil "bounded-call-~D" index)
+                   append (list
+                           (application-tool-outcome-tests--call (1- (* 2 index)) call-id)
+                           (application-tool-outcome-tests--result
+                            (* 2 index) call-id :status ':error
+                            :output                     (format nil "bounded failure ~D" index)))))
+           (decode-counts (make-hash-table :test #'equal))
+           (formatted     nil)
+           (decode        (symbol-function 'json-decode))
+           (format-record (symbol-function 'conversation-record-entry)))
+      (test-call-with-function-replacements
+       (list
+        (list 'json-decode
+              (lambda (source)
+                (incf (gethash source decode-counts 0))
+                (funcall decode source)))
+        (list 'conversation-record-entry
+              (lambda (application record)
+                (push (application--record-sequence record) formatted)
+                (funcall format-record application record))))
+       (lambda ()
+         (multiple-value-bind (records count latest position outcomes sources)
+             (application--select-history-records
+              application
+              (lambda (callback)
+                (mapc callback raw-records)
+                123)
+              :limit 3)
+           (test-assert (null formatted)
+                        "selection never formats discarded results or invocations")
+           (test-assert (and (= count 200) (= latest 200) (= position 123)
+                             (equal (mapcar #'application--record-sequence records)
+                                    '(198 199 200)))
+                        "raw selection preserves chronological page and scan cursors")
+           (test-assert (and (= (hash-table-count outcomes) 1)
+                             (= (hash-table-count sources) 3))
+                        "selected outcomes and source caches follow the bounded page")
+           (dolist (record records)
+             (application--record-presentation
+              application record :outcomes outcomes :source-cache (gethash record sources)))
+           (test-assert (and (= (length formatted) 4)
+                             (every (lambda (sequence) (member sequence '(198 199 200)))
+                                    formatted))
+                        "only final selected entries and their resolved outcome are formatted")
+           (test-assert
+            (every (lambda (record)
+                     (= (gethash (getf (rest record) :wire-json) decode-counts 0) 1))
+                   (remove-if-not (lambda (record) (eq (first record) ':provider-item))
+                                  raw-records))
+            "every provider record is decoded once through selection eviction and publication"))))))
+  nil)
+
+(-> application-tests--history-outcome-chronology () null)
+(defun application-tests--history-outcome-chronology ()
+  "Resolve an older selected call from chronological raw outcomes in a newer segment."
+  (dolist (terminal-result-p '(nil t))
+    (with-test-configuration (configuration)
+      (let* ((application (application-tool-outcome-tests--application configuration))
+             (call        (application-tool-outcome-tests--call 1 "older"))
+             (handoff     (application-tool-outcome-tests--result 2 "older"))
+             (replacement (application-tool-outcome-tests--result 4 "older"))
+             (active      (list
+                           (application-tool-outcome-tests--completion 3 "old-job" :outcome ':failure)
+                           replacement
+                           (application-tool-outcome-tests--completion 5 "old-job" :outcome ':success)
+                           (application-tool-outcome-tests--completion
+                            6 "new-job" :outcome ':failure :summary "selected terminal failure"))))
+        (setf (getf (rest handoff) :details)
+              (list :tool-execution :handed-off-p t :job (list :id "old-job"))
+              (getf (rest replacement) :details)
+              (list :tool-execution :handed-off-p t :job (list :id "new-job")))
+        (when terminal-result-p
+          (setf active (append active
+                               (list (application-tool-outcome-tests--result 7 "older")
+                                     (application-tool-outcome-tests--completion
+                                      8 "new-job" :outcome ':failure)))))
+        (multiple-value-bind (records count latest position outcomes sources)
+            (application--select-history-records
+             application (lambda (callback) (mapc callback (list call handoff)) 10)
+             :before-sequence 2 :limit 1)
+          (declare (ignore count latest position))
+          (test-call-with-function-replacements
+           (list (list 'conversation-record-entry
+                       (lambda (&rest arguments)
+                         (declare (ignore arguments))
+                         (error "Outcome correlation formatted an unselected record."))))
+           (lambda ()
+             (application--select-history-records
+              application (lambda (callback) (mapc callback active) 20)
+              :limit 1 :collect-p nil :outcomes outcomes)))
+          (let* ((key          (application--tool-outcome-key application ':call "older"))
+                 (raw          (gethash key outcomes))
+                 (presentation (application--record-presentation
+                                application (first records) :outcomes outcomes
+                                :source-cache                         (gethash (first records) sources)))
+                 (metadata     (third presentation)))
+            (test-assert (= (application--record-sequence (getf raw :outcome-record))
+                            (if terminal-result-p 7 6))
+                         "replaced job aliases cannot overwrite a later selected outcome")
+            (test-assert (eq (getf metadata :state)
+                             (if terminal-result-p ':success ':failure))
+                         "selected older invocations use their newer segment's final state")
+            (test-assert (if terminal-result-p
+                             (null (getf metadata :job-key))
+                             (equal (getf metadata :job-key)
+                                    (application--tool-outcome-key application ':job "new-job")))
+                         "job identity follows handoff replacement and terminal results"))))))
+  nil)
+
 (-> test-bounded-transcript-replay () null)
 (defun test-bounded-transcript-replay ()
   "Test startup replays exactly the newest two hundred fifty visible entries."
+  (application-tests--history-selection-work)
+  (application-tests--history-outcome-chronology)
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (conversation
