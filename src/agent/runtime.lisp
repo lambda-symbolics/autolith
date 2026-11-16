@@ -747,23 +747,30 @@ retries stay auditable next to the request they belong to."
                      :test #'equal))))
         (when (and plan (getf plan :argument-error))
           (setf (gethash "arguments" item) "{}"))
-        (conversation-append-provider-item
-         conversation
-         item
-         :tool-label (when (getf plan :tool)
-                       (tool-display-name (getf plan :tool)))
-         :persistence
-         (if plan
-             (getf plan :persistence)
-             ':durable))))
+        (handler-case
+            (conversation-append-provider-item
+             conversation
+             item
+             :tool-label (when (getf plan :tool)
+                           (tool-display-name (getf plan :tool)))
+             :persistence
+             (if plan
+                 (getf plan :persistence)
+                 ':durable))
+          (provider-call-conflict (condition)
+            (error 'agent-loop-error
+                   :message         (princ-to-string condition)
+                   :conversation-id (conversation-identifier conversation)
+                   :request-number  request-number)))))
     (conversation-append-provider-metadata
      conversation
-     (append (list :request-number   request-number
-                   :response-id      (provider-result-response-id result)
-                   :usage            (agent--portable-value
-                                      (provider-usage-normalize
-                                       (provider-result-usage result)))
-                   :request-identity (conversation-request-identity conversation))
+     (append (list :request-number         request-number
+                   :context-usage-pending t
+                   :response-id            (provider-result-response-id result)
+                   :usage                  (agent--portable-value
+                                            (provider-usage-normalize
+                                             (provider-result-usage result)))
+                   :request-identity       (conversation-request-identity conversation))
              ;; The service's effective retention mode, when it reports one.
              (let ((context (agent--result-reasoning-context result)))
                (and context (list :reasoning-context context))))))
@@ -2151,94 +2158,95 @@ loop, so compaction ahead of the user message shares the turn's budget."
                       :output-item-count (length (provider-result-output-items result))
                       :tool-call-count   (length calls)
                       :turn-completion   (provider-result-turn-completion result))))
-         (conversation-note-provider-response conversation)
-         (handler-case
-             (progn
-               (when (and calls (not tools-p))
-                 (error 'agent-loop-error
-                        :message         "A tool-free model turn returned function calls."
-                        :conversation-id (conversation-identifier conversation)
-                        :request-number  request-number))
-               (when (and calls tool-restriction-p (not tool-calls-p))
-                 (error 'agent-loop-error
-                        :message
-                        (format nil "A restricted turn exceeded its ~D tool-round limit."
-                                *agent-restricted-maximum-tool-rounds*)
-                        :conversation-id (conversation-identifier conversation)
-                        :request-number  request-number))
-               (when (and calls tool-restriction-p)
-                 (agent--validate-tool-call-allowlist
-                  agent calls tool-allowlist :request-number request-number))
-               (conversation-clear-ephemeral-input-items conversation)
-               (agent--validate-tool-call-identifiers
-                agent calls :seen-call-identifiers seen-call-identifiers
-                            :request-number        request-number))
-           (agent-loop-error (condition)
-             ;; Rejected calls still carry billable provider usage.
-             (agent-observer-status observer :provider-request-completed completion-details)
-             (error condition)))
-         (let ((call-plans
-                 (agent--tool-call-plans agent calls :storm-state storm-state)))
-           (agent--persist-provider-result
-            agent
-            result
-            :request-number request-number
-            :call-plans     call-plans)
-           (provider-context-note-response context-request result)
-           (agent--answer-tool-searches
-            agent result tool-namespaces :request-number request-number)
-           (agent--note-persisted-assistant-response
-            observer result request-number)
-           (agent-observer-status observer :provider-request-completed completion-details)
-           (knowledge-usage-capture conversation
-                                    :calls          calls
-                                    :request-number request-number
-                                    :usage          (provider-result-usage result))
-           (when (or (agent-turn-complete-p agent result)
-                     (and (null calls) (mission-agent-terminal-p agent)))
-             (agent-observer-status
-              observer
-              :turn-completed
-              (append
-               (list :provider-requests request-number
-                     :tool-rounds       tool-rounds
-                     :tool-calls        tool-calls
-                     :response-id       (provider-result-response-id result))
-               (agent-turn-completion-details agent)))
-             (agent-learn-procedures agent observer tool-calls)
-             (return result))
-           (cond
-             ((null calls)
+          (conversation-note-provider-response conversation)
+          (let ((call-plans nil))
+            (handler-case
+                (progn
+                  (when (and calls (not tools-p))
+                    (error 'agent-loop-error
+                           :message         "A tool-free model turn returned function calls."
+                           :conversation-id (conversation-identifier conversation)
+                           :request-number  request-number))
+                  (when (and calls tool-restriction-p (not tool-calls-p))
+                    (error 'agent-loop-error
+                           :message
+                           (format nil "A restricted turn exceeded its ~D tool-round limit."
+                                   *agent-restricted-maximum-tool-rounds*)
+                           :conversation-id (conversation-identifier conversation)
+                           :request-number  request-number))
+                  (when (and calls tool-restriction-p)
+                    (agent--validate-tool-call-allowlist
+                     agent calls tool-allowlist :request-number request-number))
+                  (conversation-clear-ephemeral-input-items conversation)
+                  (agent--validate-tool-call-identifiers
+                   agent calls :seen-call-identifiers seen-call-identifiers
+                               :request-number        request-number)
+                  (setf call-plans
+                        (agent--tool-call-plans agent calls :storm-state storm-state))
+                  (agent--persist-provider-result
+                   agent
+                   result
+                   :request-number request-number
+                   :call-plans     call-plans))
+              (agent-loop-error (condition)
+                ;; Rejected calls still carry billable provider usage.
+                (agent-observer-status observer :provider-request-completed completion-details)
+                (error condition)))
+            (provider-context-note-response context-request result)
+            (agent--answer-tool-searches
+             agent result tool-namespaces :request-number request-number)
+            (agent--note-persisted-assistant-response
+             observer result request-number)
+            (agent-observer-status observer :provider-request-completed completion-details)
+            (knowledge-usage-capture conversation
+                                     :calls          calls
+                                     :request-number request-number
+                                     :usage          (provider-result-usage result))
+            (when (or (agent-turn-complete-p agent result)
+                      (and (null calls) (mission-agent-terminal-p agent)))
               (agent-observer-status
                observer
-               :provider-follow-up
-               (list :request-number request-number))
-              (agent--apply-steering-input
-               agent observer request-number))
-             (t
-              (incf tool-rounds)
-              (incf tool-calls (length calls))
-              (agent--execute-tool-calls agent call-plans result
-                                         :observer           observer
-                                         :tool-round         tool-rounds
-                                         :tool-allowlist     tool-allowlist
-                                         :tool-restriction-p tool-restriction-p)
-              (if (or (agent-turn-complete-p agent result)
-                      (mission-agent-terminal-p agent))
-                  (progn
-                    (agent-observer-status
-                     observer
-                     :turn-completed
-                     (append
-                      (list :provider-requests request-number
-                            :tool-rounds       tool-rounds
-                            :tool-calls        tool-calls
-                            :response-id       (provider-result-response-id result))
-                      (agent-turn-completion-details agent)))
-                    (agent-learn-procedures agent observer tool-calls)
-                    (return result))
-                  (agent--apply-steering-input
-                   agent observer request-number)))))))))
+               :turn-completed
+               (append
+                (list :provider-requests request-number
+                      :tool-rounds       tool-rounds
+                      :tool-calls        tool-calls
+                      :response-id       (provider-result-response-id result))
+                (agent-turn-completion-details agent)))
+              (agent-learn-procedures agent observer tool-calls)
+              (return result))
+            (cond
+              ((null calls)
+               (agent-observer-status
+                observer
+                :provider-follow-up
+                (list :request-number request-number))
+               (agent--apply-steering-input
+                agent observer request-number))
+              (t
+               (incf tool-rounds)
+               (incf tool-calls (length calls))
+               (agent--execute-tool-calls agent call-plans result
+                                          :observer           observer
+                                          :tool-round         tool-rounds
+                                          :tool-allowlist     tool-allowlist
+                                          :tool-restriction-p tool-restriction-p)
+               (if (or (agent-turn-complete-p agent result)
+                       (mission-agent-terminal-p agent))
+                   (progn
+                     (agent-observer-status
+                      observer
+                      :turn-completed
+                      (append
+                       (list :provider-requests request-number
+                             :tool-rounds       tool-rounds
+                             :tool-calls        tool-calls
+                             :response-id       (provider-result-response-id result))
+                       (agent-turn-completion-details agent)))
+                     (agent-learn-procedures agent observer tool-calls)
+                     (return result))
+                   (agent--apply-steering-input
+                    agent observer request-number)))))))))
 
 (defmethod initialize-instance :after ((agent agent) &key conversation)
   "Attach a new execution to its participant's context backing."

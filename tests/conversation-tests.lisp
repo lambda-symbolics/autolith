@@ -1323,6 +1323,7 @@
            (conversation-append-user-message conversation "run the check")
            (conversation-append-provider-item conversation call)
            (let ((next-sequence (conversation-next-sequence conversation)))
+             (conversation-append-provider-item conversation call)
              (test-assert
               (= (conversation-next-sequence conversation) next-sequence)
               "an identical repeated call is a retry that adds no record")
@@ -1383,6 +1384,32 @@
              (test-assert
               (string= (json-get (fourth items) "role") "user")
               "replay retains history produced after the selected output")))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+(-> test-conversation-ephemeral-then-durable-call () null)
+(defun test-conversation-ephemeral-then-durable-call ()
+  "Test a request-local call does not swallow a later durable append."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration
+                                :identifier "ephemeral-then-durable"))
+         (call
+           (json-object "type" "function_call" "status" "completed"
+                        "arguments" "{}" "call_id" "shared-call"
+                        "name" "run" "namespace" "shell")))
+    (unwind-protect
+         (progn
+           (conversation-append-provider-item conversation call
+                                              :persistence ':next-response)
+           (let ((records (conversation-next-sequence conversation)))
+             (conversation-append-provider-item conversation call)
+             (test-assert (= (1+ records) (conversation-next-sequence conversation))
+                          "a durable append after a request-local copy still records")
+             (conversation-clear-ephemeral-input-items conversation)
+             (test-assert (= 1 (count-if #'function-call-item-p
+                                         (conversation-input-items conversation)))
+                          "the promoted call survives clearing request-local items")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 

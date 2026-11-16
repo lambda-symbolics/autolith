@@ -1040,6 +1040,7 @@
   test-conversation-lease-owner-startup-report
   test-conversation-interrupted-tool-call
   test-conversation-late-duplicate-tool-output
+  test-conversation-ephemeral-then-durable-call
   test-conversation-reload-keeps-exchange-order
   test-conversation-persistence
   test-conversation-private-storage

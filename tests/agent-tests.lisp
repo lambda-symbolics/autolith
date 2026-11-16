@@ -1241,20 +1241,42 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
          (let* ((conversation (conversation-create configuration
                                                   :identifier "duplicate-call-identity"))
                 (call         (agent-test-call :call-id "reused"))
+                (reordered    (json-object "status" "completed"
+                                           "call_id" "reused"
+                                           "arguments" "{}"
+                                           "name" "echo"
+                                           "namespace" "test"
+                                           "type" "function_call"))
                 (conflict     (agent-test-call :call-id   "reused"
-                                               :arguments "{\"value\":1}")))
+                                               :arguments "{\"value\":1}"))
+                (anonymous    (json-object "type" "function_call"
+                                           "arguments" "{}"
+                                           "name" "echo"
+                                           "namespace" "test")))
            (conversation-append-provider-item conversation call)
-           (conversation-append-provider-item conversation call)
-           (test-assert (= 1 (count-if #'function-call-item-p (conversation-input-items conversation)))
-                        "an identical repeated call is persisted once")
+           (let ((records (conversation-next-sequence conversation)))
+             (conversation-append-provider-item conversation call)
+             (conversation-append-provider-item conversation reordered)
+             (test-assert (= records (conversation-next-sequence conversation))
+                          "a repeated call adds no record")
+             (test-assert (= 1 (count-if #'function-call-item-p
+                                         (conversation-input-items conversation)))
+                          "a repeated call is projected once"))
            (test-assert (handler-case
                             (progn
                               (conversation-append-provider-item conversation conflict)
                               nil)
                           (provider-call-conflict () t))
                         "a reused identifier that names another call is refused")
-           (test-assert (= 1 (count-if #'function-call-item-p (conversation-input-items conversation)))
-                        "a conflicting call is never persisted"))
+           (test-assert (handler-case
+                            (progn
+                              (conversation-append-provider-item conversation anonymous)
+                              nil)
+                          (conversation-invariant-error () t))
+                        "a call without an identifier is refused")
+           (test-assert (= 1 (count-if #'function-call-item-p
+                                       (conversation-input-items conversation)))
+                        "a refused call is never persisted"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
