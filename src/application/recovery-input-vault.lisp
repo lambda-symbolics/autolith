@@ -985,11 +985,11 @@ The caller must hold CONTROLLER's lock."
              (format nil "~D follow-up or steering message~:P saved to the vault: "
                      (application-recovery-input-vault--input-count captures))))
         (list (terminal-span ':code "(vault)")
-              (terminal-span ':dim " shows, ")
+              (terminal-span ':dim " display contents, ")
               (terminal-span ':code "(vault-restore)")
-              (terminal-span ':dim " restores, ")
+              (terminal-span ':dim " resubmit messages, ")
               (terminal-span ':code "(vault-discard)")
-              (terminal-span ':dim " discards"))))
+              (terminal-span ':dim " delete queue"))))
       t)))
 
 (-> application-recovery-input-vault--actions (&key (:restore-p boolean)) list)
