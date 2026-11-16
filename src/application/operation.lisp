@@ -919,13 +919,20 @@ Only result types with an explicit native data contract opt in."))
     (values goal (not (null key)))))
 
 (-> application-lisp--snapshot-tool-value
-    (tool-result application) list)
-(defun application-lisp--snapshot-tool-value (result application)
-  "Snapshot a tool report and its content identity guard for local display.
-Use explicit native data when available, otherwise retain the report text.
-No live result, tool, or native data object escapes in the snapshot."
-  (let ((content (copy-seq (tool-result-content result))))
-    (or (handler-case
+    (tool-result application string) list)
+(defun application-lisp--snapshot-tool-value (result application tool-name)
+  "Snapshot TOOL-NAME's report and its content identity guard for local display.
+A background handoff becomes the entry an agent's handoff shows, with its
+job.cancel call. Otherwise use explicit native data when available, or retain
+the report text. No live result, tool, or native data object escapes in the
+snapshot."
+  (let ((content (copy-seq (tool-result-content result)))
+        (handoff (application--tool-execution-handoff
+                  (list :tool-result :status ':ok :details (tool-result-details result)))))
+    (or (when handoff
+          (list (application--tool-execution-handoff-entry application tool-name handoff)
+                content ':handoff))
+        (handler-case
             (multiple-value-bind (value present-p)
                 (application-lisp--native-tool-value result)
               (when present-p
@@ -977,7 +984,7 @@ No live result, tool, or native data object escapes in the snapshot."
           ;; A reused content identity is ambiguous, even for a plain report.
           (setf (gethash content *application-lisp-tool-results*)
                 (unless (nth-value 1 (gethash content *application-lisp-tool-results*))
-                  (application-lisp--snapshot-tool-value result application)))))
+                  (application-lisp--snapshot-tool-value result application canonical-name)))))
       (tool-result-content result))))
 
 (defmethod application-operation-invoke

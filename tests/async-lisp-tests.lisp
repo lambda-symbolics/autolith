@@ -139,6 +139,43 @@
                       "cancellation preserves captured output and a terminal result")))))
   nil)
 
+(-> test-application-async-lisp-cancel-call () null)
+(defun test-application-async-lisp-cancel-call ()
+  "Offer the job.cancel call when a background evaluation starts, as an agent's handoff does."
+  (async-lisp-tests--call-with-application
+   (lambda (application)
+     (let ((present (symbol-function 'application-present))
+           (entries nil))
+       (setf *async-lisp-test-started* (sb-thread:make-semaphore))
+       (test-call-with-function-replacements
+        (list (list 'application-present
+                    (lambda (owner entry &rest arguments)
+                      (push entry entries)
+                      (apply present owner entry arguments))))
+        (lambda ()
+          (application-run-async-lisp-input
+           application
+           "? (progn (sb-thread:signal-semaphore *async-lisp-test-started*) (sleep 60))")))
+       (let* ((job     (async-lisp-tests--last-job application))
+              (call    (terminal-ui--job-cancel-text (session-job-identifier job)))
+              (entry   (find-if (lambda (entry)
+                                  (and (listp entry) (some #'termdown:widget-p entry)))
+                                entries))
+              (widgets (remove-if-not #'termdown:widget-p entry)))
+         (test-assert (sb-thread:wait-on-semaphore *async-lisp-test-started* :timeout 5)
+                      "the background form started")
+         (test-assert (and widgets
+                           (string= call (terminal--spans-text widgets))
+                           (every (lambda (widget)
+                                    (equal (list ':insert call) (termdown:widget-action widget)))
+                                  widgets))
+                      "the submission offers a clickable job.cancel call for its job")
+         (test-assert (search "in background" (terminal--spans-text entry))
+                      "the submission reads like an agent's handoff")
+         (session-job-cancel job ':user)
+         (async-lisp-tests--wait job)))))
+  nil)
+
 (-> test-application-async-lisp-routing () null)
 (defun test-application-async-lisp-routing ()
   "Test async classification, multiline input, busy routing, and recalled work consumption."

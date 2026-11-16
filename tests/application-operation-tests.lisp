@@ -1223,3 +1223,41 @@
       (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+(-> test-application-lisp-handoff-presentation () null)
+(defun test-application-lisp-handoff-presentation ()
+  "Show a user's background tool call as an agent's handoff is shown, with its job.cancel call."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (let ((call (terminal-ui--job-cancel-text "exec:7")))
+           (test-call-with-function-replacements
+            (list (list 'tool-execute
+                        (lambda (&rest arguments)
+                          (declare (ignore arguments))
+                          (application-operation-tests--native-result
+                           '(:tool-execution :handed-off-p t :handoff-reason :requested
+                             :job (:id "exec:7" :state :running))))))
+            (lambda ()
+              (let* ((evaluation (application-lisp-evaluate
+                                  "(test-operation.echo :text \"background\")"
+                                  :application application))
+                     (entry      (application-lisp--result-entry evaluation))
+                     (widgets    (remove-if-not #'termdown:widget-p entry))
+                     (text       (terminal--spans-text entry)))
+                (test-assert (equal '(:handoff) (application-lisp-evaluation-value-kinds evaluation))
+                             "A handed-off tool call has its own presentation kind.")
+                (test-assert (and widgets
+                                  (string= call (terminal--spans-text widgets))
+                                  (every (lambda (widget)
+                                           (equal (list ':insert call) (termdown:widget-action widget)))
+                                         widgets))
+                             "The user's background tool call offers a clickable job.cancel call.")
+                (test-assert (and (search "running in background" text)
+                                  (not (search "HANDED-OFF-P" text)))
+                             "The handoff reads as job state, not as serialized data.")))))
+      (ignore-errors (terminal-ui-stop (application-ui application)))
+      (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)

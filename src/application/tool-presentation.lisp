@@ -2154,9 +2154,13 @@ re-emitting untrusted serialized JSON."
                    (application--failure-result-rows
                     output :tool-name (getf (rest record) :tool)))))))
 
-(-> application--tool-execution-handoff-entry (application list list) list)
-(defun application--tool-execution-handoff-entry (application record handoff)
-  "Present a background handoff as job state and identity rather than serialized output."
+(-> application--tool-execution-handoff-entry (application string list) list)
+(defun application--tool-execution-handoff-entry (application tool-name handoff)
+  "Present TOOL-NAME's background HANDOFF as job state and identity, not as serialized output.
+
+A job that is still queued or running offers its job.cancel call. The agent's
+tool result, the user's own tool call and the user's background evaluation all
+show this entry."
   (let* ((job         (getf (rest handoff) :job))
          (state       (getf job :state))
          (reason      (getf (rest handoff) :handoff-reason))
@@ -2180,9 +2184,7 @@ re-emitting untrusted serialized JSON."
      (application--tool-entry
       application
       :style  (if (eq state ':failed) ':failure ':notice)
-      :header (format nil "↪ ~A"
-                      (application--tool-display-name
-                       application (getf (rest record) :tool)))
+      :header (format nil "↪ ~A" (application--tool-display-name application tool-name))
       :detail (format nil "~A · ~A" status
                       (if (member state '(:queued :running))
                           (terminal-ui--job-cancel-text (getf job :id))
@@ -2205,7 +2207,8 @@ re-emitting untrusted serialized JSON."
   (declare (ignore tool))
   (let ((handoff (application--tool-execution-handoff record)))
     (if handoff
-        (application--tool-execution-handoff-entry application record handoff)
+        (application--tool-execution-handoff-entry
+         application (getf (rest record) :tool) handoff)
         (call-next-method))))
 
 (defmethod application-tool-result-entry

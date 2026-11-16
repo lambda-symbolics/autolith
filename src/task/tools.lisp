@@ -852,6 +852,21 @@ jobs return three NIL values; each frontend owns its error and presentation."
                    :result       result))
            nil path)))))
 
+(-> session-job-handoff-form (tool-execution-job agent keyword) (values list string))
+(defun session-job-handoff-form (job viewer reason)
+  "Return background JOB's handoff form for VIEWER and that form as text.
+
+REASON says why the job runs in the background. Every presentation of a
+handoff reads this form, whoever started the job."
+  (task--job-native-form
+   job (session-job-snapshot job) viewer
+   :wrapper
+   (lambda (record)
+     (list :tool-execution
+           :handed-off-p   t
+           :handoff-reason reason
+           :job            record))))
+
 (-> task--tool-execution-handoff-result
     (tool-execution-job agent keyword)
     task-tool-result)
@@ -861,19 +876,10 @@ jobs return three NIL values; each frontend owns its error and presentation."
 The content opens with how the result will reach VIEWER, so the model does not
 poll a job whose completion will wake it."
   (task-completion-watch job viewer)
-  (let ((snapshot (session-job-snapshot job)))
-    (multiple-value-bind (form content)
-        (task--job-native-form
-         job snapshot viewer
-         :wrapper
-         (lambda (record)
-           (list :tool-execution
-                 :handed-off-p t
-                 :handoff-reason reason
-                 :job            record)))
-      (task-tool-result
-       (format nil "~A~%~A" (task--handoff-guidance job viewer) content)
-       form))))
+  (multiple-value-bind (form content) (session-job-handoff-form job viewer reason)
+    (task-tool-result
+     (format nil "~A~%~A" (task--handoff-guidance job viewer) content)
+     form)))
 
 (-> task--handoff-guidance (session-job agent) string)
 (defun task--handoff-guidance (job viewer)
