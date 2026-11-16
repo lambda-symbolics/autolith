@@ -346,6 +346,9 @@
 
 (defclass relay-recording-terminal (queued-recording-terminal stream-terminal)
   ()
+  (:default-initargs                       :input-stream          (make-string-input-stream "")
+                    :output-stream         (make-broadcast-stream)
+                    :input-file-descriptor -1)
   (:documentation "A queued recording terminal using the real direct-stream relay adapter."))
 
 (defmethod terminal-input-ready-p ((terminal queued-recording-terminal))
