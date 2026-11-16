@@ -339,3 +339,91 @@
               (equal (conversation-input-history (conversation-load identity)) expected)
               "repaired history reloads without scanning retired records")))))))
   nil)
+
+(-> test-conversation-input-history-page-load () null)
+(defun test-conversation-input-history-page-load ()
+  "Count cold page traversals and recover tentative pages without retaining skipped inputs."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (identity (conversation-pathname conversation))
+           (sidecar (conversation-input-history-pathname identity))
+           (inputs (loop for index below 12
+                         collect (format nil "input ~D ~A" index
+                                         (make-string 16384 :initial-element #\x))))
+           (original-map (symbol-function 'log-map)))
+      (loop for input in inputs
+            for index from 0
+            do (conversation-append-user-message conversation input)
+               (conversation-append-user-message conversation input)
+               (when (= index 4)
+                 (conversation-append-summary conversation
+                                              (make-continuation :intent "checkpoint"))))
+      (dolist (case '(((:limit 3) 9 12 1)
+                      ((:start 3 :limit 2) 3 5 1)
+                      ((:start 0 :limit 2 :skip 9) 0 2 1)
+                      ((:limit 0) 0 0 1)
+                      ((:start 20 :limit 3) 0 0 1)
+                      ((:skip 12 :limit 3) 0 0 1)
+                      ((:skip 3 :limit 2) 7 9 2)))
+        (let ((loaded (conversation-load identity)))
+          (dotimes (visit 2)
+            (let ((passes 0))
+              (test-call-with-function-replacements
+               (list (list 'log-map
+                           (lambda (function pathname &rest arguments)
+                             (when (equal pathname sidecar) (incf passes))
+                             (apply original-map function pathname arguments))))
+               (lambda ()
+                 (multiple-value-bind (page total)
+                     (apply #'conversation-input-history-page loaded (first case))
+                   (test-assert (and (= total 12)
+                                     (equal page (subseq inputs (second case) (third case))))
+                                "cold and warm pages preserve deduplication, bounds and total"))))
+              (test-assert (= passes (fourth case))
+                           "newest and absolute pages read once; relative older pages read twice")))))
+      (let ((forms (log-read sidecar)))
+        (dolist (damage '(:torn :torn-duplicate :invalid :stale :publication-failure))
+          (sexp-store:log-write
+           sidecar
+           (case damage
+             (:torn (butlast forms 2))
+             (:torn-duplicate (butlast forms))
+             (:stale (subseq forms 0 2))
+             (otherwise
+              (append (subseq forms 0 4) (list '(:input :seq 0 :source "invalid"))))))
+          (when (member damage '(:torn :torn-duplicate))
+            (with-open-file (stream sidecar :direction ':output :if-exists ':append)
+              (write-string "(:input" stream)))
+          (let* ((loaded (conversation-load identity))
+                 (original-write (symbol-function 'log-write-streaming))
+                 (replacements
+                   (when (eq damage ':publication-failure)
+                     (list (list 'log-write-streaming
+                                 (lambda (&rest arguments)
+                                   (apply original-write arguments)
+                                   (error "Injected failure after history publication.")))))))
+            (test-call-with-function-replacements
+             replacements
+             (lambda ()
+               (multiple-value-bind (page total)
+                   (conversation-input-history-page loaded :limit 3)
+                 (test-assert (and (= total 12) (equal page (subseq inputs 9)))
+                              "recovery resets tentative deduplication, total and newest queue"))))
+            (multiple-value-bind (page total)
+                (conversation-input-history-page loaded :start 0 :limit 12)
+              (test-assert (and (= total 12) (equal page inputs))
+                           "recovered pages retain the complete chronological history")))))
+      (let ((loaded (conversation-load identity)))
+        (conversation-input-history-page loaded :limit 3)
+        (test-call-with-function-replacements
+         (list (list 'conversation-input-history--publish
+                     (lambda (&rest arguments) (declare (ignore arguments)) nil)))
+         (lambda ()
+           (conversation-append-user-message loaded (first (last inputs)))
+           (conversation-append-user-message loaded "later")))
+        (multiple-value-bind (page total)
+            (conversation-input-history-page loaded :limit 3)
+          (test-assert (and (= total 13)
+                            (equal page (append (subseq inputs 10) '("later"))))
+                       "warm catchup maps all inputs once and merges the old/new boundary")))))
+  nil)
