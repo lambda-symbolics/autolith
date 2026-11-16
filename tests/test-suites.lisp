@@ -385,6 +385,9 @@
   test-fullscreen-outcome-publication-retry
   test-fullscreen-outcome-eviction-and-reset
   test-fullscreen-handoff-origin
+  test-fullscreen-origin-reverse-search
+  test-fullscreen-origin-chronology
+  test-tool-outcome-selection-metadata
   test-terminal-compact-success-groups
   test-terminal-compact-success-stream-and-retry
   test-terminal-compact-call-groups

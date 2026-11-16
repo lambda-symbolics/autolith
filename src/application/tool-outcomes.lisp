@@ -35,9 +35,10 @@
         append (cons (terminal-span ':plain (string #\Newline))
                      (application--tool-row-spans application row))))
 
-(-> application--tool-result-outcome (application list list) (option list))
-(defun application--tool-result-outcome (application record entry)
-  "Describe RECORD's semantic outcome without interpreting its output text."
+(-> application--tool-result-outcome
+    (application list list &key (:metadata-only-p boolean)) (option list))
+(defun application--tool-result-outcome (application record entry &key metadata-only-p)
+  "Describe RECORD's outcome, omitting formatted body work when METADATA-ONLY-P."
   (let* ((properties (rest record))
          (call-key   (application--tool-outcome-key
                       application ':call (getf properties :call-id)))
@@ -59,20 +60,22 @@
             :entry-transform (when (and (eq state ':failure)
                                         (equal (getf properties :tool) "resource.edit"))
                                #'application--resource-edit-failure-entry)
-            :body            (cond
-                               (handoff
-                                (cons (terminal-span ':plain (string #\Newline)) entry))
-                               ((and (eq state ':success) entry
-                                     (typep (application--find-tool application (getf properties :tool))
-                                            'papercut-report-tool))
-                                ;; Prominent notices, such as papercut reports, retain their heading.
-                                (cons (terminal-span ':plain (string #\Newline)) entry))
-                               (t
-                                (application--entry-body entry)))))))
+            :body            (unless metadata-only-p
+                               (cond
+                                 (handoff
+                                  (cons (terminal-span ':plain (string #\Newline)) entry))
+                                 ((and (eq state ':success) entry
+                                       (typep (application--find-tool application (getf properties :tool))
+                                              'papercut-report-tool))
+                                  ;; Prominent notices, such as papercut reports, retain their heading.
+                                  (cons (terminal-span ':plain (string #\Newline)) entry))
+                                 (t
+                                  (application--entry-body entry))))))))
 
-(-> application--job-completion-outcome (application list list) (option list))
-(defun application--job-completion-outcome (application properties entry)
-  "Associate a durable job notice with its handed-off invocation."
+(-> application--job-completion-outcome
+    (application list list &key (:metadata-only-p boolean)) (option list))
+(defun application--job-completion-outcome (application properties entry &key metadata-only-p)
+  "Associate a job notice with its invocation, optionally omitting formatted body work."
   (let* ((completion (getf properties :job-completion))
          (outcome    (getf completion :outcome))
          (job-key    (application--tool-outcome-key
@@ -89,23 +92,30 @@
       (list :kind ':completion :job-key job-key :state state
             :retain-output-p (or (not (eq state ':success))
                                  (not (application-compact-view-p application)))
-            :body            (cond
-                               ((and (eq state ':failure) (non-empty-string-p summary))
-                                (application--tool-outcome-body
-                                 application
-                                 (application--failure-result-rows summary)))
-                               ((eq state ':pending)
-                                (cons (terminal-span ':plain (string #\Newline)) entry))
-                               ((not (application-compact-view-p application))
-                                (application--entry-body entry)))))))
+            :body            (unless metadata-only-p
+                               (cond
+                                 ((and (eq state ':failure) (non-empty-string-p summary))
+                                  (application--tool-outcome-body
+                                   application
+                                   (application--failure-result-rows summary)))
+                                 ((eq state ':pending)
+                                  (cons (terminal-span ':plain (string #\Newline)) entry))
+                                 ((not (application-compact-view-p application))
+                                  (application--entry-body entry))))))))
 
-(-> application--record-tool-outcome-basic (application list list) (option list))
-(defun application--record-tool-outcome-basic (application record entry)
-  "Extract RECORD's invocation identity, lifecycle state and rendered ENTRY body."
+(-> application--record-tool-outcome-basic
+    (application list list &key (:item t) (:metadata-only-p boolean)) (option list))
+(defun application--record-tool-outcome-basic
+    (application record entry &key (item nil item-supplied-p) metadata-only-p)
+  "Extract RECORD's identity and lifecycle state, reusing decoded provider ITEM.
+
+METADATA-ONLY-P suppresses formatted outcome bodies during history selection."
   (case (first record)
     (:provider-item
      (let* ((wire-json (getf (rest record) :wire-json))
-            (item      (and (stringp wire-json) (json-decode wire-json)))
+            (item      (if item-supplied-p
+                           item
+                           (and (stringp wire-json) (application--transcript-json wire-json))))
             (call-key  (when (and (json-object-p item)
                                   (equal (json-get item "type") "function_call"))
                          (application--tool-outcome-key
@@ -114,41 +124,38 @@
          (list :kind ':call :call-key call-key :state ':pending
                :expandable-input-p (equal (function-call-canonical-name item) "lisp.eval")))))
     (:tool-result
-     (application--tool-result-outcome application record entry))
+     (application--tool-result-outcome application record entry :metadata-only-p metadata-only-p))
     (:message
      (when (application--job-completion-message-p (rest record))
-       (application--job-completion-outcome application (rest record) entry)))))
+       (application--job-completion-outcome application (rest record) entry
+                                            :metadata-only-p metadata-only-p)))))
 
 (-> application--tool-outcome-origin (application list) (option list))
 (defun application--tool-outcome-origin (application metadata)
-  "Recover the durable invocation for an outcome whose viewport chunk was evicted."
-  (let ((conversation (application-conversation application))
-        (call-key     (getf metadata :call-key))
-        (job-key      (getf metadata :job-key)))
-    (when (and (null call-key) job-key)
-      (setf call-key
-            (block found
-              (conversation-map-records
-               conversation
-               (lambda (record)
-                 (when (eq (first record) ':tool-result)
-                   (let* ((handoff (application--tool-execution-handoff record))
-                          (job     (getf (rest handoff) :job)))
-                     (when (equal job-key (application--tool-outcome-key
-                                           application ':job (getf job :id)))
-                       (return-from found
-                         (application--tool-outcome-key
-                          application ':call (getf (rest record) :call-id))))))))
-              nil)))
-    (when call-key
+  "Recover an evicted invocation before METADATA's sequence, newest records first."
+  (let ((call-key (getf metadata :call-key))
+        (job-key  (getf metadata :job-key))
+        (before   (getf metadata :seq)))
+    (when (or call-key job-key)
       (block found
-        (conversation-map-records
-         conversation
+        (conversation-map-records-reverse
+         (application-conversation application)
          (lambda (record)
-           (when (eq (first record) ':provider-item)
-             (let ((candidate (application--record-tool-outcome-basic application record nil)))
-               (when (equal call-key (getf candidate :call-key))
-                 (return-from found (application--record-presentation application record)))))))
+           (let ((sequence (application--record-sequence record)))
+             (when (or (null before) (null sequence) (< sequence before))
+               (cond
+                 ((and (null call-key) (eq (first record) ':tool-result))
+                  (let* ((handoff (application--tool-execution-handoff record))
+                         (job     (getf (rest handoff) :job)))
+                    (when (equal job-key (application--tool-outcome-key
+                                          application ':job (getf job :id)))
+                      (setf call-key (application--tool-outcome-key
+                                      application ':call (getf (rest record) :call-id))))))
+                 ((and call-key (eq (first record) ':provider-item))
+                  (let ((candidate (application--record-tool-outcome-basic application record nil)))
+                    (when (equal call-key (getf candidate :call-key))
+                      (return-from found
+                        (application--record-presentation application record))))))))))
         nil))))
 
 (-> application--record-tool-outcome (application list list) (option list))
@@ -166,7 +173,8 @@
     (when (and (member (getf metadata :kind) '(:result :completion))
                (terminal-ui-fullscreen-p (application-ui application)))
       (let ((keys (list :call-key (getf metadata :call-key)
-                        :job-key  (getf metadata :job-key))))
+                        :job-key  (getf metadata :job-key)
+                        :seq      (application--record-sequence record))))
         (setf (getf metadata :origin-function)
               (lambda () (application--tool-outcome-origin application keys)))))
     metadata))

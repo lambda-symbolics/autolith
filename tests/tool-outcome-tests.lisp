@@ -342,3 +342,119 @@
                            (format nil "  │ completed~%~:[~%~;~]" group)))
                      "job completion preserves the invocation's group, prefix, and entry kind"))))
   nil)
+
+(-> test-fullscreen-origin-reverse-search () null)
+(defun test-fullscreen-origin-reverse-search ()
+  "Recover nearby origins without reading older segments, and exhaust genuine misses."
+  (with-test-configuration (configuration)
+    (let* ((application (application-tool-outcome-tests--application configuration))
+           (conversation (application-conversation application)))
+      (dotimes (index 2)
+        (conversation-append-record
+         conversation (list :message :role ':user :content (format nil "old segment ~D" index)))
+        (conversation-append-summary conversation (make-continuation :intent "older checkpoint")))
+      (let* ((call (application-tool-outcome-history-tests--append
+                    conversation (application-tool-outcome-tests--call 0 "nearby")))
+             (handoff (application-tool-outcome-tests--result 0 "nearby"))
+             (active (conversation-storage-active-pathname (conversation-pathname conversation)))
+             (segment-map (fdefinition 'sexp-store:segment-map))
+             (reads 0))
+        (setf (getf (rest handoff) :details)
+              '(:tool-execution :handed-off-p t :job (:id "exec:nearby")))
+        (setf handoff (application-tool-outcome-history-tests--append conversation handoff))
+        (let ((completion (application-tool-outcome-history-tests--append
+                           conversation (application-tool-outcome-tests--completion
+                                         0 "exec:nearby" :outcome ':failure))))
+          (test-call-with-function-replacements
+           (list (list 'conversation-map-records
+                       (lambda (&rest arguments)
+                         (declare (ignore arguments))
+                         (error "Origin lookup used forward lifetime mapping.")))
+                 (list 'conversation--map-storage-records
+                       (lambda (&rest arguments)
+                         (declare (ignore arguments))
+                         (error "Origin lookup used forward storage mapping.")))
+                 (list 'sexp-store:segment-map
+                       (lambda (function segment &rest arguments)
+                         (test-assert (equal segment active)
+                                      "a nearby origin does not open archived segments")
+                         (incf reads)
+                         (apply segment-map function segment arguments))))
+           (lambda ()
+             (dolist (outcome (list handoff completion))
+               (let* ((presentation (application--record-presentation application outcome))
+                      (origin (funcall (getf (third presentation) :origin-function))))
+                 (test-assert (equal (first origin)
+                                     (application--record-presentation-identifier application call))
+                              "result and job completion recover the same durable invocation")))
+             (test-assert (= reads 2)
+                          "each origin lookup visits its newest segment only once"))))
+        (dolist (kind '(:call :job))
+          (test-assert
+           (null (application--tool-outcome-origin
+                  application
+                  (list (if (eq kind ':call) ':call-key ':job-key)
+                        (application--tool-outcome-key application kind "missing"))))
+           "an absent origin returns NIL after searching archived segments")))))
+  nil)
+
+(-> test-fullscreen-origin-chronology () null)
+(defun test-fullscreen-origin-chronology ()
+  "Resolve reused call and job identifiers at the outcome's historical position."
+  (with-test-configuration (configuration)
+    (let* ((application (application-tool-outcome-tests--application configuration))
+           (conversation (application-conversation application))
+           (pairs nil))
+      (dotimes (index 2)
+        (let* ((call (application-tool-outcome-history-tests--append
+                      conversation (application-tool-outcome-tests--call 0 "reused")))
+               (handoff (application-tool-outcome-tests--result 0 "reused")))
+          (setf (getf (rest handoff) :details)
+                '(:tool-execution :handed-off-p t :job (:id "exec:0")))
+          (setf handoff (application-tool-outcome-history-tests--append conversation handoff))
+          ;; This reused call follows the handoff and cannot be its origin.
+          (application-tool-outcome-history-tests--append
+           conversation (application-tool-outcome-tests--call 0 "reused"))
+          (let ((completion (application-tool-outcome-history-tests--append
+                             conversation (application-tool-outcome-tests--completion
+                                           0 "exec:0" :outcome ':failure))))
+            (push (list call handoff completion) pairs)))
+        (conversation-append-summary conversation (make-continuation :intent "reused identifiers")))
+      (dolist (pair pairs)
+        (dolist (outcome (rest pair))
+          (let* ((presentation (application--record-presentation application outcome))
+                 (origin (funcall (getf (third presentation) :origin-function))))
+            (test-assert
+             (equal (first origin) (application--record-presentation-identifier application (first pair)))
+             "historical outcomes cannot attach to a later reused call or job identifier"))))))
+  nil)
+
+(-> test-tool-outcome-selection-metadata () null)
+(defun test-tool-outcome-selection-metadata ()
+  "Select lifecycle metadata without decoding a supplied item or formatting failure bodies."
+  (with-test-configuration (configuration)
+    (let* ((application (application-tool-outcome-tests--application configuration))
+           (call (application-tool-outcome-tests--call 1 "raw"))
+           (item (json-decode (getf (rest call) :wire-json)))
+           (completion (application-tool-outcome-tests--completion 2 "exec:raw" :outcome ':failure)))
+      (test-call-with-function-replacements
+       (list (list 'json-decode
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     (error "Selection decoded a supplied provider item.")))
+             (list 'application--failure-result-rows
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     (error "Selection formatted an unselected failure body."))))
+       (lambda ()
+         (let ((metadata (application--record-tool-outcome-basic
+                          application call nil :item item :metadata-only-p t)))
+           (test-assert (equal (getf metadata :call-key)
+                               (application--tool-outcome-key application ':call "raw"))
+                        "raw provider metadata uses the decoded item"))
+         (let ((metadata (application--record-tool-outcome-basic
+                          application completion nil :metadata-only-p t)))
+           (test-assert (and (eq (getf metadata :state) ':failure)
+                             (null (getf metadata :body)))
+                        "raw completion metadata retains lifecycle state without a body"))))))
+  nil)
