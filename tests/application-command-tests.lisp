@@ -479,7 +479,8 @@
   (dolist
       (case
        '(("/help" :execute)
-         ("/cwd /tmp" :hold)
+         ("/cwd /tmp" :steer)
+         ("/cwd" :execute)
          ("/model gpt-5.6-sol" :apply)
          ("/detach" :execute)
          ("/fix-skipped-definitions" :hold)
@@ -2284,7 +2285,7 @@
 
 (-> test-channel-command-admission-safety () null)
 (defun test-channel-command-admission-safety ()
-  "Keep current-session mutation and computed Lisp arguments off the immediate path."
+  "Respect command lanes while deferring computed Lisp arguments."
   (with-test-configuration (configuration)
     (let* ((terminal     (make-instance 'recording-terminal :columns 80))
            (ui           (terminal-ui-create :terminal terminal))
@@ -2295,10 +2296,16 @@
            (controller   (application-input-controller-create application :start-reader-p nil)))
       (unwind-protect
            (progn
-             (dolist (source '("(model)" "(effort)" "(compact)" "(cwd \"elsewhere\")"
-                               "(tell (read-line) \"message\")"))
-               (test-assert (eq (application-operation-source-active-turn-action application source) ':hold)
-                            (format nil "~A keeps its serialized admission" source)))
+             (dolist (case '(("(model)" :hold)
+                             ("(effort)" :hold)
+                             ("(compact)" :hold)
+                             ("(cwd \"elsewhere\")" :steer)
+                             ("(cwd)" :execute)
+                             ("(cwd (read-line))" :hold)
+                             ("(tell (read-line) \"message\")" :hold)))
+               (destructuring-bind (source expected) case
+                 (test-assert (eq (application-operation-source-active-turn-action application source) expected)
+                              (format nil "~A has channel admission ~S" source expected))))
              (application-input-controller-begin-external-work controller)
              (unwind-protect
                   (dolist (source '("(new)" "/new"))
