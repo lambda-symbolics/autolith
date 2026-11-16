@@ -1913,6 +1913,7 @@
   test-application-async-lisp-evaluation
   test-application-async-lisp-concurrency
   test-application-async-lisp-cancellation
+  test-application-async-lisp-cancel-call
   test-async-lisp-output-flood
   test-async-lisp-output-captures-standard-text
   test-async-lisp-output-sanitizes-control-text
@@ -2099,7 +2100,8 @@
   test-application-lisp-result-presentations
   test-application-lisp-shared-report-identity
   test-application-lisp-terminal-widths
-  test-application-lisp-report-text)
+  test-application-lisp-report-text
+  test-application-lisp-handoff-presentation)
 
 (define-test-suite lisp-value-evaluation
   test-application-lisp-value-evaluation-safety)

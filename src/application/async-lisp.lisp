@@ -162,5 +162,7 @@ so completion enters the originating session even after a session switch."
                     (return-from application-run-async-lisp-input ':failed))))))
         (application-async-lisp--present
          application conversation
-         (format nil "Async Lisp submitted: ~A" (session-job-identifier job))))
+         (application--tool-execution-handoff-entry
+          application "async-lisp"
+          (session-job-handoff-form job (application-agent application) ':requested))))
       ':continue)))

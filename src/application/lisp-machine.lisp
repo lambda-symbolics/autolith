@@ -261,14 +261,20 @@ journaling or provider conversation projection."
         (if values
             (loop for value in values
                   for index from 0
+                  for kind = (nth index (application-lisp-evaluation-value-kinds evaluation))
                   append
                   (append
                    (unless (zerop index)
                      (list (terminal-span ':plain (string #\Newline))))
-                   (list (terminal-span ':success "⇒ "))
-                   (if (eq (nth index (application-lisp-evaluation-value-kinds evaluation)) ':text)
-                       (list (terminal-span ':plain value))
-                       (application-lisp--value-spans value))))
+                   (case kind
+                     (:handoff
+                      value)
+                     (:text
+                      (list (terminal-span ':success "⇒ ")
+                            (terminal-span ':plain value)))
+                     (otherwise
+                      (cons (terminal-span ':success "⇒ ")
+                            (application-lisp--value-spans value))))))
             (list (terminal-span ':success "⇒ ")
                   (terminal-span ':dim "no values")))))
      (:aborted
@@ -763,9 +769,10 @@ caller."
 (-> application-lisp--render-values
     (list (option application)) (values list list))
 (defun application-lisp--render-values (values application)
-  "Snapshot VALUES as display text and corresponding Lisp or report kinds.
-Use tool presentation only for unambiguous, unchanged content identities.
-No raw values or tool objects escape in the returned lists."
+  "Snapshot VALUES for display and return each one's kind beside it.
+A :LISP or :TEXT value is display text. A :HANDOFF value is the finished entry
+of a background handoff. Use tool presentation only for unambiguous, unchanged
+content identities. No raw values or tool objects escape in the returned lists."
   (let ((texts nil)
         (kinds nil))
     (dolist (value values)
