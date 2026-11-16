@@ -137,6 +137,7 @@ offered only while the typed prefix no longer matches its primary."
 (-> terminal-ui-create
     (&key (:terminal terminal) (:editor (option line-editor)) (:prompt string)
      (:placeholder string) (:completions list) (:fullscreen-p boolean)
+     (:prompt-padding (integer 0 2))
      (:completion-function (option function))
      (:completion-root (option pathname))
      (:path-search-function (option function))
@@ -147,12 +148,13 @@ offered only while the typed prefix no longer matches its primary."
 (defun terminal-ui-create
     (&key terminal editor (prompt "> ") (placeholder "") completions
        completion-function completion-root path-search-function mention-function
-       fullscreen-p message-header-prefixes
+       fullscreen-p message-header-prefixes (prompt-padding 1)
        (clock-function #'terminal-ui--monotonic-seconds))
   "Create an inline or opt-in fullscreen UI for interactive TERMINAL.
 
 MESSAGE-HEADER-PREFIXES name the transcript lines the fullscreen viewport
 jumps between as messages. MENTION-FUNCTION completes @ participant names."
+  (check-type prompt-padding (integer 0 2))
   (unless (typep terminal 'terminal)
     (error 'terminal-error
            :message   "TERMINAL-UI-CREATE requires a terminal instance."
@@ -209,6 +211,7 @@ jumps between as messages. MENTION-FUNCTION completes @ participant names."
                    :live-region             live-region
                    :clock-function          clock-function
                    :prompt                  prompt
+                   :prompt-padding          prompt-padding
                    :message-header-prefixes message-header-prefixes
                    :placeholder             placeholder
                    :completions             completions
@@ -2260,13 +2263,14 @@ and the modeline last, so the response being received stays in view."
          (tail      (terminal-ui-stream-tail ui))
          (tail-rows (and tail (terminal-ui--stream-tail-rows terminal tail row-width)))
          (leading   (if (terminal-ui-compact-tail-group ui) 1 0))
+         (padding   (if (terminal-ui-selector ui) 1 (terminal-ui-prompt-padding ui)))
          (overflow  (and limit
-                         (- (+ leading (length tail-rows) (length activity) 1) limit))))
+                         (- (+ leading (length tail-rows) (length activity) padding) limit))))
     (when (and tail-rows overflow (plusp overflow))
       (setf activity (butlast activity overflow)))
     (let ((rows (append tail-rows activity)))
       (when rows
-        (setf rows (append rows (list nil))))
+        (setf rows (append rows (make-list padding))))
       (if (plusp leading)
           (cons nil rows)
           rows))))
@@ -2300,7 +2304,7 @@ and the modeline last, so the response being received stays in view."
            (terminal-ui--prompt-content ui)
          (values (append (list prompt-spans)
                          (terminal-ui--completion-rows ui row-width)
-                         (list nil))
+                         (make-list (terminal-ui-prompt-padding ui)))
                  0 cursor-offset))))))
 
 (-> terminal-ui--live-content
@@ -3319,6 +3323,15 @@ seen can offer the notice again."
     (unless (equal details (terminal-ui-idle-status-details ui))
       (setf (terminal-ui-idle-status-details ui) details)
       (terminal-ui--paint-live ui)))
+  ui)
+
+(-> terminal-ui-set-prompt-padding (terminal-ui (integer 0 2)) terminal-ui)
+(defun terminal-ui-set-prompt-padding (ui padding)
+  "Set UI's normal prompt padding to PADDING blank rows and repaint it."
+  (check-type padding (integer 0 2))
+  (with-terminal-ui-locked (ui)
+    (setf (terminal-ui-prompt-padding ui) padding)
+    (terminal-ui--paint-live ui))
   ui)
 
 (-> terminal-ui-set-status

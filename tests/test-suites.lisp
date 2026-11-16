@@ -404,6 +404,7 @@
   test-terminal-fullscreen-new-conversation
   test-terminal-fullscreen-small-windows
   test-terminal-fullscreen-flush-wrap-cursor
+  test-terminal-prompt-padding
   test-terminal-live-theme
   test-terminal-theme-defaults
   test-terminal-theme-write-failure

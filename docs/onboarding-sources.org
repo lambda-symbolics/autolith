@@ -400,6 +400,18 @@ The turn timer and other information are in the modeline. A small decorative act
 
 Some people hate this Claudism, so you can disable it in =(settings)=.
 
+* Prompt padding
+:PROPERTIES:
+:ID: prompt-padding
+:VERSION: 1
+:EXERCISE: choose
+:SETTING: prompt-padding
+:CHOICES: 0 1 2
+:END:
+Choose how many blank lines to leave above and below the prompt.
+Use 0 for a compact prompt, 1 for the default spacing, or 2 for more room.
+You can change this later in =(settings)=.
+
 * Message style
 :PROPERTIES:
 :ID: transcript-style

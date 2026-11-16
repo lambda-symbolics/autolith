@@ -2563,6 +2563,10 @@ the settings page and commands use the same setters."
        (application-set-relax application value))
       (:terminal-theme
        (application-set-terminal-theme application value))
+      (:prompt-padding
+       (setf (config name configuration) value)
+       (when (application-ui application)
+         (terminal-ui-set-prompt-padding (application-ui application) value)))
       (:permission-mode
        (if value
            (application--set-durable-permission-mode application value)

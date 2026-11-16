@@ -524,6 +524,7 @@ from its world."
              :columns               columns
              :input-file-descriptor (terminal-standard-input-file-descriptor)))))
      :prompt                  *application-prompt*
+     :prompt-padding          (if configuration (config :prompt-padding configuration) 1)
      :message-header-prefixes *application-message-header-prefixes*
      :placeholder             (if inbox-p *application-inbox-placeholder* *application-placeholder*)
      :completion-function     #'application-command-completion-entries

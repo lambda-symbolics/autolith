@@ -190,6 +190,12 @@ panels while such frames show, as during the boot screen."))
     :reader        terminal-ui-prompt
     :type          string
     :documentation "The untrusted-text-safe prompt prefix.")
+   (prompt-padding
+    :initarg       :prompt-padding
+    :initform      1
+    :accessor      terminal-ui-prompt-padding
+    :type          (integer 0 2)
+    :documentation "Blank rows separating the normal prompt from live activity and its lower edge.")
    (message-header-prefixes
     :initarg  :message-header-prefixes
     :initform nil

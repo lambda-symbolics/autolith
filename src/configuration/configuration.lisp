@@ -586,6 +586,15 @@ Ordinary native defaults remain lazy and follow the current environment."
   :scope                         :durable
   :default                       t)
 
+(define-setting :prompt-padding (integer-setting)
+  :label                        "Prompt padding"
+  :group                        :terminal
+  :documentation                "Blank rows before and after the prompt: zero, one, or two."
+  :scope                        :durable
+  :type                         '(integer 0 2)
+  :options                      '(0 1 2)
+  :default                      1)
+
 (define-setting :onboarding-p (boolean-setting)
   :label                      "Onboarding"
   :group                      :terminal

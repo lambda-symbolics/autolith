@@ -412,12 +412,14 @@ distinguishing the legend from the placeholder and the modeline."
         (setf rows (append rows display))))
     (let* ((leading (position-if (lambda (row) (plusp (length row))) rows))
            (visible (and leading (nthcdr leading rows)))
-           (count   (min limit (if visible (1+ (length visible)) 0))))
+           (padding (if (terminal-ui-selector ui) 1 (terminal-ui-prompt-padding ui)))
+           (count   (min limit (if visible (+ padding (length visible)) 0))))
       (setf (fullscreen-terminal-ui-pinned-actions ui)
             (loop for (row start end action) in actions
                   when (and leading (<= leading row) (< row (+ leading count)))
                     collect (list (- row leading) start end action)))
-      (subseq (append visible (when visible (list ""))) 0 count))))
+      (subseq (append visible (when visible (make-list padding :initial-element "")))
+              0 count))))
 
 (-> terminal-ui-fullscreen--frame (fullscreen-terminal-ui (option real))
     (values list integer integer))

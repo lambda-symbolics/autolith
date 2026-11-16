@@ -311,7 +311,8 @@
            (ui    (application-ui application)))
        (terminal-ui-set-input ui "saved user draft")
        (dolist (event '((:paste "(settings)") :submit
-                        (:paste "theme") :submit (:paste "almighty") :submit :escape
+                        (:paste "theme") :submit (:paste "almighty") :submit
+                        (:paste "prompt padding") :submit (:paste "0") :submit :escape
                         :submit :submit))
          (queued-recording-terminal-enqueue terminal event))
        (test-call-with-function-replacements
@@ -321,6 +322,10 @@
                        "settings exercise returns to the tour and completes")))
        (test-assert (eq ':almighty (config :terminal-theme (application-configuration application)))
                     "the user changed a real durable setting")
+       (test-assert (and (zerop (config :prompt-padding (application-configuration application)))
+                         (zerop (getf (preferences-load-values configuration) :prompt-padding))
+                         (zerop (terminal-ui-prompt-padding ui)))
+                    "the real settings picker applies and persists zero padding")
        (test-assert (null (onboarding-state-pending configuration pages)) "exercise completion is recorded")
        (test-assert (search "settings" (recording-terminal-output terminal)) "the real picker was rendered")
        (test-assert (null (queued-recording-terminal-events terminal)) "every picker and lesson event was consumed")
@@ -358,28 +363,39 @@
 (-> test-onboarding-choice-exercise () null)
 (defun test-onboarding-choice-exercise ()
   "Pick a lesson's setting value by typing its form, persisting it for later launches."
-  (onboarding-tests--call
-   (lambda (application controller configuration terminal)
-     (declare (ignore controller))
-     (setf (application-configuration application)
-           (configuration-copy configuration :boot-screen-p nil))
-     (let ((pages (list (list :id "pick" :version 1 :title "Pick" :body "Choose."
-                              :exercise ':choose :setting ':activity-line-p :choices '(t nil))
-                        (onboarding-ui-test--page "finish"))))
-       (dolist (event '((:paste "(settings :activity-line-p maybe)") :submit :home :kill-to-end
-                        (:paste "(settings :activity-line-p nil)") :submit :submit :submit))
-         (queued-recording-terminal-enqueue terminal event))
-       (test-call-with-function-replacements
-        (list (list 'onboarding-pages (lambda (config) (declare (ignore config)) pages)))
-        (lambda ()
-          (test-assert (eq ':completed (application-onboard application))
-                       "the choice lesson completes once a value is picked")))
-       (test-assert (null (config :activity-line-p (application-configuration application)))
-                    "the picked value applies to the running session")
-       (test-assert (null (getf (preferences-load-values configuration) :activity-line-p ':absent))
-                    "the picked value is saved for later launches")
-       (test-assert (null (queued-recording-terminal-events terminal))
-                    "a form naming no choice is only edited, then the lesson continues"))))
+  (dolist (case '((:activity-line-p nil maybe) (:prompt-padding 0 3) (:prompt-padding 2 -1)))
+    (destructuring-bind (setting value invalid) case
+      (onboarding-tests--call
+       (lambda (application controller configuration terminal)
+         (declare (ignore controller))
+         (setf (application-configuration application)
+               (configuration-copy configuration :boot-screen-p nil))
+         (let* ((page  (if (eq setting ':prompt-padding)
+                           (find "prompt-padding" (onboarding-pages configuration)
+                                 :key (lambda (page) (getf page :id)) :test #'string=)
+                           (list :id "pick" :version 1 :title "Pick" :body "Choose."
+                                 :exercise ':choose :setting setting :choices '(t nil))))
+                (pages (list page (onboarding-ui-test--page "finish"))))
+           (test-assert page "the configured choice lesson is available")
+           (dolist (event (list (list ':paste (format nil "(settings ~S ~S)" setting invalid))
+                               ':submit ':home ':kill-to-end
+                               (list ':paste (format nil "(settings ~S ~S)" setting value))
+                               ':submit ':submit ':submit))
+             (queued-recording-terminal-enqueue terminal event))
+           (test-call-with-function-replacements
+            (list (list 'onboarding-pages (lambda (config) (declare (ignore config)) pages)))
+            (lambda ()
+              (test-assert (eq ':completed (application-onboard application))
+                           "the choice lesson completes once a valid value is picked")))
+           (test-assert (eql value (config setting (application-configuration application)))
+                        "the picked value applies to the running session")
+           (test-assert (eql value (getf (preferences-load-values configuration) setting ':absent))
+                        "the picked value is saved for later launches")
+           (when (eq setting ':prompt-padding)
+             (test-assert (= value (terminal-ui-prompt-padding (application-ui application)))
+                          "the lesson applies the padding to its running UI"))
+           (test-assert (null (queued-recording-terminal-events terminal))
+                        "a form naming no choice is only edited, then the lesson continues"))))))
   nil)
 
 (-> test-onboarding-authentication () null)
