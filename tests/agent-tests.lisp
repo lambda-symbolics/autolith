@@ -1212,23 +1212,26 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                      'scripted-provider
                      :results
                      (list (agent-test-result "first" (list first-call))
-                           (agent-test-result "duplicate" (list duplicate-call)))))
+                           (agent-test-result "duplicate" (list duplicate-call))
+                           (agent-test-result
+                            "duplicate-final"
+                            (list (agent-test-message "duplicate handled"))))))
                   (agent
                     (agent-create :configuration configuration
                                   :provider      provider
                                   :conversation  conversation
                                   :tool-registry (agent-test-registry)
-                                  :worker        ':unused)))
+                                  :worker        ':unused))
+                  (result (agent-run-user-turn agent "accept duplicate id")))
              (test-assert
-              (handler-case
-                  (progn
-                    (agent-run-user-turn agent "reject duplicate id")
-                    nil)
-                (agent-loop-error ()
-                  t))
-              "a repeated call identity is rejected before persistence")
-             (test-assert (= (length (conversation-input-items conversation)) 3)
-                          "only the first call and its correlated output remain")))
+              (string= "duplicate-final" (provider-result-response-id result))
+              "a repeated call identity does not end the turn")
+             (test-assert
+              (equal '("duplicate" "duplicate-2")
+                     (loop for item in (conversation-input-items conversation)
+                           when (function-call-item-p item)
+                             collect (json-get item "call_id")))
+              "a repeated call identity is renamed before persistence")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -1288,6 +1291,46 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
            (test-assert (= 1 (count-if #'function-call-item-p
                                        (conversation-input-items conversation)))
                         "a refused call is never persisted"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-agent-repeated-call-identifiers () null)
+(defun test-agent-repeated-call-identifiers ()
+  "Give a repeated provider call identifier a fresh one instead of ending the turn."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation (conversation-create
+                               configuration :identifier "repeated-call-identifiers"))
+                (agent        (agent-create
+                               :configuration configuration
+                               :provider      (make-instance 'scripted-provider :results nil)
+                               :conversation  conversation
+                               :tool-registry (agent-test-registry)
+                               :worker        ':unused))
+                (seen         (make-hash-table :test #'equal))
+                (first-call   (agent-test-call :call-id   "shared"
+                                               :arguments "{\"value\":1}"))
+                (second-call  (agent-test-call :call-id   "shared"
+                                               :arguments "{\"value\":2}"))
+                (later-call   (agent-test-call :call-id   "shared"
+                                               :arguments "{\"value\":3}")))
+           (agent--validate-tool-call-identifiers
+            agent (list first-call second-call)
+            :seen-call-identifiers seen :request-number 1)
+           (test-assert (string= "shared" (json-get first-call "call_id"))
+                        "the first call keeps its identifier")
+           (test-assert (string= "shared-2" (json-get second-call "call_id"))
+                        "a repeated identifier in one response gets a fresh one")
+           (agent--validate-tool-call-identifiers
+            agent (list later-call)
+            :seen-call-identifiers seen :request-number 2)
+           (test-assert (string= "shared-3" (json-get later-call "call_id"))
+                        "a later request in the same turn gets another fresh one")
+           (test-assert (and (gethash "shared" seen)
+                             (gethash "shared-2" seen)
+                             (gethash "shared-3" seen))
+                        "every reserved identifier is remembered for the turn"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 

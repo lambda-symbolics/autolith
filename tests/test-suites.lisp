@@ -1435,6 +1435,7 @@
   test-agent-invalid-call-history
   test-agent-malformed-tool-arguments
   test-agent-duplicate-call-identity
+  test-agent-repeated-call-identifiers
   test-agent-refused-item-keeps-usage
   test-agent-tool-storm-guard
   test-agent-tool-storm-guard-defaults

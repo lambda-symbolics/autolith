@@ -1004,7 +1004,10 @@ restricted turn cannot discover tools outside its allowlist."
     null)
 (defun agent--validate-tool-call-identifiers
     (agent calls &key seen-call-identifiers request-number)
-  "Validate CALLS and reserve their unique call identifiers for this user turn."
+  "Validate CALLS and reserve one identifier per call for this user turn.
+
+  A provider that repeats an identifier still names distinct calls, so the
+  repeated identifier is replaced with an unused one."
   (let ((round-identifiers (make-hash-table :test #'equal))
         (conversation      (agent-conversation agent)))
     (dolist (call calls)
@@ -1019,19 +1022,29 @@ restricted turn cannot discover tools outside its allowlist."
                  :message         "The provider returned a function call without a call_id."
                  :conversation-id (conversation-identifier conversation)
                  :request-number  request-number))
-        (when (or (gethash call-id seen-call-identifiers)
-                  (gethash call-id round-identifiers))
-          (error 'agent-loop-error
-                 :message         (format nil "The provider repeated function call identifier ~S."
-                                          call-id)
-                 :conversation-id (conversation-identifier conversation)
-                 :request-number  request-number))
-        (setf (gethash call-id round-identifiers) t)))
+        (let ((unique-id (agent--unused-call-identifier
+                          call-id round-identifiers seen-call-identifiers)))
+          (unless (string= call-id unique-id)
+            (setf (gethash "call_id" call) unique-id))
+          (setf (gethash unique-id round-identifiers) t))))
     (maphash (lambda (call-id present-p)
                (declare (ignore present-p))
                (setf (gethash call-id seen-call-identifiers) t))
              round-identifiers))
   nil)
+
+(-> agent--unused-call-identifier (string hash-table hash-table) string)
+(defun agent--unused-call-identifier
+    (call-id round-identifiers seen-call-identifiers)
+  "Return CALL-ID, or the first suffixed variant neither identifier table holds."
+  (if (and (not (gethash call-id round-identifiers))
+           (not (gethash call-id seen-call-identifiers)))
+      call-id
+      (loop for suffix from 2
+            for candidate = (format nil "~A-~D" call-id suffix)
+            unless (or (gethash candidate round-identifiers)
+                       (gethash candidate seen-call-identifiers))
+              return candidate)))
 
 (-> agent--tool-call-allowed-p (json-object list) boolean)
 (defun agent--tool-call-allowed-p (call allowlist)
