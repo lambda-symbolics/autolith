@@ -713,9 +713,10 @@ connection loss."
 (-> localgroup-client-screen-release (localgroup-screen) null)
 (defun localgroup-client-screen-release (screen)
   "Give back the terminal SCREEN painted on: leave its screen, then restore its input mode."
-  (localgroup-screen-close screen)
-  ; mallet:suppress no-ignore-errors -- best-effort terminal release during unwinding
-  (ignore-errors (terminal-stop (localgroup-screen-terminal screen)))
+  (unwind-protect
+       (localgroup-screen-close screen)
+    ; mallet:suppress no-ignore-errors -- best-effort terminal release during unwinding
+    (ignore-errors (terminal-stop (localgroup-screen-terminal screen))))
   nil)
 
 (-> localgroup--attach-record-once
@@ -821,27 +822,33 @@ SCREEN the caller lends stays the caller's to release."
         ; mallet:suppress no-ignore-errors -- best-effort socket close during unwinding
         (ignore-errors (sb-bsd-sockets:socket-close socket))))))
 
-(-> localgroup-relay-exit (configuration (option list) keyword) null)
-(defun localgroup-relay-exit (configuration exit mode)
-  "Report EXIT's message and, for a controlling terminal, exit with its status.
+(-> localgroup-relay-exit
+    (configuration (option list) keyword &key (:session-id (option string)))
+    null)
+(defun localgroup-relay-exit (configuration exit mode &key session-id)
+  "Report EXIT and how to reopen SESSION-ID after releasing the client's terminal.
 
-Before exiting, publish the crash capsule from EXIT's details to this process's
-launcher so recovery can restore the conversation. Read-only observers report
-the message without publishing the capsule or exiting."
-  (when exit
-    (let ((message (getf exit :message)))
-      (when message
-        (format *error-output* "~&~A~%" message)
-        (finish-output *error-output*)))
-    (unless (eq mode ':read-only)
-      (let ((capsule (getf (getf exit :details) :crash-capsule)))
-        (when (non-empty-string-p capsule)
-          (handler-case
-              (application-publish-crash-pointer configuration (pathname capsule))
-            (error (condition)
-              (format *error-output* "~&Could not hand the crash capsule to recovery: ~A~%"
-                      condition)))))
-      (uiop:quit (getf exit :status))))
+For a controlling terminal, publish EXIT's crash capsule to the launcher and
+exit with its status. Read-only observers report without publishing or exiting.
+A detach or connection loss has no EXIT but still names the channel to reopen."
+  (let ((message (getf exit :message)))
+    (when message
+      (format *error-output* "~&~A~%" message))
+    (when (and session-id
+               (not (and message (search (channel-open-command session-id) message))))
+      (let ((terminal (make-instance 'terminal :styled-p (terminal-environment-styling-p))))
+        (format *error-output* "~&~A~%"
+                (terminal--render-spans terminal (channel-open-instruction session-id)))))
+    (finish-output *error-output*))
+  (when (and exit (not (eq mode ':read-only)))
+    (let ((capsule (getf (getf exit :details) :crash-capsule)))
+      (when (non-empty-string-p capsule)
+        (handler-case
+            (application-publish-crash-pointer configuration (pathname capsule))
+          (error (condition)
+            (format *error-output* "~&Could not hand the crash capsule to recovery: ~A~%"
+                    condition)))))
+    (uiop:quit (getf exit :status)))
   nil)
 
 

@@ -318,6 +318,56 @@
       (test-assert (= 1 (count-if (lambda (chunk) (search (alternate-screen-leave-sequence) chunk))
                                   (recording-terminal-chunks terminal)))
                    "closing an inactive screen writes nothing")))
+  (dolist (failure '(:enter :leave))
+    (let* ((terminal       (make-instance 'recording-terminal :columns 40 :rows 8))
+           (screen         (localgroup-screen-create :terminal terminal))
+           (write-function (symbol-function 'terminal--write))
+           (condition      (make-condition 'terminal-error :operation ':write
+                                                          :message    "Injected screen transition failure."
+                                                          :cause      nil))
+           (restored       nil)
+           (leave-attempts 0))
+      (test-call-with-function-replacements
+       (list
+        (list 'platform-terminal-enable-fullscreen
+              (lambda (platform) (declare (ignore platform)) ':screen-test-token))
+        (list 'platform-terminal-restore-fullscreen
+              (lambda (platform token) (declare (ignore platform)) (push token restored)))
+        (list 'terminal--write
+              (lambda (destination text)
+                (when (and (eq failure ':leave)
+                           (search (alternate-screen-leave-sequence) text)
+                           (= 1 (incf leave-attempts)))
+                  (error condition))
+                (funcall write-function destination text)
+                (when (and (eq failure ':enter)
+                           (search (alternate-screen-enter-sequence) text))
+                  (error condition)))))
+       (lambda ()
+         (let ((failed-p nil))
+           (handler-case
+               (progn
+                 (localgroup-screen-handle-packet
+                  screen '(:frame :height 8 :width 40 :complete-p t :rows ((0 "hello"))
+                                  :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+                 (when (eq failure ':leave)
+                   (localgroup-screen-handle-packet screen '(:screen :leave))))
+             (terminal-error (failure) (setf failed-p (eq failure condition))))
+           (test-assert failed-p "The injected terminal failure reaches its caller"))
+         (when (eq failure ':leave)
+           (test-assert (and (localgroup-screen-active-p screen)
+                             (null (localgroup-screen-token screen)))
+                        "Failed physical leave retains retry ownership but consumes the native token"))
+         (localgroup-client-screen-release screen)
+         (let ((bytes (apply #'concatenate 'string (reverse (recording-terminal-chunks terminal)))))
+           (test-assert (and (search (alternate-screen-enter-sequence) bytes)
+                             (search (alternate-screen-leave-sequence) bytes)
+                             (not (localgroup-screen-active-p screen)))
+                        "Failed entry is compensated and failed leave is retried by client finalization"))
+         (test-assert (= 1 (count ':screen-test-token restored))
+                      "Native fullscreen state is restored once even when physical leave is retried")
+         (when (eq failure ':leave)
+           (test-assert (= 2 leave-attempts) "The finalizer retries the failed physical leave once"))))))
   nil)
 
 (defclass localgroup-tests-panel ()
@@ -1638,19 +1688,16 @@
 
 (-> test-localgroup-open-instruction-relay () null)
 (defun test-localgroup-open-instruction-relay ()
-  "Test the advice to open a channel again reaches the terminal that relays it."
-  (with-test-configuration (configuration root)
-    (declare (ignore root))
+  "Test the client reports reopen advice after receiving a real relay attachment's exit."
+  (with-test-configuration (configuration)
     (let* ((terminal     (localgroup-terminal-create))
            (ui           (terminal-ui-create :terminal terminal))
            (conversation (conversation-create configuration))
-           (application
-             (make-instance 'application :configuration configuration
-                                         :conversation  conversation
-                                         :ui            ui))
-           (controller
-             (make-instance 'application-input-controller :application application
-                                                          :main-thread (current-thread)))
+           (application  (make-instance 'application :configuration configuration
+                                                     :conversation  conversation
+                                                     :ui            ui))
+           (controller   (make-instance 'application-input-controller :application application
+                                                                      :main-thread (current-thread)))
            (socket       nil)
            (stream       nil))
       (setf (application-input-controller application) controller)
@@ -1660,24 +1707,27 @@
              (conversation-append-user-message conversation "keep this conversation")
              (terminal-ui-start ui)
              (multiple-value-setq (socket stream)
-               (test-localgroup--attach (localgroup-start application) ':control
-                                        :styled-p t))
-             (test-assert (application--present-open-instruction application)
-                          "a durable detached conversation has resume advice")
-             (let ((exit (loop for ready-p = (task-tests--wait-until
-                                              (lambda () (listen stream)) 10)
-                               for packet = (and ready-p (daemon-read-packet stream))
-                               while packet
-                               when (eq (first packet) ':exit)
-                                 return packet)))
-               (test-assert
-                (and exit
-                     (eql (getf (rest exit) :status) 0)
-                     (search (application--open-command application)
-                             (getf (rest exit) :message)))
-                "the relaying terminal receives the resume command as its exit message")
-               (test-assert (and exit (find #\Escape (getf (rest exit) :message)))
-                            "a styled relaying terminal receives the styled resume advice")))
+               (test-localgroup--attach (localgroup-start application) ':control :styled-p t))
+             (test-assert (null (application--present-open-instruction application))
+                          "The server leaves attached-channel reopen advice to the client")
+             (test-assert
+              (not (search (application--open-command application)
+                           (application-input-controller--forced-exit-message controller ':turn-cancellation)))
+              "The server's forced-exit notice leaves reopen advice to the client")
+             (localgroup-finish-attachments application :status 0 :message "Channel closed.")
+             (let* ((exit     (loop for packet = (test-localgroup--read-packet stream)
+                                   until (eq (first packet) ':exit)
+                                   finally (return packet)))
+                    (command  (application--open-command application))
+                    (output   (with-output-to-string (*error-output*)
+                                (localgroup-relay-exit configuration (rest exit) ':read-only
+                                                       :session-id (conversation-identifier conversation))))
+                    (position (search command output)))
+               (test-assert (not (search command (getf (rest exit) :message)))
+                            "The attachment exit packet carries no server-generated reopen command")
+               (test-assert (and position
+                                 (not (search command output :start2 (+ position (length command)))))
+                            "The client reports the attached channel's reopen command exactly once")))
         (when stream (ignore-errors (close stream)))
         (when (and socket (null stream))
           (ignore-errors (sb-bsd-sockets:socket-close socket)))
@@ -1761,14 +1811,32 @@
                                 (push status statuses))))
        (lambda ()
          (with-test-environment (("AUTOLITH_CRASH_POINTER" (namestring pointer)))
-           (let ((report (with-output-to-string (*error-output*)
-                           (localgroup-relay-exit configuration exit ':control)
-                           (localgroup-relay-exit configuration exit ':read-only)
-                           (localgroup-relay-exit configuration nil ':control))))
-             (test-assert (equal statuses '(76))
-                          "only the controlling terminal exits with the session's status")
-             (test-assert (= 2 (count #\Newline report))
-                          "every attached terminal reports the session's exit message"))
+            (dolist (case (list (list exit ':control) (list exit ':read-only)
+                               (list nil ':control) (list nil ':read-only)))
+              (destructuring-bind (result mode) case
+                (let* ((report   (with-output-to-string (*error-output*)
+                                   (localgroup-relay-exit configuration result mode :session-id "bopen1")))
+                       (command  (channel-open-command "bopen1"))
+                       (position (search command report)))
+                  (test-assert (and position
+                                    (not (search command report :start2 (+ position (length command)))))
+                               "Controllers and observers report one reopen command, including detach or connection loss")
+                  (test-assert (eq (not (null (search (getf exit :message) report)))
+                                   (not (null result)))
+                               "An attachment's exit message is reported only when one was received"))))
+            (test-assert (equal statuses '(76))
+                         "Only the controlling terminal exits with the session's status")
+            (let* ((command  (channel-open-command "bopen1"))
+                   (message  (format nil "Channel closed. Run ~A" command))
+                   (report   (with-output-to-string (*error-output*)
+                               (localgroup-relay-exit configuration (list :status 78 :message message)
+                                                      ':control :session-id "bopen1")))
+                   (position (search command report)))
+              (test-assert (and position
+                                (not (search command report :start2 (+ position (length command)))))
+                           "A legacy server's reopen command is reported once")
+              (test-assert (eql (first statuses) 78)
+                           "Already-reported advice preserves the controlling exit status"))
            (with-output-to-string (*error-output*)
              (localgroup-relay-exit configuration crash ':read-only))
            (test-assert (not (probe-file pointer))

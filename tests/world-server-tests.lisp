@@ -1596,91 +1596,130 @@ run once the wake has."
 
 (-> test-world-client-switch-navigates () null)
 (defun test-world-client-switch-navigates ()
-  "Test a terminal switching channels states no launch options, and stays in its channel when the other refuses it."
+  "Test switch refusals preserve the current channel and final reporting follows terminal cleanup."
   (with-test-configuration (configuration)
     (let ((opens           nil)
           (attaches        nil)
           (client-versions nil)
           (refuse-p        nil)
           (rejects-p       nil)
+          (quit-p          nil)
           (notices         nil)
-          (loading-p       nil))
-      (flet ((run ()
-               "Run the client loop for a terminal started with launch options, switching once."
-               (setf opens nil attaches nil loading-p nil client-versions nil)
+          (loading-p       nil)
+          (reports         nil)
+          (lifecycle       nil)
+          (release         (symbol-function 'localgroup-client-screen-release)))
+      (flet ((run (expected-channel)
+               "Run one switch and check its sole final report names EXPECTED-CHANNEL."
+               (setf opens nil attaches nil loading-p nil client-versions nil
+                     notices nil reports nil lifecycle nil)
                (let ((calls 0))
-                 (test-call-with-function-replacements
-                  (list (list 'main--open-world-channel
-                              (lambda (candidate &rest arguments)
-                                (declare (ignore candidate arguments))
-                                (values "bfirst1" nil)))
-                        (list 'localgroup--find-record
-                              (lambda (candidate session-id)
-                                (declare (ignore candidate))
-                                (list session-id)))
-                        (list 'localgroup-attach-record
-                              (lambda (candidate record mode &key panel screen notice client-version)
-                                (declare (ignore candidate mode panel screen))
-                                (push (first record) attaches)
-                                (push client-version client-versions)
-                                (when notice
-                                  (push notice notices))
-                                (cond
-                                  ((= (incf calls) 1)
-                                   (list ':switch :session-id "bsecnd2"))
-                                  ((and rejects-p (equal (first record) "bsecnd2"))
-                                   (error 'localgroup-error
-                                          :message   "Another terminal controls b-secnd2."
-                                          :operation ':attach))
-                                  (t
-                                   ':detached))))
-                        (list 'localgroup-relay-exit
-                              (lambda (&rest arguments)
-                                (declare (ignore arguments))
-                                nil))
-                        (list 'localgroup-screen-show-loading
-                              (lambda (screen text &rest arguments)
-                                (declare (ignore screen text arguments))
-                                (setf loading-p t)))
-                        (list 'world-client-open
-                              (lambda (candidate &rest arguments)
-                                (declare (ignore candidate))
-                                (test-assert loading-p
-                                             "loading is displayed before the blocking channel open")
-                                (push arguments opens)
-                                (if refuse-p
-                                    (error 'localgroup-error
-                                           :message   "Channel b-secnd2 cannot take that."
-                                           :operation ':open)
-                                    (values (getf arguments :channel) nil)))))
-                  (lambda ()
-                    (let ((*error-output* (make-broadcast-stream)))
-                      (main--run-world-client configuration
-                                              :permission-mode ':full-access
-                                              :launch          '(:model "other"
-                                                                 :permission-mode :full-access))))))))
-        (run)
+                 (multiple-value-prog1
+                     (test-call-with-function-replacements
+                      (list (list 'main--open-world-channel
+                                  (lambda (candidate &rest arguments)
+                                    (declare (ignore candidate arguments))
+                                    (values "bfirst1" nil)))
+                            (list 'localgroup--find-record
+                                  (lambda (candidate session-id)
+                                    (declare (ignore candidate))
+                                    (list session-id)))
+                            (list 'localgroup-attach-record
+                                  (lambda (candidate record mode &key panel screen notice client-version)
+                                    (declare (ignore candidate mode panel screen))
+                                    (push (first record) attaches)
+                                    (push client-version client-versions)
+                                    (when notice
+                                      (push notice notices))
+                                    (cond
+                                      ((= (incf calls) 1)
+                                       (list ':switch :session-id "bsecnd2"))
+                                      ((and rejects-p (equal (first record) "bsecnd2"))
+                                       (error 'localgroup-error
+                                              :message   "Another terminal controls b-secnd2."
+                                              :operation ':attach))
+                                      (t
+                                       (when quit-p
+                                         (list :status 77 :message "Channel closed."))))))
+                            (list 'world-sidebar-start
+                                  (lambda (panel)
+                                    (declare (ignore panel))
+                                    (push ':start lifecycle)))
+                            (list 'world-sidebar-stop
+                                  (lambda (panel)
+                                    (declare (ignore panel))
+                                    (push ':stop lifecycle)))
+                            (list 'localgroup-client-screen-release
+                                  (lambda (screen)
+                                    (push ':release lifecycle)
+                                    (funcall release screen)))
+                            (list 'localgroup-relay-exit
+                                  (lambda (candidate exit mode &key session-id)
+                                    (declare (ignore candidate))
+                                    (push (list session-id exit mode) reports)
+                                    (push ':report lifecycle)
+                                    (when quit-p
+                                      (throw 'client-exit (getf exit :status)))))
+                            (list 'localgroup-screen-show-loading
+                                  (lambda (screen text &rest arguments)
+                                    (declare (ignore screen text arguments))
+                                    (setf loading-p t)))
+                            (list 'world-client-open
+                                  (lambda (candidate &rest arguments)
+                                    (declare (ignore candidate))
+                                    (test-assert loading-p
+                                                 "Loading is displayed before the blocking channel open")
+                                    (push arguments opens)
+                                    (if refuse-p
+                                        (error 'localgroup-error
+                                               :message   "Channel b-secnd2 cannot take that."
+                                               :operation ':open)
+                                        (values (getf arguments :channel) nil)))))
+                      (lambda ()
+                        (catch 'client-exit
+                          (let ((*error-output* (make-broadcast-stream)))
+                            (main--run-world-client configuration
+                                                    :permission-mode ':full-access
+                                                    :launch          '(:model "other"
+                                                                       :permission-mode :full-access))))))
+                   (test-assert (equal reports
+                                       (list (list expected-channel
+                                                   (when quit-p (list :status 77 :message "Channel closed."))
+                                                   ':control)))
+                                "Only the final successful attachment is reported, with its exit and mode")
+                   (let ((events (reverse lifecycle)))
+                     (test-assert (and (= 1 (count ':release events))
+                                       (= 1 (count ':stop events))
+                                       (= 1 (count ':report events))
+                                       (< (position ':release events) (position ':report events))
+                                       (< (position ':stop events) (position ':report events)))
+                                  "Screen release and sidebar shutdown each happen once before the final report"))))))
+        (run "bsecnd2")
         (test-assert (and (= (length opens) 1)
                           (null (getf (first opens) :launch))
                           (equal (getf (first opens) :channel) "bsecnd2")
                           (getf (first opens) :switch-p))
-                     "a switch opens the other channel as a switch, without this start's launch options")
+                     "A switch opens the other channel without this start's launch options")
         (test-assert (equal (reverse attaches) '("bfirst1" "bsecnd2"))
-                     "the terminal attaches to the channel it switched to")
+                     "The terminal attaches to the channel it switched to")
         (test-assert (equal (reverse client-versions) (list *autolith-version* nil))
-                     "only the initially loaded channel receives this client's version")
+                     "Only the initially loaded channel receives this client's version")
         (setf refuse-p t)
-        (run)
+        (run "bfirst1")
         (test-assert (and (equal (reverse attaches) '("bfirst1" "bfirst1"))
                           (search "could not switch to b-secnd2" (first notices)))
-                     "a channel that refuses the switch leaves the terminal in the channel it came from, told why")
-        (setf notices nil)
-        (setf refuse-p  nil
-              rejects-p t)
-        (run)
+                     "An open refusal returns the terminal to its current channel with a notice")
+        (setf refuse-p nil rejects-p t)
+        (run "bfirst1")
         (test-assert (and (equal (reverse attaches) '("bfirst1" "bsecnd2" "bfirst1"))
                           (search "Another terminal controls" (first notices)))
-                     "a channel that opens but rejects the terminal's attachment returns it to the channel it came from, told why"))))
+                     "An attachment refusal returns the terminal to its current channel with a notice")
+        (setf quit-p t)
+        (test-assert (eql (run "bfirst1") 77)
+                     "A nonlocal exit from the final report propagates after cleanup")
+        (setf rejects-p nil)
+        (test-assert (eql (run "bsecnd2") 77)
+                     "A switched channel's nonlocal final report follows the same single cleanup"))))
   nil)
 
 (-> test-world-client-refusal-ends-start () null)

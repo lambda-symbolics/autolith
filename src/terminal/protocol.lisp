@@ -100,7 +100,7 @@ panels while such frames show, as during the boot screen."))
            (terminal-flush terminal)
            (setf completed-p t))
       (unless completed-p
-        (platform-terminal-restore-fullscreen *platform* token)))
+        (terminal-screen-leave terminal token)))
     token))
 
 (defmethod terminal-screen-leave ((terminal terminal) token)

@@ -344,6 +344,10 @@
   (:documentation
    "A recording terminal accepting deterministic events from other threads."))
 
+(defclass relay-recording-terminal (queued-recording-terminal stream-terminal)
+  ()
+  (:documentation "A queued recording terminal using the real direct-stream relay adapter."))
+
 (defmethod terminal-input-ready-p ((terminal queued-recording-terminal))
   "Return true when TERMINAL has a thread-safely queued event."
   (with-lock-held ((queued-recording-terminal-event-lock terminal))
@@ -1120,47 +1124,64 @@
 
 (-> test-interrupt-open-instruction () null)
 (defun test-interrupt-open-instruction ()
-  "Test that Ctrl-C exits with an exact command only for durable conversations."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration)))
-    (labels ((interrupt-application (conversation)
-               "Run one CONVERSATION until a scripted Ctrl-C and return its output."
-               (let* ((terminal (make-instance 'scripted-terminal
-                                               :columns 80
-                                               :events  (list :interrupt)))
+  "Test direct quit, interrupt and EOF present one reopen command for durable conversations."
+  (with-test-configuration (configuration)
+    (labels ((exit-output (conversation events wrapped-p &key reason)
+               "Run CONVERSATION through EVENTS and verify its actual exit REASON."
+               (let* ((terminal (make-instance (if wrapped-p
+                                                   'relay-recording-terminal
+                                                   'queued-recording-terminal)
+                                               :columns 80))
+                      (served   (if wrapped-p
+                                    (localgroup-terminal-create :direct-terminal terminal)
+                                    terminal))
                       (application
-                        (make-instance 'application
-                                       :configuration configuration
-                                       :conversation  conversation
-                                       :provider      nil
-                                       :tool-registry (make-instance 'tool-registry)
-                                       :worker        nil
-                                       :agent         nil
-                                       :ui            (terminal-ui-create
-                                                       :terminal terminal))))
-                 (application-run application)
-                 (recording-terminal-output terminal))))
-      (unwind-protect
-           (let ((durable (conversation-create configuration
-                                               :identifier "resume-this"))
+                        (make-instance 'application :configuration configuration
+                                                    :conversation  conversation
+                                                    :provider      nil
+                                                    :tool-registry (make-instance 'tool-registry)
+                                                    :worker        nil
+                                                    :agent         nil
+                                                    :ui            (terminal-ui-create :terminal served))))
+                 (setf (queued-recording-terminal-events terminal) events)
+                 (when (and wrapped-p (equal events '(:interrupt)) (conversation-persisted-p conversation))
+                   (test-assert
+                    (search (application--open-command application)
+                            (application-input-controller--forced-exit-message
+                             (make-instance 'application-input-controller :application application
+                                                                          :main-thread (current-thread))
+                             ':turn-cancellation))
+                    "A directly wrapped terminal includes reopen advice in its forced-exit notice"))
+                 (test-assert (eq (application-serve application) reason)
+                              (format nil "The direct terminal exits through ~S, wrapped: ~S" reason wrapped-p))
+                 (recording-terminal-output terminal)))
+
+             (occurrences (text substring)
+               "Count nonoverlapping SUBSTRING occurrences in TEXT."
+               (loop for start = 0 then (+ position (length substring))
+                     for position = (search substring text :start2 start)
+                     while position count position)))
+      (dolist (case '((:interrupt (:interrupt) nil)
+                      (:quit ((:insert "(close)") :submit) nil)
+                      (:end-of-input (:end-of-input) nil)
+                      (:interrupt (:interrupt) t)
+                      (:quit ((:insert "(close)") :submit) t)
+                      (:end-of-input (:end-of-input) t)))
+        (destructuring-bind (reason events wrapped-p) case
+          (let* ((durable (conversation-create configuration
+                                               :identifier (format nil "resume-~(~A~)-~:[bare~;wrapped~]" reason wrapped-p)))
                  (empty   (conversation-create configuration
-                                               :identifier "discard-this")))
-             (conversation-append-user-message durable "keep this conversation")
-             (let ((output (interrupt-application durable)))
-               (test-assert (search "To open this channel again, run:" output)
-                            "Ctrl-C explains how to resume a durable conversation")
-               (test-assert (search "autolith open resume-this" output)
-                            "the Ctrl-C instruction carries the exact resume command"))
-             (let ((output (interrupt-application empty)))
-               (test-assert (not (search "autolith open" output))
-                            "Ctrl-C gives no resume command for an empty conversation")
-               (test-assert
-                (not (conversation-storage-occupied-p
-                      (conversation-pathname empty)))
-                "Ctrl-C does not persist an empty conversation")))
-        (platform-delete-directory-tree *platform* root
-                                        :validate          t
-                                        :if-does-not-exist ':ignore))))
+                                               :identifier (format nil "discard-~(~A~)-~:[bare~;wrapped~]" reason wrapped-p)))
+                 (command (channel-open-command (conversation-identifier durable))))
+            (conversation-append-user-message durable "keep this conversation")
+            (let ((output (exit-output durable (copy-tree events) wrapped-p :reason reason)))
+              (test-assert (= 1 (occurrences output command))
+                           (format nil "Direct ~S prints the exact reopen command once" reason)))
+            (let ((output (exit-output empty (copy-tree events) wrapped-p :reason reason)))
+              (test-assert (not (search "autolith open" output))
+                           (format nil "Direct ~S gives no reopen command for an empty channel" reason))
+              (test-assert (not (conversation-storage-occupied-p (conversation-pathname empty)))
+                           (format nil "Direct ~S does not persist an empty conversation" reason))))))))
   nil)
 
 (-> test-repeated-interrupt-forces-exit () null)

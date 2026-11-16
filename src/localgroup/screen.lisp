@@ -528,7 +528,7 @@ client tells the session, and the next paint rewrites the whole screen."
 (defun localgroup-screen--enter (screen)
   "Take the client's screen for the session's frames."
   (let ((terminal (localgroup-screen-terminal screen))
-        (columns (nth-value 1 (localgroup-screen-pane-size screen))))
+        (columns  (nth-value 1 (localgroup-screen-pane-size screen))))
     (setf (localgroup-screen-token screen) (terminal-screen-enter terminal)
           (localgroup-screen-active-p screen) t)
     (unless (= columns (nth-value 1 (localgroup-screen-pane-size screen)))
@@ -541,15 +541,16 @@ client tells the session, and the next paint rewrites the whole screen."
   "Give the client's screen back and forget the session's frame."
   (when (localgroup-screen-active-p screen)
     (let ((terminal (localgroup-screen-terminal screen))
-          (columns (nth-value 1 (localgroup-screen-pane-size screen))))
-      (setf (localgroup-screen-active-p screen) nil
-            (localgroup-screen-frame screen) nil
-            (localgroup-screen-loading screen) nil
-            (localgroup-screen-boot-ui screen) nil)
-      (unless (= columns (nth-value 1 (localgroup-screen-pane-size screen)))
-        (setf (localgroup-screen-resize-pending-p screen) t))
+          (columns  (nth-value 1 (localgroup-screen-pane-size screen))))
       (unwind-protect
-           (terminal-screen-leave terminal (shiftf (localgroup-screen-token screen) nil))
+           (progn
+             (terminal-screen-leave terminal (shiftf (localgroup-screen-token screen) nil))
+             (setf (localgroup-screen-active-p screen) nil
+                   (localgroup-screen-frame screen) nil
+                   (localgroup-screen-loading screen) nil
+                   (localgroup-screen-boot-ui screen) nil)
+             (unless (= columns (nth-value 1 (localgroup-screen-pane-size screen)))
+               (setf (localgroup-screen-resize-pending-p screen) t)))
         (terminal-screen-invalidate terminal (localgroup-screen-painter screen)))))
   nil)
 

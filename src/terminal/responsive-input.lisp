@@ -309,14 +309,24 @@
   (input-pump-wake (application-input-controller-input-pump controller))
   nil)
 
+(-> channel-open-command (string) string)
+(defun channel-open-command (identifier)
+  "Return the shell command that opens the channel named by IDENTIFIER."
+  (format nil "autolith open ~A"
+          (uiop:escape-shell-token (conversation-identifier-display identifier))))
+
+(-> channel-open-instruction (string) list)
+(defun channel-open-instruction (identifier)
+  "Return styled advice for opening the channel named by IDENTIFIER."
+  (list (terminal-span ':dim "To open this channel again, run:")
+        (terminal-span ':plain (string #\Newline))
+        (terminal-span ':code (format nil "  ~A" (channel-open-command identifier)))))
+
 (-> application--open-command (application) string)
 (defun application--open-command (application)
   "Return the shell command that opens APPLICATION's channel again."
-  (format nil "autolith open ~A"
-          (uiop:escape-shell-token
-           (conversation-identifier-display
-            (conversation-identifier
-             (application-conversation application))))))
+  (channel-open-command
+   (conversation-identifier (application-conversation application))))
 
 (-> application-input-controller--force-interrupt-exit
     (application-input-controller)
@@ -349,8 +359,8 @@ Fullscreen restoration bypasses the UI lock, which may be held during shutdown."
 (defun application-input-controller--forced-exit-message (controller reason)
   "Return CONTROLLER's forced-exit notice for shutdown or cancellation REASON.
 
-Forced exit abandons an unfinished run, so every reason carries the durable
-resume command that reopens the conversation the run leaves behind."
+The attached client reports its own reopen advice after releasing its screen;
+only a direct terminal includes the command in this prepared notice."
   (let* ((application
            (application-input-controller-application controller))
          (conversation
@@ -359,6 +369,7 @@ resume command that reopens the conversation the run leaves behind."
          (open-command
            (and conversation
                 (conversation-persisted-p conversation)
+                (not (application--client-reports-exit-p application))
                 (application--open-command application))))
     (format nil
             "~%~A~%~@[To open this channel again, run:~%  ~A~%~]"

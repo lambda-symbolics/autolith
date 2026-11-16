@@ -332,31 +332,26 @@ presents the warning in the first channel it opens only."
   (prog1 (terminal-ui-read-event ui)
     (terminal-ui-refresh-size ui #'application-pending-terminal-size)))
 
+(-> application--client-reports-exit-p (application) boolean)
+(defun application--client-reports-exit-p (application)
+  "Return whether APPLICATION has no direct terminal and clients report its exit."
+  (let* ((ui       (and (slot-boundp application 'ui) (application-ui application)))
+         (terminal (and ui (terminal-ui-terminal ui))))
+    (and (typep terminal 'image-daemon:relay)
+         (null (image-daemon:relay-direct-terminal terminal)))))
+
 (-> application--present-open-instruction (application) boolean)
 (defun application--present-open-instruction (application)
-  "Present the command that opens APPLICATION's channel again when its conversation is durable.
+  "Put durable APPLICATION's reopen advice in its direct terminal epilogue.
 
-A detached session's relay closes before the terminal UI unwinds, so there the
-instruction is the relay's exit message, which the attached client prints after
-restoring its own terminal. A direct session puts it in the UI's epilogue so a
-fullscreen session shows it on the normal screen after its alternate buffer
-closes. Both carry the same styling, rendered for the terminal that shows it."
-  (let ((conversation (application-conversation application)))
-    (if (conversation-persisted-p conversation)
-        (let* ((ui    (application-ui application))
-               (spans (list
-                       (terminal-span ':dim "To open this channel again, run:")
-                       (terminal-span ':plain (string #\Newline))
-                       (terminal-span ':code
-                                      (format nil "  ~A"
-                                              (application--open-command application))))))
-          (unless (localgroup-finish-attachments
-                   application
-                   :status  0
-                   :message (terminal--render-spans (terminal-ui-terminal ui) spans))
-            (terminal-ui-set-epilogue ui spans))
-          t)
-        nil)))
+Attached clients report their own channel after releasing their shared screen."
+  (let ((conversation (application-conversation application))
+        (ui           (application-ui application)))
+    (when (and (conversation-persisted-p conversation)
+               (not (application--client-reports-exit-p application)))
+      (terminal-ui-set-epilogue
+       ui (channel-open-instruction (conversation-identifier conversation)))
+      t)))
 
 (-> application--initial-work-items
     ((option string) (option string) boolean)
@@ -646,7 +641,7 @@ controller's exit reason."
                            (application-input-failed-backtrace condition)))))
                     (setf exit-reason
                           (application-input-controller-exit-reason input-controller))
-                    (when (eq exit-reason ':interrupt)
+                    (when (member exit-reason '(:quit :interrupt :end-of-input))
                       (application--present-open-instruction application)))
                (finish-shutdown)))
         (finish-shutdown)))
@@ -1258,8 +1253,10 @@ options; when that channel refuses the open or the terminal's attachment,
 the terminal attaches to the one it left. One screen, with one sidebar of
 the world, follows the terminal from channel to channel, so a switch never
 gives the terminal back in between."
-  (let* ((panel  (world-sidebar-create configuration))
-         (screen (localgroup-client-screen-create :panel panel)))
+  (let* ((panel        (world-sidebar-create configuration))
+         (screen       (localgroup-client-screen-create :panel panel))
+         (last-channel nil)
+         (final-exit   nil))
     (unwind-protect
          (progn
            (world-sidebar-start panel)
@@ -1304,11 +1301,13 @@ gives the terminal back in between."
                          (handler-case
                              (progn
                                (setf (world-sidebar-current panel) session-id)
-                               (localgroup-attach-record configuration record attachment-mode
-                                                        :panel           panel
-                                                        :screen          screen
-                                                         :notice         (shiftf notice nil)
-                                                         :client-version (shiftf client-version nil)))
+                               (prog1
+                                   (localgroup-attach-record configuration record attachment-mode
+                                                            :panel          panel
+                                                            :screen         screen
+                                                            :notice         (shiftf notice nil)
+                                                            :client-version (shiftf client-version nil))
+                                 (setf last-channel session-id)))
                            (localgroup-error (condition)
                              (close-started)
                              ;; A switch whose channel refuses this terminal, as
@@ -1354,13 +1353,14 @@ gives the terminal back in between."
                                origin     nil
                                started-p  nil)))))
                   (t
-                   ;; The terminal comes back before the session's last word,
-                   ;; so the word lands on it rather than on the screen it left.
-                   (localgroup-client-screen-release screen)
-                   (localgroup-relay-exit configuration exit attachment-mode)
-                   (return t)))))))
-      (localgroup-client-screen-release screen)
-      (world-sidebar-stop panel))))
+                    (setf final-exit exit)
+                    (return)))))))
+      (unwind-protect
+           (localgroup-client-screen-release screen)
+        (world-sidebar-stop panel)))
+    (localgroup-relay-exit configuration final-exit attachment-mode
+                           :session-id last-channel)
+    t))
 
 (-> main--session-options () list)
 (defun main--session-options ()
