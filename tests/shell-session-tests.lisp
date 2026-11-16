@@ -3,7 +3,7 @@
 ;;;; -- Reusable Shell Behavior --
 
 (-> shell-session-tests--run (tool-context string &key (:command string)
-                             (:timeout (integer 1)) (:separate-p boolean)) tool-result)
+                              (:timeout (integer 1)) (:separate-p boolean)) tool-result)
 (defun shell-session-tests--run (context name &key (command ":") (timeout 10) separate-p)
   "Invoke the public named-shell tool with bounded test deadlines."
   (tool-execute (tool-registry-find (tool-context-registry context) "shell" "run")
@@ -14,7 +14,7 @@
 (defun shell-session-tests--output (result context &key (stream ':output))
   "Read exact retained output rather than searching incidental preview text."
   (let* ((metadata (first (getf (tool-result-details result) :shell-logs)))
-         (capture (find stream (getf metadata :captures) :key (lambda (entry) (getf entry :stream)))))
+         (capture  (find stream (getf metadata :captures) :key (lambda (entry) (getf entry :stream)))))
     (utf8-octets-to-string
      (shell-output-tests--read-bytes
       (shell-output-tests--capture-path context (getf capture :reference))))))
@@ -23,10 +23,10 @@
 (defun test-shell-session-platform-discovery ()
   "Expose session operations only on hosts with a safe bounded transport."
   (dolist (platform (list *platform* (make-instance 'platform)))
-    (let* ((*platform* platform)
+    (let* ((*platform*  platform)
            (supported-p (platform-shell-sessions-p platform))
-           (registry (default-tools--register-shell (make-instance 'tool-registry)))
-           (run (tool-registry-find registry "shell" "run")))
+           (registry    (default-tools--register-shell (make-instance 'tool-registry)))
+           (run         (tool-registry-find registry "shell" "run")))
       (test-assert (eq (not (null (json-get (json-get (tool-parameters run) "properties") "session")))
                        supported-p)
                    "Session parameter follows host capability")
@@ -46,10 +46,10 @@
   "Retain variables, functions, cwd and exact per-command stdout/stderr logs."
   (when (platform-shell-sessions-p *platform*)
     (with-test-configuration (configuration root)
-      (let* ((configuration (configuration-copy configuration :working-directory root))
-             (registry (default-tools--register-shell (make-instance 'tool-registry)))
-             (context (shell-output-tests--context configuration registry))
-             (child (merge-pathnames "child/" root))
+      (let* ((configuration  (configuration-copy configuration :working-directory root))
+             (registry       (default-tools--register-shell (make-instance 'tool-registry)))
+             (context        (shell-output-tests--context configuration registry))
+             (child          (merge-pathnames "child/" root))
              (authorizations nil))
         (ensure-directories-exist child)
         (setf (slot-value context 'command-authorization-function)
@@ -62,8 +62,8 @@
                 (tool-result-success-p
                  (shell-session-tests--run
                   context "development"
-                 :command (format nil "declare -a VALUES=(lost kept); VALUE=${VALUES[1]}; f() { printf '%s' \"$VALUE\"; }; cd ~A"
-                                   (uiop:escape-sh-token (namestring child)))))
+                  :command (format nil "declare -a VALUES=(lost kept); VALUE=${VALUES[1]}; f() { printf '%s' \"$VALUE\"; }; cd ~A"
+                                    (uiop:escape-sh-token (namestring child)))))
                 "Initialize state in one shell")
                (let ((result (shell-session-tests--run context "development" :command "f")))
                  (test-assert (string= "kept" (shell-session-tests--output result context))
@@ -71,7 +71,7 @@
                  (test-assert (equal child (second (first authorizations)))
                               "Authorize subsequent commands at the observed physical cwd"))
                (let ((result (shell-session-tests--run context "development" :separate-p t
-                                                       :command "printf out; printf err >&2; false")))
+                                                       :command                          "printf out; printf err >&2; false")))
                  (test-assert (= 1 (getf (tool-result-details result) :exit-code))
                               "Preserve nonzero command status without terminating the shell")
                  (test-assert (string= "out" (shell-session-tests--output result context)) "Capture stdout")
@@ -101,7 +101,7 @@
     (with-test-configuration (configuration root)
       (declare (ignore root))
       (let* ((registry (default-tools--register-shell (make-instance 'tool-registry)))
-             (context (shell-output-tests--context configuration registry)))
+             (context  (shell-output-tests--context configuration registry)))
         (unwind-protect
              (progn
                (let ((result (shell-session-tests--run context "work" :command "printf final; exit 7")))
@@ -139,21 +139,21 @@
   (when (platform-shell-sessions-p *platform*)
     (with-test-configuration (configuration root)
       (let* ((configuration (configuration-copy configuration :working-directory root))
-             (registry (default-tools--register-shell (make-instance 'tool-registry)))
-             (context (shell-output-tests--context configuration registry))
-             (marker (merge-pathnames "escaped-child" root)))
+             (registry      (default-tools--register-shell (make-instance 'tool-registry)))
+             (context       (shell-output-tests--context configuration registry))
+             (marker        (merge-pathnames "escaped-child" root)))
         (unwind-protect
              (progn
                (let* ((*shell-log-capture-byte-limit* 64)
-                      (result (shell-session-tests--run context "bounded"
-                                                       :command "i=0; while [ $i -lt 200 ]; do printf x; i=$((i+1)); done"))
-                      (capture (first (getf (first (getf (tool-result-details result) :shell-logs)) :captures))))
+                      (result                         (shell-session-tests--run context "bounded"
+                                                                               :command "i=0; while [ $i -lt 200 ]; do printf x; i=$((i+1)); done"))
+                      (capture                        (first (getf (first (getf (tool-result-details result) :shell-logs)) :captures))))
                  (test-assert (= 64 (getf capture :byte-count)) "Retained output obeys the existing finite disk limit")
                  (test-assert (= 200 (getf capture :observed-byte-count)) "Drain oversized output without blocking the shell"))
                (let ((result (shell-session-tests--run
                               context "timeout" :timeout 1
-                              :command (format nil "printf partial; (sleep 3; printf leak > ~A) & wait"
-                                               (uiop:escape-sh-token (namestring marker))))))
+                              :command                   (format nil "printf partial; (sleep 3; printf leak > ~A) & wait"
+                                                                 (uiop:escape-sh-token (namestring marker))))))
                  (test-assert (eq ':timeout (getf (tool-result-details result) :execution-status)) "Report timeout status")
                  (test-assert (string= "partial" (shell-session-tests--output result context)) "Retain partial output")
                  (test-assert (shell-session-dead-p (shell-session--find context "timeout")) "Timeout invalidates the session"))
@@ -162,7 +162,6 @@
           (tool-registry-close-runtime-state registry)))))
   nil)
 
-
 (-> test-shell-session-serialization () null)
 (defun test-shell-session-serialization ()
   "Serialize simultaneous submissions without mixing captures or losing state."
@@ -170,8 +169,8 @@
     (with-test-configuration (configuration root)
       (declare (ignore root))
       (let* ((registry (default-tools--register-shell (make-instance 'tool-registry)))
-             (context (shell-output-tests--context configuration registry))
-             (threads nil))
+             (context  (shell-output-tests--context configuration registry))
+             (threads  nil))
         (unwind-protect
              (progn
                (shell-session-tests--run context "serial" :command "COUNT=0")
@@ -202,16 +201,16 @@
   "Run a named-shell test with a minimal real supervised task runtime."
   (with-test-configuration (configuration root)
     (let* ((configuration (configuration-copy configuration :working-directory root))
-           (registry (task-augment-tool-registry
-                      (default-tools--register-shell (make-instance 'tool-registry))))
-           (parent (agent-create :configuration configuration :provider (make-instance 'model-provider)
-                                 :tool-registry registry :worker nil))
-           (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
-           (context (make-instance 'tool-context :configuration configuration :agent parent
-                                   :registry registry :worker nil :conversation (agent-conversation parent)
-                                   :command-authorization-function
-                                   (lambda (command directory)
-                                     (declare (ignore command directory)) ':full-access))))
+           (registry      (task-augment-tool-registry
+                           (default-tools--register-shell (make-instance 'tool-registry))))
+           (parent        (agent-create :configuration configuration :provider (make-instance 'model-provider)
+                                        :tool-registry registry :worker nil))
+           (orchestrator  (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
+           (context       (make-instance 'tool-context :configuration configuration :agent parent
+                                         :registry registry :worker nil :conversation (agent-conversation parent)
+                                         :command-authorization-function
+                                         (lambda (command directory)
+                                           (declare (ignore command directory)) ':full-access))))
       (unwind-protect
            (funcall function configuration parent orchestrator context registry)
         (task-orchestrator-close orchestrator)
@@ -228,9 +227,9 @@
             (let* ((result (tool-execute (tool-registry-find registry "shell" "run") context
                                          (json-object "session" "cancelled" "command" "printf started; sleep 30"
                                                       "async" t)))
-                   (job (task-orchestrator-find-visible-job
-                         orchestrator (getf (getf (rest (tool-result-details result)) :job) :id)
-                         :viewer parent :tool-name "job.get")))
+                   (job    (task-orchestrator-find-visible-job
+                            orchestrator (getf (getf (rest (tool-result-details result)) :job) :id)
+                            :viewer parent :tool-name "job.get")))
               (test-assert (task-tests--wait-until
                             (lambda ()
                               (let ((session (shell-session--find context "cancelled")))
@@ -253,12 +252,12 @@
   "Keep the sandbox's original workspace boundary for the entire shell lifetime."
   (when (platform-shell-sessions-p *platform*)
     (with-test-configuration (configuration root)
-      (let* ((workspace (merge-pathnames "workspace/" root))
+      (let* ((workspace     (merge-pathnames "workspace/" root))
              (configuration (configuration-copy configuration :working-directory workspace))
-             (registry (default-tools--register-shell (make-instance 'tool-registry)))
-             (context (shell-output-tests--context configuration registry))
-             (inside (merge-pathnames "inside" workspace))
-             (outside (merge-pathnames "outside" root)))
+             (registry      (default-tools--register-shell (make-instance 'tool-registry)))
+             (context       (shell-output-tests--context configuration registry))
+             (inside        (merge-pathnames "inside" workspace))
+             (outside       (merge-pathnames "outside" root)))
         (ensure-directories-exist workspace)
         (setf (slot-value context 'command-authorization-function)
               (lambda (command directory)
@@ -276,22 +275,21 @@
           (tool-registry-close-runtime-state registry)))))
   nil)
 
-
 (-> test-shell-session-protocol-boundaries () null)
 (defun test-shell-session-protocol-boundaries ()
   "Protect publication, bounded records and root cleanup against mutable shell paths."
   (when (platform-shell-sessions-p *platform*)
     (with-test-configuration (configuration root)
       (let* ((configuration (configuration-copy configuration :working-directory root))
-             (registry (default-tools--register-shell (make-instance 'tool-registry)))
-             (context (shell-output-tests--context configuration registry))
-             (data (merge-pathnames "owned/" root))
-             (target (merge-pathnames "target/" root))
-             (sentinel (merge-pathnames "sentinel" target))
-             (link (merge-pathnames "record-link" root))
-             (fifo (merge-pathnames "record-fifo" root))
-             (large (merge-pathnames "record-large" root))
-             (session (make-instance 'shell-session :name "publication" :directory root :scope nil)))
+             (registry      (default-tools--register-shell (make-instance 'tool-registry)))
+             (context       (shell-output-tests--context configuration registry))
+             (data          (merge-pathnames "owned/" root))
+             (target        (merge-pathnames "target/" root))
+             (sentinel      (merge-pathnames "sentinel" target))
+             (link          (merge-pathnames "record-link" root))
+             (fifo          (merge-pathnames "record-fifo" root))
+             (large         (merge-pathnames "record-large" root))
+             (session       (make-instance 'shell-session :name "publication" :directory root :scope nil)))
         (ensure-directories-exist data)
         (ensure-directories-exist target)
         (with-open-file (stream sentinel :direction ':output) (write-string "preserved" stream))
@@ -313,7 +311,7 @@
                                 "Retained functions, aliases and PATH do not change protocol status writers"))
                  (test-assert
                   (string= "safe" (shell-session-tests--output
-                                  (shell-session-tests--run context "shadowed" :command "builtin printf safe") context))
+                                   (shell-session-tests--run context "shadowed" :command "builtin printf safe") context))
                   "Protocol survives subsequent commands with shadowed printf")
                  (dolist (name '("command" "frame" "go" "status"))
                    (let ((path (merge-pathnames name data)))
@@ -340,7 +338,7 @@
                                                :configuration (configuration-copy configuration
                                                                                  :working-directory (uiop:temporary-directory))
                                                :registry registry :worker nil
-                                               :conversation (tool-context-conversation context)
+                                               :conversation  (tool-context-conversation context)
                                                :command-authorization-function
                                                (lambda (command directory)
                                                  (declare (ignore command directory)) ':sandboxed))))

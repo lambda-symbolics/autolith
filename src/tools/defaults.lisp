@@ -516,10 +516,10 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
   (tool-registry-describe-namespace registry "shell"
                                     "Authorized external commands, defaulting to the workspace directory.")
   (let* ((supported-p (platform-shell-sessions-p *platform*))
-         (pool (when supported-p
-                 (or (tool-registry-runtime-binding registry 'shell-session-pool)
-                     (tool-registry-bind-runtime registry 'shell-session-pool
-                                                 (make-instance 'shell-session-pool)))))
+         (pool        (when supported-p
+                        (or (tool-registry-runtime-binding registry 'shell-session-pool)
+                            (tool-registry-bind-runtime registry 'shell-session-pool
+                                                        (make-instance 'shell-session-pool)))))
          (description "Run one authorized external command, synchronously or as an inspectable job. Retain private raw output and return exit/status metadata, a bounded head/tail preview, and shell-log: references for later ranges or search. Use PowerShell syntax on Windows and POSIX shell syntax elsewhere.")
          (properties
            (json-object
@@ -546,9 +546,12 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
          registry
          (list 'shell-session-tool "shell" (string-downcase (symbol-name operation))
                (ecase operation
-                 (:sessions "List this agent's named shell sessions, live/dead state and current directories.")
-                 (:reset "Stop and replace one named shell. Discard variables/functions and recreate it in the workspace or supplied directory.")
-                 (:close "Stop and forget one named shell and all its descendant processes."))
+                 (:sessions
+                  "List this agent's named shell sessions, live/dead state and current directories.")
+                 (:reset
+                  "Stop and replace one named shell. Discard variables/functions and recreate it in the workspace or supplied directory.")
+                 (:close
+                  "Stop and forget one named shell and all its descendant processes."))
                (if (eq operation ':sessions)
                    (tool-object-schema (json-object) nil)
                    (tool-object-schema

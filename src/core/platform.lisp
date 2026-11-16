@@ -485,7 +485,7 @@ interrupt context and must do no more than record the event."))
   (declare (ignore directory programs))
   (error 'platform-capability-unavailable
          :capability ':shell-sessions
-         :message "Reusable shell sessions are unavailable on this host."))
+         :message    "Reusable shell sessions are unavailable on this host."))
 
 (defgeneric platform-open-url (platform url)
   (:documentation

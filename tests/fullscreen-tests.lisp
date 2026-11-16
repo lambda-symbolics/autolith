@@ -1762,7 +1762,7 @@
              (ui           (fullscreen-test--ui terminal))
              (conversation (conversation-create configuration))
              (application  (make-instance 'application :configuration configuration
-                                          :tool-registry (make-default-tool-registry)
+                                          :tool-registry              (make-default-tool-registry)
                                           :conversation conversation :ui ui))
              (forms        #("(let ((start (get-internal-real-time))) (list :first start :description \"first compact source beyond the visible input preview\" :first-complete t))"
                              "(let ((start (get-internal-real-time))) (list :second start :description \"second compact source beyond the visible input preview\" :second-complete t))"))
@@ -1896,7 +1896,7 @@
           (labels ((toggle-input ()
                      (terminal-ui-process-event active ':scroll-top)
                      (let* ((frame (map 'list #'clinedi:ansi-strip (fullscreen-test--frame active)))
-                             (row   (position-if (lambda (text) (search "(let" text)) frame)))
+                            (row   (position-if (lambda (text) (search "(let" text)) frame)))
                         (test-assert row "the form text is visible and clickable")
                         (when row
                          (fullscreen-test--click active (1+ (search "(let" (nth row frame))) (1+ row))))))

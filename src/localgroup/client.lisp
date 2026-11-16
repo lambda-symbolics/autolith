@@ -754,7 +754,7 @@ SCREEN the caller lends stays the caller's to release."
                                       (append
                                        (list :mode mode :rows rows :columns columns
                                              :client-pid (current-process-id)
-                                             :styled-p (terminal-environment-styling-p))
+                                             :styled-p   (terminal-environment-styling-p))
                                        (when client-version
                                          (list :client-version client-version))
                                        (when notice

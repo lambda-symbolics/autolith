@@ -480,7 +480,7 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
                             (multiple-value-bind (attached-p direct-p replaced)
                                 (image-daemon:relay-attach
                                  terminal attachment :rows rows :columns columns :styled-p styled-p
-                                 :session-id (image-daemon:daemon-runtime-identifier session)
+                                 :session-id         (image-daemon:daemon-runtime-identifier session)
                                  :defer-revocation-p t)
                               (setf previous replaced)
                               (values attached-p direct-p))))

@@ -19,7 +19,7 @@
 
 An omitted PID supports clients that predate terminal process reporting."
   (unless (or (null client-pid) (typep client-pid '(integer 1)))
-    (error 'localgroup-error :message "The terminal client PID must be a positive integer."
+    (error 'localgroup-error :message  "The terminal client PID must be a positive integer."
                             :operation ':attach))
   (image-daemon:attachment-start
    (make-instance 'localgroup-attachment :socket socket :stream stream :mode mode

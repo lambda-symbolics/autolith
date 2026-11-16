@@ -6,19 +6,19 @@
 (defun test-localgroup-startup-reader ()
   "Keep boot input on the startup thread until the responsive reader is started."
   (with-test-configuration (configuration)
-    (let* ((terminal     (localgroup-terminal-create))
-           (ui           (terminal-ui-create :terminal terminal :fullscreen-p t))
-           (application  (make-instance 'application
-                                        :configuration configuration
-                                        :conversation  (conversation-create configuration)
-                                        :ui            ui))
-           (controller   (application-input-controller-create
-                          application :start-reader-p nil :load-pending-p nil))
-           (attached     (sb-thread:make-semaphore :name "Startup attachment completed"))
-           (replay       (symbol-function 'localgroup-terminal-replay-screen))
-           (session      nil)
-           (socket       nil)
-           (stream       nil))
+    (let* ((terminal    (localgroup-terminal-create))
+           (ui          (terminal-ui-create :terminal terminal :fullscreen-p t))
+           (application (make-instance 'application
+                                       :configuration configuration
+                                       :conversation  (conversation-create configuration)
+                                       :ui            ui))
+           (controller  (application-input-controller-create
+                         application :start-reader-p nil :load-pending-p nil))
+           (attached    (sb-thread:make-semaphore :name "Startup attachment completed"))
+           (replay      (symbol-function 'localgroup-terminal-replay-screen))
+           (session     nil)
+           (socket      nil)
+           (stream      nil))
       (unwind-protect
            (progn
              (configuration-ensure-directories configuration)
@@ -53,9 +53,9 @@
                         (lambda ()
                           (not (application-input-controller-reader-live-p controller)))
                         :halted-function (lambda () (> waits 10))
-                        :wait-function (lambda (seconds)
-                                         (declare (ignore seconds))
-                                         (incf waits)))
+                        :wait-function   (lambda (seconds)
+                                           (declare (ignore seconds))
+                                           (incf waits)))
                     ':start)
                 "boot consumes the client's early Enter without a competing reader"))
              (application-input-controller--start-reader controller)

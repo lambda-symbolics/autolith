@@ -142,9 +142,9 @@
 (defun shell-session--await-native-cleanup (session condition)
   "Retain native cleanup ownership inside the sandbox scope until reaping is proved."
   (setf (shell-session-cleanup-condition session) condition)
-  (let ((owner (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-thread condition))
-        (retry (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-retry condition))
-        (readers (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-readers condition))
+  (let ((owner    (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-thread condition))
+        (retry    (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-retry condition))
+        (readers  (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-readers condition))
         (reaped-p nil))
     (loop
       (unless (or owner reaped-p)
@@ -179,14 +179,14 @@
 (defun shell-session--start (session context authorization)
   "Start one supervised shell and retain sandbox scope until its process tree dies."
   (let* ((configuration (tool-context-configuration context))
-         (workspace (config :working-directory configuration))
-         (programs (platform-shell-session-programs *platform*))
-         (temporary (platform-make-temporary-directory
-                     *platform* (uiop:temporary-directory) "autolith-shell-"))
-         (staging (platform-make-temporary-directory
-                   *platform* (uiop:temporary-directory) "autolith-shell-publish-"))
-         (roots (or (task-worktree-command-writable-roots context) (list workspace)))
-         (exit-code nil))
+         (workspace     (config :working-directory configuration))
+         (programs      (platform-shell-session-programs *platform*))
+         (temporary     (platform-make-temporary-directory
+                         *platform* (uiop:temporary-directory) "autolith-shell-"))
+         (staging       (platform-make-temporary-directory
+                         *platform* (uiop:temporary-directory) "autolith-shell-publish-"))
+         (roots         (or (task-worktree-command-writable-roots context) (list workspace)))
+         (exit-code     nil))
     (setf (shell-session-temporary session) temporary
           (shell-session-staging session) staging
           (shell-session-programs session) programs)
@@ -211,25 +211,25 @@
                                              program arguments :policy policy :environment environment
                                              :working-directory (shell-session-directory session)
                                              :output-limit 1000 :error-output-limit 1000
-                                             :cancel-function (lambda () (shell-session-stop-p session)))
+                                             :cancel-function   (lambda () (shell-session-stop-p session)))
                                           (cl-exec-sandbox:sandbox-process-cleanup-error (condition)
                                             (shell-session--await-native-cleanup session condition)
                                             (or (cl-exec-sandbox:sandbox-execution-error-result condition)
                                                 (error condition))))))
                                   (setf exit-code (sandbox-result-exit-code result)
                                         (shell-session-diagnostic session)
-                                         (bounded-string
-                                          (format nil "Shell exited (~A): ~A"
-                                                  (sandbox-result-exit-code result)
-                                                  (cl-exec-sandbox:sandbox-result-error-output result)) :limit 1000))))))
+                                        (bounded-string
+                                         (format nil "Shell exited (~A): ~A"
+                                                 (sandbox-result-exit-code result)
+                                                 (cl-exec-sandbox:sandbox-result-error-output result)) :limit 1000))))))
                         (ecase authorization
                           (:sandboxed
                            (platform-call-with-command-sandbox
-                           *platform* workspace #'run :writable-roots (append roots (list temporary))
-                           :read-roots (cons staging
-                                             (mapcar (lambda (entry)
-                                                       (uiop:pathname-directory-pathname (pathname (second entry))))
-                                                     programs))))
+                            *platform* workspace #'run :writable-roots (append roots (list temporary))
+                            :read-roots                                (cons staging
+                                                                             (mapcar (lambda (entry)
+                                                                                       (uiop:pathname-directory-pathname (pathname (second entry))))
+                                                                                     programs))))
                           (:full-access
                            (run (external-sandbox-policy) nil))))
                     (error (condition)
@@ -269,7 +269,7 @@
     (unless (shell-session-thread session)
       (shell-session--start session context authorization))
     (let ((complete-p nil)
-          (status nil))
+          (status     nil))
       (unwind-protect
            (progn
              (dolist (name '("status" "cwd"))
@@ -280,46 +280,46 @@
              session (shell-session--path session "frame")
              (platform-shell-session-frame *platform* (shell-session-temporary session)
                                            (and change-directory-p directory)
-                                           :programs (shell-session-programs session)
+                                           :programs       (shell-session-programs session)
                                            :merge-output-p merge-output-p))
             (shell-session--write session (shell-session--path session "go") "")
-             (let ((result
-                     (workspace-tool-run-shell-command
-                    (platform-shell-session-reader-command
-                     *platform* (shell-session-temporary session) :merge-output-p merge-output-p
-                     :programs (shell-session-programs session))
-                      (shell-session-temporary session)
-                      :policy (external-sandbox-policy) :timeout timeout :output-limit output-limit
-                      :context context :merge-output-p merge-output-p
-                      :cancel-function (lambda ()
-                                         (and (shell-session-dead-p session)
-                                              (not (probe-file (shell-session--path session "status")))))
-                      :result-function (lambda (result)
-                                         (setf status (cl-exec-sandbox:sandbox-result-status result))))))
-               (when (and (not (shell-session-dead-p session))
-                          (probe-file (shell-session--path session "status")))
-                (let ((cwd (platform-shell-session-read-record *platform* (shell-session--path session "cwd") 16384)))
-                   (setf (shell-session-directory session)
-                         (uiop:ensure-directory-pathname
-                          (subseq cwd 0 (max 0 (1- (length cwd))))))))
-              (setf complete-p (and (eq status ':exited)
-                                    (not (shell-session-dead-p session))
-                                    (probe-file (shell-session--path session "status"))))
-               result))
+            (let ((result
+                    (workspace-tool-run-shell-command
+                     (platform-shell-session-reader-command
+                      *platform* (shell-session-temporary session) :merge-output-p merge-output-p
+                      :programs                                                    (shell-session-programs session))
+                     (shell-session-temporary session)
+                     :policy (external-sandbox-policy) :timeout timeout :output-limit output-limit
+                     :context context :merge-output-p merge-output-p
+                     :cancel-function (lambda ()
+                                        (and (shell-session-dead-p session)
+                                             (not (probe-file (shell-session--path session "status")))))
+                     :result-function (lambda (result)
+                                        (setf status (cl-exec-sandbox:sandbox-result-status result))))))
+              (when (and (not (shell-session-dead-p session))
+                         (probe-file (shell-session--path session "status")))
+               (let ((cwd (platform-shell-session-read-record *platform* (shell-session--path session "cwd") 16384)))
+                  (setf (shell-session-directory session)
+                        (uiop:ensure-directory-pathname
+                         (subseq cwd 0 (max 0 (1- (length cwd))))))))
+             (setf complete-p (and (eq status ':exited)
+                                   (not (shell-session-dead-p session))
+                                   (probe-file (shell-session--path session "status"))))
+             result))
         (unless complete-p (shell-session--stop session))))))
 
 (-> shell-session-run (tool-context hash-table) tool-result)
 (defun shell-session-run (context arguments)
   "Authorize the current cwd, pin lifetime scopes, and invoke one named command."
   (shell-session--require-capability)
-  (let* ((name (tool-argument arguments "session" :required t))
-         (command (tool-argument arguments "command" :required t))
-         (session (shell-session--find context name))
+  (let* ((name               (tool-argument arguments "session" :required t))
+         (command            (tool-argument arguments "command" :required t))
+         (session            (shell-session--find context name))
          (explicit-directory (tool-argument arguments "directory"))
-         (directory (if (and session (null explicit-directory))
-                        (shell-session-directory session)
-                        (workspace-tool-resolve-path context explicit-directory)))
-         (authorization (tool-context-authorize-command context command directory)))
+         (directory          (if (and session (null explicit-directory))
+                                 (shell-session-directory session)
+                                 (workspace-tool-resolve-path context explicit-directory)))
+         (authorization      (tool-context-authorize-command context command directory)))
     (unless (and (non-empty-string-p name) (non-empty-string-p command))
       (shell-session--fail "Named shells require a nonempty session name and command."))
     (when (eq authorization ':deny)
@@ -335,15 +335,15 @@
     (tool-execution-invoke
      (tool-context-execution-runtime context) (tool-context-agent context)
      :tool-name "shell.run" :description (tool-argument arguments "description")
-     :summary (format nil "~A in shell ~A" command name)
+     :summary           (format nil "~A in shell ~A" command name)
      :operation-function
      (lambda ()
       (shell-session--execute session context command :directory directory :authorization authorization
-                               :timeout (workspace-tool-shell-timeout arguments)
-                               :merge-output-p (not (tool-boolean-argument arguments "separate-output" :tool-name "shell.run"))
-                               :output-limit *shell-maximum-output-characters*
+                               :timeout            (workspace-tool-shell-timeout arguments)
+                               :merge-output-p     (not (tool-boolean-argument arguments "separate-output" :tool-name "shell.run"))
+                               :output-limit       *shell-maximum-output-characters*
                                :change-directory-p (not (null explicit-directory))))
-     :async-p (tool-boolean-argument arguments "async" :tool-name "shell.run")
+     :async-p           (tool-boolean-argument arguments "async" :tool-name "shell.run")
      :completion-policy (tool-completion-policy-argument arguments :tool-name "shell.run"))))
 
 (defmethod tool-execute ((tool shell-session-tool) (context tool-context) (arguments hash-table))

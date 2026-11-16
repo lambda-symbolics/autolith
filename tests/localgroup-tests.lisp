@@ -1583,11 +1583,11 @@
   (with-test-configuration (configuration)
     (let* ((terminal    (localgroup-terminal-create))
            (application (make-instance 'application :configuration configuration
-                                                    :conversation (conversation-create configuration)
-                                                    :ui (terminal-ui-create :terminal terminal)))
+                                                    :conversation  (conversation-create configuration)
+                                                    :ui            (terminal-ui-create :terminal terminal)))
            (main-thread (test-localgroup--make-main-thread))
            (controller  (make-instance 'application-input-controller :application application
-                                                                    :main-thread main-thread))
+                                                                    :main-thread  main-thread))
            (session     nil)
            (clients     nil))
       (setf (application-input-controller application) controller)

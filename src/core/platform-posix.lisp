@@ -470,8 +470,8 @@ Conflicts require an explicit choice. Rename failures warn and retry next lookup
 
 (defmethod platform-shell-session-delete-directory ((platform posix-platform) pathname)
   "Unlink substituted roots; recursively remove only an observed real directory."
-  (let* ((name (string-right-trim "/" (posix--namestring pathname)))
-         (path (uiop:parse-native-namestring name))
+  (let* ((name   (string-right-trim "/" (posix--namestring pathname)))
+         (path   (uiop:parse-native-namestring name))
          (status (platform-path-status platform path :follow-links-p nil)))
     (when status
       (if (eq (platform-file-status-kind status) ':directory)
@@ -563,7 +563,7 @@ Conflicts require an explicit choice. Rename failures warn and retry next lookup
                         (sb-posix:syscall-error () nil)))
               return (uiop:native-namestring (platform-truename *platform* candidate)))
       (error 'platform-capability-unavailable :capability ':shell-sessions
-             :message (format nil "Reusable shells require ~A on PATH." name))))
+             :message                                     (format nil "Reusable shells require ~A on PATH." name))))
 
 (defmethod platform-shell-session-programs ((platform posix-platform))
   "Snapshot native PATH resolution before commands can change shell state."
@@ -604,9 +604,9 @@ Conflicts require an explicit choice. Rename failures warn and retry next lookup
 
 (defmethod platform-shell-session-start-command ((platform posix-platform) directory &key programs)
   "Run a persistent shell, sourcing complete private command frames serially."
-  (let ((root (uiop:escape-sh-token (uiop:native-namestring directory)))
-        (fifo (uiop:escape-sh-token (second (assoc "mkfifo" programs :test #'string=))))
-        (pause (uiop:escape-sh-token (second (assoc "sleep" programs :test #'string=))))
+  (let ((root   (uiop:escape-sh-token (uiop:native-namestring directory)))
+        (fifo   (uiop:escape-sh-token (second (assoc "mkfifo" programs :test #'string=))))
+        (pause  (uiop:escape-sh-token (second (assoc "sleep" programs :test #'string=))))
         (remove (uiop:escape-sh-token (second (assoc "rm" programs :test #'string=)))))
     (format nil "umask 077; ~A ~A/output ~A/error || exit; : > ~A/ready; while :; do while [ ! -f ~A/go ]; do ~A 0.02; done; ~A -f ~A/go; . ~A/frame; done"
             fifo root root root root pause remove root root)))
@@ -614,10 +614,10 @@ Conflicts require an explicit choice. Rename failures warn and retry next lookup
 (defmethod platform-shell-session-frame
     ((platform posix-platform) control-directory directory &key merge-output-p programs)
   "Source the command in the same shell and report completion outside its output."
-  (let ((root (uiop:escape-sh-token (uiop:native-namestring control-directory)))
-        (move (uiop:escape-sh-token (second (assoc "mv" programs :test #'string=))))
+  (let ((root  (uiop:escape-sh-token (uiop:native-namestring control-directory)))
+        (move  (uiop:escape-sh-token (second (assoc "mv" programs :test #'string=))))
         (print (uiop:escape-sh-token (second (assoc "printf" programs :test #'string=))))
-        (pwd (uiop:escape-sh-token (second (assoc "pwd" programs :test #'string=)))))
+        (pwd   (uiop:escape-sh-token (second (assoc "pwd" programs :test #'string=)))))
     (format nil "{ ~A. ~A/command; } > ~A/output ~A~%~A '%s' \"$?\" > ~A/status.pending~%~A -P > ~A/cwd~%~A ~A/status.pending ~A/status~%"
             (if directory
                 (format nil "\\builtin cd ~A && "
@@ -629,10 +629,10 @@ Conflicts require an explicit choice. Rename failures warn and retry next lookup
 (defmethod platform-shell-session-reader-command
     ((platform posix-platform) directory &key merge-output-p programs)
   "Drain FIFOs with backpressure while the normal capture supervisor enforces limits."
-  (let ((root (uiop:escape-sh-token (uiop:native-namestring directory)))
-        (cat (uiop:escape-sh-token (second (assoc "cat" programs :test #'string=))))
+  (let ((root  (uiop:escape-sh-token (uiop:native-namestring directory)))
+        (cat   (uiop:escape-sh-token (second (assoc "cat" programs :test #'string=))))
         (pause (uiop:escape-sh-token (second (assoc "sleep" programs :test #'string=))))
-        (head (uiop:escape-sh-token (second (assoc "head" programs :test #'string=)))))
+        (head  (uiop:escape-sh-token (second (assoc "head" programs :test #'string=)))))
     (format nil "~A ~A/output & ~A wait; while [ ! -f ~A/status ]; do ~A 0.02; done; status=$(~A -c 4 ~A/status); case $status in ''|*[!0-9]*) exit 125;; esac; [ \"$status\" -le 255 ] || exit 125; exit \"$status\""
             cat root (if merge-output-p "" (format nil "~A ~A/error >&2 &" cat root)) root pause head root)))
 

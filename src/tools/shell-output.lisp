@@ -146,16 +146,16 @@ so cleanup can release every published capture."
                             (return-from workspace-tool-run-shell-command
                               (tool-failure diagnostic)))))))
             (when result-function (funcall result-function result))
-             (shell-command-result
-              (shell-output--render-result result artifact output-limit :diagnostic diagnostic)
-              (list :exit-code          (sandbox-result-exit-code result)
-                    :execution-status   (cl-exec-sandbox:sandbox-result-status result)
-                    :shell-logs         (list (shell-log--public-metadata
-                                               (shell-log-artifact-metadata artifact)))
-                    :capture-diagnostic diagnostic)
-              (and (null diagnostic)
-                   (eql (sandbox-result-exit-code result) 0)
-                   (eq (cl-exec-sandbox:sandbox-result-status result) ':exited)))))
+            (shell-command-result
+             (shell-output--render-result result artifact output-limit :diagnostic diagnostic)
+             (list :exit-code          (sandbox-result-exit-code result)
+                   :execution-status   (cl-exec-sandbox:sandbox-result-status result)
+                   :shell-logs         (list (shell-log--public-metadata
+                                              (shell-log-artifact-metadata artifact)))
+                   :capture-diagnostic diagnostic)
+             (and (null diagnostic)
+                  (eql (sandbox-result-exit-code result) 0)
+                  (eq (cl-exec-sandbox:sandbox-result-status result) ':exited)))))
       (when artifact
         ; mallet:suppress no-ignore-errors -- releasing the log must not mask the command result or failure
         (ignore-errors (shell-log-release-artifact artifact))))))
