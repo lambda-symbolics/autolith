@@ -57,23 +57,97 @@ may use provider token counts when available; the default is not a tokenizer."))
 
 (-> provider-context--header-components (model-provider vector) list)
 (defun provider-context--header-components (provider tools)
-  "Separate stable accounting policy from replaceable prompt and tool fingerprints."
+  "Separate stable accounting policy from replaceable prompt and tool text."
   (let ((configuration (and (compute-applicable-methods #'provider-configuration (list provider))
                             (provider-configuration provider))))
     (when configuration
-      (list :policy      (provider-cache-prefix--entry
-                          (vector (symbol-name (class-name (class-of provider)))
-                                  (config :model configuration) (config :model-provider configuration)
-                                  (config :reasoning-effort configuration) (config :provider-endpoint configuration)))
-            :prompt      (provider-cache-prefix--entry (system-prompt configuration))
-            :tool-header (provider-cache-prefix--entry tools)))))
+      (let ((prompt (system-prompt configuration)))
+        (list :policy      (provider-cache-prefix--entry
+                            (vector (symbol-name (class-name (class-of provider)))
+                                    (config :model configuration) (config :model-provider configuration)
+                                    (config :reasoning-effort configuration) (config :provider-endpoint configuration)))
+              :prompt      (provider-cache-prefix--entry prompt)
+              :tool-header (provider-cache-prefix--entry tools)
+              :header-text (list prompt (json-encode tools)))))))
+
+(-> provider-context--inserted-bytes (string string) (integer 0))
+(defun provider-context--inserted-bytes (before after)
+  "Count inserted UTF-8 bytes on a Myers character diff, without deletion credits.
+
+Keep separated unchanged islands. Bound comparison work; an exhausted search
+replaces only the unmatched middle, after common prefix and suffix removal."
+  (block nil
+    (let* ((prefix  (or (mismatch before after) (return 0)))
+           (old-end (length before))
+           (new-end (length after)))
+      (loop while (and (> old-end prefix) (> new-end prefix)
+                       (char= (char before (1- old-end)) (char after (1- new-end))))
+            do (decf old-end) (decf new-end))
+      (let* ((old            (subseq before prefix old-end))
+             (new            (subseq after prefix new-end))
+             (old-count      (length old))
+             (new-count      (length new))
+             (sizes          (map 'vector (lambda (character)
+                                           (let ((code (char-code character)))
+                                             (cond
+                                               ((< code #x80)
+                                                1)
+                                               ((< code #x800)
+                                                2)
+                                               ((< code #x10000)
+                                                3)
+                                               (t
+                                                4))))
+                                 new))
+             (budget         (max 1000000 (* 16 (+ old-count new-count))))
+             (distance-limit (min (+ old-count new-count) (isqrt (* 2 budget))))
+             (origin         (1+ distance-limit))
+             (positions      (make-array (+ (* 2 distance-limit) 3) :initial-element -1))
+             (costs          (make-array (length positions) :initial-element 0))
+             (replacement    (reduce #'+ sizes :initial-value 0)))
+        (when (zerop new-count)
+          (return 0))
+        (when (zerop old-count)
+          (return replacement))
+        (setf (aref positions (1+ origin)) 0)
+        (loop for distance from 0 to distance-limit do
+          (loop for diagonal from (- distance) to distance by 2
+                for index = (+ origin diagonal)
+                for insertion-p = (or (= diagonal (- distance))
+                                      (and (/= diagonal distance)
+                                           (< (aref positions (1- index))
+                                              (aref positions (1+ index)))))
+                for x = (if insertion-p
+                            (aref positions (1+ index))
+                            (1+ (aref positions (1- index))))
+                for y = (- x diagonal)
+                for cost = (if insertion-p
+                               (+ (aref costs (1+ index))
+                                  (if (and (plusp distance) (<= 1 y new-count))
+                                      (aref sizes (1- y))
+                                      0))
+                               (aref costs (1- index)))
+                do (when (minusp (decf budget))
+                     (return-from provider-context--inserted-bytes replacement))
+                   (loop while (and (< x old-count) (< y new-count)
+                                    (char= (char old x) (char new y)))
+                         do (incf x) (incf y)
+                            (when (minusp (decf budget))
+                              (return-from provider-context--inserted-bytes replacement)))
+                   (when (and (>= x old-count) (>= y new-count))
+                     (return-from provider-context--inserted-bytes cost))
+                   (setf (aref positions index) x
+                         (aref costs index)     cost)))
+        replacement))))
 
 (-> provider-context--header-charge (list list) (integer 0))
 (defun provider-context--header-charge (sample components)
-  "Charge full current changed components without subtracting unmeasured old costs."
+  "Charge one token per inserted or replacement UTF-8 byte of changed headers."
   (loop for key in '(:prompt :tool-header)
+        for previous in (or (getf sample :header-text) '("" ""))
+        for current in (getf components :header-text)
         unless (equal (getf sample key) (getf components key))
-          sum (ceiling (second (getf components key)) 4)))
+          sum (provider-context--inserted-bytes previous current)))
 
 (-> provider-context--history (model-provider conversation) list)
 (defun provider-context--history (provider conversation)
@@ -266,7 +340,7 @@ the encoder's own fields must still be present there."
   "Anchor ordinary usage after persistence, before locally generated tool evidence.
 
 Re-encode the measured projection through its original encoder, with its
-persisted response and no temporary suffix. Retain fingerprints only. Merged
+persisted response and no temporary suffix. Retain header text once per epoch;
 messages that later change fail closed."
   (let* ((conversation (getf context :conversation))
          (provider     (getf context :provider))
@@ -330,8 +404,16 @@ messages that later change fail closed."
                               :tokens         (max (+ input output) (or total 0))
                               :temporary-characters
                               (max 0 (- (getf context :wire-characters) base-characters)))))
-                  (conversation-append-record conversation (list :context-usage :sample sample))
-                  (setf (conversation-context-usage-sample conversation) sample)))))))))
+                 (let ((previous (conversation-context-usage-sample conversation)))
+                   (unless (and (conversation-context-usage-sample-p previous)
+                                (getf previous :header-text)
+                                (every (lambda (key)
+                                         (equal (getf previous key) (getf sample key)))
+                                       '(:prompt :tool-header)))
+                     (setf (getf sample :header-text) (getf context :header-text)))
+                   (conversation-append-record conversation (list :context-usage :sample sample))
+                   (setf (conversation-context-usage-sample conversation)
+                         (conversation-context-usage-resolve sample previous)))))))))))
   nil)
 
 (-> provider-context--request-characters (t) (values (integer 0) boolean))

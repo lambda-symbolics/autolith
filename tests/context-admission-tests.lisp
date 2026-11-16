@@ -224,6 +224,37 @@
                (equal (mapcar #'json-encode before)
                       (mapcar #'json-encode (conversation-input-items loaded)))
                "reload sees no rejected checkpoint")))))))
+  (context-admission-test--with-measured-context
+   (lambda (agent)
+     (context-admission-test--measure agent :envelope-length 64)
+     (let* ((conversation (agent-conversation agent))
+            (previous     (copy-tree (conversation-context-usage-sample conversation)))
+            (append       #'conversation-append-record))
+       (test-call-with-function-replacements
+        (list (list 'system-prompt
+                    (lambda (configuration) (declare (ignore configuration)) "small policy č")))
+        (lambda ()
+          (test-call-with-function-replacements
+           (list (list 'conversation-append-record
+                       (lambda (conversation record)
+                         (when (eq (first record) ':context-usage)
+                           (error 'file-error :pathname (conversation-pathname conversation)))
+                         (funcall append conversation record))))
+           (lambda ()
+             (test-assert (handler-case
+                              (progn (context-admission-test--measure agent :envelope-length 64) nil)
+                            (file-error () t))
+                          "a failed measured-sample append propagates")))
+          (test-assert (equal previous (conversation-context-usage-sample conversation))
+                       "failed publication preserves the live measured anchor")
+          (test-assert (equal previous (conversation-context-usage-sample
+                                        (conversation-load (conversation-pathname conversation))))
+                       "failed publication preserves the durable measured anchor")
+          (context-admission-test--measure agent :envelope-length 64)
+          (let* ((records (conversation--read-records (conversation-pathname conversation)))
+                 (sample  (getf (rest (first (last records))) :sample)))
+            (test-assert (equal '("small policy č" "[]") (getf sample :header-text))
+                         "retry publishes a self-contained changed-header snapshot")))))))
   nil)
 
 (-> test-context-admission-mission-large-budget () null)
@@ -1107,6 +1138,28 @@
           "a small envelope cannot erase authoritative measured occupancy")))))
   nil)
 
+(-> test-context-admission-header-byte-diff () null)
+(defun test-context-admission-header-byte-diff ()
+  "Price inserted and replacement UTF-8 bytes while retaining unchanged islands."
+  (dolist (case '(("" "" 0) ("abc" "" 0) ("" "č😊" 6)
+                  ("abc" "axc" 1) ("abc" "ačc" 2) ("x" "😊" 4)
+                  ("aXislandYz" "aBislandCz" 2) ("axbcyd" "abXcd" 1)
+                  ("aaaa" "aa" 0) ("ab" "ba" 1)))
+    (destructuring-bind (before after expected) case
+      (test-assert (= expected (provider-context--inserted-bytes before after))
+                   "the edit script charges new bytes and gives no deletion credits")))
+  (let* ((text   "Autolith retains measured context across prompt and tool changes. ")
+         (before (make-string 200000))
+         (after  nil))
+    (dotimes (index (length before))
+      (setf (char before index) (char text (mod index (length text)))))
+    (setf after (copy-seq before))
+    (dotimes (index 20)
+      (setf (char after (+ 1000 (* index 10000))) #\#))
+    (test-assert (= 20 (provider-context--inserted-bytes before after))
+                 "dispersed edits to a large header retain the unchanged islands"))
+  nil)
+
 (-> test-context-admission-measured-header-resume () null)
 (defun test-context-admission-measured-header-resume ()
   "Keep opaque measured history through disk resume and changed environment policy."
@@ -1116,6 +1169,21 @@
                                        "description" (make-string 2000 :initial-element #\d)
                                        "parameters" (json-object "type" "object")))))
        (context-admission-test--measure original :tools tools)
+       (let* ((conversation (agent-conversation original))
+              (snapshot     (getf (conversation-context-usage-sample conversation) :header-text)))
+         (test-assert (equal snapshot (list "small policy" (json-encode tools)))
+                      "the first measured epoch stores raw prompt and canonical tool text")
+         (context-admission-test--measure original :tools tools
+                                          :usage          (json-object "input_tokens" 1300 "output_tokens" 200
+                                                                       "total_tokens" 1500))
+         (let ((records (remove-if-not (lambda (record) (eq (first record) ':context-usage))
+                                      (conversation--read-records (conversation-pathname conversation)))))
+           (test-assert (null (getf (getf (rest (first (last records))) :sample) :header-text))
+                        "later samples in the same epoch omit repeated header text"))
+         (test-assert (equal snapshot
+                             (getf (conversation-context-usage-sample
+                                    (conversation-load (conversation-pathname conversation))) :header-text))
+                      "replay hydrates omitted text into the latest sample"))
        (let* ((configuration (agent-configuration original))
               (conversation  (conversation-load (conversation-pathname (agent-conversation original))))
               (provider      (make-instance 'context-admission-test-provider :configuration configuration))
@@ -1125,7 +1193,7 @@
               (application   (make-instance 'application :configuration configuration
                                             :conversation conversation :provider provider
                                             :agent agent :tool-registry registry))
-              (prompt        "small policy with new working environment"))
+              (prompt        "small policy č😊"))
          (test-call-with-function-replacements
           (list (list 'system-prompt
                       (lambda (configuration) (declare (ignore configuration)) prompt))
@@ -1133,8 +1201,8 @@
                       (lambda (registry &key canonical-names)
                         (declare (ignore registry canonical-names)) tools)))
           (lambda ()
-            (let* ((charge   (ceiling (second (provider-cache-prefix--entry prompt)) 4))
-                   (expected (+ 1200 charge)))
+            (let* ((charge   7)
+                   (expected (+ 1500 charge)))
               (multiple-value-bind (tokens exact-p)
                   (context-estimate-known-tokens configuration conversation
                                                  :provider provider :tool-registry registry)
@@ -1158,13 +1226,19 @@
                 (setf (gethash "instructions" request) "small policy")
                 (test-assert (not (nth-value 1 (provider-context--matched-input provider request)))
                              "restoring an old measured header also rejects post-encode tamper")))
+            (let ((description (copy-seq (json-get (aref tools 0) "description"))))
+              (setf (char description 10) #\č
+                    (char description 1900) #\😊
+                    (gethash "description" (aref tools 0)) description)
+              (let* ((*provider-context-request* (provider-context-request-create provider conversation tools))
+                     (request                    (provider-request-object provider conversation tools)))
+               (test-assert (= 1521 (provider-request-input-token-estimate provider request))
+                            "prompt bytes and canonical tool JSON edits share the measured anchor")))
             (setf tools #())
             (let* ((*provider-context-request* (provider-context-request-create provider conversation tools))
-                   (request                    (provider-request-object provider conversation tools))
-                   (expected                   (+ 1200 (ceiling (second (provider-cache-prefix--entry prompt)) 4)
-                                                  (ceiling (second (provider-cache-prefix--entry tools)) 4))))
-              (test-assert (= expected (provider-request-input-token-estimate provider request))
-                           "tool replacement charges its current size without subtracting unmeasured old cost"))
+                   (request                    (provider-request-object provider conversation tools)))
+              (test-assert (= 1507 (provider-request-input-token-estimate provider request))
+                           "tool deletion gives no credit and inserts no schema bytes"))
             (setf prompt (make-string 20000 :initial-element #\p))
             (test-assert (agent-should-compact-p agent) "genuine prompt growth crosses soft admission")
             (let* ((*provider-context-request* (provider-context-request-create provider conversation tools))
@@ -1172,7 +1246,14 @@
               (test-assert
                (handler-case (progn (provider-open-response-stream provider request :conversation conversation) nil)
                  (provider-context-budget-error () t))
-               "genuine prompt growth crosses hard admission"))))))))
+               "genuine prompt growth crosses hard admission"))
+            (setf prompt "small policy")
+            (conversation-append-summary conversation (make-continuation :intent "A replacement context."))
+            (context-admission-test--measure agent :tools tools :envelope-length 64)
+            (let* ((records (conversation--read-records (conversation-pathname conversation)))
+                   (sample  (getf (rest (first (last records))) :sample)))
+              (test-assert (equal '("small policy" "[]") (getf sample :header-text))
+                           "a reset starts a self-contained header epoch"))))))))
   nil)
 
 (-> test-context-admission-measured-header-identity () null)
@@ -1191,6 +1272,35 @@
            (test-assert (null (conversation-context-usage-sample
                                (conversation-load (conversation-pathname conversation))))
                         "malformed component fingerprints are rejected on disk resume")))
+       (dotimes (index 2)
+         (let* ((malformed (copy-tree sample))
+                (text      (copy-list (getf malformed :header-text))))
+           (setf (nth index text) "mismatched text"
+                 (getf malformed :header-text) text)
+           (conversation-append-record conversation (list :context-usage :sample malformed))
+           (test-assert (null (conversation-context-usage-sample
+                               (conversation-load (conversation-pathname conversation))))
+                        "snapshot text must match both stored component fingerprints")))
+       (let ((empty (copy-tree sample)))
+         (setf (getf empty :header-text) (list "" (second (getf sample :header-text)))
+               (getf empty :prompt) (provider-cache-prefix--entry ""))
+         (test-assert (conversation-context-usage-sample-p empty)
+                      "empty prompt text is valid present snapshot evidence"))
+       (let ((legacy (copy-tree sample)))
+         (remf legacy :header-text)
+         (conversation-append-record conversation '(:context-usage :sample nil))
+         (conversation-append-record conversation (list :context-usage :sample legacy))
+         (let ((loaded (conversation-context-usage-sample
+                        (conversation-load (conversation-pathname conversation)))))
+           (test-assert (and (= 26 (length loaded)) (null (getf loaded :header-text)))
+                        "genuine fingerprint-only format-two records load without invented text")
+           (test-call-with-function-replacements
+            (list (list 'system-prompt
+                        (lambda (configuration) (declare (ignore configuration)) "small policy č")))
+            (lambda ()
+              (test-assert (= 15 (provider-context--header-charge
+                                  loaded (provider-context--header-components provider #())))
+                           "old format-two evidence charges current UTF-8 bytes until remeasured")))))
        (setf (conversation-context-usage-sample conversation) sample)
        (let* ((components (provider-context--header-components provider #()))
               (history    (provider-context--history provider conversation)))
@@ -1206,7 +1316,7 @@
            (test-assert (not (nth-value 1 (provider-context--matched-input provider request)))
                         "history is revalidated at admission rather than trusting its captured snapshot")))
        (let ((legacy (copy-tree sample)))
-          (dolist (key '(:policy :prompt :tool-header :encoder-fields)) (remf legacy key))
+         (dolist (key '(:policy :prompt :tool-header :encoder-fields :header-text)) (remf legacy key))
          (setf (getf legacy :format) 1)
          (test-assert (conversation-context-usage-sample-p legacy) "legacy exact anchors are readable")
          (test-assert (not (provider-context--sample-matches-p
