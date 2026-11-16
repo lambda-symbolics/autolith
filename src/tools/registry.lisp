@@ -1347,19 +1347,77 @@ Each element is a cons of the declared name and its subschema."
         (collect schema)))
     (nreverse properties)))
 
-(-> tool--corrected-value (json-object t) t)
+(-> tool--integer-schema-p (t) boolean)
+(defun tool--integer-schema-p (schema)
+  "Return true when SCHEMA declares the JSON integer type alone."
+  (and (json-object-p schema)
+       (equal (json-get schema "type") "integer")
+       t))
+
+(-> tool--decimal-integer-text-p (string) boolean)
+(defun tool--decimal-integer-text-p (text)
+  "Return true when TEXT is one plain decimal integer and nothing else."
+  (let ((start (if (and (plusp (length text))
+                        (member (char text 0) '(#\+ #\-) :test #'char=))
+                   1
+                   0)))
+    (and (< start (length text))
+         (loop for index from start below (length text)
+               always (digit-char-p (char text index)))
+         t)))
+
+(-> tool--boolean-schema-p (t) boolean)
+(defun tool--boolean-schema-p (schema)
+  "Return true when SCHEMA declares the JSON boolean type alone."
+  (and (json-object-p schema)
+       (equal (json-get schema "type") "boolean")
+       t))
+
+(-> tool--declared-boolean (string) t)
+(defun tool--declared-boolean (text)
+  "Return TEXT as a JSON boolean when it spells one, else TEXT unchanged."
+  (cond
+    ((string= text "true")
+     t)
+    ((string= text "false")
+     (json-false))
+    (t
+     text)))
+
+(-> tool--declared-scalar (t t) t)
+(defun tool--declared-scalar (schema value)
+  "Return VALUE in the JSON type SCHEMA declares when its text form is exact.
+
+A transport can carry a declared integer as decimal text or a declared boolean
+as its JSON spelling. Accept those spellings so the call executes, and leave
+every other value unchanged so a malformed value still reaches the argument
+diagnostic."
+  (cond
+    ((and (stringp value)
+          (tool--integer-schema-p schema)
+          (tool--decimal-integer-text-p value))
+     (parse-integer value))
+    ((and (stringp value) (tool--boolean-schema-p schema))
+     (tool--declared-boolean value))
+    (t
+     value)))
+
+(-> tool--corrected-value (t t) t)
 (defun tool--corrected-value (schema value)
-  "Return VALUE with underscore-spelled names corrected against SCHEMA."
+  "Return VALUE corrected against SCHEMA.
+
+A declared name accepts its underscore spelling, a declared integer accepts its
+own decimal text, and a declared boolean accepts its JSON spelling."
   (cond
     ((and (json-object-p schema) (json-object-p value))
      (tool--corrected-object (tool--schema-properties schema) value))
-    ((and (json-object-p schema) (vectorp value))
+    ((and (json-object-p schema) (vectorp value) (not (stringp value)))
      (let ((items (json-get schema "items")))
        (if (json-object-p items)
            (map 'simple-vector (lambda (element) (tool--corrected-value items element)) value)
            value)))
     (t
-     value)))
+     (tool--declared-scalar schema value))))
 
 (-> tool--corrected-object (list json-object) json-object)
 (defun tool--corrected-object (properties object)
