@@ -840,6 +840,7 @@
   test-world-sidebar-command-events
   test-world-sidebar-finds-conversations-once
   test-world-sidebar-visibility
+  test-world-sidebar-freshness test-world-sidebar-first-failure
   test-world-sidebar-unread)
 
 (define-test-suite preferences

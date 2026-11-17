@@ -1686,12 +1686,18 @@ Click a channel or home to switch to it.
 | Green =●= | The agent is working            |
 | =○=       | Hosted but not working          |
 | =·=       | No running session              |
+| =?=       | Runtime state is unknown        |
 
 A channel name in cyan has a terminal attached. A yellow number counts
 messages received since this terminal last viewed the channel; =@= counts
 mentions of you. Each terminal tracks its own unread counts. A channel first
 seen by that terminal starts at zero. The =✉= count shows deliveries waiting
 for a channel that no process serves.
+
+If a gather fails, the sidebar retains the last channel rows and marks their
+runtime state unknown until a successful refresh. Failed or closing hosts are
+unavailable for attachment while their owners finish cleanup and release their
+conversation leases.
 
 The sidebar takes about a fifth of a wide terminal's width. Press =Ctrl-S=
 to hide or show it; that preference is kept across channel switches and

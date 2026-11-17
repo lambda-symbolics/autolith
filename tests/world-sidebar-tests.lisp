@@ -503,7 +503,7 @@
                  (incf clock (* 2 *world-sidebar-refresh-seconds* internal-time-units-per-second))))
         (test-call-with-function-replacements
          (list (list 'world-sidebar--statuses
-                     (lambda (candidate) (declare (ignore candidate)) statuses)))
+                     (lambda (candidate) (declare (ignore candidate)) (values statuses t))))
          (lambda ()
            (setf (world-sidebar-current sidebar) "bfirst1"
                  statuses (list (status "bfirst1" 4 1 :attached-p t) (status "bsecnd2" 7 0)))
@@ -588,7 +588,7 @@
          (root           (merge-pathnames "tasks/" (config :data-root configuration)))
          (scans          0))
      (test-call-with-function-replacements
-      (list (list 'world-sidebar--statuses (lambda (candidate) (declare (ignore candidate)) nil))
+      (list (list 'world-sidebar--statuses (lambda (candidate) (declare (ignore candidate)) (values nil t)))
             (list 'uiop/filesystem:subdirectories
                   (lambda (directory)
                     (when (equal directory root) (incf scans))

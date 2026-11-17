@@ -2865,7 +2865,9 @@ A parent that writes @parent to its own child reaches nobody but the child."
      (test-call-with-function-replacements
       (list
        (list 'world-channel-statuses
-             (lambda (&rest arguments) (declare (ignore arguments)) statuses)))
+             (lambda (&rest arguments) (declare (ignore arguments)) statuses))
+       (list 'world-sidebar--statuses
+             (lambda (candidate) (declare (ignore candidate)) (values statuses t))))
       (lambda ()
         (let* ((durable   (world-load configuration))
                (catalogue (world-channel-catalogue configuration))

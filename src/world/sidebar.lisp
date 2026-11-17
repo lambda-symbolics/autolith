@@ -102,6 +102,16 @@
     :accessor      world-sidebar-refreshed-at
     :type          (option real)
     :documentation "The internal real time of the last refresh, or NIL before the first.")
+   (last-success-at
+    :initform      nil
+    :accessor      world-sidebar-last-success-at
+    :type          (option real)
+    :documentation "The monotonic time of the last successful runtime observation.")
+   (failure
+    :initform      nil
+    :accessor      world-sidebar-failure
+    :type          (option string)
+    :documentation "A bounded condition class for the latest failed observation, without remote text.")
    (clock-function
     :initarg       :clock-function
     :initform      #'get-internal-real-time
@@ -167,8 +177,10 @@ a refresh is due."
   (if (world-sidebar-gatherer panel)
       (let ((gathered (with-lock-held ((world-sidebar-lock panel))
                         (shiftf (world-sidebar-gathered panel) nil))))
-        (and gathered
-             (world-sidebar--take panel (first gathered))))
+        (when gathered
+          (if (eq (first gathered) ':failed)
+              (world-sidebar--mark-stale panel (second gathered))
+              (world-sidebar--accept panel (first gathered) (second gathered)))))
       (let ((now  (funcall (world-sidebar-clock-function panel)))
             (last (world-sidebar-refreshed-at panel)))
         (if (and last
@@ -176,7 +188,10 @@ a refresh is due."
             nil
             (progn
               (setf (world-sidebar-refreshed-at panel) now)
-              (world-sidebar--take panel (world-sidebar--gather panel)))))))
+              (handler-case
+                  (world-sidebar--accept panel (world-sidebar--gather panel))
+                (error (condition)
+                  (world-sidebar--mark-stale panel (world-sidebar--failure-name condition)))))))))
 
 (defmethod screen-panel-rows ((panel world-sidebar) terminal &key height width)
   "Render the tree viewport and fixed actions, retaining logical keyboard selection."
@@ -187,6 +202,7 @@ a refresh is due."
       (world-sidebar--rows (world-sidebar-entries panel) height
                            :offset   (world-sidebar-scroll-offset panel)
                            :drawer-p (= width (terminal-columns terminal))
+                           :stale-p  (getf (world-sidebar-inputs panel) :runtime-unknown-p)
                            :selected (when (= width (terminal-columns terminal))
                                        (world-sidebar-selected-row panel)))
     (setf (world-sidebar-actions panel) (coerce actions 'vector))
@@ -347,15 +363,15 @@ a refresh is due."
 (defun world-sidebar--gather-loop (sidebar)
   "Gather SIDEBAR's entries every refresh interval until it is asked to stop.
 
-A failed gather keeps the entries shown before; the next one tries again."
+A failed gather publishes a stale observation; the next one tries again."
   (loop
     (let ((inputs (handler-case
-                      (world-sidebar--gather sidebar)
-                    (error ()
-                      nil))))
+                      (list (world-sidebar--gather sidebar)
+                            (funcall (world-sidebar-clock-function sidebar)))
+                    (error (condition)
+                      (list ':failed (world-sidebar--failure-name condition))))))
       (with-lock-held ((world-sidebar-lock sidebar))
-        (when inputs
-          (setf (world-sidebar-gathered sidebar) (list inputs)))
+        (setf (world-sidebar-gathered sidebar) inputs)
         (when (world-sidebar-stopping-p sidebar)
           (return))
         (condition-wait (world-sidebar-condition-variable sidebar)
@@ -371,6 +387,20 @@ A failed gather keeps the entries shown before; the next one tries again."
   (if (eq (getf entry :kind) ':workspace)
       (list ':workspace (getf entry :key))
       (list ':channel (getf entry :id))))
+
+(-> world-sidebar--failure-name (condition) string)
+(defun world-sidebar--failure-name (condition)
+  "Return a bounded condition class, never the failed response or its contents."
+  (bounded-string (symbol-name (class-name (class-of condition))) :limit 80))
+
+(-> world-sidebar--mark-stale (world-sidebar &optional (option string)) boolean)
+(defun world-sidebar--mark-stale (sidebar &optional failure)
+  "Keep durable rows and selection while marking runtime observations unknown."
+  (let* ((inputs    (copy-list (world-sidebar-inputs sidebar)))
+         (changed-p (not (getf inputs :runtime-unknown-p))))
+    (setf (getf inputs :runtime-unknown-p) t
+          (world-sidebar-failure sidebar) (or failure "runtime-unavailable"))
+    (or (world-sidebar--take sidebar inputs) changed-p)))
 
 (-> world-sidebar--take (world-sidebar list) boolean)
 (defun world-sidebar--take (sidebar inputs)
@@ -396,6 +426,18 @@ command that happens to occupy the old entry's index."
                 0))
       (world-sidebar--reveal-selection sidebar))))
 
+(-> world-sidebar--accept (world-sidebar list &optional (option real)) boolean)
+(defun world-sidebar--accept (sidebar inputs &optional observed-at)
+  "Accept gathered INPUTS with their observation time, independently of local tree clicks."
+  (let ((changed-p (not (eql (getf (world-sidebar-inputs sidebar) :runtime-unknown-p)
+                             (getf inputs :runtime-unknown-p)))))
+    (if (getf inputs :runtime-unknown-p)
+        (setf (world-sidebar-failure sidebar) "runtime-unavailable")
+        (setf (world-sidebar-last-success-at sidebar)
+              (or observed-at (funcall (world-sidebar-clock-function sidebar)))
+              (world-sidebar-failure sidebar) nil))
+    (or (world-sidebar--take sidebar inputs) changed-p)))
+
 (-> world-sidebar--toggle (world-sidebar string) null)
 (defun world-sidebar--toggle (sidebar key)
   "Open the tree node KEY names in SIDEBAR when it shows closed, or close it, and rebuild the entries.
@@ -412,23 +454,23 @@ The choice stays when the terminal moves to another channel."
 (-> world-sidebar--gather (world-sidebar) list)
 (defun world-sidebar--gather (sidebar)
   "Gather the read-only catalogue, then guard positive repository observations in the durable store."
-  (let* ((configuration (world-sidebar-configuration sidebar))
-         (statuses      (world-sidebar--statuses sidebar))
-         (world         (handler-case (world-channel-catalogue configuration :statuses statuses)
-                          (autolith-error () (make-instance 'world))))
-         (channels      (world-sidebar--channels sidebar world))
-         (groups        (world-repository-groups channels (world-sidebar-current sidebar)))
-         (remembered    (handler-case (world-repository-remember configuration channels groups)
-                          (autolith-error () channels))))
-    (unless (eq remembered channels)
-      (setf channels remembered
-            groups (world-repository-groups channels (world-sidebar-current sidebar))))
-    (list :inbox    (world-inbox-channel world)
-          :channels channels
-          :groups   groups
-          :names    (world-sidebar--names world)
-          :statuses statuses
-          :pending  (world-sidebar--pending configuration))))
+  (let ((configuration (world-sidebar-configuration sidebar)))
+    (multiple-value-bind (statuses known-p) (world-sidebar--statuses sidebar)
+      (let* ((world      (world-channel-catalogue configuration :statuses statuses))
+             (channels   (world-sidebar--channels sidebar world))
+             (groups     (world-repository-groups channels (world-sidebar-current sidebar)))
+             (remembered (handler-case (world-repository-remember configuration channels groups)
+                           (autolith-error () channels))))
+        (unless (eq remembered channels)
+          (setf channels remembered
+                groups (world-repository-groups channels (world-sidebar-current sidebar))))
+        (list :inbox             (world-inbox-channel world)
+              :channels          channels
+              :groups            groups
+              :names             (world-sidebar--names world)
+              :statuses          statuses
+              :runtime-unknown-p (not known-p)
+              :pending           (world-sidebar--pending configuration))))))
 
 (-> world-sidebar--names (world) list)
 (defun world-sidebar--names (world)
@@ -457,10 +499,13 @@ A newly hosted channel without durable history sorts by its creation time."
                      channels)
              #'> :key #'first))))
 
-(-> world-sidebar--statuses (world-sidebar) list)
+(-> world-sidebar--statuses (world-sidebar) (values list boolean))
 (defun world-sidebar--statuses (sidebar)
-  "Return the current live channel statuses for SIDEBAR's catalogue."
-  (world-channel-statuses (world-sidebar-configuration sidebar)))
+  "Return live statuses and whether the endpoint answered; signal query failures."
+  (let ((entry (world-client-entry (world-sidebar-configuration sidebar))))
+    (if entry
+        (values (mapcar #'rest (getf (rest (localgroup-query-record entry ':channels)) :channels)) t)
+        (values nil nil))))
 
 (-> world-sidebar--pending (configuration) list)
 (defun world-sidebar--pending (configuration)
@@ -487,9 +532,10 @@ Folding metadata describes this terminal's view; clients may fold independently.
 
 (-> world-sidebar--entries
     (world-sidebar &key (:inbox (option channel)) (:channels list) (:groups list)
-                       (:names list) (:statuses list) (:pending list) (:include-closed-p boolean))
+                     (:names list) (:statuses list) (:pending list) (:include-closed-p boolean)
+                     (:runtime-unknown-p boolean))
     list)
-(defun world-sidebar--entries (sidebar &key inbox channels groups names statuses pending include-closed-p)
+(defun world-sidebar--entries (sidebar &key inbox channels groups names statuses pending include-closed-p runtime-unknown-p)
   "Return the home INBOX entry, then its indented workspace and channel entries.
 
 NAMES pairs channels with their agents' names; STATUSES and PENDING
@@ -515,7 +561,9 @@ what it hides. INCLUDE-CLOSED-P retains every descendant for structured clients.
                                     sidebar channel
                                     :depth   depth
                                     :name    (rest (assoc identifier names :test #'string=))
-                                    :status  (gethash identifier table)
+                                     :status (if runtime-unknown-p
+                                                 (list :state ':unknown)
+                                                 (gethash identifier table))
                                     :pending (rest (assoc identifier pending :test #'string=)))
                                    (list :indent (if inbox 2 0))))
                       (shown      nil)
@@ -658,9 +706,9 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
 
 (-> world-sidebar--rows
     (list (integer 0) &key (:drawer-p boolean) (:offset (integer 0))
-                          (:selected (option integer)))
+                         (:selected (option integer)) (:stale-p boolean))
     (values list list))
-(defun world-sidebar--rows (entries height &key drawer-p (offset 0) selected)
+(defun world-sidebar--rows (entries height &key drawer-p (offset 0) selected stale-p)
   "Return HEIGHT rows and hit actions, with a scrolling tree above one row of command buttons."
   (let* ((footer-count  (min 1 height))
          (legend-count  (if (> height 1) 1 0))
@@ -669,7 +717,9 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
          (start         (min offset (max 0 (- (length entries) limit))))
          (end           (min (length entries) (+ start limit)))
          (shown         (subseq entries start end))
-         (heading       (subseq (list (list (terminal-span ':brand " CHANNELS  ↑ ↓")) nil) 0 heading-count))
+         (heading       (subseq (list (list (terminal-span ':brand " CHANNELS  ↑ ↓"))
+                                      (when stale-p (list (terminal-span ':notice " Runtime status unknown"))))
+                                0 heading-count))
          (filler        (make-list (- limit (length shown)) :initial-element nil))
          (buttons       (loop for command in '("(new)" "(delete)")
                               for index from (length entries)
@@ -799,6 +849,8 @@ then its agent's name and its title; a closed node shows what it hides."
          (terminal-span ':agent-spinner "● "))
         (:idle
          (terminal-span ':success "○ "))
+        (:unknown
+         (terminal-span ':notice "? "))
         ((:paused :detaching :stopping :failed :starting)
          (terminal-span ':notice "○ "))
         (otherwise

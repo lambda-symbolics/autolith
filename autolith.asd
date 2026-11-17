@@ -481,6 +481,7 @@
                                           (:file "portable-values-tests")
                                           (:file "client-subscription-tests")
                                           (:file "world-sidebar-tests")
+                                          (:file "sidebar-freshness-tests")
                                           (:file "world-repository-groups-tests")
                                           (:file "preferences-tests")
                                           (:file "prompt-cache-tests")
