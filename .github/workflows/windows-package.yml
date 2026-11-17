@@ -222,8 +222,20 @@ jobs:
             foreach ($test in ($env:AUTOLITH_CHECK_TEST -split ',')) {
               if ($test.Trim()) { $selection += @('--test', $test.Trim()) }
             }
-            & script\check.ps1 --timeout 1800 @selection 2>&1 | Tee-Object -FilePath $log
-            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
+            # Temporary bounded repeat of the selected native cases, with fresh official cores each time.
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              $env:AUTOLITH_TEST_WINDOWS57_TRACE = Join-Path $env:RUNNER_TEMP "windows57-$attempt.sexp"
+              Write-Output "Windows57 native attempt $attempt/3"
+              & script\check.ps1 --timeout 1800 @selection 2>&1 | Tee-Object -FilePath $log -Append
+              $iterationStatus = $LASTEXITCODE
+              if (Test-Path -LiteralPath $env:AUTOLITH_TEST_WINDOWS57_TRACE) {
+                Get-Content -Raw -LiteralPath $env:AUTOLITH_TEST_WINDOWS57_TRACE | Tee-Object -FilePath $log -Append
+              }
+              if ($null -ne $iterationStatus -and $iterationStatus -ne 0) {
+                $status = $iterationStatus
+                break
+              }
+            }
           } catch {
             $_ | Out-String | Tee-Object -FilePath $log -Append
             $status = 1

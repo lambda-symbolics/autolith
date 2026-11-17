@@ -184,6 +184,20 @@
                    "oversized stage records are not parsed")))
   nil)
 
+(-> world-restart-tests--trace (configuration (integer 1) t) null)
+(defun world-restart-tests--trace (configuration old-pid process)
+  "Retain scalar cycle evidence outside fixture cleanup for opt-in native probes."
+  (let ((path (uiop:getenv "AUTOLITH_TEST_WINDOWS57_TRACE")))
+    (when (non-empty-string-p path)
+      (with-open-file (stream (uiop:parse-native-namestring path)
+                              :direction ':output :if-exists ':append
+                              :if-does-not-exist ':create)
+        (with-standard-io-syntax
+          (write (world-restart-tests--diagnostics configuration old-pid process)
+                 :stream stream)
+          (terpri stream)))))
+  nil)
+
 (-> world-restart-tests--checkpoint (configuration cons &key (:process t)) list)
 (defun world-restart-tests--checkpoint (configuration entry &key process)
   "Return the resumed world and channel entries after marker removal, events, and timeout diagnostics when unavailable."
@@ -194,19 +208,21 @@
                    :until (lambda (events) (find ':closed events :key #'first))))
          (world   nil)
          (resumed nil))
-    (if (task-tests--wait-until
-         (lambda ()
-           (setf world   (world-client-entry configuration)
-                 resumed (localgroup--find-record-or-nil configuration channel))
-           (and world resumed
-                (/= (getf (rest (rest world)) :pid) old-pid)
-                (eql (getf (rest (rest resumed)) :pid) (getf (rest (rest world)) :pid))
-                ;; Endpoints precede process services and marker removal.
-                (not (probe-file (world-server-restart-pathname configuration)))))
-         180)
-        (list world resumed events)
-        (list nil nil events
-              (world-restart-tests--diagnostics configuration old-pid process)))))
+    (prog1
+     (if (task-tests--wait-until
+          (lambda ()
+            (setf world   (world-client-entry configuration)
+                  resumed (localgroup--find-record-or-nil configuration channel))
+            (and world resumed
+                 (/= (getf (rest (rest world)) :pid) old-pid)
+                 (eql (getf (rest (rest resumed)) :pid) (getf (rest (rest world)) :pid))
+                 ;; Endpoints precede process services and marker removal.
+                 (not (probe-file (world-server-restart-pathname configuration)))))
+          180)
+         (list world resumed events)
+         (list nil nil events
+                 (world-restart-tests--diagnostics configuration old-pid process)))
+     (world-restart-tests--trace configuration old-pid process))))
 
 (-> world-restart-tests--logs (configuration) string)
 (defun world-restart-tests--logs (configuration)
