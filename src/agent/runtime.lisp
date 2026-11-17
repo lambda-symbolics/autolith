@@ -763,14 +763,13 @@ record is written even when an item is refused and the turn then fails."
               :request-number request-number)))
       (conversation-append-provider-metadata
        conversation
-       (append (list :request-number        request-number
-                     :context-usage-pending t
-                     :response-id           (provider-result-response-id result)
-                     :usage                 (agent--portable-value
-                                             (provider-usage-normalize
-                                              (provider-result-usage result)))
-                     :request-identity      (conversation-request-identity conversation))
-               ;; The service's effective retention mode, when it reports one.
+       (append (list :request-number   request-number
+                     :response-id      (provider-result-response-id result)
+                     :usage            (agent--portable-value
+                                        (provider-usage-normalize
+                                         (provider-result-usage result)))
+                     :request-identity (conversation-request-identity conversation))
+                 ;; The service's effective retention mode, when it reports one.
                (let ((context (agent--result-reasoning-context result)))
                  (and context (list :reasoning-context context)))))))
   nil)
@@ -1007,7 +1006,9 @@ restricted turn cannot discover tools outside its allowlist."
   "Validate CALLS and reserve one identifier per call for this user turn.
 
   A provider that repeats an identifier still names distinct calls, so the
-  repeated identifier is replaced with an unused one."
+  repeated identifier is replaced with one the conversation does not
+  already name.  SEEN-CALL-IDENTIFIERS holds the identifiers the
+  conversation's durable calls already name."
   (let ((round-identifiers (make-hash-table :test #'equal))
         (conversation      (agent-conversation agent)))
     (dolist (call calls)
@@ -2069,7 +2070,8 @@ Return issued request count and optional next-request details."
 REQUEST-NUMBER counts provider requests the turn already issued before the
 loop, so compaction ahead of the user message shares the turn's budget."
     (let ((*task-unfinished-work-agent* agent)
-          (seen-call-identifiers        (make-hash-table :test #'equal))
+          (seen-call-identifiers
+            (conversation-used-call-identifiers (agent-conversation agent)))
           (storm-state                  (agent-tool-storm-state-create))
           (tool-rounds                  0)
           (tool-calls                   0)
@@ -2186,7 +2188,9 @@ loop, so compaction ahead of the user message shares the turn's budget."
                              :failure
                              (agent--provider-error-metadata condition)))
                       (error condition)))))
-              (calls           (provider-result-tool-calls result))
+              (calls
+                (remove-if-not #'function-call-item-p
+                               (provider-result-output-items result)))
               (completion-details
                 (list :request-number    request-number
                       :response-id       (provider-result-response-id result)

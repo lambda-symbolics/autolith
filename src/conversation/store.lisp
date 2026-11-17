@@ -2773,6 +2773,21 @@ state before rethrowing its failure; a retry uses the same durable receipt."
           (values item durable-record))))))
 
 (-> conversation--validate-provider-item (conversation json-object) json-object)
+(-> conversation-used-call-identifiers (conversation) hash-table)
+(defun conversation-used-call-identifiers (conversation)
+  "Return the call identifiers CONVERSATION's durable provider calls name.
+
+A durable call identifier names exactly one call, so a call that reuses one
+of these identifiers must be planned under a fresh identifier."
+  (let ((identifiers (make-hash-table :test #'equal)))
+    (dolist (item (conversation-input-items-for-request
+                   conversation :include-ephemeral-p nil))
+      (when (function-call-item-p item)
+        (let ((call-id (json-get item "call_id")))
+          (when (non-empty-string-p call-id)
+            (setf (gethash call-id identifiers) t)))))
+    identifiers))
+
 (-> conversation--call-status (conversation json-object) symbol)
 (defun conversation--call-status (conversation item)
   "Return :NEW, :PROMOTE or :CONFLICT for the call ITEM names.
@@ -2790,7 +2805,8 @@ longer named."
                   (equal (json-get left "name") (json-get right "name"))
                   (equal (json-get left "arguments") (json-get right "arguments")))))
     (let ((call-id (json-get item "call_id")))
-      (if (not (non-empty-string-p call-id))
+      (if (or (not (function-call-item-p item))
+              (not (non-empty-string-p call-id)))
           ':new
           (let ((durable
                   (loop for candidate
@@ -3609,8 +3625,7 @@ ordinary responses replace it."
     (when (or (member kind '(:summary :native-compaction :context-adoption
                              :configuration :precompaction))
               (and (eq kind :provider)
-                   (or (getf metadata :context-adoption)
-                       (getf metadata :context-usage-pending))))
+                   (getf metadata :context-adoption)))
       (setf (conversation-context-usage-sample conversation) nil)))
   nil)
 

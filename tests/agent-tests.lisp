@@ -1330,7 +1330,26 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
            (test-assert (and (gethash "shared" seen)
                              (gethash "shared-2" seen)
                              (gethash "shared-3" seen))
-                        "every reserved identifier is remembered for the turn"))
+                        "every reserved identifier is remembered for the turn")
+           (let ((durable (agent-test-call :call-id "durable-shared"
+                                           :name    "echo-durable")))
+             (conversation-append-provider-item conversation durable)
+             (let ((reserved (conversation-used-call-identifiers conversation)))
+               (test-assert (gethash "durable-shared" reserved)
+                            "the conversation reports the identifiers its calls already name")
+               (let ((reused (agent-test-call :call-id "durable-shared"
+                                              :name    "echo-reused")))
+                 (agent--validate-tool-call-identifiers
+                  agent (list reused)
+                  :seen-call-identifiers reserved :request-number 3)
+                 (test-assert (string= "durable-shared-2" (json-get reused "call_id"))
+                              "an identifier the conversation already names is replaced")
+                 (test-assert (handler-case
+                                  (progn
+                                    (conversation-append-provider-item conversation reused)
+                                    t)
+                                (provider-call-conflict () nil))
+                            "the replacement identifier is appended without a conflict")))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
