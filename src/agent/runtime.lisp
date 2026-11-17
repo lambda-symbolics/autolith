@@ -998,54 +998,29 @@ restricted turn cannot discover tools outside its allowlist."
         :retryable-p (typep condition 'provider-retryable-error)))
 
 (-> agent--validate-tool-call-identifiers
-    (agent list
-     &key (:seen-call-identifiers hash-table) (:request-number integer))
+    (agent list &key (:request-number integer))
     null)
 (defun agent--validate-tool-call-identifiers
-    (agent calls &key seen-call-identifiers request-number)
-  "Validate CALLS and reserve one identifier per call for this user turn.
+    (agent calls &key request-number)
+  "Validate CALLS and give each one an identifier the conversation does not name.
 
-  A provider that repeats an identifier still names distinct calls, so the
-  repeated identifier is replaced with one the conversation does not
-  already name.  SEEN-CALL-IDENTIFIERS holds the identifiers the
-  conversation's durable calls already name."
-  (let ((round-identifiers (make-hash-table :test #'equal))
-        (conversation      (agent-conversation agent)))
+  A provider that repeats an identifier still names distinct calls, so a
+  repeated identifier, or one the conversation already names, is replaced
+  before the response is recorded."
+  (let ((conversation (agent-conversation agent)))
     (dolist (call calls)
       (unless (json-object-p call)
         (error 'agent-loop-error
                :message         "The provider returned a tool call that is not a JSON object."
                :conversation-id (conversation-identifier conversation)
                :request-number  request-number))
-      (let ((call-id (json-get call "call_id")))
-        (unless (non-empty-string-p call-id)
-          (error 'agent-loop-error
-                 :message         "The provider returned a function call without a call_id."
-                 :conversation-id (conversation-identifier conversation)
-                 :request-number  request-number))
-        (let ((unique-id (agent--unused-call-identifier
-                          call-id round-identifiers seen-call-identifiers)))
-          (unless (string= call-id unique-id)
-            (setf (gethash "call_id" call) unique-id))
-          (setf (gethash unique-id round-identifiers) t))))
-    (maphash (lambda (call-id present-p)
-               (declare (ignore present-p))
-               (setf (gethash call-id seen-call-identifiers) t))
-             round-identifiers))
+      (unless (non-empty-string-p (json-get call "call_id"))
+        (error 'agent-loop-error
+               :message         "The provider returned a function call without a call_id."
+               :conversation-id (conversation-identifier conversation)
+               :request-number  request-number)))
+    (conversation-reconcile-call-identifiers conversation calls))
   nil)
-
-(-> agent--unused-call-identifier (string hash-table hash-table) string)
-(defun agent--unused-call-identifier
-    (call-id round-identifiers seen-call-identifiers)
-  "Return CALL-ID, or the first suffixed variant neither identifier table holds."
-  (if (and (not (gethash call-id round-identifiers))
-           (not (gethash call-id seen-call-identifiers)))
-      call-id
-      (loop for suffix from 2
-            for candidate = (format nil "~A-~D" call-id suffix)
-            unless (or (gethash candidate round-identifiers)
-                       (gethash candidate seen-call-identifiers))
-              return candidate)))
 
 (-> agent--tool-call-allowed-p (json-object list) boolean)
 (defun agent--tool-call-allowed-p (call allowlist)
@@ -2070,8 +2045,6 @@ Return issued request count and optional next-request details."
 REQUEST-NUMBER counts provider requests the turn already issued before the
 loop, so compaction ahead of the user message shares the turn's budget."
     (let ((*task-unfinished-work-agent* agent)
-          (seen-call-identifiers
-            (conversation-used-call-identifiers (agent-conversation agent)))
           (storm-state                  (agent-tool-storm-state-create))
           (tool-rounds                  0)
           (tool-calls                   0)
@@ -2221,7 +2194,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
                      agent calls tool-allowlist :request-number request-number))
                   (conversation-clear-ephemeral-input-items conversation)
                   (agent--validate-tool-call-identifiers
-                   agent calls :seen-call-identifiers seen-call-identifiers
+                   agent calls
                                :request-number        request-number)
                   (setf call-plans
                         (agent--tool-call-plans agent calls :storm-state storm-state))

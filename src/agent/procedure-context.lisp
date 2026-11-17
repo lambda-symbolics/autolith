@@ -196,6 +196,7 @@ a child agent."
                                                                           (getf offer :bindings))))
                  (plans (agent--tool-call-plans agent (list call)))
                  (plan  (first plans)))
+            (conversation-reconcile-call-identifiers (agent-conversation agent) (list call))
             (agent--append-provider-item agent call
                                          :tool-label  (tool-display-name (getf plan :tool))
                                          :persistence (getf plan :persistence))

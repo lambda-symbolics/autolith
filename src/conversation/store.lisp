@@ -2788,6 +2788,83 @@ of these identifiers must be planned under a fresh identifier."
             (setf (gethash call-id identifiers) t)))))
     identifiers))
 
+^(-> provider-item-call-identifier (json-object) (option string))
+(defun provider-item-call-identifier (item)
+  "Return the call identifier ITEM names or refers to."
+  (when (json-object-p item)
+    (json-get item "call_id")))
+
+(-> conversation--call-entry (conversation string) (values t t))
+(defun conversation--call-entry (conversation call-id)
+  "Return the durable and request-local call items CONVERSATION names by CALL-ID."
+  (values
+   (loop for candidate in (conversation-input-items-for-request
+                           conversation :include-ephemeral-p nil)
+         when (and (function-call-item-p candidate)
+                   (equal call-id (json-get candidate "call_id")))
+           return candidate)
+   (loop for entry in (conversation-ephemeral-input-entries conversation)
+         for candidate = (getf entry :item)
+         when (and (function-call-item-p candidate)
+                   (equal call-id (json-get candidate "call_id")))
+           return candidate)))
+
+(-> conversation--unused-call-identifier
+    (conversation string &key (:provider-identifiers hash-table) (:reserved-identifiers hash-table))
+    string)
+(defun conversation--unused-call-identifier
+    (conversation call-id &key provider-identifiers reserved-identifiers)
+  "Return an identifier for CALL-ID that no table or conversation call names."
+  (labels ((available-p (candidate)
+             (and (not (gethash candidate provider-identifiers))
+                  (not (gethash candidate reserved-identifiers))
+                  (multiple-value-bind (durable ephemeral)
+                      (conversation--call-entry conversation candidate)
+                    (and (null durable) (null ephemeral))))))
+    (if (available-p call-id)
+        call-id
+        (loop for suffix from 2
+              for candidate = (format nil "~A-~D" call-id suffix)
+              when (available-p candidate)
+                return candidate))))
+
+(-> conversation-reconcile-call-identifiers (conversation list) hash-table)
+(defun conversation-reconcile-call-identifiers (conversation items)
+  "Rewrite the call identifiers ITEMS repeat or CONVERSATION already names.
+
+Returns an equal hash-table mapping each replaced identifier to its replacement.
+A call keeps its identifier when the conversation does not already name it, so a
+provider that names its calls uniquely is recorded verbatim.  An identifier the
+response itself introduces is never chosen as a replacement, so renaming one
+call cannot rename another."
+  (let ((provider-identifiers (make-hash-table :test #'equal))
+        (reserved-identifiers (make-hash-table :test #'equal))
+        (mapping              (make-hash-table :test #'equal)))
+    (dolist (item items)
+      (let ((call-id (provider-item-call-identifier item)))
+        (when (non-empty-string-p call-id)
+          (setf (gethash call-id provider-identifiers) t))))
+    (dolist (item items)
+      (let ((call-id (provider-item-call-identifier item)))
+        (when (non-empty-string-p call-id)
+          (let ((replacement (gethash call-id mapping)))
+            (cond
+              (replacement
+               (setf (gethash "call_id" item) replacement))
+              ((and (function-call-item-p item)
+                    (or (gethash call-id reserved-identifiers)
+                        (eq (conversation--call-status conversation item) ':conflict)))
+               (let ((fresh (conversation--unused-call-identifier
+                             conversation call-id
+                             :provider-identifiers provider-identifiers
+                             :reserved-identifiers reserved-identifiers)))
+                 (setf (gethash call-id mapping) fresh)
+                 (setf (gethash fresh reserved-identifiers) t)
+                 (setf (gethash "call_id" item) fresh)))
+              (t
+               (setf (gethash call-id reserved-identifiers) t)))))))
+    mapping))
+
 (-> conversation--call-status (conversation json-object) symbol)
 (defun conversation--call-status (conversation item)
   "Return :NEW, :PROMOTE or :CONFLICT for the call ITEM names.
@@ -2808,19 +2885,8 @@ longer named."
       (if (or (not (function-call-item-p item))
               (not (non-empty-string-p call-id)))
           ':new
-          (let ((durable
-                  (loop for candidate
-                          in (conversation-input-items-for-request
-                              conversation :include-ephemeral-p nil)
-                        when (and (function-call-item-p candidate)
-                                  (equal call-id (json-get candidate "call_id")))
-                        return candidate))
-                (ephemeral
-                  (loop for entry in (conversation-ephemeral-input-entries conversation)
-                        for candidate = (getf entry :item)
-                        when (and (function-call-item-p candidate)
-                                  (equal call-id (json-get candidate "call_id")))
-                        return candidate)))
+          (multiple-value-bind (durable ephemeral)
+              (conversation--call-entry conversation call-id)
             (cond
               ((and ephemeral (same-call-p ephemeral item))
                ':promote)

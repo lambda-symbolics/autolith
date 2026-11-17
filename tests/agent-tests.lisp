@@ -1296,7 +1296,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
 
 (-> test-agent-repeated-call-identifiers () null)
 (defun test-agent-repeated-call-identifiers ()
-  "Give a repeated provider call identifier a fresh one instead of ending the turn."
+  "Test a provider that repeats a call identifier still names distinct calls."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration)))
     (unwind-protect
@@ -1308,48 +1308,35 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                                :conversation  conversation
                                :tool-registry (agent-test-registry)
                                :worker        ':unused))
-                (seen         (make-hash-table :test #'equal))
                 (first-call   (agent-test-call :call-id   "shared"
                                                :arguments "{\"value\":1}"))
                 (second-call  (agent-test-call :call-id   "shared"
                                                :arguments "{\"value\":2}"))
-                (later-call   (agent-test-call :call-id   "shared"
+                (unique-call  (agent-test-call :call-id   "shared-2"
                                                :arguments "{\"value\":3}")))
            (agent--validate-tool-call-identifiers
-            agent (list first-call second-call)
-            :seen-call-identifiers seen :request-number 1)
+            agent (list first-call second-call unique-call) :request-number 1)
            (test-assert (string= "shared" (json-get first-call "call_id"))
                         "the first call keeps its identifier")
-           (test-assert (string= "shared-2" (json-get second-call "call_id"))
-                        "a repeated identifier in one response gets a fresh one")
-           (agent--validate-tool-call-identifiers
-            agent (list later-call)
-            :seen-call-identifiers seen :request-number 2)
-           (test-assert (string= "shared-3" (json-get later-call "call_id"))
-                        "a later request in the same turn gets another fresh one")
-           (test-assert (and (gethash "shared" seen)
-                             (gethash "shared-2" seen)
-                             (gethash "shared-3" seen))
-                        "every reserved identifier is remembered for the turn")
-           (let ((durable (agent-test-call :call-id "durable-shared"
-                                           :name    "echo-durable")))
-             (conversation-append-provider-item conversation durable)
-             (let ((reserved (conversation-used-call-identifiers conversation)))
-               (test-assert (gethash "durable-shared" reserved)
-                            "the conversation reports the identifiers its calls already name")
-               (let ((reused (agent-test-call :call-id "durable-shared"
-                                              :name    "echo-reused")))
-                 (agent--validate-tool-call-identifiers
-                  agent (list reused)
-                  :seen-call-identifiers reserved :request-number 3)
-                 (test-assert (string= "durable-shared-2" (json-get reused "call_id"))
-                              "an identifier the conversation already names is replaced")
-                 (test-assert (handler-case
-                                  (progn
-                                    (conversation-append-provider-item conversation reused)
-                                    t)
-                                (provider-call-conflict () nil))
-                            "the replacement identifier is appended without a conflict")))))
+           (test-assert (string= "shared-3" (json-get second-call "call_id"))
+                        "a repeated identifier gets a fresh one")
+           (test-assert (string= "shared-2" (json-get unique-call "call_id"))
+                        "a replacement never takes an identifier the response names")
+           (conversation-append-provider-item conversation first-call)
+           (conversation-append-provider-item conversation second-call)
+           (conversation-append-provider-item conversation unique-call)
+           (let ((later-call (agent-test-call :call-id   "shared"
+                                              :arguments "{\"value\":4}")))
+             (agent--validate-tool-call-identifiers
+              agent (list later-call) :request-number 2)
+             (test-assert (string= "shared-4" (json-get later-call "call_id"))
+                          "an identifier the conversation already names is replaced")
+             (test-assert (handler-case
+                              (progn
+                                (conversation-append-provider-item conversation later-call)
+                                t)
+                            (provider-call-conflict () nil))
+                          "the replacement identifier is appended without a conflict")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
