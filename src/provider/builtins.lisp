@@ -93,8 +93,17 @@
 
 ;; ChatGPT subscription metadata: https://github.com/openai/codex,
 ;; codex-rs/models-manager/models.json at c465563aa9626d99420062135b187d299f904f81.
+;; GPT-6.2 IDs: https://openai.com/index/introducing-gpt-6-2-astra-sol/
+;; They are absent from Codex catalog 7457b7268fe109e5387bf0eac80ef4acd7c31365;
+;; use their predecessors' subscription context and reasoning defaults.
 (defparameter *codex-models*
   '((:name              "gpt-6.1-sol"
+     :context-window    272000
+     :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
+    (:name              "gpt-6.2-astra"
+     :context-window    272000
+     :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
+    (:name              "gpt-6.2-sol"
      :context-window    272000
      :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
     (:name              "gpt-6.1-terra"

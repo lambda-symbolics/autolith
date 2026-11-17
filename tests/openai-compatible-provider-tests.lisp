@@ -1167,6 +1167,16 @@
                  (equal (provider-model-reasoning-efforts astra-model)
                         '("low" "medium" "high" "xhigh" "max" "ultra")))
             "ChatGPT exposes gpt-6-astra with current Codex metadata")
+           (dolist (name '("gpt-6.2-astra" "gpt-6.2-sol"))
+             (let* ((model-metadata      (provider-model-for name))
+                    (model-configuration (configuration-copy configuration :model name)))
+               (test-assert
+                (and model-metadata
+                     (= (provider-model-context-window model-metadata) 272000)
+                     (equal (provider-model-reasoning-efforts model-metadata)
+                            '("low" "medium" "high" "xhigh" "max" "ultra"))
+                     (eq (provider-family (provider-create model-configuration)) ':codex))
+                (format nil "~A is selectable with Codex subscription defaults" name))))
            (dolist (entry '(("gpt-6.1-sol" "low" "medium" "high" "xhigh" "max" "ultra")
                             ("gpt-6-sol" "low" "medium" "high" "xhigh" "max" "ultra")
                             ("gpt-6-luna" "low" "medium" "high" "xhigh" "max")))
