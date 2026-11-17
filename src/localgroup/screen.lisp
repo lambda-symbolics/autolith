@@ -447,15 +447,13 @@ before the first channel frame; channel switches retain their side panel."
                  for index from 0 collect (list index row))
            :height height :width width :complete-p t)))
       (let* ((content-width (min 54 width))
-             (bar-width     (max 1 (- content-width 2)))
-             (filled        (floor (* bar-width (1- step)) 6))
-             (bar           (format nil "[~A~A]"
-                                    (make-string filled :initial-element #\=)
-                                    (make-string (- bar-width filled) :initial-element #\-)))
-             (stage         (format nil "~D/6  ~A" step description))
+             (bar           (terminal--bar-spans content-width 0
+                                                 (floor (* content-width (1- step)) 6)))
+             (stage         (list (terminal-span ':legend-accent (format nil "~D/6" step))
+                                  (terminal-span ':dim (format nil "  ~A" description))))
              (lines         (cond
                               ((>= height 4)
-                               (list title "" bar stage))
+                               (list (list (terminal-span ':brand title)) nil bar stage))
                               ((>= height 2)
                                (list bar stage))
                               (t
@@ -464,13 +462,13 @@ before the first channel frame; channel switches retain their side panel."
              (left          (make-string (floor (- width content-width) 2) :initial-element #\Space)))
         (clinedi:frame-snapshot-apply
          nil
-         (loop for text in lines
+         (loop for spans in lines
                for row from top
                collect (list row
                              (terminal--render-spans
                               (localgroup-screen-terminal screen)
                               (terminal--clip-spans
-                               (list (terminal-span ':notice (concatenate 'string left text))) width))))
+                               (cons (terminal-span ':plain left) spans) width))))
          :height height :width width :complete-p t)))))
 
 (-> localgroup-screen-resized (localgroup-screen) null)

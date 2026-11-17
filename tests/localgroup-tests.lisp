@@ -487,7 +487,7 @@
                           "the pending operation is painted before a channel can answer")
              (localgroup-screen-show-loading screen text :step 4 :description "initializing")
              (let ((frame (localgroup-screen--loading-frame screen)))
-               (test-assert (some (lambda (row) (find #\= row))
+               (test-assert (some (lambda (row) (find #\━ row))
                                   (clinedi:frame-snapshot-rows frame))
                             "completed milestones fill the loading bar"))
              (setf (terminal-columns terminal) 24
