@@ -194,7 +194,11 @@
            (let* ((catalog
                     (skill-catalog-for-configuration configuration))
                   (winner   (skill-catalog-find catalog "winner"))
-                  (standard (skill-catalog-find catalog "standard")))
+                  (standard (skill-catalog-find catalog "standard"))
+                  ;; Room for the fixed texts, the omission line and a few names.
+                  (budget   (+ (length (skill--catalog-prefix))
+                               (length (skill--catalog-guidance))
+                               120)))
              (test-assert
               (equal
                (skill-metadata-pathname winner)
@@ -223,9 +227,21 @@
                             "Standard instructions."))
               "Autolith discovers and reads standard Skills through cl-skills")
              (multiple-value-bind (rendered included omitted)
-                 (skill-catalog-render catalog :character-budget 1500)
+                 (skill-catalog-render catalog)
                (test-assert
-                (<= (length rendered) 1500)
+                (and (= included (length (skill-catalog-skills catalog)))
+                     (zerop omitted)
+                     (search (format nil "- winner: Project definition.~%") rendered))
+                "the catalog lists every skill and describes the ones its budget reaches")
+               (test-assert
+                (notany (lambda (root)
+                          (search (namestring root) rendered))
+                        (list project-skills user-skills site-skills))
+                "the catalog leaves source paths to skill.load"))
+             (multiple-value-bind (rendered included omitted)
+                 (skill-catalog-render catalog :character-budget budget)
+               (test-assert
+                (<= (length rendered) budget)
                 "the rendered catalog obeys its exact character budget")
                (test-assert
                 (search "call `skill.load`" rendered)
@@ -239,7 +255,7 @@
                 "catalog rendering reports metadata that does not fit")
                (test-assert
                 (> included 1)
-                "catalog packing prioritizes usable names and paths over descriptions"))
+                "catalog packing lists names before it spends anything on descriptions"))
              (test-assert
               (handler-case
                   (progn
