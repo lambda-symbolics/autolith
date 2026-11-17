@@ -8468,6 +8468,229 @@
          root :validate t :if-does-not-exist ':ignore))))
   nil)
 
+(-> application-tests--connection-preparation-failure
+    ((member :create :reconnect) (member :worker :registry :initialize :install)
+     &key (:different-conversation-p boolean))
+    null)
+(defun application-tests--connection-preparation-failure
+    (operation stage &key different-conversation-p)
+  "Inject one connection preparation failure and verify exact resource ownership."
+  (with-test-configuration (configuration)
+    (let ((original-registry-create         (symbol-function 'application--create-tool-registry))
+          (original-worker-create           (symbol-function 'lisp-worker-pool-create))
+          (original-registry-close          (symbol-function 'tool-registry-close-runtime-state))
+          (original-worker-stop             (symbol-function 'lisp-worker-manager-stop))
+          (original-conversation-create     (symbol-function 'application--conversation-create-owned))
+          (original-conversation-load       (symbol-function 'application--conversation-load-owned))
+          (original-context-refresh         (symbol-function 'application-refresh-context-meter))
+          (original-presentation-connect    (symbol-function 'application-connect-task-presentation))
+          (original-presentation-disconnect (symbol-function 'application-disconnect-task-presentation))
+          (initial-snapshot                 (application--extension-registry-snapshot))
+          (injected                         (make-condition 'task-error
+                                                            :message   "Injected connection preparation failure."
+                                                            :tool-name "application"))
+          (probing-p                        nil)
+          (old-application                  nil)
+          (old-registry                     nil)
+          (old-worker                       nil)
+          (old-lease                        nil)
+          (new-application                  nil)
+          (new-registry                     nil)
+          (new-worker                       nil)
+          (selected-lease                   nil)
+          (selected-identifier              nil)
+          (selected-lease-acquired-p        nil)
+          (new-registry-closed-p            nil)
+          (new-worker-stopped-p             nil)
+          (new-presentation-disconnected-p  nil)
+          (old-registry-closed-p            nil)
+          (old-worker-stopped-p             nil)
+          (snapshot                         nil)
+          (target-id                        nil)
+          (observed                         nil))
+      (unwind-protect
+           (test-call-with-function-replacements
+            (list
+             (list 'image-state-load
+                   (lambda (configuration &key pristine-p)
+                     (declare (ignore configuration pristine-p))
+                     nil))
+             (list 'image-state-reconnect (lambda () nil))
+             (list 'application--reconnect-configuration
+                   (lambda (previous immutable-p)
+                     (configuration-copy previous :immutable-p immutable-p)))
+             (list 'application-terminal-ui-create
+                   (lambda (&key relay-presentation configuration inbox-p)
+                     (declare (ignore relay-presentation configuration inbox-p))
+                     (terminal-ui-create
+                      :terminal (make-instance 'recording-terminal :columns 72))))
+             (list 'application--create-tool-registry
+                   (lambda (configuration &key shared-mcp-manager)
+                     (when (and probing-p (eq stage ':registry))
+                       (error injected))
+                     (multiple-value-bind (registry retained)
+                         (funcall original-registry-create configuration
+                                  :shared-mcp-manager shared-mcp-manager)
+                       (when probing-p
+                         (setf new-registry registry))
+                       (values registry retained))))
+             (list 'lisp-worker-pool-create
+                   (lambda (configuration)
+                     (when (and probing-p (eq stage ':worker))
+                       (error injected))
+                     (let ((worker (funcall original-worker-create configuration)))
+                       (when probing-p
+                         (setf new-worker worker))
+                       worker)))
+             (list 'application--conversation-create-owned
+                   (lambda (application configuration &key timestamp)
+                     (multiple-value-bind (conversation lease acquired-p)
+                         (funcall original-conversation-create
+                                  application configuration :timestamp timestamp)
+                       (when probing-p
+                        (setf selected-lease lease
+                              selected-identifier (conversation-identifier conversation)
+                              selected-lease-acquired-p acquired-p))
+                       (values conversation lease acquired-p))))
+             (list 'application--conversation-load-owned
+                   (lambda (application configuration identifier)
+                     (multiple-value-bind (conversation lease acquired-p)
+                         (funcall original-conversation-load
+                                  application configuration identifier)
+                       (when probing-p
+                        (setf selected-lease lease
+                              selected-identifier (conversation-identifier conversation)
+                              selected-lease-acquired-p acquired-p))
+                       (values conversation lease acquired-p))))
+             (list 'application-refresh-context-meter
+                   (lambda (application)
+                     (when (and probing-p (not (eq application old-application)))
+                       (setf new-application application))
+                     (funcall original-context-refresh application)
+                     (when (and probing-p (eq stage ':initialize)
+                                (not (eq application old-application)))
+                       (error injected))))
+             (list 'application-disconnect-task-presentation
+                   (lambda (application)
+                     (when (eq application new-application)
+                       (setf new-presentation-disconnected-p t))
+                     (funcall original-presentation-disconnect application)))
+             (list 'application-connect-task-presentation
+                   (lambda (application)
+                     (funcall original-presentation-connect application)
+                     (when (and probing-p (eq stage ':install)
+                                (not (eq application old-application)))
+                       (error injected))))
+             (list 'tool-registry-close-runtime-state
+                   (lambda (registry &key retain)
+                     (when (eq registry new-registry)
+                       (setf new-registry-closed-p t))
+                     (when (eq registry old-registry)
+                       (setf old-registry-closed-p t))
+                     (funcall original-registry-close registry :retain retain)))
+             (list 'lisp-worker-manager-stop
+                   (lambda (worker)
+                     (when (eq worker new-worker)
+                       (setf new-worker-stopped-p t))
+                     (when (eq worker old-worker)
+                       (setf old-worker-stopped-p t))
+                     (funcall original-worker-stop worker))))
+            (lambda ()
+              (when (eq operation ':reconnect)
+                (setf old-application (application-create configuration :pristine-p t)
+                      old-registry (application-tool-registry old-application)
+                      old-worker (application-worker old-application)
+                      old-lease (application-conversation-lease old-application))
+                (conversation-append-user-message
+                 (application-conversation old-application) "retained session")
+                (when different-conversation-p
+                  (let ((target (conversation-create configuration
+                                                     :identifier "replacement-session")))
+                    (conversation-append-user-message target "replacement session")
+                    (setf target-id (conversation-identifier target)))))
+              (setf snapshot (application--extension-registry-snapshot)
+                    probing-p t)
+              (handler-case
+                  (ecase operation
+                    (:create
+                     (application-create configuration :pristine-p t))
+                    (:reconnect
+                     (application-reconnect old-application :conversation-id target-id)))
+                (serious-condition (condition)
+                  (setf observed condition)))
+              (setf probing-p nil)
+              (test-assert
+               (if (eq stage ':install)
+                   (and (typep observed 'application-runtime-replacement-error)
+                        (eq (application-runtime-replacement-error-operation observed) ':reconnect)
+                        (eq (application-runtime-replacement-error-stage observed) ':install)
+                        (eq (application-runtime-replacement-error-cause observed) injected)
+                        (null (application-runtime-replacement-error-rollback-causes observed)))
+                   (eq observed injected))
+               "connection failure preserves its cause and replacement stage")
+              (test-assert
+               (and (or (null new-registry) new-registry-closed-p)
+                    (or (null new-worker) new-worker-stopped-p))
+               "failure closes exactly the resources acquired before it")
+              (when new-application
+                (test-assert new-presentation-disconnected-p
+                             "initialization failure disconnects the constructed application"))
+              (when (member stage '(:worker :registry))
+                (test-assert
+                 (ecase operation
+                   (:create
+                    (and new-registry (null new-worker)))
+                   (:reconnect
+                    (and new-worker (null new-registry))))
+                 "partial acquisition follows the caller's resource order"))
+              (test-assert
+               (and selected-lease
+                    (eq selected-lease-acquired-p
+                        (not (null (or (eq operation ':create) different-conversation-p))))
+                    (or (null target-id) (string= selected-identifier target-id))
+                    (if selected-lease-acquired-p
+                        (and (not (eq selected-lease old-lease))
+                             (not (conversation-lease-held-p selected-lease)))
+                        (and (eq selected-lease old-lease)
+                             (conversation-lease-held-p selected-lease))))
+               "failure releases new conversation leases and retains borrowed leases")
+              (test-assert
+               (equal snapshot (application--extension-registry-snapshot))
+               "failed replacement restores extension registrations")
+              (when old-application
+                (test-assert
+                 (and (eq (application-tool-registry old-application) old-registry)
+                      (eq (application-worker old-application) old-worker)
+                      (eq (application-conversation-lease old-application) old-lease)
+                      (conversation-lease-held-p old-lease)
+                      (not old-registry-closed-p)
+                      (not old-worker-stopped-p)
+                      (application-task-presentation-listener old-application))
+                 "failed replacement retains old ownership and presentation")
+                (let* ((executed-p nil)
+                       (probe
+                         (job-pool-submit
+                          (task-orchestrator-pool
+                           (application--task-orchestrator old-application))
+                          (lambda (job)
+                            (declare (ignore job))
+                            (setf executed-p t))
+                          :name "retained-runtime-probe")))
+                  (multiple-value-bind (result terminal-p)
+                      (job-await probe :timeout-seconds 5)
+                    (test-assert
+                     (and terminal-p executed-p (eq (getf result :state) ':completed))
+                     "the retained runtime executes work after rollback"))))))
+        (application--discard-connection-resources new-application new-registry new-worker)
+        (when old-application
+          (application--discard-connection-resources old-application old-registry old-worker)
+          (application-release-conversation-lease old-application))
+        (when (and selected-lease selected-lease-acquired-p
+                   (conversation-lease-held-p selected-lease))
+          (conversation-lease-release selected-lease))
+        (application--extension-registry-restore initial-snapshot))))
+  nil)
+
 (-> test-application-create-unwind-safety () null)
 (defun test-application-create-unwind-safety ()
   "Test late construction failure closes every newly owned runtime."
@@ -8569,6 +8792,8 @@
       (platform-delete-directory-tree
        *platform*
        root :validate t :if-does-not-exist ':ignore)))
+  (dolist (stage '(:worker :initialize))
+    (application-tests--connection-preparation-failure ':create stage))
   nil)
 
 (-> test-application-reconnect-unwind-safety () null)
@@ -8890,6 +9115,10 @@
                  root :validate t :if-does-not-exist ':ignore)))))
     (run-case ':pre-commit)
     (run-case ':retirement))
+  (dolist (different-conversation-p '(nil t))
+    (dolist (stage '(:registry :initialize :install))
+      (application-tests--connection-preparation-failure
+       ':reconnect stage :different-conversation-p different-conversation-p)))
   nil)
 
 (-> test-application-task-presentation () null)

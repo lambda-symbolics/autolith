@@ -1204,6 +1204,90 @@ once per process; APPLICATION--BUILD then constructs each application."
           (image-state-load configuration :pristine-p t)
           (image-state-load configuration))))
 
+(-> application--prepare-connection-provider
+    (configuration &key (:previous-provider (option model-provider)))
+    (values model-provider installation-provenance (option update-availability)))
+(defun application--prepare-connection-provider (configuration &key previous-provider)
+  "Return a fresh provider, installation provenance, and cached update availability.
+Validate PREVIOUS-PROVIDER against the effective registrations before replacing it."
+  (let* ((provenance (installation-provenance-detect configuration))
+         (update     (update-availability-current configuration provenance)))
+    (when previous-provider
+      (application--validate-provider-registration previous-provider configuration))
+    (values (provider-create configuration
+                             :reasoning-summaries-p
+                             (config :reasoning-traces-p configuration))
+            provenance
+            update)))
+
+(-> application--make-connected-application
+    (&key (:configuration configuration) (:conversation conversation)
+          (:conversation-lease (option conversation-lease))
+          (:provider model-provider) (:tool-registry tool-registry) (:worker t)
+          (:permission-state permission-state)
+          (:permission-mode (member :ask :auto :sandboxed :full-access))
+          (:pristine-p boolean) (:installation-provenance installation-provenance)
+          (:update-availability (option update-availability))
+          (:recovering-p boolean) (:relay-presentation list) (:hurry-up-p boolean))
+    application)
+(defun application--make-connected-application
+    (&key configuration conversation conversation-lease provider tool-registry worker
+          permission-state (permission-mode ':ask) pristine-p installation-provenance
+          update-availability recovering-p relay-presentation hurry-up-p)
+  "Construct an application around caller-owned resources without initializing history.
+The caller must retain the result before fallible connection initialization."
+  (let* ((agent (agent-create :configuration configuration
+                              :provider      provider
+                              :conversation  conversation
+                              :tool-registry tool-registry
+                              :hurry-up-p    hurry-up-p
+                              :worker        worker))
+         (ui    (application-terminal-ui-create
+                 :relay-presentation relay-presentation
+                 :configuration      configuration
+                 :inbox-p            (conversation-inbox-p conversation))))
+    (make-instance 'application
+                   :configuration           configuration
+                   :conversation            conversation
+                   :conversation-lease      conversation-lease
+                   :provider                provider
+                   :tool-registry           tool-registry
+                   :worker                  worker
+                   :agent                   agent
+                   :ui                      ui
+                   :permission-state        permission-state
+                   :permission-mode         permission-mode
+                   :pristine-p              pristine-p
+                   :installation-provenance installation-provenance
+                   :update-availability     update-availability
+                   :recovery-startup-p      recovering-p)))
+
+(-> application--initialize-connection
+    (application &key (:recovering-p boolean)
+                      (:rendered-sequence (option integer))
+                      (:history-floor-sequence (option integer)))
+    null)
+(defun application--initialize-connection
+    (application &key recovering-p rendered-sequence history-floor-sequence)
+  "Restore APPLICATION's transcript cursors, input history, and context estimate.
+The caller owns APPLICATION and its resources if any initialization step fails."
+  (let ((conversation (application-conversation application)))
+    (multiple-value-bind (rendered history-floor)
+        (application--normalize-recovery-cursors
+         conversation
+         :recovering-p           recovering-p
+         :rendered-sequence      rendered-sequence
+         :history-floor-sequence history-floor-sequence)
+      (setf (application-rendered-sequence application)        rendered
+            (application-render-position application)        0
+            (application-render-generation application)      (conversation-log-generation conversation)
+            (application-transcript-synchronized-p application) nil
+            (application-history-floor-sequence application) history-floor))
+    (application--load-conversation-input-history
+     (application-ui application) conversation)
+    (application-refresh-context-meter application))
+  nil)
+
 (-> application--build
     (configuration &key (:conversation-id (option string))
                         (:permission-mode (member :ask :auto :sandboxed :full-access))
@@ -1232,112 +1316,66 @@ servers. Release acquired resources if construction fails."
                (multiple-value-list
                 (application-recovery-state configuration))
                (list nil nil nil)))
-         (recovery-conversation-id        (first recovery-state))
+         (recovery-conversation-id      (first recovery-state))
          (selected-conversation-id
            (application--selected-conversation-id
             conversation-id recovery-conversation-id))
-         (recovery-rendered-sequence      (second recovery-state))
-         (recovery-history-floor-sequence (third recovery-state))
-         (registry                        nil)
-         (worker                          nil)
-         (conversation                    nil)
-         (conversation-lease              nil)
-         (conversation-lease-acquired-p   nil)
-         (application                     nil)
-         (completed-p                     nil))
+         (registry                      nil)
+         (worker                        nil)
+         (conversation                  nil)
+         (conversation-lease            nil)
+         (conversation-lease-acquired-p nil)
+         (application                   nil)
+         (completed-p                   nil))
     (unwind-protect
          (progn
            (channel-loading-report 3 "Reading channel history")
            (multiple-value-setq
-               (conversation
-                conversation-lease
-                conversation-lease-acquired-p)
+               (conversation conversation-lease conversation-lease-acquired-p)
              (if selected-conversation-id
                  (application--conversation-load-owned
                   nil configuration selected-conversation-id)
-                 (application--conversation-create-owned
-                  nil configuration)))
+                 (application--conversation-create-owned nil configuration)))
            (channel-loading-report 4 "Initializing provider and tools")
-           (let* ((permission-state
-                    (permissions-load configuration))
+           (let* ((permission-state (permissions-load configuration))
                   (configuration
                     (application--configuration-for-conversation
                      configuration conversation))
                   (recovering-conversation-p
-                    (and
-                     (null conversation-id)
-                     recovery-conversation-id
-                     (string=
-                      (conversation-identifier conversation)
-                      (conversation-identifier-migration-resolve
-                       configuration recovery-conversation-id))))
-                  (installation-provenance
-                    (installation-provenance-detect configuration))
-                  (update-availability
-                    (update-availability-current
-                     configuration installation-provenance))
-                  (provider
-                    (provider-create
-                     configuration
-                     :reasoning-summaries-p
-                     (config :reasoning-traces-p configuration))))
-             (setf registry (if tool-registry-function
-                                (funcall tool-registry-function configuration)
-                                (application--create-tool-registry configuration))
-                   worker   (lisp-worker-pool-create configuration))
-             (let* ((agent
-                      (agent-create
-                       :configuration configuration
-                       :provider      provider
-                       :conversation  conversation
-                       :tool-registry registry
-                       :worker        worker))
-                    (ui (application-terminal-ui-create
-                         :relay-presentation relay-presentation
-                         :configuration      configuration
-                         :inbox-p            (conversation-inbox-p conversation))))
-               (setf application
-                     (make-instance
-                      'application
-                      :configuration       configuration
-                      :conversation        conversation
-                      :conversation-lease  conversation-lease
-                      :provider            provider
-                      :tool-registry       registry
-                      :worker              worker
-                      :agent               agent
-                      :ui                  ui
-                      :permission-state    permission-state
-                      :permission-mode     permission-mode
-                      :pristine-p          pristine-p
-                      :installation-provenance
-                      installation-provenance
-                      :update-availability update-availability
-                      :recovery-startup-p
-                      (not (null recovering-conversation-p)))
+                    (and (null conversation-id)
+                         recovery-conversation-id
+                         (string=
+                          (conversation-identifier conversation)
+                          (conversation-identifier-migration-resolve
+                           configuration recovery-conversation-id)))))
+             (multiple-value-bind (provider provenance update)
+                 (application--prepare-connection-provider configuration)
+               (setf registry (if tool-registry-function
+                                  (funcall tool-registry-function configuration)
+                                  (application--create-tool-registry configuration))
+                     worker   (lisp-worker-pool-create configuration)
+                     application
+                     (application--make-connected-application
+                      :configuration           configuration
+                      :conversation            conversation
+                      :conversation-lease      conversation-lease
+                      :provider                provider
+                      :tool-registry           registry
+                      :worker                  worker
+                      :permission-state        permission-state
+                      :permission-mode         permission-mode
+                      :pristine-p              pristine-p
+                      :installation-provenance provenance
+                      :update-availability     update
+                      :recovering-p            (not (null recovering-conversation-p))
+                      :relay-presentation      relay-presentation)
                      (application-mutation-replay-failures application)
                      mutation-replay-failures)
-               (multiple-value-bind
-                     (restored-rendered-sequence
-                      restored-history-floor-sequence)
-                   (application--normalize-recovery-cursors
-                    conversation
-                    :recovering-p
-                    (not (null recovering-conversation-p))
-                    :rendered-sequence      recovery-rendered-sequence
-                    :history-floor-sequence recovery-history-floor-sequence)
-                 (setf
-                  (application-rendered-sequence application)
-                  restored-rendered-sequence
-                  (application-render-position application) 0
-                  (application-render-generation application)
-                  (conversation-log-generation conversation)
-                  (application-transcript-synchronized-p application)
-                  nil
-                  (application-history-floor-sequence application)
-                  restored-history-floor-sequence))
-               (application--load-conversation-input-history ui conversation)
-               (application-refresh-context-meter application)
+               (application--initialize-connection
+                application
+                :recovering-p           (not (null recovering-conversation-p))
+                :rendered-sequence      (second recovery-state)
+                :history-floor-sequence (third recovery-state))
                (application-connect-task-presentation application)
                (application--load-goal application)
                (application-publish-recovery-session application)
@@ -1347,8 +1385,7 @@ servers. Release acquired resources if construction fails."
                (setf completed-p t)
                application)))
       (unless completed-p
-        (application--discard-connection-resources
-         application registry worker)
+        (application--discard-connection-resources application registry worker)
         (when conversation-lease-acquired-p
           (conversation-lease-release conversation-lease))))))
 
@@ -1440,11 +1477,11 @@ servers. Release acquired resources if construction fails."
                                     (provider-bootstrap-configuration
                                      retained-configuration))
                               retained-configuration))
-                           (permission-state                (permissions-load prepared-configuration))
+                           (permission-state         (permissions-load prepared-configuration))
                            (recovery-state
                             (multiple-value-list
                              (application-recovery-state prepared-configuration)))
-                           (recovery-conversation-id        (first recovery-state))
+                           (recovery-conversation-id (first recovery-state))
                            (selected-conversation-id
                             (application--selected-conversation-id
                              conversation-id recovery-conversation-id))
@@ -1470,120 +1507,77 @@ servers. Release acquired resources if construction fails."
                               owned-conversation))
                            (configuration
                             (application--configuration-for-conversation
-                             prepared-configuration
-                             conversation))
-                           (installation-provenance
-                            (installation-provenance-detect configuration))
-                           (update-availability
-                            (update-availability-current
-                             configuration installation-provenance))
-                           (provider
-                            (progn
-                              (when (and (slot-boundp application 'provider)
-                                         (application-provider application))
-                                (application--validate-provider-registration
-                                 (application-provider application)
-                                 configuration))
-                              (provider-create
-                               configuration
-                               :reasoning-summaries-p
-                               (config :reasoning-traces-p configuration))))
-                           (recovery-rendered-sequence      (second recovery-state))
-                           (recovery-history-floor-sequence (third recovery-state))
-                           (recovering-conversation-p
-                            (and
-                             (null conversation-id)
-                             recovery-conversation-id
-                             (string=
-                              (conversation-identifier conversation)
-                              (conversation-identifier-migration-resolve
-                               prepared-configuration
-                               recovery-conversation-id)))))
-                      (setf (config :hurry-up-p configuration) hurry-up-p
-                            worker (lisp-worker-pool-create configuration)
-                            registry (application--create-tool-registry configuration))
-                      (let* ((agent
-                               (agent-create :configuration configuration
-                                             :provider      provider
-                                             :conversation  conversation
-                                             :tool-registry registry
-                                             :hurry-up-p    hurry-up-p
-                                             :worker        worker))
-                             (ui (application-terminal-ui-create
-                                  :configuration configuration
-                                  :inbox-p       (conversation-inbox-p conversation))))
-                        (setf new-application
-                              (make-instance
-                               'application
-                               :configuration           configuration
-                               :conversation            conversation
-                               :conversation-lease      selected-conversation-lease
-                               :provider                provider
-                               :tool-registry           registry
-                               :worker                  worker
-                               :agent                   agent
-                               :ui                      ui
-                               :permission-state        permission-state
-                               :permission-mode         permission-mode
-                               :pristine-p              (application-pristine-p application)
-                               :installation-provenance installation-provenance
-                               :update-availability     update-availability
-                               :recovery-startup-p
-                               (not (null recovering-conversation-p))))
-                        (multiple-value-bind
-                              (restored-rendered-sequence
-                               restored-history-floor-sequence)
-                            (application--normalize-recovery-cursors
-                             conversation
-                             :recovering-p
-                             (not (null recovering-conversation-p))
-                             :rendered-sequence      recovery-rendered-sequence
-                             :history-floor-sequence recovery-history-floor-sequence)
-                          (setf
-                           (application-rendered-sequence new-application)
-                           restored-rendered-sequence
-                           (application-render-position new-application) 0
-                           (application-render-generation new-application)
-                           (conversation-log-generation conversation)
-                           (application-transcript-synchronized-p new-application) nil
-                           (application-history-floor-sequence new-application)
-                           restored-history-floor-sequence
-                           (application-mutation-replay-failures new-application) nil))
-                        (application--load-conversation-input-history ui conversation)
-                        (application-refresh-context-meter new-application)
-                        (application--load-goal new-application)
-                        (image-state-reconnect)
-                        (setf retirement-started-p t
-                              failure-stage ':retire)
-                        (application-disconnect-task-presentation application)
-                        (setf presentation-disconnected-p t)
-                        (multiple-value-bind (completed retirement-failure)
-                            (tool-registry-quiesce-runtime-state old-registry)
-                          (setf quiesced-tools completed)
-                          (when retirement-failure
-                            (error retirement-failure)))
-                        (setf failure-stage ':install)
-                        (application-connect-task-presentation new-application)
-                        (context-runtime-reset)
-                        (application-publish-recovery-session new-application)
-                        (management-repl-transfer application new-application)
-                        (telemetry--call-safely
-                         (lambda () (telemetry-attach
-                                     (application-configuration new-application))))
-                        (setf completed-p t)
-                        (when (and retained-conversation-lease
-                                   (not
-                                    (eq retained-conversation-lease
-                                        selected-conversation-lease)))
-                          (conversation-lease-release retained-conversation-lease)
-                          (setf (application-conversation-lease application) nil))
-                        (when (and (slot-boundp application 'worker)
-                                   (application-worker application))
-                          ; mallet:suppress no-ignore-errors -- best-effort stop of the replaced worker
-                          (ignore-errors
-                            (lisp-worker-manager-stop
-                             (application-worker application))))
-                        new-application))
+                             prepared-configuration conversation)))
+                      (multiple-value-bind (provider provenance update)
+                          (application--prepare-connection-provider
+                           configuration
+                           :previous-provider
+                           (and (slot-boundp application 'provider)
+                                (application-provider application)))
+                        (let ((recovering-conversation-p
+                                (and (null conversation-id)
+                                     recovery-conversation-id
+                                     (string=
+                                      (conversation-identifier conversation)
+                                      (conversation-identifier-migration-resolve
+                                       prepared-configuration recovery-conversation-id)))))
+                         (setf (config :hurry-up-p configuration) hurry-up-p
+                               worker (lisp-worker-pool-create configuration)
+                               registry (application--create-tool-registry configuration)
+                               new-application
+                               (application--make-connected-application
+                                :configuration           configuration
+                                :conversation            conversation
+                                :conversation-lease      selected-conversation-lease
+                                :provider                provider
+                                :tool-registry           registry
+                                :worker                  worker
+                                :permission-state        permission-state
+                                :permission-mode         permission-mode
+                                :pristine-p              (application-pristine-p application)
+                                :installation-provenance provenance
+                                :update-availability     update
+                                :recovering-p            (not (null recovering-conversation-p))
+                                :hurry-up-p              hurry-up-p)
+                               (application-mutation-replay-failures new-application) nil)
+                         (application--initialize-connection
+                          new-application
+                          :recovering-p           (not (null recovering-conversation-p))
+                          :rendered-sequence      (second recovery-state)
+                          :history-floor-sequence (third recovery-state))
+                         (application--load-goal new-application)
+                         (image-state-reconnect)
+                         (setf retirement-started-p t
+                               failure-stage ':retire)
+                         (application-disconnect-task-presentation application)
+                         (setf presentation-disconnected-p t)
+                         (multiple-value-bind (completed retirement-failure)
+                             (tool-registry-quiesce-runtime-state old-registry)
+                           (setf quiesced-tools completed)
+                           (when retirement-failure
+                             (error retirement-failure)))
+                         (setf failure-stage ':install)
+                         (application-connect-task-presentation new-application)
+                         (context-runtime-reset)
+                         (application-publish-recovery-session new-application)
+                         (management-repl-transfer application new-application)
+                         (telemetry--call-safely
+                          (lambda () (telemetry-attach
+                                      (application-configuration new-application))))
+                         (setf completed-p t)
+                         (when (and retained-conversation-lease
+                                    (not
+                                     (eq retained-conversation-lease
+                                         selected-conversation-lease)))
+                           (conversation-lease-release retained-conversation-lease)
+                           (setf (application-conversation-lease application) nil))
+                         (when (and (slot-boundp application 'worker)
+                                    (application-worker application))
+                           ; mallet:suppress no-ignore-errors -- best-effort stop of the replaced worker
+                           (ignore-errors
+                             (lisp-worker-manager-stop
+                              (application-worker application))))
+                         new-application)))
                  (unless completed-p
                    (application--extension-registry-restore
                     extension-registry-snapshot))))
