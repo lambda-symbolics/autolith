@@ -172,16 +172,17 @@ configured window. Read existing metadata only, without discovery or preparation
 
 (-> compaction-recovery-text-item (t) (values t (integer 0)))
 (defun compaction-recovery-text-item (value)
-  "Copy VALUE for a text-only transcript, replacing media nodes with bounded notices.
+  "Copy canonical VALUE for a text-only transcript, replacing media parts with bounded notices.
 
-Return the copy and omitted image count. Ordinary strings are never interpreted
-as media; image payloads, URLs and incidental metadata are not copied."
+Return the copy and omitted image count. Recognize canonical input_image
+and legacy image_url parts. Ordinary strings and MIME metadata are retained."
   (let ((images 0))
     (values
      (clinker-transcript:transform-json
       value :node-function
       (lambda (item)
-        (if (and (hash-table-p item) (provider-context--image-p item))
+        (if (and (hash-table-p item)
+                 (member (json-get item "type") '("input_image" "image_url") :test #'equal))
             (progn
               (incf images)
               (values :replace

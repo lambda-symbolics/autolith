@@ -691,6 +691,34 @@
                                        (compaction-recovery-text-view (make-compaction-recovery) source))))
                        "Independent retries produce the same detached transcript.")))
       (test-assert (apply #'= lengths) "Several orders of payload magnitude produce identical transcript size.")))
+  (with-test-configuration (configuration)
+    (dolist (case (list
+                   (list (clinker-transcript:input-image-item "data:image/png;base64,CANONICAL") t)
+                   (list (json-object "type" "image_url" "image_url"
+                                      (json-object "url" "https://example.invalid/legacy-image")) t)
+                   (list (json-object "type" "image" "value" "ordinary result") nil)
+                   (list (json-object "mimeType" "image/png" "data" "ordinary result") nil)
+                   (list (json-object "mime_type" "image/png" "data" "ordinary result") nil)
+                   (list (json-object "inlineData"
+                                      (json-object "mimeType" "image/png" "data" "ordinary result")) nil)
+                   (list (json-object "fileData"
+                                      (json-object "mimeType" "image/png" "fileUri" "ordinary result")) nil)))
+      (destructuring-bind (part image-p) case
+        (let* ((state     (make-compaction-recovery))
+               (source    (conversation-compaction-summary-view
+                           (conversation-create configuration)
+                           (list (json-object "type" "message" "role" "user"
+                                              "content" (vector part)))))
+               (view      (compaction-recovery-text-view state source))
+               (projected (aref (json-get (first (compaction-image-tests--transcript view)) "content") 0))
+               (audit     (find :plain-text (compaction-recovery-notes state)
+                                :key        (lambda (note) (getf note :tier)))))
+          (test-assert (= (if image-p 1 0) (getf audit :images-omitted))
+                       "Only canonical and supported legacy media parts count as omitted images.")
+          (test-assert (if image-p
+                           (json-string= (json-get projected "type") "input_text")
+                           (equal (json-encode part) (json-encode projected)))
+                       "Canonical media becomes text; ordinary structured result data survives intact.")))))
   nil)
 
 (-> test-compaction-recovery-recent-images () null)
