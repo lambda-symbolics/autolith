@@ -4291,6 +4291,7 @@
                           :ui            (terminal-ui-create :terminal terminal))))
     (unwind-protect
          (let ((*application-history-page-size* 3))
+           (application-set-reasoning-traces application nil)
            (loop for index from 1 to 4
                  do (conversation-append-user-message
                      conversation
