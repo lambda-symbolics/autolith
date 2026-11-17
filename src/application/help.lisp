@@ -2,31 +2,6 @@
 
 ;;;; -- Human Help --
 
-(defparameter *application-help-sections*
-  '((:topic :channels :title "Channels"
-     :description "Move between channels, message them, and place their agents."
-     :commands    ("switch" "new" "tell" "move" "dismiss" "domestic" "rename"))
-    (:topic :conversations :title "Conversations"
-     :description "Manage the conversation of this channel."
-     :commands    ("history" "goal" "context" "compact"))
-    (:topic :models :title "Models"
-     :description "Choose a provider, model, and reasoning effort."
-     :commands    ("auth" "model" "models" "effort" "fast" "hurry-up"))
-    (:topic :workspace :title "Workspace"
-     :description "Change directories, permissions, skills, and workspace notes."
-     :commands    ("cwd" "permissions" "agenda" "skills" "mcp" "papercuts"
-                   "papercut" "papercut-close"))
-    (:topic :display :title "Display"
-     :description "Adjust settings, reasoning, timestamps, and transcript detail."
-     :commands    ("onboard" "settings" "trace" "timestamps" "ste" "titles" "cache-misses"
-                   "compact-tool"))
-    (:topic :runtime :title "Runtime and recovery"
-     :description "Inspect the session, save a generation, or recover queued input."
-     :commands    ("info" "status" "checkpoint" "checkpoint-cancel" "generations" "rollback" "update"
-                   "fix-skipped-definitions" "vault" "vault-store" "vault-restore"
-                   "vault-discard" "data.export" "data.import" "detach" "close")))
-  "Human help topics and their preferred command order; registrations supply the text.")
-
 (defgeneric application-help-operation-notes (operation)
   (:documentation "Return OPERATION's detailed Markdown notes from its live backend."))
 
@@ -153,7 +128,7 @@ Talk to Autolith in plain text. Run local commands as Lisp forms.
 
 ~A
 
-For one command, use `(help 'switch)`. For a tool, use `(help \"lisp.eval\")`."
+For one command, use `(help 'open)`. For a tool, use `(help \"lisp.eval\")`."
           (application-help--topic-menu)))
 
 (-> application-help--topic-menu () string)
@@ -214,22 +189,30 @@ All commands: `(help :commands)` · Full reference: `(help :all)`")))
   "Return SECTION's currently registered commands in the preferred order."
   (application-help--operation-list
    (getf section :title)
-   (loop for name in (getf section :commands)
-         for operation = (find name operations :test #'string=
-                                              :key   #'application-operation-name)
-         when (typep operation 'application-command-operation) collect operation)
+   (application-help--commands-for-topic operations (getf section :topic))
    (getf section :description)))
+
+(-> application-help--commands-for-topic (list (option keyword)) list)
+(defun application-help--commands-for-topic (operations topic)
+  "Select effective commands by their own topic and rank, preserving ties."
+  (stable-sort
+   (remove-if-not
+    (lambda (operation)
+      (and (typep operation 'application-command-operation)
+           (eq topic (application-command-help-topic
+                      (application-operation-backend operation)))))
+    operations)
+   (lambda (first second)
+     (let ((first-order  (application-command-help-order
+                          (application-operation-backend first)))
+           (second-order (application-command-help-order
+                          (application-operation-backend second))))
+       (and first-order (or (null second-order) (< first-order second-order)))))))
 
 (-> application-help--command-document (list) string)
 (defun application-help--command-document (operations)
-  "List all commands, including registrations outside the curated topics."
-  (let* ((commands (application-help--operations-of-kind operations ':command))
-         (covered  (loop for section in *application-help-sections*
-                         append (getf section :commands)))
-         (other    (remove-if (lambda (entry)
-                                (member (application-operation-name entry) covered
-                                        :test #'string=))
-                              commands)))
+  "List commands using the help metadata of their effective registrations."
+  (let ((other (application-help--commands-for-topic operations nil)))
     (format nil "# Commands~%~%Use `(help 'NAME)` for usage and details.~%~%~{~A~^~%~%~}~@[~%~%~A~]"
             (loop for section in *application-help-sections*
                   collect (application-help--section-document section operations))

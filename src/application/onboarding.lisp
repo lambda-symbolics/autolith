@@ -218,6 +218,8 @@ Without BOOT-SCREEN-P the session skips both and only takes the screen."
 
 (define-application-command application--builtin-onboard-command
     (:name              "/onboard"
+     :help-topic        :display
+     :help-order        1
      :argument          nil
      :description       "replay the fullscreen onboarding tour"
      :tip               "Use `(onboard)` to replay the internal onboarding guide."

@@ -2787,6 +2787,8 @@ The current value and its source sit in aligned columns of their own."
 
 (define-application-command application--builtin-settings-command
     (:name              "/settings"
+     :help-topic        :display
+     :help-order        2
      :argument          "[NAME [VALUE]]"
      :description       "browse and change settings"
      :tip               "Change native values with `(settings :onboarding-p nil)` or `(settings :boot-screen-seconds 2)`; inspect one setting with `(settings :terminal-theme)`."
@@ -2897,7 +2899,7 @@ The current value and its source sit in aligned columns of their own."
     (:name              "/help"
      :argument          "[TOPIC]"
      :description       "browse help or look up a command"
-     :tip               "Use `(help :workspace)` for a section or `(help 'switch)` for a command."
+     :tip               "Use `(help :workspace)` for a section or `(help 'open)` for a command."
      :busy-behavior     :execute
      :terminal-behavior :shared
      :callable          t)
@@ -2909,6 +2911,8 @@ The current value and its source sit in aligned columns of their own."
 
 (define-application-command application--builtin-new-command
     (:name              "/new"
+     :help-topic        :channels
+     :help-order        2
      :argument          nil
      :description       "open a new channel in this workspace"
      :tip               "opens a new channel and moves this terminal there; the channel you leave keeps running."
@@ -3032,6 +3036,8 @@ show."
 
 (define-application-command application--builtin-open-command
     (:name              "/open"
+     :help-topic        :channels
+     :help-order        1
      :argument          "[ID]"
      :description       "move this terminal to another channel"
      :tip               "takes a channel ID or a unique fragment of one, or picks one without; the channel you leave keeps running."
@@ -3076,6 +3082,8 @@ show."
 
 (define-application-command application--builtin-rename-command
     (:name              "/rename"
+     :help-topic        :channels
+     :help-order        7
      :argument          "[[WHO] NAME]"
      :description       "rename an agent"
      :tip               "renames this channel's agent, or the participant WHO names, or picks one without arguments; names are letters, digits, hyphens and underscores."
@@ -3127,6 +3135,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-move-command
     (:name              "/move"
+     :help-topic        :channels
+     :help-order        4
      :argument          "[AGENT [CHANNEL]]"
      :description       "move an agent into a channel, this one by default"
      :tip               "stops the agent where it is; in its new channel it waits until someone writes there or mentions it. Without arguments it picks the agent, then the channel."
@@ -3166,6 +3176,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-domestic-command
     (:name              "/domestic"
+     :help-topic        :channels
+     :help-order        6
      :argument          nil
      :description       "create a new agent for this channel"
      :tip               "for a channel without an agent: a fresh agent with this session's model and its short channel ID as an initial name."
@@ -3178,6 +3190,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-dismiss-command
     (:name              "/dismiss"
+     :help-topic        :channels
+     :help-order        5
      :argument          "[AGENT]"
      :description       "park an agent, leaving its channel without one"
      :tip               "stops the agent and parks it in no channel, keeping its context and leaving its children unaffected; (move \"WHO\") brings it back. Its channel then takes a moved agent or a domestic one."
@@ -3207,6 +3221,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-tell-command
     (:name              "/tell"
+     :help-topic        :channels
+     :help-order        3
      :argument          "[CHANNEL MESSAGE]"
      :description       "send a message to a channel as yourself"
      :tip               "reaches the channel's residents and subscribers and wakes their agents. Without a message it picks the channel and lets you write one."
@@ -3243,6 +3259,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-history-command
     (:name              "/history"
+     :help-topic        :conversations
+     :help-order        1
      :argument          nil
      :description       "load earlier transcript history"
      :tip               "loads one configured page of earlier transcript entries."
@@ -3255,6 +3273,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-working-directory-command
     (:name              "/cwd"
+     :help-topic        :workspace
+     :help-order        1
      :argument          "[PATH]"
      :description       "show or change the active workspace"
      :tip               "Use `(cwd pathname)` to change the active workspace, or `(cwd)` to inspect it."
@@ -3279,6 +3299,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-authentication-command
     (:name              "/auth"
+     :help-topic        :models
+     :help-order        1
      :argument          "[PROVIDER] [METHOD]"
      :description       "pick and authenticate a registered provider"
      :tip               "Use `(auth \"chatgpt\" :device-code)` for device authentication, or `:browser`."
@@ -3298,6 +3320,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-model-command
     (:name              "/model"
+     :help-topic        :models
+     :help-order        2
      :argument          "[MODEL] [:provider PROVIDER]"
      :description       "pick a registered provider model and reasoning effort"
      :tip               "Select a provider/model ID, or use (model \"ID\" :provider \"NAME\"). The choice is saved for future sessions."
@@ -3330,6 +3354,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-models-command
     (:name              "/models"
+     :help-topic        :models
+     :help-order        3
      :argument          "[:provider PROVIDER]"
      :description       "list registered providers and models"
      :tip               "Use (models :provider \"NAME\") to list one provider's models."
@@ -3342,6 +3368,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-effort-command
     (:name              "/effort"
+     :help-topic        :models
+     :help-order        4
      :argument          "[LEVEL]"
      :description       "pick the reasoning effort"
      :tip               "sets the model's reasoning budget without changing models. Higher levels allow more reasoning and can take longer; available levels depend on the model."
@@ -3365,6 +3393,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-fast-command
     (:name              "/fast"
+     :help-topic        :models
+     :help-order        5
      :description       "show or change Codex Fast mode"
      :tip               "Use `(fast t)` to request priority service, which counts more heavily against plan usage; use `(fast nil)` for normal service."
      :busy-behavior     :apply
@@ -3378,6 +3408,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-trace-command
     (:name              "/trace"
+     :help-topic        :display
+     :help-order        3
      :description       "show visible reasoning summaries"
      :tip               "Use `(trace t)` to show reasoning summaries or `(trace nil)` to hide them. Change the reasoning budget with `(effort)`."
      :busy-behavior     :apply
@@ -3391,6 +3423,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-turn-timestamps-command
     (:name              "/timestamps"
+     :help-topic        :display
+     :help-order        4
      :description       "show local timestamps beside user and assistant turns"
      :tip               "Use `(timestamps t)` to show local-time labels beside user and assistant turns, or `(timestamps nil)` to hide them."
      :busy-behavior     :apply
@@ -3404,6 +3438,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-simple-technical-english-command
     (:name              "/ste"
+     :help-topic        :display
+     :help-order        5
      :description       "use Simple Technical English for replies"
      :tip               "Use `(ste t)` to request short, direct Simple Technical English, or `(ste nil)` to remove that style instruction."
      :busy-behavior     :apply
@@ -3417,6 +3453,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-session-titles-command
     (:name              "/titles"
+     :help-topic        :display
+     :help-order        6
      :description       "allow provider-generated session-title refreshes"
      :tip               "Use `(titles t)` to allow provider-generated title refreshes, or `(titles nil)` for locally derived titles."
      :busy-behavior     :apply
@@ -3430,6 +3468,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-cache-misses-command
     (:name              "/cache-misses"
+     :help-topic        :display
+     :help-order        7
      :description       "notify when a request re-reads uncached context"
      :tip               "Use `(cache-misses t)` to report uncached context and likely causes, or `(cache-misses nil)` to hide these notices."
      :busy-behavior     :apply
@@ -3443,6 +3483,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-hurry-up-command
     (:name              "/hurry-up"
+     :help-topic        :models
+     :help-order        6
      :description       "show or change hurry-up mode"
      :tip               "Use `(hurry-up t)` to favor direct work with at most two child agents, or `(hurry-up nil)` for normal delegation limits."
      :busy-behavior     :apply
@@ -3456,6 +3498,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-permissions-command
     (:name              "/permissions"
+     :help-topic        :workspace
+     :help-order        2
      :description       "choose command access for this session"
      :tip               "Use `(permissions :ask)` for approval prompts, `:auto` for automatic authorization, `:sandbox` for workspace confinement, or `:full` for session-wide host access."
      :busy-behavior     :apply
@@ -3498,6 +3542,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-goal-command
     (:name              "/goal"
+     :help-topic        :conversations
+     :help-order        2
      :argument          "[OBJECTIVE]"
      :description       "set or view the session goal"
      :tip               "Set a string objective; use `(goal :pause)`, `(goal :resume)`, or `(goal :clear)` for control."
@@ -3511,6 +3557,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-agenda-command
     (:name              "/agenda"
+     :help-topic        :workspace
+     :help-order        3
      :argument          nil
      :description       "show workspace agenda entries"
      :tip               "shows durable commitments and notes for the current workspace."
@@ -3523,6 +3571,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-papercuts-command
     (:name              "/papercuts"
+     :help-topic        :workspace
+     :help-order        6
      :argument          nil
      :description       "show workspace papercut reports"
      :tip               "shows problems Autolith recorded when something was not working."
@@ -3535,6 +3585,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-papercut-command
     (:name              "/papercut"
+     :help-topic        :workspace
+     :help-order        7
      :argument          "[ID]"
      :description       "show one complete papercut report"
      :tip               "opens the full report named by `(papercuts)`."
@@ -3553,6 +3605,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-papercut-close-command
     (:name              "/papercut-close"
+     :help-topic        :workspace
+     :help-order        8
      :argument          "[ID]"
      :description       "close one resolved papercut report"
      :tip               "removes a fixed or obsolete report from `(papercuts)`."
@@ -3571,6 +3625,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-skills-command
     (:name              "/skills"
+     :help-topic        :workspace
+     :help-order        4
      :argument          nil
      :description       "show available skills"
      :tip               "shows request-local skills and any discovery problems."
@@ -3661,6 +3717,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-mcp-command
     (:name              "/mcp"
+     :help-topic        :workspace
+     :help-order        5
      :description       "show or refresh configured MCP servers"
      :tip               "Inspect connections with `(mcp)`, rediscover tools with `(mcp :refresh)`, or reread configuration with `(mcp :reload)`."
      :busy-behavior     :apply
@@ -3701,6 +3759,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-checkpoint-command
     (:name              "/checkpoint"
+     :help-topic        :runtime
+     :help-order        3
      :argument          "[:allow-dirty t]"
      :description       "save a retained live generation"
      :tip               "saves the current live state as a retained generation; (checkpoint :allow-dirty t) accepts uncommitted source changes and marks the generation dirty."
@@ -3713,6 +3773,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-checkpoint-cancel-command
     (:name              "/checkpoint-cancel"
+     :help-topic        :runtime
+     :help-order        4
      :argument          nil
      :description       "cancel a checkpoint that waits for running work"
      :tip               "a checkpoint holds every channel's new turns until running work finishes; this lets them go on without it."
@@ -3731,6 +3793,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-generations-command
     (:name              "/generations"
+     :help-topic        :runtime
+     :help-order        5
      :argument          nil
      :description       "list retained generations"
      :tip               "shows live generations available for recovery."
@@ -3745,6 +3809,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-rollback-command
     (:name              "/rollback"
+     :help-topic        :runtime
+     :help-order        6
      :argument          "[ID]"
      :description       "pick a generation for recovery"
      :tip               "selects a retained generation for the next recovery start."
@@ -3769,6 +3835,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-info-command
     (:name              "/info"
+     :help-topic        :runtime
+     :help-order        1
      :argument          nil
      :description       "show current model and runtime settings"
      :tip               "prints the current settings without changing them."
@@ -3781,6 +3849,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-status-command
     (:name              "/status"
+     :help-topic        :runtime
+     :help-order        2
      :aliases           ("/usage")
      :argument          nil
      :description       "show usage and rate limits"
@@ -3794,6 +3864,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-update-command
     (:name              "/update"
+     :help-topic        :runtime
+     :help-order        7
      :argument          nil
      :description       "check and install a newer packaged release"
      :tip               "updates curl-installed Autolith and explains source or Nix updates."
@@ -3806,6 +3878,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-context-command
     (:name              "/context"
+     :help-topic        :conversations
+     :help-order        3
      :argument          nil
      :description       "inspect request-local context"
      :tip               "reveals the ephemeral context prepared for provider requests."
@@ -3818,6 +3892,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-compact-command
     (:name              "/compact"
+     :help-topic        :conversations
+     :help-order        4
      :argument          nil
      :description       "compact conversation context now"
      :tip               "compacts the conversation context immediately, replacing older turns with a summary."
@@ -3830,6 +3906,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-fix-skipped-definitions-command
     (:name              "/fix-skipped-definitions"
+     :help-topic        :runtime
+     :help-order        8
      :argument          "[comment]"
      :description       "ask the model to rebuild or drop skipped private definitions"
      :tip               "Use `(fix-skipped-definitions \"Drop temporary development overrides.\")` to direct which skipped definitions to rebuild or drop before committing."
@@ -3843,6 +3921,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-compact-tool-command
     (:name              "/compact-tool"
+     :help-topic        :display
+     :help-order        8
      :description       "collapse or expand tool call detail in the transcript"
      :tip               "Use `(compact-tool t)` to collapse tool details or `(compact-tool nil)` to expand them."
      :busy-behavior     :hold
@@ -3856,6 +3936,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-detach-command
     (:name              "/detach"
+     :help-topic        :runtime
+     :help-order        15
      :argument          nil
      :description       "detach Autolith from the current terminal"
      :tip               "keeps the session running and returns the foreground shell."
@@ -3894,6 +3976,8 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-close-command
     (:name              "/close"
+     :help-topic        :runtime
+     :help-order        16
      :aliases           ("/exit")
      :argument          nil
      :description       "leave Autolith"

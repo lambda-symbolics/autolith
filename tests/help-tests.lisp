@@ -24,6 +24,92 @@
                         (terminal-span-text item)))
                   items)))
 
+(-> help-tests--command
+    (&key (:definition-name symbol) (:name string) (:aliases list)
+          (:help-topic t) (:help-order t))
+    application-command)
+(defun help-tests--command
+    (&key (definition-name 'help-tests--dynamic-command) (name "/commands")
+          aliases help-topic help-order)
+  "Create a callable fixture command with explicit help metadata."
+  (application-command-create
+   :definition-name definition-name :name name :aliases aliases :argument nil
+   :description "A dynamically registered help test command."
+   :tip         "Exercise dynamic help discovery."
+   :busy-behavior ':inspect :terminal-behavior ':shared
+   :help-topic help-topic :help-order help-order :callable-p t
+   :handler     (lambda (application)
+                  (declare (ignore application))
+                  ':continue)))
+
+(-> help-tests--registration-help (application) null)
+(defun help-tests--registration-help (application)
+  "Exercise extension ranking, aliases, replacements, and invalid metadata."
+  (dolist (command
+           (list (help-tests--command :definition-name 'help-tests--zeta-command
+                                      :name            "/help-zeta"
+                                      :help-topic ':channels :help-order 0)
+                 (help-tests--command :definition-name 'help-tests--alpha-command
+                                      :name "/help-alpha" :aliases '("/help-alias")
+                                      :help-topic ':channels :help-order 0)
+                 (help-tests--command :definition-name 'help-tests--unranked-command
+                                      :name "/help-unranked" :help-topic ':channels)))
+    (register-application-command command :source ':test))
+  (let* ((section   (application-operation-help application ':channels))
+         (positions (mapcar (lambda (usage) (search usage section))
+                            '("(help-zeta)" "(help-alpha)" "(open" "(help-unranked)"))))
+    (test-assert (and (every #'integerp positions) (apply #'< positions))
+                 "topic extensions sort by rank, retain effective-registration ties, and place unranked commands last")
+    (test-assert (and (not (search "(help-alias)" section))
+                      (equal (application-operation-help application 'help-alias)
+                             (application-operation-help application 'help-alpha)))
+                 "aliases resolve to their canonical command without another section listing"))
+  (register-application-command
+   (help-tests--command :definition-name 'help-tests--replacement-command :name "/open")
+   :source ':test)
+  (let* ((channels    (application-operation-help application ':channels))
+         (commands    (application-operation-help application ':commands))
+         (other       (search "## Other commands" commands))
+         (replacement (search "(open)" commands)))
+    (test-assert (and (not (search "(open" channels))
+                      other replacement (< other replacement))
+                 "a replacement without metadata belongs to Other commands instead of inheriting builtin metadata"))
+  (register-application-command
+   (help-tests--command :definition-name 'help-tests--replacement-command :name "/open"
+                        :help-topic ':workspace :help-order -1)
+   :source ':test)
+  (let* ((workspace   (application-operation-help application ':workspace))
+         (replacement (search "(open)" workspace))
+         (directory   (search "(cwd" workspace)))
+    (test-assert (and replacement directory (< replacement directory)
+                      (not (search "(open" (application-operation-help application ':channels))))
+                 "a replacement supplies its own topic and rank"))
+  (dolist (metadata '((:help-topic :unknown-help-topic)
+                      (:help-topic "channels")
+                      (:help-order "first")
+                      (:help-order 1/2)))
+    (test-assert
+     (handler-case (progn (apply #'help-tests--command metadata) nil)
+       (configuration-error () t))
+     "constructors refuse invalid help metadata with a configuration condition")
+    (test-assert
+     (handler-case
+         (progn
+           (macroexpand-1
+            `(define-application-command help-tests--invalid-command
+                 (:name "/help-invalid" :argument nil
+                  :description "Invalid help metadata fixture."
+                  :tip         "Exercise definition refusal."
+                  :busy-behavior :inspect :terminal-behavior :shared
+                  :callable    t ,@metadata)
+                 (application)
+               (declare (ignore application))
+               ':continue))
+           nil)
+       (application-command-definition-error () t))
+     "defining forms refuse invalid help metadata with a definition condition"))
+  nil)
+
 
 ;;;; -- Selection and Discovery --
 
@@ -33,16 +119,25 @@
   (with-help-tests-application (application terminal)
     (let* ((overview (application-operation-help application))
            (section  (application-operation-help application ':channels))
-           (command  (application-operation-help application 'switch))
+           (command  (application-operation-help application 'open))
            (tool     (application-operation-help application "test-operation.echo")))
       (test-assert (and (search "(new)" section) (not (search "(new)" command)))
                    "keywords choose sections while quoted symbols choose commands")
-      (test-assert (equal (application-operation-help application " SwItCh ")
-                          (application-operation-help application 'switch))
+      (let ((positions (mapcar (lambda (usage) (search usage section))
+                               '("(open" "(new)" "(tell" "(move" "(dismiss" "(domestic)" "(rename"))))
+        (test-assert (and (every #'integerp positions) (apply #'< positions))
+                     "channels help includes canonical open and preserves the editorial command order"))
+      (test-assert (equal (application-operation-help application " OpEn ")
+                          (application-operation-help application 'open))
                    "command subjects accept strings and ignore case and outer whitespace")
       (test-assert (equal (application-operation-help application "/usage")
                           (application-operation-help application 'status))
                    "help can resolve an existing command alias")
+      (let* ((runtime (application-operation-help application ':runtime))
+             (status  (search "(status)" runtime)))
+        (test-assert (and status (not (search "(status)" runtime :start2 (1+ status)))
+                          (not (search "(usage)" runtime)))
+                     "runtime help lists the canonical status command once for its aliases"))
       (test-assert (search "test-operation"
                            (application-operation-help application ':tools))
                    "the tools index exposes live namespaces")
@@ -72,27 +167,19 @@
     (let ((snapshot (application-command--registry-snapshot)))
       (unwind-protect
            (progn
-             (register-application-command
-              (application-command-create
-               :definition-name 'help-tests--dynamic-command
-               :name "/commands" :aliases nil :argument nil
-               :description     "A dynamically registered help test command."
-               :tip             "Exercise dynamic help discovery."
-               :busy-behavior ':inspect :terminal-behavior ':shared
-               :lambda-list nil :callable-p t :static-options nil
-               :handler         (lambda (application)
-                                  (declare (ignore application))
-                                  ':continue))
-              :source ':test)
+             (register-application-command (help-tests--command) :source ':test)
              (let ((section (application-operation-help application ':commands))
                    (command (application-operation-help application 'commands)))
-               (test-assert (search "(commands)" section)
-                            "new commands appear even without a curated section")
+               (let ((other   (search "## Other commands" section))
+                     (dynamic (search "(commands)" section)))
+                 (test-assert (and other dynamic (< other dynamic))
+                              "commands without help metadata appear under Other commands"))
                (test-assert
                 (and (search "(new)" section)
                      (not (search "(new)" command))
                      (equal command (application-operation-help application "COMMANDS")))
                 "reserved keyword topics take precedence over live commands"))
+             (help-tests--registration-help application)
              (let* ((ui     (application-ui application))
                     (editor (terminal-ui-editor ui)))
                (test-assert
@@ -129,7 +216,7 @@
   (with-help-tests-application (application terminal)
     (let* ((conversation (application-conversation application))
            (before       (conversation-next-sequence conversation)))
-      (dolist (source '("(help)" "(help :workspace)" "(help 'switch)"
+      (dolist (source '("(help)" "(help :workspace)" "(help 'open)"
                         "(help \"test-operation.echo\")" "(help 42)"
                         "(help \"definitely-unknown\")"))
         (recording-terminal-reset terminal)
@@ -149,7 +236,7 @@
                    "looking up a tool never invokes it")
       (dolist (case '(("(help)" :execute)
                       ("(help :workspace)" :execute)
-                      ("(help 'switch)" :execute)
+                      ("(help 'open)" :execute)
                       ("(help \"test-operation.echo\")" :execute)
                       ("(help (read-line))" :hold)))
         (destructuring-bind (source expected) case

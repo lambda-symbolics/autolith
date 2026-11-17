@@ -1132,6 +1132,8 @@ The caller must hold CONTROLLER's lock."
 
 (define-application-command application--builtin-vault-command
     (:name              "/vault"
+     :help-topic        :runtime
+     :help-order        9
      :argument          nil
      :description       "inspect recovered queued input"
      :tip               "shows input preserved after an active-image crash."
@@ -1144,6 +1146,8 @@ The caller must hold CONTROLLER's lock."
 
 (define-application-command application--builtin-vault-restore-command
     (:name              "/vault-restore"
+     :help-topic        :runtime
+     :help-order        11
      :argument          nil
      :description       "restore recovered queued input"
      :tip               "queues all vaulted input in its original order without automatic submission."
@@ -1170,6 +1174,8 @@ The caller must hold CONTROLLER's lock."
 
 (define-application-command application--builtin-vault-discard-command
     (:name              "/vault-discard"
+     :help-topic        :runtime
+     :help-order        12
      :argument          nil
      :description       "discard recovered queued input"
      :tip               "deletes only this conversation's recovery vault and blocked pending state."

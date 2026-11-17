@@ -3,9 +3,25 @@
 ;;;; -- Interactive Command Protocol --
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
+  (defparameter *application-help-sections*
+    '((:topic :channels :title "Channels"
+       :description "Move between channels, message them, and place their agents.")
+      (:topic :conversations :title "Conversations"
+       :description "Manage the conversation of this channel.")
+      (:topic :models :title "Models"
+       :description "Choose a provider, model, and reasoning effort.")
+      (:topic :workspace :title "Workspace"
+       :description "Change directories, permissions, skills, and workspace notes.")
+      (:topic :display :title "Display"
+       :description "Adjust settings, reasoning, timestamps, and transcript detail.")
+      (:topic :runtime :title "Runtime and recovery"
+       :description "Inspect the session, save a generation, or recover queued input."))
+    "Supported command help topics in editorial presentation order.")
+
   (defparameter *application-command-metadata-keys*
     '(:name :aliases :argument :description :tip
-      :busy-behavior :terminal-behavior :callable :static-options :slash-parser)
+      :busy-behavior :terminal-behavior :callable :static-options :slash-parser
+      :help-topic :help-order)
     "The literal metadata keys accepted by DEFINE-APPLICATION-COMMAND.")
 
   (defparameter *application-command-required-metadata-keys*
@@ -160,11 +176,11 @@ The maximum is NIL for &REST or &KEY."
 
   (-> application-command--validate-metadata
       (t &key (:aliases t) (:argument t) (:description t) (:tip t) (:busy-behavior t)
-         (:terminal-behavior t) (:static-options t))
+           (:terminal-behavior t) (:static-options t) (:help-topic t) (:help-order t))
       boolean)
   (defun application-command--validate-metadata
       (name &key aliases argument description tip busy-behavior terminal-behavior
-                 static-options)
+                   static-options help-topic help-order)
     "Validate command metadata values and return true."
     (unless (application-command--identifier-p name)
       (application-command--definition-error
@@ -204,6 +220,14 @@ The maximum is NIL for &REST or &KEY."
                     :test #'eq)
       (application-command--definition-error
        name "Application command ~A has invalid terminal behavior ~S." name terminal-behavior))
+    (unless (or (null help-topic)
+                (find help-topic *application-help-sections*
+                      :key (lambda (section) (getf section :topic))))
+      (application-command--definition-error
+       name "Application command ~A has unknown help topic ~S." name help-topic))
+    (unless (or (null help-order) (integerp help-order))
+      (application-command--definition-error
+       name "Application command ~A has invalid help order ~S." name help-order))
     t)
 
   (-> application-command--validate-defining-form (t t t) boolean)
@@ -322,7 +346,9 @@ The maximum is NIL for &REST or &KEY."
        :tip               (getf metadata :tip)
        :busy-behavior     (getf metadata :busy-behavior)
        :terminal-behavior (getf metadata :terminal-behavior)
-       :static-options    static-options))))
+       :static-options    static-options
+       :help-topic        (getf metadata :help-topic)
+       :help-order        (getf metadata :help-order)))))
 
 (defclass application-command ()
   ((definition-name
@@ -356,6 +382,18 @@ The maximum is NIL for &REST or &KEY."
     :reader        application-command-tip
     :type          non-empty-string
     :documentation "The startup advice and help notes, with Markdown inline code for Lisp forms.")
+   (help-topic
+    :initarg       :help-topic
+    :initform      nil
+    :reader        application-command-help-topic
+    :type          (option keyword)
+    :documentation "The help section supplied by this registration, or NIL for Other commands.")
+   (help-order
+    :initarg       :help-order
+    :initform      nil
+    :reader        application-command-help-order
+    :type          (option integer)
+    :documentation "The editorial rank within its help section; unranked commands follow ranked ones.")
    (busy-behavior
     :initarg       :busy-behavior
     :reader        application-command-busy-behavior
@@ -495,7 +533,9 @@ The maximum is NIL for &REST or &KEY."
        :tip               (application-command-tip command)
        :busy-behavior     (application-command-busy-behavior command)
        :terminal-behavior (application-command-terminal-behavior command)
-       :static-options    (application-command-static-options command))
+       :static-options    (application-command-static-options command)
+       :help-topic        (application-command-help-topic command)
+       :help-order        (application-command-help-order command))
     (error (condition)
       (error 'configuration-error
              :message (princ-to-string condition))))
@@ -539,11 +579,13 @@ The maximum is NIL for &REST or &KEY."
           (:argument (option string)) (:description string) (:tip string)
           (:busy-behavior keyword) (:terminal-behavior keyword)
           (:lambda-list list) (:callable-p boolean) (:static-options list)
-          (:slash-parser (option function)) (:handler function))
+          (:slash-parser (option function)) (:handler function)
+          (:help-topic t) (:help-order t))
     application-command)
 (defun application-command-create
     (&key definition-name name aliases argument description tip busy-behavior
-          terminal-behavior lambda-list callable-p static-options slash-parser handler)
+            terminal-behavior lambda-list callable-p static-options slash-parser handler
+            help-topic help-order)
   "Create and validate one immutable interactive command."
   (unless (and (symbolp definition-name)
                definition-name
@@ -569,7 +611,9 @@ The maximum is NIL for &REST or &KEY."
                                                 :tip               tip
                                                 :busy-behavior     busy-behavior
                                                 :terminal-behavior terminal-behavior
-                                                :static-options    static-options))
+                                                :static-options    static-options
+                                                :help-topic        help-topic
+                                                :help-order        help-order))
     (error (condition)
       (error 'configuration-error :message (princ-to-string condition))))
   (unless (functionp handler)
@@ -587,6 +631,8 @@ The maximum is NIL for &REST or &KEY."
     :tip               (copy-seq tip)
     :busy-behavior     busy-behavior
     :terminal-behavior terminal-behavior
+    :help-topic        help-topic
+    :help-order        help-order
     :lambda-list       (copy-tree lambda-list)
     :callable-p        callable-p
     :static-options    (mapcar (lambda (option)
@@ -1220,7 +1266,10 @@ APPLICATION are its authoritative Lisp argument contract. Optional :SLASH-PARSER
 names a function receiving the complete slash remainder and returning a proper
 list of semantic arguments; it is never invoked for Lisp calls. Without a parser,
 slash input uses token splitting. Parser and handler functions are captured at
-registration. Every handler returns :CONTINUE or :QUIT."
+registration. :HELP-TOPIC selects a supported section, defaulting to Other commands;
+:HELP-ORDER is an optional integer rank, with effective registration order breaking
+ties. Replacements supply their own help metadata. Every handler returns :CONTINUE
+or :QUIT."
   (application-command--validate-defining-form
    definition-name metadata lambda-list)
   (let* ((callable-p       (eq (getf metadata :callable) t))
@@ -1240,6 +1289,8 @@ registration. Every handler returns :CONTINUE or :QUIT."
            :tip               ,(getf metadata :tip)
            :busy-behavior     ',(getf metadata :busy-behavior)
            :terminal-behavior ',(getf metadata :terminal-behavior)
+           :help-topic        ',(getf metadata :help-topic)
+           :help-order        ,(getf metadata :help-order)
            :lambda-list       ',call-lambda-list
            :callable-p        ,callable-p
            :static-options    ',static-options
