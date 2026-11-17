@@ -142,6 +142,14 @@
   (declare (ignore provider))
   ':gemini-code-assist)
 
+(defmethod provider-authenticate ((provider gemini-code-assist-provider)
+                                  &key stream open-browser-p)
+  "Run installed-application OAuth for the Gemini subscription provider."
+  (gemini-oauth-login (provider-credential-manager provider)
+                      :stream         (or stream *standard-output*)
+                      :open-browser-p open-browser-p)
+  "Gemini authentication was saved by Autolith.")
+
 (defmethod provider-reconfiguration-initargs append
     ((provider gemini-code-assist-provider))
   "Preserve Code Assist setup state and endpoint across reconfiguration."

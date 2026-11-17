@@ -1117,7 +1117,8 @@
 
 (define-test-suite authentication
   test-authentication-store
-  test-authentication-bootstrap-and-refresh)
+  test-authentication-bootstrap-and-refresh
+  test-provider-authentication-dispatch)
 
 (define-test-suite chatgpt-authentication
   run-chatgpt-authentication-tests)

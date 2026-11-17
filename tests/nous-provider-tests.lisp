@@ -51,10 +51,8 @@
                  (eq (provider-registration-family registration) ':nous)
                  (functionp
                   (provider-registration-model-discovery registration))
-                 (functionp
-                  (provider-registration-authenticator registration))
                  (null (provider-registration-models registration)))
-            "Nous is a dynamic built-in provider with explicit authentication")
+            "Nous is a dynamic built-in provider")
            (let ((authentication-provider
                    (provider-authentication-provider configuration "nous")))
              (test-assert

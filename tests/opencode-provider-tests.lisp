@@ -271,7 +271,6 @@
             (lambda (selected &key reasoning-summaries-p)
               (declare (ignore reasoning-summaries-p))
               (opencode-provider-create selected))
-            :authenticator            #'provider--opencode-registration-authenticator
             :source                   ':runtime)
            (test-call-with-function-replacements
             (list
@@ -520,7 +519,6 @@
             :protocol                          ':chat-completions
             :endpoint                          *opencode-chat-completions-endpoint*
             :factory                           #'provider--opencode-registration-factory
-            :authenticator                     #'provider--opencode-registration-authenticator
             :model-discovery                   #'opencode--fetch-models
             :model-discovery-endpoint          *opencode-models-endpoint*
             :model-discovery-endpoint-resolver #'opencode-models-endpoint

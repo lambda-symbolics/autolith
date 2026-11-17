@@ -272,7 +272,8 @@ Account adapters may skip cached wire routing while this is true.")
     (configuration name &key reasoning-summaries-p)
   "Create NAME's registered provider for authentication.
 Bind the authentication construction context so account adapters can recover
-credentials and model metadata independently of their cached wire routes."
+credentials and model metadata independently of their cached wire routes.
+An empty catalog never requires discovery before the first login."
   (let* ((*provider-authentication-bootstrap-p* t)
          (canonical                             (provider--canonical-name name))
          (registration                          (provider-registration-find canonical)))
@@ -283,39 +284,27 @@ credentials and model metadata independently of their cached wire routes."
                      "Unknown provider ~A. Registered providers: ~{~A~^, ~}."
                      name
                      (mapcar #'provider-registration-name (provider-registrations)))))
-    (if (and (null (provider-registration-models registration))
-             (provider-registration-authenticator registration))
-        (let ((provider
-                (funcall (provider-registration-factory registration)
-                         configuration
-                         :reasoning-summaries-p reasoning-summaries-p)))
-          (unless (typep provider 'model-provider)
-            (error 'configuration-error
-                   :message
-                   (format nil
-                           "Provider factory for ~A returned ~S instead of a model-provider."
-                           (provider-registration-name registration)
-                           provider)))
-          (setf (model-provider-registration provider) registration)
-          provider)
-        (progn
-          (when (and (provider-registration-model-discovery registration)
-                     (null (provider-registration-models registration)))
-            (let ((failures
-                    (provider-refresh-models configuration :provider-name canonical)))
-              (when failures
-                (error (first failures)))))
-          (let ((model (first (provider-registration-models registration))))
-            (unless model
-              (error 'configuration-error
-                     :message (format nil "Provider ~A has no available models."
-                                      (provider-registration-name registration))))
-            (provider-create
-             (configuration-copy configuration
-                                 :model          (provider-model-name model)
-                                 :model-provider (provider-registration-name registration))
-             :reasoning-summaries-p reasoning-summaries-p
-             :registration          registration))))))
+    (let* ((model (first (provider-registration-models registration)))
+           (provider
+             (if model
+                 (provider-create
+                  (configuration-copy configuration
+                                      :model          (provider-model-name model)
+                                      :model-provider (provider-registration-name registration))
+                  :reasoning-summaries-p reasoning-summaries-p
+                  :registration          registration)
+                 (funcall (provider-registration-factory registration)
+                          configuration
+                          :reasoning-summaries-p reasoning-summaries-p))))
+      (unless (typep provider 'model-provider)
+        (error 'configuration-error
+               :message
+               (format nil
+                       "Provider factory for ~A returned ~S instead of a model-provider."
+                       (provider-registration-name registration)
+                       provider)))
+      (setf (model-provider-registration provider) registration)
+      provider)))
 
 (defgeneric provider-authenticated-model (configuration provider)
   (:documentation

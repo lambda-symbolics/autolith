@@ -205,6 +205,13 @@
    :stream (or stream *standard-output*) :open-browser-p open-browser-p)
   "GitHub Copilot authentication was saved by Autolith.")
 
+(defmethod provider-authenticate ((provider copilot-provider-mixin)
+                                  &key stream open-browser-p)
+  "Authorize the Copilot account through GitHub's device login."
+  (copilot-provider-authenticate provider
+                                 :stream         stream
+                                 :open-browser-p open-browser-p))
+
 (defmethod provider-authenticate :around
     ((provider copilot-provider-mixin) &key stream open-browser-p)
   "Allow policy enablement during the single shared post-login model refresh."
@@ -323,7 +330,7 @@
  "copilot" :description             "GitHub Copilot subscription"
  :family ':copilot :protocol ':custom
  :endpoint                          "https://api.individual.githubcopilot.com/chat/completions"
- :factory #'copilot-provider-create :authenticator #'copilot-provider-authenticate
+ :factory                           #'copilot-provider-create
  :model-discovery                   #'copilot--fetch-models
  :model-discovery-endpoint          "https://api.individual.githubcopilot.com/models"
  :model-discovery-endpoint-resolver #'copilot--models-cache-key

@@ -773,3 +773,96 @@
                 "OAuth failure diagnostics redact an echoed refresh token"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+
+;;;; -- Provider Authentication Dispatch --
+
+(-> provider-authentication-test--dispatch (configuration string symbol) null)
+(defun provider-authentication-test--dispatch (configuration name login)
+  "Exercise direct, registered and extension authentication for one account adapter."
+  (let* ((original (provider-registration-find name))
+         (factory  (provider-registration-factory original))
+         (events   nil))
+    (register-provider name
+                       :family          (provider-registration-family original)
+                       :factory         factory
+                       :model-discovery (lambda (selected) (declare (ignore selected)) nil)
+                       :source          ':runtime)
+    (test-call-with-function-replacements
+     (list
+      (list login (lambda (&rest arguments)
+                    (declare (ignore arguments))
+                    (push ':login events)
+                    "Authentication saved."))
+      (list 'provider-refresh-models
+            (lambda (selected &key provider-name)
+              (declare (ignore selected))
+              (test-assert (equal name provider-name) "Refresh selects the authenticated account")
+              (push ':refresh events)
+              nil)))
+     (lambda ()
+       (let* ((provider     (provider-authentication-provider configuration name))
+              (registration (model-provider-registration provider))
+              (stream       (make-string-output-stream)))
+         (test-assert (null events) "Empty-catalog login construction does not discover models")
+         (setf (model-provider-registration provider) nil)
+         (provider-authenticate provider :stream stream :open-browser-p nil)
+         (test-assert (equal events '(:login)) "Direct authentication invokes the account exchange once")
+         (setf events nil
+               (model-provider-registration provider) registration)
+         (provider-authenticate provider :stream stream :open-browser-p nil)
+         (test-assert (equal (reverse events) '(:login :refresh))
+                      "Registered authentication performs one login and one subsequent refresh")
+         (register-provider
+          name :factory    factory
+          :authenticator
+          (lambda (selected &key stream open-browser-p)
+            (declare (ignore selected stream open-browser-p))
+            (push ':callback events)
+            "Extension authentication saved.")
+          :model-discovery (lambda (selected) (declare (ignore selected)) nil)
+          :source          ':runtime)
+         (setf events nil
+               (model-provider-registration provider) (provider-registration-find name))
+         (provider-authenticate provider :stream stream :open-browser-p nil)
+         (test-assert (equal (reverse events) '(:callback :refresh))
+                      "The extension callback replaces the primary exchange without a second refresh")
+         (setf events nil
+               (model-provider-registration provider) registration)
+         (test-call-with-function-replacements
+          (list (list login (lambda (&rest arguments)
+                              (declare (ignore arguments))
+                              (push ':login events)
+                              (error 'authentication-error :message "Synthetic login failure."))))
+          (lambda ()
+            (test-assert
+             (handler-case
+                 (progn (provider-authenticate provider :stream stream :open-browser-p nil) nil)
+               (authentication-error () t))
+             "The account login failure propagates")))
+         (test-assert (equal events '(:login)) "Failed login does not refresh models")))))
+  nil)
+
+(-> test-provider-authentication-dispatch () null)
+(defun test-provider-authentication-dispatch ()
+  "Authenticate built-in account adapters before model discovery, with callback overrides."
+  (with-test-configuration (configuration)
+    (let ((snapshot (provider--registry-snapshot)))
+      (unwind-protect
+           (dolist (specification '(("chatgpt" chatgpt-oauth-login)
+                                    ("grok" device-authentication-login)
+                                    ("gemini" gemini-oauth-login)
+                                    ("nous" device-authentication-login)
+                                    ("fireworks" fireworks-api-key-login)
+                                    ("anthropic" anthropic-api-key-login)
+                                    ("openai-api" openai-compatible--authenticate)
+                                    ("opencode-go" opencode-api-key-login)
+                                    ("opencode-zen" opencode-zen-api-key-login)
+                                    ("openrouter" openrouter-api-key-login)
+                                    ("mistral" mistral-api-key-login)
+                                    ("copilot" device-authentication-login)))
+             (provider-authentication-test--dispatch configuration
+                                                     (first specification)
+                                                     (second specification)))
+        (provider--registry-restore snapshot))))
+  nil)

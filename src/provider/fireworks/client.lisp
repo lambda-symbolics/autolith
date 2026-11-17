@@ -18,6 +18,13 @@
   (declare (ignore provider))
   ':fireworks)
 
+(defmethod provider-authenticate ((provider fireworks-api-key-provider)
+                                  &key stream open-browser-p)
+  "Prompt for and save the Fireworks API key."
+  (declare (ignore open-browser-p))
+  (fireworks-api-key-login (provider-credential-manager provider)
+                          :stream (or stream *standard-output*)))
+
 (defmethod provider-family-create
     ((family (eql ':fireworks))
      (configuration configuration)
