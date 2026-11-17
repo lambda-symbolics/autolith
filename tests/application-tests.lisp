@@ -9894,9 +9894,16 @@
                         "effort switching preserves the latest rate snapshot")
            (test-assert (typep (application-agent application) 'agent)
                         "switching effort reconnects the agent")
-           (let ((items (application--model-items application)))
-              (test-assert (= (length items) 8)
-                           "every configured ChatGPT model is offered")
+           (let* ((items  (application--model-items application))
+                  (models (provider-registration-models
+                           (provider-registration-find "chatgpt"))))
+             (test-assert
+              (and (= (length items) (length models))
+                   (null (set-exclusive-or
+                          (mapcar (lambda (item) (getf item :model)) items)
+                          (mapcar #'provider-model-name models)
+                          :test #'string=)))
+              "every configured ChatGPT model is offered")
              (test-assert (string= (getf (find t items
                                                :key (lambda (item) (getf item :current-p)))
                                          :model)
