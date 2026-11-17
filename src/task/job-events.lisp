@@ -146,35 +146,26 @@
 (-> run-job-event--snapshot (t) t)
 (defun run-job-event--snapshot (value)
   "Copy bounded proper data before validation, rejecting cycles and foreign atoms."
-  (let ((nodes     0)
-        (ancestors (make-hash-table :test #'eq))
-        (keywords  (run-job-event--keywords)))
-    (labels ((copy-value (value depth)
-               (when (or (> (incf nodes) 256) (> depth 8))
-                 (run-job-event--error))
-               (cond
-                 ((consp value)
-                  (when (gethash value ancestors)
-                    (run-job-event--error))
-                  (setf (gethash value ancestors) t)
-                  (unwind-protect
-                       (let ((head (first value))
-                             (tail (rest value)))
-                         (unless (listp tail) (run-job-event--error))
-                         (cons (copy-value head (1+ depth))
-                               (copy-value tail depth)))
-                    (remhash value ancestors)))
-                 ((stringp value)
-                  (let ((length (length value)))
-                    (when (> length 4096) (run-job-event--error))
-                    (subseq value 0 length)))
-                 ((or (null value) (eq value t)
-                      (and (keywordp value) (member value keywords))
-                      (typep value '(integer 0 9223372036854775807)))
-                  value)
-                 (t
-                  (run-job-event--error)))))
-      (copy-value value 0))))
+  (let ((keywords (run-job-event--keywords)))
+    (handler-case
+        (portable-value-map
+         value
+         (lambda (item child)
+           (declare (ignore child))
+           (cond
+             ((stringp item)
+              (let ((length (length item)))
+                (when (> length 4096) (run-job-event--error))
+                (subseq item 0 length)))
+             ((or (null item) (eq item t)
+                  (and (keywordp item) (member item keywords))
+                  (typep item '(integer 0 9223372036854775807)))
+              item)
+             (t
+              (run-job-event--error))))
+         :proper-lists-p t :maximum-depth 8 :maximum-nodes 256 :list-node-policy ':tree)
+      (portable-value-error ()
+        (run-job-event--error)))))
 
 (-> run-job-event--serialize (list) string)
 (defun run-job-event--serialize (record)

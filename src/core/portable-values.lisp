@@ -12,18 +12,27 @@
   (:documentation "A payload-free rejection of an unsafe portable value tree."))
 
 (-> portable-value-map
-    (t function &key (:containers-p boolean) (:proper-lists-p boolean) (:list function)) t)
-(defun portable-value-map (value convert &key containers-p proper-lists-p (list #'identity))
-  "Copy bounded cons spines and call CONVERT on other values with a child mapper.
+    (t function &key (:containers-p boolean) (:proper-lists-p boolean) (:list function)
+                     (:maximum-depth (integer 0)) (:maximum-nodes (integer 0))
+                     (:list-node-policy (member :spine :tree :container))) t)
+(defun portable-value-map (value convert &key containers-p proper-lists-p (list #'identity)
+                                          (maximum-depth 128) (maximum-nodes 262144)
+                                          (list-node-policy ':spine))
+  "Copy bounded trees and call CONVERT on other values with a child mapper.
 
-CONVERT receives the value and a one-argument mapper for children. With
-CONTAINERS-P, vectors and hash tables participate in active-path cycle checks
-and allocation preflight. CONVERT must map their children before allocating
-unbounded output. LIST finishes each copied cons tree. Completed shared trees
-are copied independently. Root depth is zero; CAR and container children add
-one level, while the terminal cons tail retains the spine's depth. Charge each
-walk entry and spine cell, allowing depth 128 and 262144 charges. These limits
-bound structure, not string bytes."
+CONVERT receives a value and a one-argument mapper for children. CONTAINERS-P
+includes vectors and hash tables in active-path cycle checks and allocation
+preflight. CONVERT must map their children before allocating unbounded output.
+LIST finishes each copied cons tree. Shared completed trees copy independently.
+Root depth is zero; CAR and container children add one level, while cons tails
+retain their spine's depth. MAXIMUM-DEPTH and MAXIMUM-NODES bound structure,
+not string bytes. LIST-NODE-POLICY determines cons accounting: :SPINE charges
+one list entry, every cons cell and the terminal tail; :TREE charges each cons
+cell and the terminal tail; :CONTAINER charges the list entry but no spine
+cells or terminal NIL. All policies charge each mapped element."
+  (check-type maximum-depth (integer 0))
+  (check-type maximum-nodes (integer 0))
+  (check-type list-node-policy (member :spine :tree :container))
   (let ((active (make-hash-table :test #'eq))
         (nodes  0))
     (labels ((reject (reason)
@@ -32,9 +41,9 @@ bound structure, not string bytes."
 
              (charge (depth)
                "Account for one visit before allocating its output."
-               (when (> depth 128)
+               (when (> depth maximum-depth)
                  (reject ':depth))
-               (when (> (incf nodes) 262144)
+               (when (> (incf nodes) maximum-nodes)
                  (reject ':nodes)))
 
              (enter (item)
@@ -52,14 +61,17 @@ bound structure, not string bytes."
                     (unwind-protect
                          (loop for tail = item then (rest tail)
                                while (consp tail)
-                               do (charge depth)
+                               do (when (or (eq list-node-policy ':spine)
+                                            (and (eq list-node-policy ':tree) (not (eq tail item))))
+                                    (charge depth))
                                   (enter tail)
                                   (push tail tails)
                                collect (walk (first tail) (1+ depth)) into items
                                finally
                                   (when (and proper-lists-p tail)
                                     (reject ':dotted-list))
-                                  (let ((end (walk tail depth)))
+                                  (let ((end (unless (and (eq list-node-policy ':container) (null tail))
+                                               (walk tail depth))))
                                     (return (funcall list (nconc items (unless proper-lists-p end))))))
                       (dolist (tail tails)
                         (remhash tail active)))))
@@ -73,7 +85,7 @@ bound structure, not string bytes."
                          (when (> (+ nodes (if (hash-table-p item)
                                               (hash-table-count item)
                                               (length item)))
-                                  262144)
+                                  maximum-nodes)
                            (reject ':nodes))
                          (funcall convert item (lambda (child) (walk child (1+ depth)))))
                     (remhash item active)))
