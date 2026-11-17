@@ -62,9 +62,6 @@ local retention estimate, which only schedules idle compaction."
 (defparameter *provider-cache-prefix-function* nil
   "A request-local callback receiving prefix fingerprints, or NIL outside observation.")
 
-(defparameter *provider-cache-wire-sequence-fields* '("messages" "input" "contents")
-  "Request fields that hold the ordered conversation, in the order they are looked for.")
-
 (defparameter *provider-cache-request-prefix* nil
   "Request-local fingerprints captured before final provider encoding.")
 
@@ -84,15 +81,15 @@ local retention estimate, which only schedules idle compaction."
             (provider-cache-prefix--volatile-history provider conversation))))
     (call-next-method)))
 
-(-> provider-cache-prefix-observe (json-object) null)
-(defun provider-cache-prefix-observe (request)
-  "Report the final transport REQUEST alongside its reusable prefix fingerprints."
+(-> provider-cache-prefix-observe (model-provider json-object) null)
+(defun provider-cache-prefix-observe (provider request)
+  "Report PROVIDER's final REQUEST alongside its reusable prefix fingerprints."
   (when (and *provider-cache-prefix-function* *provider-cache-request-prefix*)
     (funcall *provider-cache-prefix-function*
              (append *provider-cache-request-prefix*
                      (list :wire
                            (provider-cache-wire-plan
-                            request
+                            provider request
                             :volatile-items
                             (getf *provider-cache-request-prefix* :volatile-items 0))))))
   nil)
@@ -143,7 +140,7 @@ Methods must preserve REQUEST, copying any fields they change."))
   (provider-call-with-mission-output-allowance
    provider (provider-prepare-stream-request provider request credentials)
    (lambda (final-request)
-     (provider-cache-prefix-observe final-request)
+     (provider-cache-prefix-observe provider final-request)
      (call-next-method provider final-request :credentials credentials
                                             :conversation  conversation))))
 
@@ -231,8 +228,8 @@ adjacent source items into one message. Do not move items in the sent request."
                                   :prefix  (cl-llm-provider-api:wire-request-prefix projection)
                                   :options options))
                  (stable (provider-request-object provider projection tool-namespaces))
-                 (old    (getf (provider-cache-wire-plan stable) :items))
-                 (new    (getf (provider-cache-wire-plan request) :items)))
+                 (old    (getf (provider-cache-wire-plan provider stable) :items))
+                 (new    (getf (provider-cache-wire-plan provider request) :items)))
             (- (length new)
                (loop for stable in old
                      for item in new
@@ -263,33 +260,25 @@ adjacent source items into one message. Do not move items in the sent request."
           (provider-cache-prefix-characters previous))
        t))
 
-(-> provider-cache-wire-plan (json-object &key (:volatile-items (integer 0))) list)
-(defun provider-cache-wire-plan (request &key (volatile-items 0))
-  "Fingerprint the final encoded REQUEST as the provider receives it.
+(-> provider-cache-wire-plan (model-provider json-object &key (:volatile-items (integer 0))) list)
+(defun provider-cache-wire-plan (provider request &key (volatile-items 0))
+  "Fingerprint PROVIDER's final REQUEST without retaining prompt text.
 
-Return a property list. :FIELDS pairs each other top-level field name with its
-digest and serialized character count, sorted by name. :ITEMS fingerprints the
-ordered conversation sequence. :PREFIX-ITEMS counts the leading items before
-the VOLATILE-ITEMS trailing ones that change on every request, so a later
-request may reuse them. :BREAKPOINTS lists each explicit cache marker's path
-and requested lifetime, NIL for the service default. A request wrapped in a
-Code Assist envelope is measured through its inner request. No prompt text is
-retained."
-  (let* ((inner    (json-get request "request"))
-         (body     (if (json-object-p inner) inner request))
-         (sequence (find-if (lambda (name)
-                              (provider-cache-wire--array-p (json-get body name)))
-                            *provider-cache-wire-sequence-fields*))
-         (items    (and sequence
-                        (map 'list #'provider-cache-prefix--entry (json-get body sequence)))))
-    (list :fields
-          (sort (loop for name being the hash-keys of body using (hash-value value)
-                      unless (equal name sequence)
-                        collect (cons name (provider-cache-prefix--entry value)))
-                #'string< :key #'first)
-          :items        items
-          :prefix-items (max 0 (- (length items) volatile-items))
-          :breakpoints  (provider-cache-wire--breakpoints body nil))))
+:FIELDS pairs each non-history field name with its digest and character count.
+:ITEMS fingerprints declared history in order. :PREFIX-ITEMS excludes the
+VOLATILE-ITEMS tail. :BREAKPOINTS records explicit cache marker paths and lifetimes.
+Unknown transports retain opaque fields and have no assumed history or markers."
+  (let ((body (provider-request-body provider request)))
+    (multiple-value-bind (history sequence) (provider-request-history provider request)
+      (let ((items (and history (map 'list #'provider-cache-prefix--entry history))))
+        (list :fields
+              (sort (loop for name being the hash-keys of body using (hash-value value)
+                          unless (equal name sequence)
+                            collect (cons name (provider-cache-prefix--entry value)))
+                    #'string< :key #'first)
+              :items        items
+              :prefix-items (max 0 (- (length items) volatile-items))
+              :breakpoints  (provider-request-cache-breakpoints provider request))))))
 
 (-> provider-cache-wire-change (list list) list)
 (defun provider-cache-wire-change (previous current)
@@ -335,26 +324,6 @@ Return NIL when either plan is missing."
 (defun provider-cache-wire--array-p (value)
   "Return true when VALUE is a JSON array."
   (and (vectorp value) (not (stringp value))))
-
-(-> provider-cache-wire--breakpoints (t list) list)
-(defun provider-cache-wire--breakpoints (value path)
-  "Return each cache marker inside VALUE as its path and requested lifetime.
-
-PATH lists, innermost first, the field names and indexes leading to VALUE."
-  (cond
-    ((json-object-p value)
-     (append (let ((control (json-get value "cache_control")))
-               (when (json-object-p control)
-                 (list (list (reverse path) (json-get control "ttl")))))
-             (loop for name being the hash-keys of value using (hash-value child)
-                   unless (equal name "cache_control")
-                     append (provider-cache-wire--breakpoints child (cons name path)))))
-    ((provider-cache-wire--array-p value)
-     (loop for child across value
-           for index from 0
-           append (provider-cache-wire--breakpoints child (cons index path))))
-    (t
-     nil)))
 
 (-> provider-cache-prefix--entry (t) list)
 (defun provider-cache-prefix--entry (value)
@@ -696,63 +665,3 @@ context, so it shares that cached prefix. It delivers no context."
          (provider-request-object provider projection effective-namespaces
                                   :compaction-p compaction-p)
          (and (not compaction-p) delivery))))))
-
-
-;;;; -- Request-Local Output Ceilings --
-
-(defgeneric provider-request-with-output-ceiling (provider request ceiling)
-  (:documentation
-   "Return a request-local copy with CEILING in the supported wire field.
-
-Providers without a ceiling protocol retain their original request and use
-local admission headroom only. Custom transports may specialize this protocol;
-methods must preserve the original request and unrelated nested fields."))
-
-(defmethod provider-request-with-output-ceiling
-    ((provider model-provider) (request hash-table) (ceiling integer))
-  "Keep unknown transports unchanged, without claiming remote enforcement."
-  (declare (ignore provider ceiling))
-  request)
-
-(-> provider-request--with-output-field (hash-table string integer) hash-table)
-(defun provider-request--with-output-field (request field ceiling)
-  "Copy REQUEST before replacing one top-level output FIELD."
-  (let ((copy (json-object-copy request)))
-    (setf (gethash field copy) ceiling)
-    copy))
-
-(defmethod provider-request-with-output-ceiling
-    ((provider responses-api-provider) (request hash-table) (ceiling integer))
-  "Add a Responses ceiling only on transports that support it."
-  (if (provider-output-ceiling-p provider)
-      (provider-request--with-output-field request "max_output_tokens" ceiling)
-      request))
-
-(defmethod provider-request-with-output-ceiling
-    ((provider chat-completions-provider) (request hash-table) (ceiling integer))
-  "Project the standard Chat Completions ceiling on supporting transports."
-  (if (provider-output-ceiling-p provider)
-      (provider-request--with-output-field request "max_completion_tokens" ceiling)
-      request))
-
-(defmethod provider-request-with-output-ceiling
-    ((provider anthropic-messages-provider) (request hash-table) (ceiling integer))
-  "Copy the Messages request before changing its required max_tokens field."
-  (if (provider-output-ceiling-p provider)
-      (provider-request--with-output-field request "max_tokens" ceiling)
-      request))
-
-(defmethod provider-request-with-output-ceiling
-    ((provider cl-llm-provider-api:gemini-generate-content-provider)
-     (request hash-table) (ceiling integer))
-  "Copy GenerateContent's nested generationConfig before changing its ceiling."
-  (if (provider-output-ceiling-p provider)
-      (let* ((copy       (json-object-copy request))
-             (generation (json-get request "generationConfig"))
-             (settings   (if (json-object-p generation)
-                             (json-object-copy generation)
-                             (json-object))))
-        (setf (gethash "maxOutputTokens" settings) ceiling
-              (gethash "generationConfig" copy) settings)
-        copy)
-      request))

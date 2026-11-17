@@ -410,6 +410,14 @@
                 #:provider-output-ceiling-p
                 #:provider-progress-event
                 #:provider-request-object
+                #:provider-request-body
+                #:provider-request-history
+                #:provider-request-output-paths
+                #:provider-request-output-limits
+                #:provider-request-with-output-ceiling
+                #:provider-request-context-body
+                #:provider-request-cache-breakpoints
+                #:provider-request-characters
                 #:provider-resample-requested-attempt
                 #:provider-resample-requested-maximum-attempts
                 #:provider-resample-requested-triggers

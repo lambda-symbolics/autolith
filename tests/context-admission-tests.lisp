@@ -76,9 +76,22 @@
                   provider (json-object "generationConfig"
                                         (json-object "maxOutputTokens" 7000))))
          "GenerateContent output caps participate in admission")
-        (test-assert
-         (null (provider-check-request-context provider (json-object)))
-         "a rejected request does not poison a later small request"))))
+        (progn
+          (test-assert (null (provider-check-request-context provider (json-object)))
+                       "a rejected request does not poison a later small request")
+          (let* ((opaque-provider (make-instance 'cl-llm-provider-api:subscription-provider :configuration configuration))
+                 (opaque          (json-object "request" (json-object "input" (make-string 24000 :initial-element #\x))
+                                               "messages" #("outer"))))
+            (test-assert
+             (handler-case (progn (provider-check-request-context opaque-provider opaque) nil)
+               (provider-context-budget-error (condition)
+                 (> (provider-context-budget-error-estimated-input-tokens condition) 5000)))
+             "opaque nested request data participates in admission instead of being guessed as an envelope")
+            (let ((plan (provider-cache-wire-plan opaque-provider opaque)))
+              (test-assert (and (null (getf plan :items))
+                                (assoc "request" (getf plan :fields) :test #'equal)
+                                (assoc "messages" (getf plan :fields) :test #'equal))
+                           "unknown transports retain opaque fields without assumed history")))))))
   nil)
 
 (-> test-context-admission-fresh-projection () null)
@@ -348,9 +361,7 @@
           (test-assert (equal original (json-encode request))
                        "the caller's original request is not changed")
           (test-assert (equal (getf observed :wire)
-                              (provider-cache-wire-plan
-                               final-request
-                               :volatile-items (getf observed :volatile-items 0)))
+                              (provider-cache-wire-plan provider final-request :volatile-items (getf observed :volatile-items 0)))
                        "cache observation fingerprints the finalized wire request")))))
   nil)
 
@@ -581,8 +592,8 @@
   "Preserve Code Assist's routing envelope and its original inner output policy."
   (with-test-configuration (configuration)
     (let* ((provider   (make-instance 'gemini-code-assist-provider :configuration configuration))
-           (inner      (json-object "generationConfig" (json-object "maxOutputTokens" 20
-                                                                       "temperature" 0.5)))
+           (inner      (json-object "generationConfig" (json-object "maxOutputTokens" 20 "temperature" 0.5)
+                                    "contents" (vector (json-object "role" "user" "parts" (vector (json-object "text" "hello"))))))
            (request    (json-object "request" inner "project" "inert"))
            (before     (json-encode request))
            (copy       (provider-request-with-output-ceiling provider request 10))
@@ -595,8 +606,17 @@
                         (not (eq copy request))
                         (not (eq inner (json-get copy "request"))))
                    "both the routing envelope and inner generation policy are request-local")
-      (test-assert (member 20 (provider-request-output-ceilings request :enclosed-p t))
-                   "original inner ceilings participate in ordinary admission and conjunction")))
+      (progn
+        (test-assert (member 20 (provider-request-output-ceilings provider request))
+                     "original inner ceilings participate in ordinary admission and conjunction")
+        (test-assert (equal (provider-cache-wire-plan provider request)
+                            (provider-cache-wire-plan (make-instance 'cl-llm-provider-api:gemini-generate-content-provider) inner))
+                     "the declared envelope uses the same history and cache analysis as plain GenerateContent")
+        (test-assert (equal (provider-context--wire-plan provider request)
+                            (provider-context--wire-plan provider copy))
+                     "an inner output-only change preserves the measured-input fingerprint")
+        (test-assert (= 1 (length (getf (provider-cache-wire-plan provider request) :items)))
+                     "Code Assist history is declared through the library protocol"))))
   nil)
 
 (-> test-context-admission-code-assist-first-setup () null)
@@ -626,8 +646,7 @@
                           (gemini-code-assist-provider-setup-complete-p provider) t)
                     provider))
             (list 'provider-cache-prefix-observe
-                  (lambda (request)
-                    (push (json-encode request) observations)))
+                  (lambda (provider request) (declare (ignore provider)) (push (json-encode request) observations)))
             (list 'provider-post-event-stream
                   (lambda (url body &rest options)
                     (declare (ignore url options))

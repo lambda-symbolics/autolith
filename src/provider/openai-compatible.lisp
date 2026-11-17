@@ -523,10 +523,9 @@ The first SHARED-COUNT durable items also end at their own breakpoint."
    (json-encode-utf8 request)
    :headers (openai-compatible--request-headers provider credentials conversation)))
 
-(defmethod provider-request-with-output-ceiling
-    ((provider openai-compatible-provider) (request hash-table) (ceiling integer))
-  "Respect the compatible provider's chosen output field on a request-local copy."
-  (if (provider-output-ceiling-p provider)
-      (provider-request--with-output-field
-       request (openai-compatible-provider-output-ceiling-field provider) ceiling)
-      request))
+(defmethod provider-request-output-paths ((provider openai-compatible-provider))
+  "Use the compatible provider's selected output field before standard aliases."
+  (remove-duplicates
+   (cons (list (openai-compatible-provider-output-ceiling-field provider))
+         (call-next-method))
+   :test #'equal :from-end t))

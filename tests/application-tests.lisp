@@ -5653,7 +5653,7 @@
               (directory (platform-truename *platform* (merge-pathnames "one/" root)))
               (request   (provider-request-object (agent-provider agent)
                                                   (agent-conversation agent) #()))
-              (wire      (test-request-history request))
+              (wire      (test-request-history (agent-provider agent) request))
               (before    (position-if (lambda (item) (search "prose-before-cwd" item)) wire))
               (receipt   (position-if (lambda (item) (search (json-encode (second contents)) item)) wire))
               (after     (position-if (lambda (item) (search "prose-after-cwd" item)) wire)))

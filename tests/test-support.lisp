@@ -47,13 +47,10 @@
         (setf (symbol-function (first original))
               (rest original))))))
 
-(-> test-request-history (json-object) list)
-(defun test-request-history (request)
-  "Return the ordered conversation REQUEST sends, as encoded items."
-  (map 'list #'json-encode
-       (some (lambda (field)
-               (json-get (or (json-get request "request") request) field))
-             *provider-cache-wire-sequence-fields*)))
+(-> test-request-history (model-provider json-object) list)
+(defun test-request-history (provider request)
+  "Return PROVIDER's declared wire history as serialized items."
+  (map 'list #'json-encode (provider-request-history provider request)))
 
 (-> test-compaction-request (model-provider conversation &key (:forced-p boolean)) json-object)
 (defun test-compaction-request (provider conversation &key (forced-p t))
@@ -93,9 +90,9 @@ cache. A service renders the parallel call setting into the tool section."
                          '("instructions" "system" "systemInstruction" "tools"
                            "parallel_tool_calls"))
                    "a compaction request repeats the ordinary instructions, tool declarations and parallel call setting")
-      (let ((shared (1- (length (test-request-history compaction)))))
-        (test-assert (equal (subseq (test-request-history ordinary) 0 shared)
-                            (subseq (test-request-history compaction) 0 shared))
+      (let ((shared (1- (length (test-request-history provider compaction)))))
+        (test-assert (equal (subseq (test-request-history provider ordinary) 0 shared)
+                            (subseq (test-request-history provider compaction) 0 shared))
                      "a compaction request repeats the ordinary history before its own instructions")))
     compaction))
 

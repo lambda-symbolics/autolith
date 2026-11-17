@@ -78,10 +78,10 @@
                                  (provider-request-object provider conversation schemas))))
               "requests without skill.load do not receive selected instructions"))
            (let* ((ordinary   (test-request-history
-                               (provider-request-object provider conversation namespaces)))
+                               provider (provider-request-object provider conversation namespaces)))
                   (compaction (test-request-history
-                               (provider-request-object provider conversation namespaces
-                                                        :compaction-p t)))
+                               provider (provider-request-object provider conversation namespaces
+                                                                 :compaction-p t)))
                   (shared     (1- (length compaction))))
              (test-assert (equal (subseq ordinary 0 shared) (subseq compaction 0 shared))
                           "compaction repeats the history ordinary requests send, anchored instructions included"))))

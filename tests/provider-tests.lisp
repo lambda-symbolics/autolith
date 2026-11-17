@@ -318,14 +318,8 @@
                            (openrouter--model-name "anthropic/claude-haiku-4.5")
                            "claude-haiku-4-5"))
                  (let ((*provider-shared-item-count* count))
-                   (mapcar #'first
-                           (getf (provider-cache-wire-plan
-                                  (provider-request-object
-                                   (if (eq route ':openrouter)
-                                       (openrouter-provider-create configuration)
-                                       (anthropic-provider-create configuration))
-                                   conversation (json-array)))
-                                 :breakpoints)))))
+                   (let ((provider (if (eq route ':openrouter) (openrouter-provider-create configuration) (anthropic-provider-create configuration))))
+                    (mapcar #'first (getf (provider-cache-wire-plan provider (provider-request-object provider conversation (json-array))) :breakpoints))))))
           (test-assert (and (member '("messages" 0 "content" 0) (breakpoints ':anthropic 1)
                                     :test #'equal)
                             (not (member '("messages" 0 "content" 0) (breakpoints ':anthropic 0)

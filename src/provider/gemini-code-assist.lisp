@@ -528,6 +528,12 @@ Return the request and its context delivery."
   (declare (ignore provider))
   (values (json-get event "response") (json-get event "traceId")))
 
+(defmethod provider-request-body ((provider gemini-code-assist-provider) (request hash-table))
+  "Read the GenerateContent body, accepting the shared encoder's unwrapped projection."
+  (declare (ignore provider))
+  (let ((inner (json-get request "request")))
+    (if (json-object-p inner) inner request)))
+
 (defmethod provider-request-with-output-ceiling
     ((provider gemini-code-assist-provider) (request hash-table) (ceiling integer))
   "Copy Code Assist's routing envelope and bound the inner GenerateContent request."

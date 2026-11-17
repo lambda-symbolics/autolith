@@ -78,9 +78,7 @@
                  (test-assert (null observed) "intermediate encoding does not report a final wire plan")
                  (provider-open-response-stream provider request)
                  (test-assert (equal (getf observed :wire)
-                                     (provider-cache-wire-plan
-                                      request
-                                      :volatile-items (getf observed :volatile-items 0)))
+                                     (provider-cache-wire-plan provider request :volatile-items (getf observed :volatile-items 0)))
                               "the observed wire plan matches the final transport request")
                  (test-assert (plusp (provider-cache-prefix-characters observed))
                               "final routing preserves reusable history fingerprints")

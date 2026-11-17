@@ -568,14 +568,10 @@ new retained history here; admission replaces temporary context when encoding."
              (charge (if (= 2 (getf sample :format))
                          (provider-context--header-charge sample components) 0)))
         (return-from context-estimate-known-tokens
-          (values (+ charge (provider-context--input-tokens sample (and new (coerce new 'vector))))
+          (values (+ charge (provider-context--input-tokens provider sample (and new (coerce new 'vector))))
                   (and (null new) (equal header (getf sample :soft-header)))))))
     (values
-     (provider-context--input-tokens
-      nil (vector (system-prompt configuration)
-                  (request-context-session-state configuration :hurry-up-p hurry-up-p)
-                  (coerce items 'vector) tools))
-     nil)))
+     (provider-context--input-tokens provider nil (vector (system-prompt configuration) (request-context-session-state configuration :hurry-up-p hurry-up-p) (coerce items 'vector) tools))     nil)))
 
 (-> context--render (list) (option string))
 (defun context--render (contributions)

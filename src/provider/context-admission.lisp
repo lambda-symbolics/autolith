@@ -41,7 +41,7 @@ may use provider token counts when available; the default is not a tokenizer."))
       (provider-context--matched-input provider request)
     (if matched-p
         (values tokens uncertain-p)
-        (provider-context--input-tokens nil request))))
+        (provider-context--input-tokens provider nil (provider-request-body provider request)))))
 
 (-> provider-context--soft-header (model-provider vector) (option list))
 (defun provider-context--soft-header (provider tools)
@@ -175,36 +175,10 @@ replaces only the unmatched middle, after common prefix and suffix removal."
           :encoder nil :projection nil :tools nil :wire-provider nil :wire nil
           :wire-characters 0))))
 
-(-> provider-context--wire-body (hash-table) hash-table)
-(defun provider-context--wire-body (request)
-  "Return the token-bearing request inside an optional routing envelope."
-  (let ((inner (json-get request "request")))
-    (if (json-object-p inner) inner request)))
-
-(-> provider-context--wire-plan (hash-table) list)
-(defun provider-context--wire-plan (request)
-  "Reuse wire fingerprints, ignoring cache annotations and output-only controls."
-  (labels ((copy-value (value)
-             (typecase value
-               (hash-table
-                (let ((copy (json-object)))
-                  (maphash (lambda (key item)
-                             (unless (equal key "cache_control")
-                               (setf (gethash key copy) (copy-value item))))
-                           value)
-                  copy))
-               (string
-                value)
-               (vector
-                (map 'vector #'copy-value value))
-               (t
-                value))))
-    (let ((body (copy-value (provider-context--wire-body request))))
-      (dolist (field '("stream" "stream_options" "store" "max_output_tokens"
-                       "max_completion_tokens" "max_tokens" "prompt_cache_key"
-                       "prompt_cache_retention"))
-        (remhash field body))
-      (provider-cache-wire-plan body))))
+(-> provider-context--wire-plan (model-provider hash-table) list)
+(defun provider-context--wire-plan (provider request)
+  "Fingerprint the encoder's measured-input projection."
+  (provider-cache-wire-plan provider (provider-request-context-body provider request)))
 
 (-> provider-context--prefix-matches-p (list (integer 0) list) boolean)
 (defun provider-context--prefix-matches-p (fingerprint count entries)
@@ -226,25 +200,16 @@ replaces only the unmatched middle, after common prefix and suffix removal."
         (getf sample :history-digest) (getf sample :history-count) history)
        t))
 
-(-> provider-context--request-items (hash-table) (option vector))
-(defun provider-context--request-items (request)
-  "Return the encoded conversation sequence inside REQUEST."
-  (let ((body (provider-context--wire-body request)))
-    (loop for field in *provider-cache-wire-sequence-fields*
-          for items = (json-get body field)
-          when (provider-cache-wire--array-p items)
-            return items)))
+(-> provider-context--request-items (model-provider hash-table) (option vector))
+(defun provider-context--request-items (provider request)
+  "Return the encoder's declared conversation sequence."
+  (values (provider-request-history provider request)))
 
-(-> provider-context--input-tokens
-    (list t &key (:replaced-characters (integer 0)))
-    (values (integer 0) boolean))
-(defun provider-context--input-tokens (sample additions &key (replaced-characters 0))
-  "Return one input count and non-text uncertainty for measured or cold context.
-
-Retain measured occupancy, charge additions, and replace previously measured
-temporary context instead of charging its replacement a second time."
+(-> provider-context--input-tokens ((option model-provider) list t &key (:replaced-characters (integer 0))) (values (integer 0) boolean))
+(defun provider-context--input-tokens (provider sample additions &key (replaced-characters 0))
+  "Retain measured occupancy, charge additions and replace measured temporary context."
   (multiple-value-bind (characters uncertain-p)
-      (if additions (provider-context--request-characters additions) (values 0 nil))
+      (if additions (provider-context--request-characters provider additions) (values 0 nil))
     (values (max 0 (+ (getf sample :tokens 0)
                       (ceiling (- characters
                                   (if (and sample (vectorp additions)
@@ -263,8 +228,8 @@ temporary context instead of charging its replacement a second time."
       (let* ((*provider-context-request*       nil)
              (*provider-cache-prefix-function* nil)
              (encoded                          (provider-context--wire-plan
-                                                (provider-request-object adapter projection tools)))
-             (current                          (provider-context--wire-plan request))
+                                                adapter (provider-request-object adapter projection tools)))
+             (current                          (provider-context--wire-plan (getf context :provider) request))
              (transport-fields
                (remove-if (lambda (field)
                             (equal field (assoc (first field) (getf sample :encoder-fields) :test #'equal)))
@@ -293,8 +258,8 @@ temporary context instead of charging its replacement a second time."
                (provider-context--sample-matches-p
                 sample (getf context :soft-header) (provider-context--history provider conversation)
                 :components context))
-      (let* ((current    (provider-context--wire-plan request))
-             (items      (provider-context--request-items request))
+      (let* ((current    (provider-context--wire-plan provider request))
+             (items      (provider-context--request-items provider request))
              (fields     (getf current :fields))
              (old-fields (getf sample :wire-fields)))
         (when (and items
@@ -305,13 +270,10 @@ temporary context instead of charging its replacement a second time."
                     (getf sample :wire-digest) (getf sample :wire-count) (getf current :items)))
           (let ((count (getf sample :wire-count)))
             (multiple-value-bind (tokens uncertain-p)
-                (provider-context--input-tokens
-                 sample (unless (= count (length items)) (subseq items count))
-                 :replaced-characters (getf sample :temporary-characters 0))
-              (return-from provider-context--matched-input
-                (values (+ tokens (if header-changed-p
-                                      (provider-context--header-charge sample context) 0))
-                        t (or header-changed-p uncertain-p))))))))
+                (provider-context--input-tokens provider sample (unless (= count (length items)) (subseq items count)) :replaced-characters (getf sample :temporary-characters 0))              (return-from provider-context--matched-input
+                                                                                                                                                                                                 (values (+ tokens (if header-changed-p
+                                                                                                                                                                                                                       (provider-context--header-charge sample context) 0))
+                                                                                                                                                                                                         t (or header-changed-p uncertain-p))))))))
     (values 0 nil nil)))
 
 (-> provider-context--response-entries-p (list list) boolean)
@@ -376,9 +338,7 @@ messages that later change fail closed."
                                     :items   (cl-llm-provider-api:wire-request-items projection)
                                     :options options))
                    (base-characters
-                     (provider-context--request-characters
-                      (provider-context--request-items
-                       (provider-request-object adapter base (getf context :tools)))))
+                     (provider-context--request-characters adapter (provider-context--request-items adapter (provider-request-object adapter base (getf context :tools)))))
                    (covered
                       (make-instance 'cl-llm-provider-api:wire-request
                                      :model   (cl-llm-provider-api:wire-request-model projection)
@@ -386,8 +346,7 @@ messages that later change fail closed."
                                      :items   (append (cl-llm-provider-api:wire-request-items projection)
                                                       (nthcdr (length before) history))
                                      :options options))
-                   (wire                             (provider-context--wire-plan
-                                                      (provider-request-object adapter covered (getf context :tools)))))
+                   (wire                             (provider-context--wire-plan adapter (provider-request-object adapter covered (getf context :tools)))))
               (when (provider-context--wire-fields-compatible-p (getf wire :fields) (getf (getf context :wire) :fields))
                 (let ((sample
                         (list :format 2 :soft-header (getf context :soft-header)
@@ -416,70 +375,24 @@ messages that later change fail closed."
                          (conversation-context-usage-resolve sample previous)))))))))))
   nil)
 
-(-> provider-context--request-characters (t) (values (integer 0) boolean))
-(defun provider-context--request-characters (value)
-  "Count encoded characters, using image allowances, and flag non-text estimates."
-  (typecase value
-    (hash-table
-     (if (provider-context--image-p value)
-         (values (* 4 *provider-image-token-estimate*) t)
-         (let ((characters 2)
-               (non-text-p nil))
-           (maphash
-            (lambda (key item)
-              (multiple-value-bind (count uncertain-p)
-                  (provider-context--request-characters item)
-                (incf characters (+ 4 (length (princ-to-string key)) count))
-                (when (or uncertain-p (equal key "encrypted_content"))
-                  (setf non-text-p t))))
-            value)
-           (values characters non-text-p))))
-    (string
-     (values (+ 2 (length value)) nil))
-    (vector
-     (let ((characters 2)
-           (non-text-p nil))
-       (loop for item across value
-             do (multiple-value-bind (count uncertain-p)
-                    (provider-context--request-characters item)
-                  (incf characters (1+ count))
-                  (when uncertain-p
-                    (setf non-text-p t))))
-       (values characters non-text-p)))
-    (t
-     (values (length (princ-to-string value)) nil))))
+(-> provider-context--request-characters ((option model-provider) t) (values (integer 0) boolean))
+(defun provider-context--request-characters (provider value)
+  "Apply Autolith's image allowance to encoder-owned character analysis."
+  (provider-request-characters (or provider (make-instance 'model-provider)) value
+                               :image-characters (* 4 *provider-image-token-estimate*)))
 
-(-> provider-context--image-p (hash-table) boolean)
-(defun provider-context--image-p (value)
-  "Recognize image blocks in Responses, Chat, Messages and GenerateContent requests."
-  (let ((type (json-get value "type"))
-        (mime (or (json-get value "mimeType") (json-get value "mime_type"))))
-    (not (null (or (member type '("image" "input_image" "image_url") :test #'equal)
-                   (and (stringp mime) (uiop:string-prefix-p "image/" mime)))))))
-
-(-> provider-request-output-ceilings (hash-table &key (:enclosed-p boolean)) list)
-(defun provider-request-output-ceilings (request &key enclosed-p)
-  "Return positive caller and request output limits, including envelopes if requested."
-  (let ((generation (json-get request "generationConfig"))
-        (inner      (json-get request "request")))
-    (append
-     (remove-if-not
-      (lambda (value) (and (integerp value) (plusp value)))
-      (list *provider-maximum-output-tokens*
-            (json-get request "max_output_tokens")
-            (json-get request "max_completion_tokens")
-            (json-get request "max_tokens")
-            (and (json-object-p generation)
-                 (json-get generation "maxOutputTokens"))))
-     ;; GenerateContent policy is nested in the Code Assist routing envelope.
-     (when (and enclosed-p (json-object-p inner))
-       (provider-request-output-ceilings inner :enclosed-p t)))))
+(-> provider-request-output-ceilings (model-provider hash-table) list)
+(defun provider-request-output-ceilings (provider request)
+  "Combine positive wire limits with the caller's Autolith output allowance."
+  (append (when (and (integerp *provider-maximum-output-tokens*)
+                     (plusp *provider-maximum-output-tokens*))
+            (list *provider-maximum-output-tokens*))
+          (provider-request-output-limits provider request)))
 
 (-> provider-request-output-reserve (model-provider hash-table) (integer 1))
 (defun provider-request-output-reserve (provider request)
   "Reserve the larger of configured headroom and the request's explicit output cap."
-  (reduce #'max (provider-request-output-ceilings request)
-          :initial-value (config :context-output-reserve (provider-configuration provider))))
+  (reduce #'max (provider-request-output-ceilings provider request)          :initial-value (config :context-output-reserve (provider-configuration provider))))
 
 (-> provider-check-request-context (model-provider hash-table) null)
 (defun provider-check-request-context (provider request)
@@ -507,9 +420,8 @@ messages that later change fail closed."
   (when (and conversation *provider-context-request*
              (eq conversation (getf *provider-context-request* :conversation)))
     (setf (getf *provider-context-request* :wire-provider) provider
-          (getf *provider-context-request* :wire) (provider-context--wire-plan request)
-          (getf *provider-context-request* :wire-characters)
-          (provider-context--request-characters (provider-context--request-items request))))
+          (getf *provider-context-request* :wire) (provider-context--wire-plan provider request)          (getf *provider-context-request* :wire-characters)
+          (provider-context--request-characters provider (provider-context--request-items provider request))))
   (when *provider-context-admission-state*
     (setf (first *provider-context-admission-state*) :entered
           (rest *provider-context-admission-state*) nil)))
@@ -556,7 +468,7 @@ Check caller limits before reducing the mission allowance, then recheck the
 encoded request."
   (if (null *provider-mission-output-allowance*)
       (funcall continuation request)
-      (let ((ceilings (provider-request-output-ceilings request :enclosed-p t)))
+      (let ((ceilings (provider-request-output-ceilings provider request)))
         (let ((*provider-maximum-output-tokens*
                 (when ceilings (reduce #'max ceilings))))
           (provider-context--admit-request provider request))
