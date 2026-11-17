@@ -231,8 +231,11 @@
                (test-assert
                 (and (= included (length (skill-catalog-skills catalog)))
                      (zerop omitted)
-                     (search (format nil "- winner: Project definition.~%") rendered))
-                "the catalog lists every skill and describes the ones its budget reaches")
+                     (search (format nil "- site-only: Site-only definition.~%") rendered)
+                     (search (format nil "- skill-7: ~A...~%"
+                                     (make-string 197 :initial-element #\h))
+                             rendered))
+                "the catalog describes every skill and cuts a long description to the limit")
                (test-assert
                 (notany (lambda (root)
                           (search (namestring root) rendered))
