@@ -349,38 +349,65 @@ rewrite and nothing to reconcile, so the move leaves it to the world store."
 
 ;;;; -- Reconciliation --
 
-(-> world-prune-empty-conversations (configuration) list)
-(defun world-prune-empty-conversations (configuration)
-  "Delete CONFIGURATION's top-level conversations that hold no message, and return their identifiers.
+(-> world-prune-empty-conversations
+    (configuration &key (:limit (integer 1)) (:after (option string)))
+    (values list list (option string)))
+(defun world-prune-empty-conversations (configuration &key (limit 32) after)
+  "Perform a bounded optional cleanup without reconstructing picker metadata.
+Return deleted identifiers, per-channel outcomes, and the next AFTER cursor."
+  (let* ((pathnames (sort (copy-list (conversation-list configuration)) #'string< :key #'pathname-name))
+         (remaining (remove-if (lambda (pathname)
+                                 (and after (not (string< after (pathname-name pathname)))))
+                               pathnames))
+         (batch     (subseq remaining 0 (min limit (length remaining))))
+         (deleted   nil)
+         (outcomes  nil))
+    (dolist (pathname batch)
+      (let ((identifier (pathname-name pathname)))
+        (handler-case
+            (multiple-value-bind (empty-p known-p)
+                (world-session--empty-conversation-p pathname)
+              (let ((status
+                      (cond
+                        ((not known-p)
+                         ':deferred)
+                        ((not empty-p)
+                         ':nonempty)
+                        ((or (conversation-inbox-pathname-p pathname)
+                             (uiop:directory-exists-p
+                              (merge-pathnames
+                               (format nil "tasks/~A/"
+                                       (or (conversation-identifier-path-fragment identifier)
+                                           (string-downcase identifier)))
+                               (config :data-root configuration))))
+                         ':retained)
+                        ((conversation-lease-busy-p configuration identifier)
+                         ':busy)
+                        (t
+                         (conversation-delete configuration identifier)
+                         (world-inbox-delete configuration identifier)
+                         (push identifier deleted)
+                         ':deleted))))
+                (push (list :id identifier :status status) outcomes)))
+          (error (condition)
+            (push (list :id identifier :status ':failed :diagnostic (princ-to-string condition)) outcomes)))))
+    (values (nreverse deleted) (nreverse outcomes)
+            (when (> (length remaining) (length batch))
+              (pathname-name (first (last batch)))))))
 
-Old releases saved a conversation as soon as a session started, so each
-session nobody wrote in left one behind, which would show as a channel with
-an agent and nothing else. The inbox stays, and so does a conversation that
-some process has open or whose children are stored. A full reconciliation
-afterwards retires the channels and agents of the conversations deleted."
-  (loop for pathname in (conversation-list configuration)
-        for identifier = (pathname-name pathname)
-        when (and (not (conversation-inbox-pathname-p pathname))
-                  (world-session--empty-conversation-p pathname)
-                  (not (uiop:directory-exists-p
-                        (merge-pathnames (format nil "tasks/~A/"
-                                                 (or (conversation-identifier-path-fragment identifier)
-                                                     (string-downcase identifier)))
-                                         (config :data-root configuration))))
-                  (not (conversation-lease-busy-p configuration identifier)))
-          collect (progn
-                    (conversation-delete configuration identifier)
-                    (world-inbox-delete configuration identifier)
-                    identifier)))
-
-(-> world-session--empty-conversation-p (pathname) boolean)
+(-> world-session--empty-conversation-p (pathname) (values boolean boolean))
 (defun world-session--empty-conversation-p (pathname)
-  "Return true when the conversation at PATHNAME holds no message and no turn."
-  (let ((metadata (conversation-picker-metadata-find pathname)))
-    (and metadata
-         (zerop (conversation-picker-metadata-search-message-count metadata))
-         (zerop (conversation-picker-metadata-user-turn-count metadata))
-         t)))
+  "Return emptiness and whether current metadata proves it, without cache rebuilding."
+  (let ((metadata (conversation-picker-metadata-read pathname)))
+    (if metadata
+        (values (and (zerop (conversation-picker-metadata-search-message-count metadata))
+                     (zerop (conversation-picker-metadata-user-turn-count metadata)))
+                t)
+        (let* ((active (conversation-storage-active-pathname pathname))
+               (header (and active (conversation-peek-header active))))
+          (values nil
+                  (not (null (or (plusp (getf (rest header) :user-turn-count 0))
+                                 (plusp (getf (rest header) :picker-search-message-count 0))))))))))
 
 (-> world-session--changes (list list &key (:all-p boolean) (:orphan-p function)) (values list list))
 (defun world-session--changes (identities mappings &key all-p (orphan-p (constantly nil)))

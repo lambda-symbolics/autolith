@@ -260,22 +260,17 @@ pristine: a pristine rescue session runs apart from it."
 
 (-> world-server--reconcile (configuration) null)
 (defun world-server--reconcile (configuration)
-  "Bring every conversation of CONFIGURATION into the world once, as the server starts.
-
-Conversations without a single message are deleted first, so they never
-become channels. Afterwards each channel keeps its own conversation in step
-as it changes. A world that cannot be reconciled only warns: the world never
-blocks the server."
+  "Reconcile required channel identities without optional transcript/cache cleanup.
+Each channel subsequently synchronizes its own conversation. Report recovery and
+reconciliation failures independently so an optional failure cannot skip identities."
   ;; Recovery can do filesystem work. Run it at server start, never in a
   ;; presentation-locked reconciliation or picker refresh.
   (handler-case (channel-remove-recover configuration)
     (error (cause)
       (warn 'world-session-warning
-            :pathname (task-child--removal-root configuration)
+            :pathname (channel--removal-root configuration)
             :cause    cause)))
-  (handler-case (progn
-                  (world-prune-empty-conversations configuration)
-                  (world-reconcile-sessions configuration))
+  (handler-case (world-reconcile-sessions configuration)
     (error (cause)
       (warn 'world-session-warning
             :pathname (configuration-world-sessions-path configuration)

@@ -735,6 +735,8 @@
   test-world-tell-prefill
   test-world-ambiguous-channel
   test-world-prune-empty-conversations
+  test-world-prune-empty-batches
+  test-world-cold-reconciliation
   test-world-inbox-modeline
   test-world-child-lifecycle
   test-world-child-removal-batch
