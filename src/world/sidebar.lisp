@@ -477,11 +477,19 @@ A newly hosted channel without durable history sorts by its creation time."
                 collect (cons identifier count))
         nil)))
 
+(-> world-sidebar-tree (world-sidebar) list)
+(defun world-sidebar-tree (sidebar)
+  "Return SIDEBAR's complete gathered tree, including descendants of closed nodes.
+
+Channel entries carry their durable :PARENT identifier, or NIL for a root.
+Folding metadata describes this terminal's view; clients may fold independently."
+  (apply #'world-sidebar--entries sidebar :include-closed-p t (world-sidebar-inputs sidebar)))
+
 (-> world-sidebar--entries
     (world-sidebar &key (:inbox (option channel)) (:channels list) (:groups list)
-                       (:names list) (:statuses list) (:pending list))
+                       (:names list) (:statuses list) (:pending list) (:include-closed-p boolean))
     list)
-(defun world-sidebar--entries (sidebar &key inbox channels groups names statuses pending)
+(defun world-sidebar--entries (sidebar &key inbox channels groups names statuses pending include-closed-p)
   "Return the home INBOX entry, then its indented workspace and channel entries.
 
 NAMES pairs channels with their agents' names; STATUSES and PENDING
@@ -491,7 +499,7 @@ latest touched first. The originating repository of the current channel comes
 first, then the others in that order. Within a group, channels nest under their
 parents. The first group is open, and a channel when the current one
 nests below it, unless the person opened or closed them; a closed one counts
-what it hides."
+what it hides. INCLUDE-CLOSED-P retains every descendant for structured clients."
   (let ((current (world-sidebar-current sidebar))
         (table   (make-hash-table :test #'equal)))
     (dolist (status statuses)
@@ -524,12 +532,13 @@ what it hides."
                                                            :test #'equal)
                                          t))))
                        (values (cons (append entry (world-sidebar--fold all :open-p open-p))
-                                     (and open-p shown))
+                                     (and (or include-closed-p open-p) shown))
                                (cons entry all)))))))
       (append
        (when inbox
          (list (list :kind      ':inbox
                      :id        (channel-identifier inbox)
+                     :parent    nil
                      :current-p (equal (channel-identifier inbox) current)
                      :unread    (or (rest (assoc (channel-identifier inbox) pending :test #'string=))
                                     0))))
@@ -548,11 +557,12 @@ what it hides."
                              (open-p (world-sidebar--open-p sidebar key first-p)))
                         (cons (append (list :kind   ':workspace
                                             :key    key
+                                            :parent (and inbox (channel-identifier inbox))
                                             :name   (world-workspace-leaf workspace)
                                             :path   (world-sidebar--short-path workspace)
                                             :indent (if inbox 2 0))
                                       (world-sidebar--fold all :open-p open-p))
-                              (and open-p shown)))))))))
+                              (and (or include-closed-p open-p) shown)))))))))
 
 (-> world-sidebar--open-p (world-sidebar string boolean) boolean)
 (defun world-sidebar--open-p (sidebar key default-p)
@@ -588,6 +598,7 @@ mentions, so nothing new below it goes unseen."
          (current-p  (equal identifier (world-sidebar-current sidebar))))
     (list :kind               ':channel
           :id                 identifier
+          :parent             (channel-parent channel)
           :name               name
           :title              (channel-title channel)
           :depth              depth
