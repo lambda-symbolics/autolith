@@ -1109,49 +1109,164 @@ run once the wake has."
                        "an unknown channel is said in a line, not signaled"))))))
   nil)
 
+(-> test-world-server-startup-reservations () null)
+(defun test-world-server-startup-reservations ()
+  "Exercise shared construction, unrelated admission, checkpoint cancellation and an end-to-end timeout."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((workspace-a  (world-tests--workspace root "reservation-a"))
+            (workspace-b  (world-tests--workspace root "reservation-b"))
+            (entry        (world-client-entry configuration))
+            (ready        (world-server-tests--open entry workspace-b))
+            (identifier-b (getf (rest ready) :session-id))
+            (build        (symbol-function 'application--build))
+            (lease        (symbol-function 'conversation-lease-acquire))
+            (load         (symbol-function 'conversation-load))
+            (entered      (sb-thread:make-semaphore))
+            (release      (sb-thread:make-semaphore))
+            (b-ready      (sb-thread:make-semaphore))
+            (threads      nil)
+            (results      (make-array 3 :initial-element nil))
+            (builds 0) (leases 0) (loads 0) (locked-builds 0)
+            (checkpoint nil) (checkpoint-ran-p nil))
+       (test-call-with-function-replacements
+        (list
+         (list 'application--build
+               (lambda (candidate &rest arguments)
+                 (when (equal (config :working-directory candidate)
+                              (uiop:ensure-directory-pathname workspace-a))
+                   (incf builds)
+                   (when (sb-thread:holding-mutex-p (world-server-open-lock server))
+                     (incf locked-builds))
+                   (sb-thread:signal-semaphore entered)
+                   (sb-thread:wait-on-semaphore release))
+                 (apply build candidate arguments)))
+         (list 'conversation-lease-acquire
+               (lambda (candidate identifier)
+                 (when (equal (config :working-directory candidate)
+                              (uiop:ensure-directory-pathname workspace-a))
+                   (incf leases))
+                 (funcall lease candidate identifier)))
+         (list 'conversation-load
+               (lambda (&rest arguments)
+                 (incf loads)
+                 (apply load arguments))))
+        (lambda ()
+          (labels ((open-on-thread (index arguments &optional done)
+                     "Start an independent waiter and retain its response or failure."
+                     (let ((thread (make-thread
+                                    (lambda ()
+                                      (setf (aref results index)
+                                            (handler-case (world-server-open server arguments)
+                                              (error (condition) condition)))
+                                      (when done (sb-thread:signal-semaphore done)))
+                                    :name "Autolith reservation test waiter")))
+                       (push thread threads))))
+            (unwind-protect
+                 (progn
+                   (open-on-thread 0 (list :directory workspace-a))
+                   (test-assert (sb-thread:wait-on-semaphore entered :timeout 20)
+                                "A construction reaches its deterministic latch")
+                   (open-on-thread 1 (list :directory workspace-a))
+                   (open-on-thread 2 (list :channel identifier-b) b-ready)
+                   (test-assert (and (sb-thread:wait-on-semaphore b-ready :timeout 20)
+                                     (eq (first (aref results 2)) ':ok)
+                                     (= builds 1) (zerop locked-builds) (zerop loads))
+                                "ready B opens with no transcript loads while one unlocked A construction is blocked")
+                   (let* ((*world-server-open-timeout-seconds* 0.05)
+                          (failure                             (handler-case (world-server-open server (list :directory workspace-a))
+                                                                 (world-error (condition) condition)))
+                          (status                              (world-server-status server))
+                          (startup                             (and (typep failure 'world-error)
+                                                                    (find (world-error-identifier failure) (getf (rest status) :startups)
+                                                                          :key (lambda (state) (getf state :identifier)) :test #'equal))))
+                     (test-assert (and startup
+                                       (eq (world-error-operation failure) ':open-timeout)
+                                       (eq (getf startup :phase) ':building)
+                                       (getf startup :pending-p)
+                                       (<= (getf (getf startup :timings) :reserved-at)
+                                           (getf (getf startup :timings) :build-started-at))
+                                       (>= (getf (getf startup :timings) :lock-wait) 0)
+                                       (= builds 1))
+                                  "a timed-out waiter identifies one still-owned construction and monotonic admission measurements"))
+                   (setf checkpoint
+                         (make-thread
+                          (lambda ()
+                            (world-server--call-with-quiescer
+                             server :application (world-host-application (world-server--find-host server identifier-b))
+                             :reconnect-id       "reservation-test"
+                             :function           (lambda () (setf checkpoint-ran-p t))))
+                          :name "Autolith reservation test checkpoint"))
+                   (test-assert (and (task-tests--wait-until (lambda () (world-server-holding-p server)) 10)
+                                     (not (world-server-checkpointing-p server))
+                                     (world-server-cancel-checkpoint server))
+                                "checkpoint admission waits for construction while status and cancellation remain available")
+                   (join-thread checkpoint)
+                   (setf checkpoint nil)
+                   (test-assert (not checkpoint-ran-p) "cancellation prevents entry into the save boundary"))
+              (sb-thread:signal-semaphore release)
+              (when checkpoint (world-server-cancel-checkpoint server) (join-thread checkpoint))
+              (dolist (thread threads) (join-thread thread)))
+            (let* ((first (aref results 0)) (second (aref results 1))
+                   (identifier (and (listp first) (getf (rest first) :session-id)))
+                   (host       (and identifier (world-server--find-host server identifier))))
+              (test-assert (and host (listp second)
+                                (equal identifier (getf (rest second) :session-id))
+                                (not (eq (getf (rest first) :started-p) (getf (rest second) :started-p)))
+                                (= builds 1) (= leases 1)
+                                (= 1 (count identifier (world-server--hosts server) :key #'world-host-channel :test #'equal))
+                                (conversation-lease-held-p (application-conversation-lease (world-host-application host))))
+                           "all A waiters settle on one host, one construction owner and one live lease"))))))))
+  nil)
+
 (-> test-world-server-starting-host () null)
 (defun test-world-server-starting-host ()
   "Test an open joins a host that is still starting instead of starting another."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((workspace (world-tests--workspace root "a"))
-            (channel   (conversation-create (configuration-copy configuration
-                                                                :working-directory workspace)
-                                            :identifier "bstart1"))
+            (channel
+             (conversation-create
+              (configuration-copy configuration :working-directory workspace)
+              :identifier "bstart1"))
             (terminal  (make-instance 'recording-terminal :columns 80))
-            (starting  (make-instance
-                        'world-host
-                        :application (make-instance
-                                      'application
-                                      :configuration (configuration-copy
-                                                      configuration
-                                                      :working-directory workspace)
-                                      :conversation  channel
-                                      :ui            (terminal-ui-create :terminal terminal))))
+            (starting
+             (make-instance 'world-host :application
+                            (make-instance 'application :configuration
+                                           (configuration-copy configuration
+                                                               :working-directory
+                                                               workspace)
+                                           :conversation channel :ui
+                                           (terminal-ui-create :terminal
+                                                               terminal))))
             (started   nil))
        (unwind-protect
-            (test-call-with-function-replacements
-             (list (list 'world-server--start-host
-                         (lambda (candidate &rest arguments)
-                           (declare (ignore candidate))
-                           (push arguments started)
-                           starting)))
-             (lambda ()
-               (with-lock-held ((world-server-lock server))
-                 (push starting (world-server-hosts server)))
-               (multiple-value-bind (host started-p)
-                   (world-server--host-for server (list :channel "bstart1"))
-                 (test-assert (and (eq host starting) (not started-p) (null started))
-                              "an open of a starting channel waits for its host"))
-               (multiple-value-bind (host started-p)
-                   (world-server--host-for server (list :directory workspace))
-                 (test-assert (and (eq host starting) (not started-p) (null started))
-                              "an open of its workspace joins the starting host nobody controls"))
-               (setf (world-host-failure starting) (make-condition 'error))
-               (multiple-value-bind (host started-p)
-                   (world-server--host-for server (list :channel "bstart1"))
-                 (test-assert (and (eq host starting) started-p (= (length started) 1))
-                              "a host that failed to start no longer holds its channel"))))
+           (test-call-with-function-replacements
+            (list
+             (list 'world-server--start-host
+                   (lambda (candidate &rest arguments)
+                     (declare (ignore candidate))
+                     (push arguments started)
+                     (values starting t))))
+            (lambda ()
+              (with-lock-held ((world-server-lock server))
+                (push starting (world-server-hosts server)))
+              (multiple-value-bind (host started-p)
+                  (world-server--host-for server (list :channel "bstart1"))
+                (test-assert
+                 (and (eq host starting) (not started-p) (null started))
+                 "an open of a starting channel waits for its host"))
+              (multiple-value-bind (host started-p)
+                  (world-server--host-for server (list :directory workspace))
+                (test-assert
+                 (and (eq host starting) (not started-p) (null started))
+                 "an open of its workspace joins the starting host nobody controls"))
+              (setf (world-host-failure starting) (make-condition 'error))
+              (multiple-value-bind (host started-p)
+                  (world-server--host-for server (list :channel "bstart1"))
+                (test-assert
+                 (and (eq host starting) started-p (= (length started) 1))
+                 "a host that failed to start no longer holds its channel"))))
          (with-lock-held ((world-server-lock server))
            (setf (world-server-hosts server)
                  (remove starting (world-server-hosts server))))))))

@@ -796,6 +796,7 @@
   test-world-client-script-submissions
   test-world-client-script
   test-world-server-starting-host
+  test-world-server-startup-reservations
   test-world-server-launch-options
   test-world-server-close-unattached
   test-world-server-close-ownership
