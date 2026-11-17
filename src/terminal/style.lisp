@@ -20,7 +20,7 @@
       :status-plain :status-dim :status-accent
       :legend-plain :legend-dim :legend-accent :sidebar-action
       :status-model :status-effort :status-branch
-      :compaction-label :compaction-track :compaction-head
+      :compaction-label :progress-track :progress-fill
       :syntax-comment :syntax-keyword :syntax-string :syntax-escape
       :syntax-number :syntax-type :syntax-function :syntax-property
       :syntax-parenthesis-1 :syntax-parenthesis-2 :syntax-parenthesis-3
@@ -132,6 +132,9 @@ neutral bright black because basic terminals cannot tint a row."
       (:legend-dim (:foreground :white))
       (:legend-accent (:foreground :bright-magenta :bold t))
       (:sidebar-action (:foreground :bright-cyan :underline t))
+      (:compaction-label (:foreground :bright-yellow :bold t))
+      (:progress-track (:faint t))
+      (:progress-fill (:foreground :bright-yellow :bold t))
       (:syntax-comment (:faint t))
       (:syntax-keyword (:foreground :magenta))
       (:syntax-string (:foreground :green))
@@ -162,10 +165,7 @@ neutral bright black because basic terminals cannot tint a row."
            (:status-accent :bright-magenta (:bold t))
            (:status-model :bright-cyan (:bold t))
            (:status-effort :bright-red (:bold t))
-           (:status-branch :bright-green (:bold t))
-           (:compaction-label :bright-yellow (:bold t))
-           (:compaction-track :white ())
-           (:compaction-head :bright-yellow (:bold t)))
+           (:status-branch :bright-green (:bold t)))
          collect (cons name
                        (apply #'make-style
                               :foreground foreground
@@ -252,6 +252,9 @@ quiet text uses soft blue."
         (:legend-dim (:foreground ,soft))
         (:legend-accent (:foreground ,accent :bold t))
         (:sidebar-action (:foreground ,secondary :underline t))
+        (:compaction-label (:foreground ,accent :bold t))
+        (:progress-track (:foreground ,soft))
+        (:progress-fill (:foreground ,accent :bold t))
         (:syntax-comment (:foreground ,soft))
         (:syntax-keyword (:foreground ,accent))
         (:syntax-string (:foreground ,secondary))
@@ -276,10 +279,7 @@ quiet text uses soft blue."
              (:status-accent ,accent (:bold t))
              (:status-model ,secondary (:bold t))
              (:status-effort ,danger (:bold t))
-             (:status-branch ,safe (:bold t))
-             (:compaction-label ,accent (:bold t))
-             (:compaction-track ,soft ())
-             (:compaction-head ,accent (:bold t)))
+             (:status-branch ,safe (:bold t)))
            collect (cons name
                          (apply #'make-style
                                 :foreground foreground
@@ -475,6 +475,18 @@ A theme that does not define STYLE renders it plainly instead of failing the row
                 (list (terminal-span style
                                      (make-string remaining :initial-element #\Space))))
         clipped)))
+
+(-> terminal--bar-spans ((integer 0) (integer 0) (integer 0)) list)
+(defun terminal--bar-spans (width start end)
+  "Return a WIDTH-cell progress bar filled from cell START below END."
+  (flet ((segment (style character count)
+           (when (plusp count)
+             (list (terminal-span style (make-string count :initial-element character))))))
+    (let* ((end   (min width end))
+           (start (min start end)))
+      (append (segment ':progress-track #\─ start)
+              (segment ':progress-fill #\━ (- end start))
+              (segment ':progress-track #\─ (- width end))))))
 
 
 ;;;; -- Markdown Heading Styles --

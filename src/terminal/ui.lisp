@@ -1699,10 +1699,7 @@ its parenthesis open, and are dropped once the name closes it itself."
 (defun terminal-ui--compaction-track-width (row-width)
   "Return the compaction track width available within ROW-WIDTH cells."
   (min *terminal-ui-compaction-track-cells*
-       (max 0
-            (- row-width
-               (text-cell-width "COMPACTING  [")
-               (text-cell-width "]")))))
+       (max 0 (- row-width (text-cell-width "COMPACTING  ")))))
 
 (-> terminal-ui--compaction-phase-at
     (terminal-ui real integer)
@@ -1911,59 +1908,26 @@ its parenthesis open, and are dropped once the name closes it itself."
                                    (format nil "ctx~A" compact-suffix)))
               maximum-width))))))))
 
-(-> terminal-ui--compaction-head-text ((integer 1)) string)
-(defun terminal-ui--compaction-head-text (width)
-  "Return the right-pointing compaction head occupying WIDTH cells."
-  (concatenate 'string
-               (make-string (1- width) :initial-element #\=)
-               ">"))
-
 (-> terminal-ui--compaction-row-at (terminal-ui real integer) list)
 (defun terminal-ui--compaction-row-at (ui now row-width)
   "Return UI's clipped indeterminate compaction row at monotonic NOW."
-  (let* ((track-width (terminal-ui--compaction-track-width row-width))
-         (head-width  (min *terminal-ui-compaction-head-cells* track-width))
-         (head-at     (terminal-ui--compaction-phase-at ui now row-width))
-         (content
-           (if (plusp track-width)
-               (remove
-                nil
-                (list
-                 (terminal-span ':compaction-label "COMPACTING")
-                 (terminal-span ':compaction-track "  [")
-                 (and (plusp head-at)
-                      (terminal-span
-                       ':compaction-track
-                       (make-string head-at :initial-element #\.)))
-                 (terminal-span
-                  ':compaction-head
-                  (terminal-ui--compaction-head-text head-width))
-                 (let ((remaining (- track-width head-at head-width)))
-                   (and (plusp remaining)
-                        (terminal-span
-                         ':compaction-track
-                         (make-string remaining :initial-element #\.))))
-                 (terminal-span ':compaction-track "]")))
-               (list (terminal-span ':compaction-label "COMPACTING"))))
-         (clipped     (terminal--clip-spans content row-width))
-         (padding
-           (and (terminal-styled-p (terminal-ui-terminal ui))
-                (- row-width (terminal--spans-width clipped)))))
-    (if (and padding (plusp padding))
-        (append clipped
-                (list
-                 (terminal-span
-                  ':compaction-track
-                  (make-string padding :initial-element #\Space))))
-        clipped)))
+  (let ((track-width (terminal-ui--compaction-track-width row-width))
+        (head-at     (terminal-ui--compaction-phase-at ui now row-width)))
+    (terminal--clip-spans
+     (cons (terminal-span ':compaction-label "COMPACTING")
+           (when (plusp track-width)
+             (cons (terminal-span ':progress-track "  ")
+                   (terminal--bar-spans track-width head-at
+                                        (+ head-at *terminal-ui-compaction-head-cells*)))))
+     row-width)))
 
-(-> terminal-ui--status-row-at (terminal-ui real integer) list)
-(defun terminal-ui--status-row-at (ui now row-width)
-  "Return UI's clipped status and context spans across ROW-WIDTH cells.
+(-> terminal-ui--status-sides-at (terminal-ui real integer) (values list list))
+(defun terminal-ui--status-sides-at (ui now row-width)
+  "Return UI's activity spans and its worked time and context spans for ROW-WIDTH cells.
 
-The context meter is right-aligned. Narrow rows reserve their available cells
-for its complete used/window count before showing activity. Total worked time
-joins the meter when every segment fits."
+Narrow rows reserve their available cells for the complete used/window count
+before showing activity. Total worked time joins the meter when every segment
+fits."
   (let* ((animated-p             (terminal-ui--animated-status-row-p ui))
          (activity-content
            (and animated-p
@@ -2181,14 +2145,11 @@ form keeps every speculative Markdown wrap live until the logical line commits."
     (when status-row-p
       (setf rows
             (append rows
-                    (list nil)
+                    (list nil
+                          (terminal-ui--status-row-at ui status-now row-width))
                     (when (terminal-ui-compacting-p ui)
-                      (list
-                       (terminal-ui--compaction-row-at
-                        ui status-now row-width)))
-                    (list
-                     (terminal-ui--status-row-at
-                      ui status-now row-width)))))
+                      (list (terminal-ui--compaction-row-at
+                             ui status-now row-width))))))
     (when (terminal-ui-local-activity ui)
       (setf rows
             (append rows

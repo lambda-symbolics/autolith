@@ -4632,8 +4632,9 @@
              (multiple-value-bind (text display cursor)
                  (terminal-ui--live-content ui 0)
                (declare (ignore display cursor))
-               (test-assert (search "COMPACTING  [====>" text)
-                            "the application observer projects compaction live"))
+               (test-assert (let ((bar (search "COMPACTING  ━━━━━" text)))
+                              (and bar (< (search "REPL" text) bar)))
+                            "the application observer projects compaction live under the modeline"))
              (conversation-append-provider-metadata
               conversation
               (list :compaction ':summary :usage '(("total_tokens" 270000))))
