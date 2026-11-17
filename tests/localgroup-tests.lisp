@@ -64,6 +64,29 @@
                                        (when pid-supplied-p (list :client-pid client-pid)))))
     (values socket stream (test-localgroup--read-packet stream))))
 
+(-> localgroup-tests--pending-diagnostics (application-input-controller) list)
+(defun localgroup-tests--pending-diagnostics (controller)
+  "Inspect fixture pending-storage metadata without printing serialized inputs."
+  (let* ((application  (application-input-controller-application controller))
+         (conversation (application-conversation application))
+         (pathname     (configuration-pending-inputs-path
+                        (application-configuration application)
+                        (conversation-pathname conversation))))
+    (list :publication-generation (application-input-controller-publication-generation controller)
+          :published-generation   (application-input-controller-published-pending-generation controller)
+          :durable-generation     (application-input-controller-durable-pending-generation controller)
+          :snapshot
+          (handler-case
+              (if (probe-file pathname)
+                  (multiple-value-bind (form complete-p) (snapshot-read pathname)
+                    (let ((state (input-state-from-form form (conversation-identifier conversation))))
+                      (list :complete-p complete-p :valid-p (not (null state))
+                            :work-kinds  (mapcar #'first (getf state :work-items))
+                            :active-kind (first (getf state :active-work)))))
+                  ':absent)
+            (error (condition)
+              (list :error (type-of condition)))))))
+
 (-> test-localgroup-endpoint-failure-isolation () null)
 (defun test-localgroup-endpoint-failure-isolation ()
   "Exercise the installed daemon failure hook, pending storage and hosted-channel isolation."
@@ -104,13 +127,15 @@
                          (cons (image-daemon:daemon-runtime-registry-pathname healthy)
                                (image-daemon:daemon-runtime-record healthy)) ':status)) ':ok))
         "failure keeps its original condition and frames while the other channel and owner answer")
-       (let ((restored (make-instance 'application-input-controller
-                                      :application application :main-thread (current-thread))))
+       (let ((restored    (make-instance 'application-input-controller
+                                         :application application :main-thread (current-thread)))
+             (diagnostics (localgroup-tests--pending-diagnostics controller)))
          (application-input-controller--load-pending restored)
-         (test-assert
-          (equal (application-input-controller--state restored :work-items)
-                 '((:message "accepted before failure") (:command "help")))
-          "a fresh controller restores accepted pending input once and in order")))))
+         (let ((actual (application-input-controller--state restored :work-items)))
+           (test-assert
+            (equal actual '((:message "accepted before failure") (:command "help")))
+            (format nil "a fresh controller restores accepted pending input once and in order; actual ~S; storage ~S"
+                    actual diagnostics)))))))
   nil)
 
 (-> test-localgroup-message-dispatch () null)

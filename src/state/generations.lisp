@@ -422,6 +422,15 @@ between that process's exit and the boot of the saved core."
 A booted generation resumes its saved session this way, as recovery does,
 apart from the world server.")
 
+(-> checkpoint-resume-diagnostic (keyword) null)
+(defun checkpoint-resume-diagnostic (phase)
+  "Report scalar startup milestones for the temporary Windows57 diagnostic run."
+  ;; Remove this opt-in probe after localizing the saved-core startup failure.
+  (when (uiop:getenv "AUTOLITH_TEST_WINDOWS57_DIAGNOSTICS")
+    (format *error-output* "~&Windows57 resume: phase ~S pid ~D~%" phase (current-process-id))
+    (finish-output *error-output*))
+  nil)
+
 (-> checkpoint-resume-main (list) null)
 (defun checkpoint-resume-main (arguments)
   "Run a booted saved core: serve its world server again after a restart, or resume its saved session.
@@ -430,7 +439,9 @@ A world server that saved this heap to restart from it serves its channels
 again when its launcher boots the core for that restart. Any other boot,
 such as a rollback, resumes the active application's conversation by its
 persisted identity, in this process."
+  (checkpoint-resume-diagnostic ':toplevel)
   (let ((restart (world-server-restart-claim)))
+    (checkpoint-resume-diagnostic (if restart ':restart-claimed ':restart-unclaimed))
     (when restart
       (uiop:quit (world-server-restart-resume restart))))
   (let* ((application  (and (boundp '*active-application*)

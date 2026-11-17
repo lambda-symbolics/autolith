@@ -8,7 +8,7 @@ on:
         type: boolean
         default: true
       test:
-        description: Optional exact source test case (empty runs the full suite)
+        description: Optional comma-separated source test cases (empty runs the full suite)
         type: string
         default: ''
   push:
@@ -212,12 +212,16 @@ jobs:
         env:
           ASDF_OUTPUT_TRANSLATIONS: ${{ steps.bootstrap.outputs.asdf-output-translations }}
           AUTOLITH_CHECK_TEST: ${{ inputs.test }}
+          # Remove this probe after resolving the Windows57 failures.
+          AUTOLITH_TEST_WINDOWS57_DIAGNOSTICS: '1'
         run: |
           $log = Join-Path $env:RUNNER_TEMP 'check.log'
           $status = 0
           try {
             $selection = @()
-            if ($env:AUTOLITH_CHECK_TEST) { $selection = @('--test', $env:AUTOLITH_CHECK_TEST) }
+            foreach ($test in ($env:AUTOLITH_CHECK_TEST -split ',')) {
+              if ($test.Trim()) { $selection += @('--test', $test.Trim()) }
+            }
             & script\check.ps1 --timeout 1800 @selection 2>&1 | Tee-Object -FilePath $log
             if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
           } catch {

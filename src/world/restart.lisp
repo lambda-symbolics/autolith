@@ -276,6 +276,7 @@ channel again under the reconnect ID its clients wait for. A channel whose
 conversation another process took meanwhile is dropped."
   (destructuring-bind (&key server application reconnect-id generation-id leases) restart
     (let ((configuration (world-server-configuration server)))
+      (checkpoint-resume-diagnostic ':reclaim-leases)
       (handler-case
           (dolist (host (world-server--restart-reclaim-leases server leases))
             (format *error-output* "~&Channel ~A did not resume: its conversation is open elsewhere.~%"
@@ -284,14 +285,21 @@ conversation another process took meanwhile is dropped."
         (error (condition)
           (format *error-output* "~&Autolith could not resume the world server: ~A~%" condition)
           (return-from world-server-restart-resume 64)))
+      (checkpoint-resume-diagnostic ':leases-reclaimed)
       (setf *active-application* nil)
       (unwind-protect
            (progn
+             (checkpoint-resume-diagnostic ':runtime-start)
              (world-server--runtime-start server)
+             (checkpoint-resume-diagnostic ':runtime-started)
              (management-repl-start server)
+             (checkpoint-resume-diagnostic ':management-started)
              (slynk-start configuration :background-p t)
+             (checkpoint-resume-diagnostic ':slynk-started)
              (world-server--attach-telemetry server)
+             (checkpoint-resume-diagnostic ':telemetry-attached)
              (world-server--restart-unmark configuration)
+             (checkpoint-resume-diagnostic ':restart-unmarked)
              (world-server--resume-channels
               server application reconnect-id
               :notice-function
@@ -299,5 +307,6 @@ conversation another process took meanwhile is dropped."
                 (application-notice-line
                  (format nil "~:[world server restarted from checkpoint ~A~;checkpoint ~A published, world server restarted from it~]"
                          (eq served application) generation-id))))
+             (checkpoint-resume-diagnostic ':channels-resumed)
              (or (world-server-serve server) 0))
         (world-server--shutdown server)))))

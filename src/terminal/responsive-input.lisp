@@ -742,6 +742,21 @@ The caller must hold CONTROLLER's publication lock."
          (application-input-controller-steering-promotion-prefix-count controller) 0))))
   nil)
 
+(-> application-input-controller--pending-diagnostic
+    (application-input-controller keyword condition) null)
+(defun application-input-controller--pending-diagnostic (controller phase condition)
+  "Report pending-storage failure types for the temporary Windows57 diagnostic run."
+  ;; Remove this opt-in probe after identifying the pending-input restore failure.
+  (when (uiop:getenv "AUTOLITH_TEST_WINDOWS57_DIAGNOSTICS")
+    (format *error-output*
+            "~&Windows57 pending: phase ~S condition ~S generation ~D published ~D durable ~D~%"
+            phase (type-of condition)
+            (application-input-controller-publication-generation controller)
+            (application-input-controller-published-pending-generation controller)
+            (application-input-controller-durable-pending-generation controller))
+    (finish-output *error-output*))
+  nil)
+
 (-> application-input-controller--publish-pending-publication-locked
     (application-input-controller list boolean)
     boolean)
@@ -790,6 +805,7 @@ The caller must hold CONTROLLER's publication lock."
                 generation)
           t)
       (error (condition)
+        (application-input-controller--pending-diagnostic controller ':publish-error condition)
         (when error-p
           (error condition))
         nil))))
@@ -913,7 +929,8 @@ The caller must hold CONTROLLER's publication lock."
                       (when (equal source-pathname legacy-pathname)
                         (when (probe-file pathname)
                           (delete-file legacy-pathname)))))))
-            (error ()
+            (error (condition)
+              (application-input-controller--pending-diagnostic controller ':load-error condition)
               nil)))))
    nil))
 

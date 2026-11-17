@@ -358,12 +358,18 @@ before deleting the listed directories."
 
 (defun launcher-run (command &key (output t) (error-output t))
   "Run COMMAND sharing this console and return its exit status."
-  (let ((process (sb-ext:run-program (first command) (rest command)
-                                     :search t
-                                     :input  t
-                                     :output output
-                                     :error  error-output
-                                     :wait   t)))
+  ;; Remove the Windows57 probe after localizing the saved-core startup failure.
+  (let* ((diagnostic-p (uiop:getenv "AUTOLITH_TEST_WINDOWS57_DIAGNOSTICS"))
+         (process      (sb-ext:run-program (first command) (rest command)
+                                           :search t
+                                           :input  t
+                                           :output output
+                                           :error  error-output
+                                           :wait   (not diagnostic-p))))
+    (when diagnostic-p
+      (format *error-output* "~&Windows57 child: pid ~D~%" (sb-ext:process-pid process))
+      (finish-output *error-output*)
+      (sb-ext:process-wait process))
     (or (sb-ext:process-exit-code process) 1)))
 
 (defun launcher-run-diagnostic (command)
