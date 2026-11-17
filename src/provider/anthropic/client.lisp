@@ -183,18 +183,77 @@ instructions and delivers no context."
       (values request (and (not compaction-p) delivery)))))
 
 
-;;;; -- Uninterrupted Tool Prefixes --
+;;;; -- Dispatched Message Prefixes --
+
+(-> anthropic--unmarked-messages (vector) vector)
+(defun anthropic--unmarked-messages (messages)
+  "Copy MESSAGES without cache placement metadata for chronological comparison."
+  (let ((copy (json-decode (json-encode messages))))
+    (loop for message across copy
+          do (loop for block across (json-get message "content")
+                   do (remhash "cache_control" block)))
+    copy))
+
+(-> anthropic--appended-messages (vector vector) (values vector boolean))
+(defun anthropic--appended-messages (messages prefix)
+  "Return only MESSAGES appended to unmarked PREFIX, plus whether it matches.
+
+A new item may extend the final same-role message. Return those new blocks as
+an independent message, without mutating a previously dispatched message."
+  (let* ((plain (anthropic--unmarked-messages messages))
+         (count (length prefix)))
+    (cond
+      ((zerop count)
+       (values messages t))
+      ((or (< (length plain) count)
+           (not (loop for index below (1- count)
+                      always (equalp (aref plain index) (aref prefix index)))))
+       (values #() nil))
+      (t
+       (let* ((previous (aref prefix (1- count)))
+              (current  (aref plain (1- count)))
+              (before   (json-get previous "content"))
+              (after    (json-get current "content")))
+         (if (and (equal (json-get previous "role") (json-get current "role"))
+                  (<= (length before) (length after))
+                  (equalp before (subseq after 0 (length before))))
+             (values
+              (concatenate
+               'vector
+               (when (< (length before) (length after))
+                 (vector (json-object "role" (json-get current "role")
+                                      "content" (subseq (json-get (aref messages (1- count)) "content")
+                                                        (length before)))))
+               (subseq messages count))
+              t)
+             (values #() nil)))))))
+
+(-> anthropic--bound-cache-markers (json-object) null)
+(defun anthropic--bound-cache-markers (request)
+  "Keep at most four explicit breakpoints, favoring the newest message boundaries."
+  (let ((remaining
+          (- 4 (loop for key in '("system" "tools")
+                     sum (count-if (lambda (block) (json-get block "cache_control"))
+                                   (or (json-get request key) #()))))))
+    (loop for message across (reverse (json-get request "messages"))
+          do (loop for block across (reverse (json-get message "content"))
+                   when (json-get block "cache_control")
+                     do (if (plusp remaining)
+                            (decf remaining)
+                            (remhash "cache_control" block)))))
+  nil)
 
 (-> anthropic--preserve-tool-prefix
     (json-object conversation &key (:history list) (:context t)
                                   (:eligible-p boolean) (:rebuild function))
     json-object)
 (defun anthropic--preserve-tool-prefix (request conversation &key history context eligible-p rebuild)
-  "Retain dispatched request-local context only through an unchanged tool continuation.
+  "Preserve dispatched messages across append-only history and context updates.
 
-Compare canonical history, active context and request headers. New user or steering
-input, compaction, ephemeral exchanges, or changed context resets the transient prefix.
-Only a successfully opened request can supply a prefix; no prompt text is persisted."
+Render new durable blocks and changed request-local context after the dispatched
+prefix. Changed headers, rewritten history, compaction and ephemeral exchanges
+start a fresh projection. Only successful dispatch promotes a candidate; prompt
+text is never persisted. Cache markers may move within the four-breakpoint budget."
   (let* ((state       (conversation-anthropic-request-state conversation))
          (prior       (getf state :prefix))
          (digests     (mapcar #'context-anchors-item-digest history))
@@ -203,36 +262,32 @@ Only a successfully opened request can supply a prefix; no prompt text is persis
                        (map 'vector (lambda (key) (json-get request key))
                             '("model" "system" "tools" "tool_choice" "thinking" "output_config"))))
          (before      (getf prior :history))
-         (tail        (and (<= (length before) (length history))
-                           (nthcdr (length before) history)))
+         (base        (when eligible-p (json-get (funcall rebuild) "messages")))
+         (canonical   (when base (anthropic--unmarked-messages base)))
          (compatible-p
-           (and eligible-p prior tail (anthropic--request-signatures request)
+           (and eligible-p prior (<= (length before) (length history))
                 (equal before (subseq digests 0 (length before)))
-                (equal header (getf prior :header))
-                (equal context-key (getf prior :context))
-                (some (lambda (item) (equal (json-get item "type") "function_call_output")) tail)
-                (every (lambda (item)
-                         (or (member (json-get item "type")
-                                     '("function_call" "function_call_output") :test #'equal)
-                             (and (equal (json-get item "type") "message")
-                                  (equal (json-get item "role") "assistant"))))
-                       tail))))
+                (equal header (getf prior :header)))))
     (when compatible-p
-      (let* ((base   (json-get (funcall rebuild) "messages"))
-             (prefix (getf prior :messages))
-             (count  (length prefix)))
-        (when (and (<= count (length base))
-                   (loop for index below count
-                         always (equal (json-get (aref base index) "role")
-                                       (json-get (aref prefix index) "role"))))
-          (setf (gethash "messages" request)
-                (concatenate 'vector prefix (subseq base count))))))
+      (multiple-value-bind (tail matches-p)
+          (anthropic--appended-messages base (getf prior :canonical))
+        (multiple-value-bind (suffix suffix-matches-p)
+            (anthropic--appended-messages (json-get request "messages") canonical)
+          (setf compatible-p (and matches-p suffix-matches-p))
+          (when compatible-p
+            (setf (gethash "messages" request)
+                  (concatenate 'vector
+                               (json-decode (json-encode (getf prior :messages)))
+                               tail
+                               (unless (equal context-key (getf prior :context)) suffix)))))))
+    (anthropic--bound-cache-markers request)
     (setf (conversation-anthropic-request-state conversation)
           (when eligible-p
             (list :prefix (and compatible-p prior)
                   :candidate
                   (list :request request :history digests :context context-key :header header
-                        :messages (json-decode (json-encode (json-get request "messages")))))))
+                        :canonical canonical
+                        :messages  (json-decode (json-encode (json-get request "messages")))))))
     request))
 
 (-> anthropic--note-dispatched-request (conversation json-object) null)

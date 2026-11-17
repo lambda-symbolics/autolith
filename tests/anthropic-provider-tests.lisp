@@ -571,77 +571,115 @@
 
 (-> anthropic-provider-test--tool-prefix () null)
 (defun anthropic-provider-test--tool-prefix ()
-  "Retain a dispatched temporary prefix through tools, resetting for fresh context or input."
-  (let ((*context-contributors*        nil)
-        (*context-resolver*            (cl-llm-provider-api:make-context-resolver))
-        (*context-last-deliveries*     (make-hash-table :test #'equal))
-        (*context-last-delivery-order* nil)
-        (body                          "PREFIX-CONTEXT-ONE"))
-    (with-test-configuration (configuration)
-      (setf (config :model configuration) "claude-haiku-5-5")
-      (register-context-contributor
-       "anthropic-tool-prefix-test"
-       (lambda (context)
-         (declare (ignore context))
-         (list (make-context-contribution :identifier "temporary" :instruction body))))
-      (let* ((provider     (anthropic-provider-create configuration))
-             (conversation (conversation-create configuration))
-             (credentials  (make-instance 'oauth-credentials :access-token "fixture-key")))
-        (conversation-append-user-message conversation "Question")
-        (let* ((first  (provider-request-object provider conversation #()))
-               (prefix (json-decode (json-encode (json-get first "messages"))))
-               (sent   nil))
-          (test-call-with-function-replacements
-           (list (list 'provider-post-event-stream
-                       (lambda (url content &key headers)
-                         (declare (ignore url headers))
-                         (setf sent (json-decode
-                                     (babel:octets-to-string content :encoding ':utf-8)))
-                         (values (make-string-input-stream "") 200 nil))))
-           (lambda ()
-             (let ((*provider-mission-output-allowance* 128))
-               (provider-open-response-stream provider first :credentials credentials
-                                              :conversation               conversation))))
-          (test-assert (and (= (json-get sent "max_tokens") 128)
-                            (> (json-get first "max_tokens") 128))
-                       "mission admission dispatches a capped copy without changing the built request")
-          (conversation-append-provider-item
-           conversation (json-object "type" "message" "role" "assistant"
-                                     "content" (json-array
-                                                (json-object "type" "thinking" "thinking" "signed"
-                                                             "signature" "prefix-signature"))))
-          (conversation-append-provider-item
-           conversation (json-object "type" "function_call" "namespace" "shell" "name" "run"
-                                     "call_id" "prefix-call" "arguments" "{}"))
-          (conversation-append-provider-item
-           conversation (json-object "type" "function_call_output" "call_id" "prefix-call"
-                                     "output" "fresh tool result"))
-          (dotimes (index 2)
-            (declare (ignorable index))
-            (let* ((*provider-context-request* (list :conversation conversation))
-                   (next                       (provider-request-object provider conversation #()))
-                   (messages                   (json-get next "messages")))
-              (test-assert
-               (cl-llm-provider-api:wire-request-suffix
-                (getf *provider-context-request* :projection))
-               "the internal prefix rebuild does not replace ordinary admission evidence")
-              (test-assert (and (equalp prefix (subseq messages 0 (length prefix)))
-                                (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode next)))
-                                (search "fresh tool result" (json-encode next))
-                                (= 1 (length (anthropic--request-signatures next))))
-                           "the tool continuation preserves the exact prefix once, including signed history")))
-          (setf body "PREFIX-CONTEXT-TWO")
-          (let ((changed (provider-request-object provider conversation #())))
-            (test-assert (and (search body (json-encode changed))
-                              (not (search "PREFIX-CONTEXT-ONE" (json-encode changed))))
-                         "changed context resets the tool-loop snapshot"))
-          (conversation-append-user-message conversation "Fresh steering input")
-          (let ((steered (provider-request-object provider conversation #())))
-            (test-assert (and (search "Fresh steering input" (json-encode steered))
-                              (search body (json-encode steered)))
-                         "fresh user and steering context is not lost"))
-          (let ((loaded (conversation-load (conversation-pathname conversation))))
-            (test-assert (and (null (conversation-anthropic-request-state loaded))
-                              (not (search "PREFIX-CONTEXT" (json-encode (conversation-input-items loaded)))))
-                         "temporary prefixes are neither history nor restart state"))))))
+  "Preserve dispatched prefixes across tools, input and context changes with bounded markers."
+  (dolist (signed-p '(nil t))
+    (let ((*context-contributors*        nil)
+          (*context-resolver*            (cl-llm-provider-api:make-context-resolver))
+          (*context-last-deliveries*     (make-hash-table :test #'equal))
+          (*context-last-delivery-order* nil)
+          (body                          "PREFIX-CONTEXT-ONE"))
+      (with-test-configuration (configuration)
+        (setf (config :model configuration) "claude-haiku-5-5")
+        (register-context-contributor
+         "anthropic-tool-prefix-test"
+         (lambda (context)
+           (declare (ignore context))
+           (list (make-context-contribution :identifier "temporary" :instruction body))))
+        (let* ((provider     (anthropic-provider-create configuration))
+               (conversation (conversation-create configuration))
+               (credentials  (make-instance 'oauth-credentials :access-token "fixture-key"))
+               (tools        (continuation-tool-namespaces))
+               (previous     nil)
+               (sent         nil))
+          (labels ((unmarked (messages)
+                     "Copy wire messages without cache placement metadata."
+                     (let ((copy (json-decode (json-encode messages))))
+                       (loop for message across copy
+                             do (loop for block across (json-get message "content")
+                                      do (remhash "cache_control" block)))
+                       copy))
+
+                   (build ()
+                     "Build and dispatch one request, checking the prior wire prefix and marker budget."
+                     (let* ((*provider-context-request* (list :conversation conversation))
+                            (request                    (provider-request-object provider conversation tools))
+                            (messages                   (unmarked (json-get request "messages")))
+                            (markers
+                              (+ (loop for key in '("system" "tools")
+                                       sum (count-if (lambda (block) (json-get block "cache_control"))
+                                                     (or (json-get request key) #())))
+                                 (loop for message across (json-get request "messages")
+                                       sum (count-if (lambda (block) (json-get block "cache_control"))
+                                                     (json-get message "content"))))))
+                       (when previous
+                         (test-assert (and (<= (length previous) (length messages))
+                                           (equalp previous (subseq messages 0 (length previous))))
+                                      "Every dispatched message is an exact prefix across append-only changes"))
+                       (test-assert (<= markers 4) "The complete request uses at most four cache breakpoints")
+                       (test-assert
+                        (cl-llm-provider-api:wire-request-suffix
+                         (getf *provider-context-request* :projection))
+                        "Internal canonical projection preserves ordinary admission evidence")
+                       (let ((*provider-mission-output-allowance* 128))
+                         (provider-open-response-stream provider request :credentials credentials
+                                                                        :conversation conversation))
+                       (test-assert (and (= (json-get sent "max_tokens") 128)
+                                         (> (json-get request "max_tokens") 128))
+                                    "Admission dispatches a capped copy without changing the built request")
+                       (setf previous messages)
+                       request))
+
+                   (tool-round (index)
+                     "Append a complete tool round, optionally with signed thinking."
+                     (conversation-append-provider-item
+                      conversation (json-object "type" "message" "role" "assistant"
+                                                "content" (if signed-p
+                                                              (json-array (json-object "type" "thinking" "thinking" "signed"
+                                                                                       "signature" (format nil "prefix-signature-~D" index)))
+                                                              (json-array (json-object "type" "output_text" "text" "Tool work")))))
+                     (conversation-append-provider-item
+                      conversation (json-object "type" "function_call" "namespace" "shell" "name" "run"
+                                                "call_id" (format nil "prefix-call-~D" index) "arguments" "{}"))
+                     (conversation-append-provider-item
+                      conversation (json-object "type" "function_call_output"
+                                                "call_id" (format nil "prefix-call-~D" index) "output" "fresh tool result"))))
+            (test-call-with-function-replacements
+             (list (list 'provider-post-event-stream
+                         (lambda (url content &key headers)
+                           (declare (ignore url headers))
+                           (setf sent (json-decode (babel:octets-to-string content :encoding ':utf-8)))
+                           (values (make-string-input-stream "") 200 nil))))
+             (lambda ()
+               (conversation-append-user-message conversation "Question")
+               (build)
+               (dotimes (index 6)
+                 (tool-round index)
+                 (let ((request (build)))
+                   (test-assert (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode request)))
+                                "Unchanged request-local context occurs once across multiple tool rounds")))
+               (setf body "PREFIX-CONTEXT-TWO")
+               (let ((changed (build)))
+                 (test-assert (and (= 1 (cl-ppcre:count-matches "PREFIX-CONTEXT-ONE" (json-encode changed)))
+                                   (= 1 (cl-ppcre:count-matches body (json-encode changed))))
+                              "Changed context is appended once without rewriting the dispatched prefix"))
+               (build)
+               (conversation-append-provider-item
+                conversation (json-object "type" "message" "role" "assistant"
+                                          "content" (json-array (json-object "type" "output_text" "text" "Answer"))))
+               (conversation-append-user-message conversation "Fresh user input")
+               (test-assert (search "Fresh user input" (json-encode (build)))
+                            "New user input follows the dispatched context without removing it")
+               (conversation-append-user-message conversation "Additional steering input")
+               (test-assert (search "Additional steering input" (json-encode (build)))
+                            "Consecutive user input extends the wire tail without rewriting an old message")
+               (setf (config :model configuration) "claude-sonnet-5-5"
+                     previous nil)
+               (let ((reset (build)))
+                 (test-assert (and (not (search "PREFIX-CONTEXT-ONE" (json-encode reset)))
+                                   (search body (json-encode reset)))
+                              "Changed request headers start a fresh projection with current context"))
+               (let ((loaded (conversation-load (conversation-pathname conversation))))
+                 (test-assert (and (null (conversation-anthropic-request-state loaded))
+                                   (not (search "PREFIX-CONTEXT" (json-encode (conversation-input-items loaded)))))
+                              "Request-local prefixes are neither durable history nor restart state")))))))))
   nil)
