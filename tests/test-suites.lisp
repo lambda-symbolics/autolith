@@ -1496,7 +1496,7 @@
   test-rlm-context-object-adapter
   test-rlm-infer
   test-rlm-frame-shared-prefix
-  test-rlm-refused-item-keeps-usage
+  test-rlm-repeated-call-identifiers-keep-usage
   test-rlm-partial-results
   test-rlm-read-partial-results
   test-rlm-incomplete-environment-reuse

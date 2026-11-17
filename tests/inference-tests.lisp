@@ -350,35 +350,32 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-(-> test-rlm-refused-item-keeps-usage () null)
-(defun test-rlm-refused-item-keeps-usage ()
-  "Charge the frame budget even when an item of its response is refused."
+(-> test-rlm-repeated-call-identifiers-keep-usage () null)
+(defun test-rlm-repeated-call-identifiers-keep-usage ()
+  "Reconcile a repeated call identifier and charge the usage it billed."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (budget        (rlm-budget-create :calls 4 :tokens 1000 :depth 1))
          (call          (agent-test-call :call-id "twice" :arguments "{}"))
-         (conflict      (agent-test-call :call-id   "twice"
-                                         :arguments "{\"value\":1}"))
+         (repeated      (agent-test-call :call-id   "twice"
+                                         :arguments "{ }"))
          (provider      (make-instance 'scripted-provider
                                        :results (list (agent-test-result
-                                                       "refused"
-                                                       (list call conflict))))))
+                                                       "repeated"
+                                                       (list call repeated))
+                                                      (rlm-inference-test-result
+                                                       "settled" "settled" 10)))))
     (unwind-protect
          (progn
-           (test-assert
-            (handler-case
-                (progn
-                  (rlm-run "charge a refused frame"
-                           :provider      provider
-                           :configuration configuration
-                           :budget        budget)
-                  nil)
-              (conversation-invariant-error () t))
-            "a refused item fails the frame as a conversation invariant error")
+           (rlm-run "reconcile a repeated frame"
+                    :provider      provider
+                    :configuration configuration
+                    :budget        budget)
+           (test-assert (>= (length (scripted-provider-input-counts provider)) 2)
+                        "the reconciled frame requests its next result")
            (test-assert (< (rlm-budget-remaining-tokens budget) 1000)
-                        "the refused frame still settles the usage its provider billed"))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
+                        "the reconciled frame still settles the usage its provider billed"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
 
 (defclass rlm-inference-test-provider (model-provider)
   ((results
@@ -3141,3 +3138,4 @@ A frame sends its shared views and its task as consecutive user messages."
             "continuation reuses the actual state rather than recomputing it"))
       (rlm-environment-pool-flush)))
   nil)
+                                                          
