@@ -2017,20 +2017,39 @@ state and update the title afterward; later failures do not roll back the runtim
 
 (-> application--load-conversation-input-history (terminal-ui conversation) terminal-ui)
 (defun application--load-conversation-input-history (ui conversation)
-  "Install CONVERSATION's bounded newest history and absolute paging callbacks in UI."
-  (multiple-value-bind (entries total)
+  "Install complete indexed paging or an explicitly local recent input window."
+  (multiple-value-bind (entries total complete-p)
       (conversation-input-history-page
        conversation :limit (line-editor-history-limit (terminal-ui-editor ui)))
     (terminal-ui-load-history
      ui entries :offset (- total (length entries))
      :older-function
-     (lambda (end)
-       (let ((count (min end *terminal-history-page-size*)))
-         (conversation-input-history-page conversation :start (- end count) :limit count)))
+     (when complete-p
+       (lambda (end)
+         (let ((count (min end *terminal-history-page-size*)))
+           (conversation-input-history-page conversation :start (- end count) :limit count))))
      :newer-function
-     (lambda (start)
-       (conversation-input-history-page
-        conversation :start start :limit *terminal-history-page-size*)))))
+     (when complete-p
+       (lambda (start)
+         (conversation-input-history-page
+          conversation :start start :limit *terminal-history-page-size*))))))
+
+(-> application-conversation-maintenance-complete (application conversation list) null)
+(defun application-conversation-maintenance-complete (application conversation result)
+  "Refresh repaired recall through the controller without replacing the person's draft."
+  (when (and (getf result :input-complete-p)
+             (eq conversation (application-conversation application))
+             (application-input-controller application))
+    (handler-case
+        (application-clients-call-as-work
+         application
+         (lambda ()
+           (when (eq conversation (application-conversation application))
+             (application--load-conversation-input-history (application-ui application) conversation))))
+      (localgroup-error (condition)
+        (unless (application-input-controller-stopping-p (application-input-controller application))
+          (error condition)))))
+  nil)
 
 (-> application--install-owned-conversation
     (application conversation &key (:conversation-lease conversation-lease) (:deletion-inbox-p boolean))

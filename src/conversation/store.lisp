@@ -1,5 +1,15 @@
 (in-package #:autolith)
 
+(defparameter *conversation-maintenance-check-function* nil
+  "Optional cancellation/deadline check during background projection repair.")
+
+(-> conversation-maintenance-check () null)
+(defun conversation-maintenance-check ()
+  "Observe the current managed maintenance job's cancellation boundary."
+  (when *conversation-maintenance-check-function*
+    (funcall *conversation-maintenance-check-function*))
+  nil)
+
 ;;;; -- Conversation Object --
 
 (defgeneric resource-observation-state-weight (alias state)
@@ -453,8 +463,29 @@ not yet been told that work from the previous process is gone.")
     :type     deque
     :documentation
     "Recent bounded local user operations in chronological durable order.")
+   (maintenance-running-p
+    :initform      nil
+    :accessor      conversation-maintenance-running-p
+    :type          boolean
+    :documentation "Whether a managed optimistic projection repair owns cache publication.")
+   (input-history-index-metadata
+    :initform      nil
+    :accessor      conversation-input-history-index-metadata
+    :type          list
+    :documentation "The constant-size manifest for maintained sparse input offsets.")
+   (input-history-repair-pending-p
+    :initform      nil
+    :accessor      conversation-input-history-repair-pending-p
+    :type          boolean
+    :documentation "Whether optional maintenance must rebuild editable input recall.")
+   (input-history-prior-sequence
+    :initform      0
+    :accessor      conversation-input-history-prior-sequence
+    :type          (integer 0)
+    :documentation "The authoritative last input sequence before the latest observed input.")
    (input-history-loaded-p
     :initform      nil
+    :initarg       :input-history-loaded-p
     :accessor      conversation-input-history-loaded-p
     :type          boolean
     :documentation "Whether this heap validated the complete input-only sidecar.")
@@ -1598,26 +1629,27 @@ the configured working directory as the directory it began in."
              :pathname identity
              :sequence nil))
     (make-instance 'conversation
-                   :identifier        conversation-id
-                   :prompt-cache-key  prompt-cache-key
-                   :parent-identifier parent-identifier
-                   :agent-name        agent-name
-                   :role              role
-                   :inbox-p           inbox-p
-                   :pathname          identity
-                   :log-pathname      log-pathname
-                   :persisted-p       nil
-                   :incomplete-tail-p nil
-                   :created-at        created-at
-                   :origin-directory  origin-directory
-                   :model             (config :model configuration)
+                   :identifier             conversation-id
+                   :prompt-cache-key       prompt-cache-key
+                   :parent-identifier      parent-identifier
+                   :agent-name             agent-name
+                   :role                   role
+                   :inbox-p                inbox-p
+                   :pathname               identity
+                   :log-pathname           log-pathname
+                   :persisted-p            nil
+                   :input-history-loaded-p t
+                   :incomplete-tail-p      nil
+                   :created-at             created-at
+                   :origin-directory       origin-directory
+                   :model                  (config :model configuration)
                    :model-provider
                    (let ((name (config :model-provider configuration)))
                      (and (non-empty-string-p name) name))
                    :reasoning-effort
                    (config :reasoning-effort configuration)
-                   :next-sequence     1
-                   :input-items       nil)))
+                   :next-sequence          1
+                   :input-items            nil)))
 
 (-> conversation--repair-incomplete-tail (conversation) null)
 (defun conversation--repair-incomplete-tail (conversation)

@@ -299,6 +299,14 @@ only changes replaceable output; its source lock and anchors never move."
                    :type     "sexp"
                    :defaults metadata-pathname)))
 
+(-> conversation-input-history-index-pathname (pathname &optional (option integer)) pathname)
+(defun conversation-input-history-index-pathname (identity &optional block)
+  "Return IDENTITY's small input index manifest or one directly addressed offset BLOCK."
+  (let ((base (conversation-input-history-pathname identity)))
+    (make-pathname :name     (format nil "~A.~A" (pathname-name base)
+                                    (if block (format nil "page.~D" block) "index"))
+                   :defaults base)))
+
 (-> conversation-context-anchors-pathname (pathname) pathname)
 (defun conversation-context-anchors-pathname (conversation-pathname)
   "Return the request-context anchor sidecar owned by CONVERSATION-PATHNAME."
@@ -353,10 +361,14 @@ only changes replaceable output; its source lock and anchors never move."
 
 (-> conversation-picker-sidecar-pathnames (pathname) list)
 (defun conversation-picker-sidecar-pathnames (conversation-pathname)
-  "Return the regenerable picker, search and input-history payload cache paths."
-  (list (conversation-picker-metadata-pathname conversation-pathname)
-        (conversation-picker-search-pathname conversation-pathname)
-        (conversation-input-history-pathname conversation-pathname)))
+  "Return regenerable picker/search caches and the complete paged input projection."
+  (let ((inputs (conversation-input-history-pathname conversation-pathname)))
+    (append (list (conversation-picker-metadata-pathname conversation-pathname)
+                  (conversation-picker-search-pathname conversation-pathname)
+                  inputs
+                  (conversation-input-history-index-pathname conversation-pathname))
+            (uiop:directory-files (uiop:pathname-directory-pathname inputs)
+                                  (format nil "~A.page.*.sexp" (pathname-name inputs))))))
 
 (-> conversation-sidecar-pathnames (pathname) list)
 (defun conversation-sidecar-pathnames (conversation-pathname)

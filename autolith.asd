@@ -139,6 +139,7 @@
                                           (:file "conversation/identifier-migration")
                                           (:file "conversation/store")
                                           (:file "conversation/input-history")
+                                          (:file "conversation/input-history-index")
                                           (:file "conversation/continuation")
                                           (:file "conversation/compaction")
                                           (:file "conversation/compaction-tail")

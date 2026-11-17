@@ -1093,7 +1093,8 @@
   test-conversation-input-history-rotation-failure
   test-conversation-input-history-recovery
   test-conversation-input-history-interruption
-  test-conversation-input-history-page-load)
+  test-conversation-input-history-page-load
+  test-conversation-maintenance-concurrent-input)
 
 (define-test-suite conversation-replay
   test-conversation-replay-navigation

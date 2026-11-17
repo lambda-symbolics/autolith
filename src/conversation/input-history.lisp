@@ -40,92 +40,14 @@ a nonlocal exit."
                       (funcall function input)))))))))))
   nil)
 
-(-> conversation-input-history--map-page-inputs (conversation function function) null)
-(defun conversation-input-history--map-page-inputs (conversation function reset-function)
-  "Stream inputs to FUNCTION under the caller's append and shared source locks.
-Reset tentative results before falling back to authoritative records."
-  (when (conversation-persisted-p conversation)
-    (let ((cached-p
-            (handler-case
-                (progn
-                  (unless (conversation-input-history--ensure-current
-                           conversation :input-function function :reset-function reset-function)
-                    (log-map (lambda (record)
-                               (when (eq (first record) ':input)
-                                 (funcall function (getf (rest record) :source))))
-                             (conversation-input-history-pathname
-                              (conversation-pathname conversation))))
-                  t)
-              (error ()
-                (setf (conversation-input-history-loaded-p conversation) nil)))))
-      (unless cached-p
-        (funcall reset-function)
-        (conversation--map-storage-records
-         (conversation-pathname conversation)
-         (lambda (record)
-           (let ((input (conversation-input-history--record-input record)))
-             (when input (funcall function input))))))))
-  nil)
-
 (-> conversation-input-history-page
     (conversation &key (:skip (integer 0)) (:limit (integer 0))
                   (:start (option (integer 0))))
-    (values list (integer 0)))
+    (values list (integer 0) boolean))
 (defun conversation-input-history-page (conversation &key (skip 0) limit start)
-  "Return an oldest-first page and the total count, merging consecutive duplicates.
-
-Skip the newest SKIP inputs and return up to LIMIT earlier inputs. If START is
-supplied, use that absolute index from the oldest input instead. Appending inputs
-does not change existing indices. Collect newest or absolute pages while counting
-and validating the cold sidecar in one pass. Relative older pages need a second
-pass, keeping only the requested page and one preceding input in memory."
-  (with-recursive-lock-held ((conversation-append-lock conversation))
-    (call-with-file-lock
-     (conversation-picker-source-lock-pathname (conversation-pathname conversation))
-     (lambda ()
-       (let ((total    0)
-             (previous nil)
-             (page     nil)
-             (tail     nil)
-             (size     0))
-         (labels ((reset-page ()
-                    (setf total 0 previous nil page nil tail nil size 0))
-
-                  (collect-input (input)
-                    (unless (and previous (string= input previous))
-                      (when (and (plusp limit)
-                                 (if start
-                                     (<= start total (1- (+ start limit)))
-                                     (zerop skip)))
-                        (let ((cell (list input)))
-                          (if tail (setf (rest tail) cell) (setf page cell))
-                          (setf tail cell)
-                          (incf size)
-                          (when (> size limit)
-                            (setf page (rest page))
-                            (decf size))))
-                      (incf total))
-                    (setf previous input)))
-           (conversation-input-history--map-page-inputs
-            conversation #'collect-input #'reset-page)
-           (when (and (not start) (plusp skip) (plusp limit))
-             (let* ((end   (- total skip))
-                    (begin (max 0 (- end limit)))
-                    (index 0))
-               (setf previous nil)
-               (when (> end begin)
-                 (block collect
-                   (conversation-input-history--map-page-inputs
-                    conversation
-                    (lambda (input)
-                      (unless (and previous (string= input previous))
-                        (when (>= index end) (return-from collect))
-                        (when (>= index begin) (push input page))
-                        (incf index))
-                      (setf previous input))
-                    (lambda () (setf index 0 previous nil page nil)))))
-               (setf page (nreverse page))))
-           (values page total)))))))
+  "Return a deduplicated page, its count, and whether indices cover complete history.
+Missing or stale indexes expose a local recent window and schedule optional repair."
+  (conversation-input-history-index-page conversation :skip skip :limit limit :start start))
 
 (-> conversation-input-history (conversation) list)
 (defun conversation-input-history (conversation)
@@ -144,8 +66,10 @@ part of a long history is needed."
   (let ((sequence (getf (rest record) :seq)))
     (when (and (conversation-input-history--record-input record)
                (typep sequence '(integer 1)))
-      (setf (conversation-input-history-last-sequence conversation)
-            (max (conversation-input-history-last-sequence conversation) sequence))))
+      (when (> sequence (conversation-input-history-last-sequence conversation))
+        (setf (conversation-input-history-prior-sequence conversation)
+              (conversation-input-history-last-sequence conversation)
+              (conversation-input-history-last-sequence conversation) sequence))))
   nil)
 
 (-> conversation-input-history--record-input (list) (option non-empty-string))
@@ -167,7 +91,8 @@ part of a long history is needed."
   "Identify the source conversation of one complete input-only index."
   (list :conversation-input-history :version 1
         :id                         (conversation-identifier conversation)
-        :created-at                 (conversation-created-at conversation)))
+        :created-at                 (conversation-created-at conversation)
+        :epoch                      (format nil "~36R-~36R" (get-internal-real-time) (random most-positive-fixnum))))
 
 (-> conversation-input-history--read
     (conversation &key (:input-function (option function))) (values integer boolean))
@@ -214,11 +139,9 @@ each validated input; its caller must discard tentative results if validation fa
       (values 0 nil))))
 
 (-> conversation-input-history--rebuild
-    (conversation &key (:input-function (option function))) null)
-(defun conversation-input-history--rebuild (conversation &key input-function)
-  "Atomically build the complete sidecar from authoritative durable records.
-
-Records stream straight into the new sidecar, so rebuilding holds no history."
+    (conversation &key (:input-function (option function)) (:call-with-publication (option function))) null)
+(defun conversation-input-history--rebuild (conversation &key input-function call-with-publication)
+  "Stream authoritative inputs into a fresh cache, optionally guarding only publication."
   (let ((sequence 0))
     (log-write-streaming
      (conversation-input-history-pathname (conversation-pathname conversation))
@@ -227,15 +150,19 @@ Records stream straight into the new sidecar, so rebuilding holds no history."
        (conversation--map-storage-records
         (conversation-pathname conversation)
         (lambda (record)
+          (conversation-maintenance-check)
           (let ((input (conversation-input-history--record-input record)))
             (when input
               (setf sequence (getf (rest record) :seq))
               (funcall emit (list :input :seq sequence :source input))
-              (when input-function (funcall input-function input))))))))
+              (when input-function (funcall input-function input)))))))
+     :call-with-publication call-with-publication)
     (setf (conversation-input-history-indexed-sequence conversation) sequence
           (conversation-input-history-last-sequence conversation)
           (max sequence (conversation-input-history-last-sequence conversation))
-          (conversation-input-history-loaded-p conversation) t))
+          (conversation-input-history-loaded-p conversation) t)
+    (conversation-input-history-index--build conversation)
+    (setf (conversation-input-history-repair-pending-p conversation) nil))
   nil)
 
 (-> conversation-input-history--append
@@ -246,10 +173,11 @@ Records stream straight into the new sidecar, so rebuilding holds no history."
         (sequence (getf (rest record) :seq)))
     (when (and input
                (> sequence (conversation-input-history-indexed-sequence conversation)))
-      (log-append
-       (conversation-input-history-pathname (conversation-pathname conversation))
-       (list :input :seq sequence :source input)
-       :repair-tail-p nil)
+      (let* ((pathname (conversation-input-history-pathname (conversation-pathname conversation)))
+             (position (conversation-input-history-index--size pathname))
+             (indexed  (list :input :seq sequence :source input)))
+        (log-append pathname indexed :repair-tail-p nil)
+        (conversation-input-history-index--note conversation indexed position))
       (setf (conversation-input-history-indexed-sequence conversation) sequence)
       (when input-function (funcall input-function input))))
   nil)
@@ -320,21 +248,29 @@ Return true when all current inputs were streamed to INPUT-FUNCTION during loadi
 
 (-> conversation-input-history--publish (conversation list) null)
 (defun conversation-input-history--publish (conversation record)
-  "Maintain the input-only sidecar after a durable append under the source lock.
-If publication fails, defer repair to the next history read or compaction. The
-conversation record is already durable and remains the recovery authority."
+  "Maintain a bounded input projection after a durable append, deferring any repair."
   (when (conversation-input-history--record-input record)
-    (let ((published-p nil))
-      (unwind-protect
-           (handler-case
-               (progn
-                 (unless (and (conversation-input-history-loaded-p conversation)
-                              (probe-file (conversation-input-history-pathname
-                                           (conversation-pathname conversation))))
-                   (conversation-input-history--ensure-current conversation))
-                 (conversation-input-history--append conversation record)
-                 (setf published-p t))
-             (error () nil))
-        (unless published-p
-          (setf (conversation-input-history-loaded-p conversation) nil)))))
+    (when (conversation-maintenance-running-p conversation)
+      (setf (conversation-input-history-repair-pending-p conversation) t
+            (conversation-input-history-loaded-p conversation) nil)
+      (return-from conversation-input-history--publish nil))
+    (handler-case
+        (let* ((pathname (conversation-input-history-pathname (conversation-pathname conversation)))
+               (prior    (conversation-input-history-prior-sequence conversation)))
+          (when (and (conversation-input-history-loaded-p conversation)
+                     (zerop prior) (not (probe-file pathname)))
+            (log-write-streaming pathname (lambda (emit) (funcall emit (conversation-input-history--header conversation))))
+            (conversation-input-history-index--build conversation))
+          (let ((metadata (conversation-input-history-index--read conversation prior)))
+            (unless metadata
+              (error 'conversation-invariant-error :pathname pathname :sequence nil
+                     :message "Editable input recall needs deferred repair."))
+            (setf (conversation-input-history-index-metadata conversation) metadata
+                  (conversation-input-history-indexed-sequence conversation) prior
+                  (conversation-input-history-loaded-p conversation) t)
+            (conversation-input-history--append conversation record)
+            (setf (conversation-input-history-repair-pending-p conversation) nil)))
+      (error ()
+        (setf (conversation-input-history-loaded-p conversation) nil
+              (conversation-input-history-repair-pending-p conversation) t))))
   nil)
