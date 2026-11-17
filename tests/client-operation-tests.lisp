@@ -344,3 +344,32 @@
                       "structured mode admission honors the current supported choices")))))
            (localgroup-client-close connection))))))
   nil)
+
+(-> test-client-state-goal () null)
+(defun test-client-state-goal ()
+  "Read ordinary and mission goal transitions through the semantic state boundary."
+  (with-test-configuration (configuration)
+    (let ((application (mission-test--application configuration)))
+      (labels ((reported ()
+                 "Return the JSON goal member through the shared client dispatcher."
+                 (let ((reply (application-client-run application "_autolith/state" (json-object))))
+                   (test-assert (eq (getf reply :outcome) ':ok) "goal state is a successful semantic request")
+                   (gethash "goal" (getf reply :value)))))
+        (test-assert (eq (reported) ':null) "a channel without a goal reports null")
+        (dolist (kind '(:goal :mission))
+          (dolist (status '(:active :paused :complete :verified :blocked :exhausted :cancelled :failed))
+            (setf (application-goal application)
+                  (list :objective "Ship the requested change" :status status :kind kind
+                        :created-at 3972384000 :continuations 2))
+            (let ((goal (reported)))
+              (test-assert
+               (and (equal (gethash "objective" goal) "Ship the requested change")
+                    (equal (gethash "status" goal) (string-downcase (symbol-name status)))
+                    (equal (gethash "kind" goal) (string-downcase (symbol-name kind)))
+                    (= (gethash "createdAt" goal) 3972384000)
+                    (= (gethash "continuations" goal) 2))
+               "state reports the goal's own kind, status, creation time and continuation count"))))
+        (setf (application-goal application) nil)
+        (test-assert (eq (reported) ':null) "clearing the goal replaces its state with null"))
+      (terminal-ui-stop (application-ui application))))
+  nil)

@@ -823,6 +823,7 @@
   test-client-protocol-channel
   test-client-operation-admission
   test-client-operation-catalog-authority
+  test-client-state-goal
   test-client-subscription-exact-completion
   test-client-subscription-early-completion
   test-client-subscription-presentation-boundary

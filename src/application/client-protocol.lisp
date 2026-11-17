@@ -118,6 +118,19 @@
       (t
        "idle"))))
 
+(-> application-client--goal (application) (or hash-table (eql :null)))
+(defun application-client--goal (application)
+  "Project the channel's current goal without mission execution details."
+  (let ((goal (application-goal application)))
+    (if goal
+        (agentcomms:json-object
+         "objective" (getf goal :objective)
+         "status" (string-downcase (symbol-name (getf goal :status)))
+         "kind" (if (mission-goal-p goal) "mission" "goal")
+         "createdAt" (or (getf goal :created-at) ':null)
+         "continuations" (getf goal :continuations 0))
+        ':null)))
+
 (-> application-client-state (application hash-table) hash-table)
 (defun application-client-state (application params)
   "Return the channel's current state, marking unavailable measurements null."
@@ -133,6 +146,7 @@
      "turnState" (application-client--turn-state application)
      "usage" (application-client--usage application)
      "liveJobCount" (application-client-live-job-count application)
+     "goal" (application-client--goal application)
      "planPresent" (if (plan-load configuration) t (argo:json-false))
      "health" "ready"
      "report" ':null)))
