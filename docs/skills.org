@@ -81,6 +81,19 @@ Autolith scans these roots recursively, with earlier roots taking precedence:
 3. =~/.agents/skills/=, the cross-agent user root shared with other agents
 4. =<site-config-root>/skills/=
 5. bundled Skill roots
+6. each directory in =*extra-skill-roots*=
+
+Discovery rejects a Skill directory outside these roots even when a
+symbolic link brings it in, so add the directory to =*extra-skill-roots*=
+in =init.lisp= instead:
+
+#+BEGIN_SRC lisp
+(setf *extra-skill-roots* '("~/myskills/"))
+#+END_SRC
+
+Extra roots are scanned after the bundled roots, so a bundled Skill of the
+same name still wins. A string root expands =~=, while a pathname root keeps
+the literal =~=.
 
 Outside Git, the workspace directory is the project root. Only the exact,
 case-sensitive filenames =SKILL.sexp= and =SKILL.md= count. Within one
