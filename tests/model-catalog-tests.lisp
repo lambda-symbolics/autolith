@@ -186,12 +186,15 @@ Call ON-REQUEST, when supplied, after reading the request headers."
       (test-assert (gethash identifier catalog) "Exact native and canonical IDs are public."))
     (dolist (identifier '("native/v1-private" "upper" "tenant/native/v1" "native/v1 "))
       (test-assert (null (gethash identifier catalog)) "No prefix or case normalization.")))
+  (dolist (identifier '("Claude Haiku 5.5" "lab/model name"))
+    (test-assert (gethash identifier (model-catalog-parse (test-model-catalog--fixture (list identifier))))
+                 "Public IDs with internal spaces preserve their exact spelling."))
   (dolist (text '("" "{" "[]" "{}" "{\"p\":[]}" "{\"p\":{}}"
                   "{\"p\":{\"models\":[]}}" "{\"p\":{\"models\":{}}}"
                   "{\"p\":{\"models\":{\"x\":[]}}}"
                   "{\"p\":{\"models\":{\"x\":{\"id\":\"y\"}}}}"
                   "{\"p\":{\"models\":{\"x\":{\"id\":\"x\",\"canonical_model_id\":null}}}}"
-                  "{\"p\":{\"models\":{\"x\":{\"id\":\"x\",\"canonical_model_id\":\"bad name\"}}}}"
+                  "{\"p\":{\"models\":{\"x\":{\"id\":\"x\",\"canonical_model_id\":\" bad name\"}}}}"
                   "{\"p\":{\"models\":{\" x\":{\"id\":\" x\"}}}}"
                   "{\"p\":{\"models\":{\"x\":{\"id\":\"x\"}}},\"bad\":{\"models\":null}}"))
     (test-assert (handler-case (progn (model-catalog-parse text) nil) (error () t))

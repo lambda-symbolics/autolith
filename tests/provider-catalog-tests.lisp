@@ -7,6 +7,14 @@
   "Provide a new public model plus a non-tool model that must not enter the picker."
   (json-encode
    (json-object
+     "moneo"
+     (json-object "models" (json-object "Claude Haiku 5.5" (json-object "id" "Claude Haiku 5.5")))
+     "opencode-go"
+     (json-object "models"
+                  (json-object "fixture-agent"
+                               (json-object "id" "fixture-agent" "tool_call" t
+                                            "modalities" (json-object "output" #("text"))
+                                            "limit" (json-object "context" 65432))))
     "openrouter"
     (json-object
      "models"
@@ -51,18 +59,23 @@
                                  (eq (provider-registration-authenticator registration)
                                      (provider-registration-authenticator original)))
                             "Public metadata preserves the account transport and authentication."))
+             (test-assert (null (provider-refresh-models configuration :provider-name "opencode-go"))
+                          "An unrelated public ID with spaces cannot block OpenCode Go discovery.")
              (test-call-with-function-replacements
               (list (list 'application--credentialed-provider-names
-                          (lambda (application) (declare (ignore application)) '("openrouter"))))
+                          (lambda (application) (declare (ignore application)) '("openrouter" "opencode-go"))))
               (lambda ()
                 (let ((items (application--model-items
                               (make-instance 'application :configuration configuration))))
                   (test-assert (find "openrouter/lab/new-agent" items
                                      :key (lambda (item) (getf item :name)) :test #'equal)
                                "A newly cataloged model is offered by the real picker.")
-                  (test-assert (not (find "openrouter/lab/image" items
-                                          :key (lambda (item) (getf item :name)) :test #'equal))
-                               "Non-tool image models are excluded."))))
+                 (test-assert (find "opencode/fixture-agent" items
+                                    :key (lambda (item) (getf item :model)) :test #'equal)
+                              "OpenCode Go models reach the authenticated model picker.")
+                 (test-assert (not (find "openrouter/lab/image" items
+                                         :key (lambda (item) (getf item :name)) :test #'equal))
+                              "Non-tool image models are excluded."))))
              (provider--registry-restore snapshot)
              (let ((*model-catalog-fetch-function* (lambda (context)
                                                     (declare (ignore context))
@@ -70,6 +83,8 @@
                (provider-load-model-cache configuration)
                (test-assert (provider-model-for "openrouter/lab/new-agent")
                             "A fresh registry loads public metadata from the last-good disk cache."))
+             (test-assert (provider-model-for "opencode/fixture-agent")
+                          "OpenCode Go discovery survives restarting with the persisted catalog.")
              (let ((*model-catalog-fetch-function* (lambda (context) (declare (ignore context)) nil)))
                (test-assert (null (provider-refresh-models configuration :provider-name "openrouter"))
                             "Warm offline refresh retains usable public metadata.")))

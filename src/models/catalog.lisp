@@ -61,9 +61,11 @@
 
 (-> model-catalog--id-p (t) boolean)
 (defun model-catalog--id-p (value)
-  "Accept exact printable ASCII model IDs, without case or prefix normalization."
+  "Accept exact printable ASCII IDs, including internal spaces, without normalization."
   (and (stringp value) (<= 1 (length value) 256)
-       (every (lambda (character) (<= 33 (char-code character) 126)) value) t))
+       (not (char= (char value 0) #\Space))
+       (not (char= (char value (1- (length value))) #\Space))
+       (every (lambda (character) (<= 32 (char-code character) 126)) value) t))
 
 (-> model-catalog--reject (string) nil)
 (defun model-catalog--reject (reason)
