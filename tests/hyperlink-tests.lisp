@@ -28,7 +28,10 @@
         (plain  (make-instance 'recording-terminal :columns 24))
         (target "https://target.test/path?q=1"))
     (dolist (source '("[documentation](https://target.test/path?q=1)"
-                      "# [https://label.test/long-link-text](https://target.test/path?q=1)"))
+                      "# [https://label.test/long-link-text](https://target.test/path?q=1)"
+                      "**[documentation](https://target.test/path?q=1)**"
+                      "1. **[https://label.test/long-link-text](https://target.test/path?q=1)**"
+                      "1. *[documentation](https://target.test/path?q=1)*"))
       (let* ((renderer (termdown:markdown-renderer-create :width 24))
              (rows     (terminal-markdown-render-line renderer source)))
         (test-assert (every #'terminal-styled-text-p rows)
