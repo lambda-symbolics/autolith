@@ -216,6 +216,7 @@
                                           (:file "inference/object")
                                           (:file "tools/registry")
                                           (:file "tools/action-contracts")
+                                          (:file "skills/resource")
                                           (:file "skills/tools")
                                           (:file "mcp/tools")
                                           (:file "tools/papercut")

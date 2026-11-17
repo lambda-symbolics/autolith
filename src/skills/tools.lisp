@@ -79,11 +79,13 @@
 
 (-> skill-augment-tool-registry (tool-registry) tool-registry)
 (defun skill-augment-tool-registry (registry)
-  "Register Autolith's native request-local skill selector in REGISTRY."
+  "Register skill.load and the skill: resource scheme in REGISTRY."
   (unless (tool-registry-find registry "skill" "load")
     (tool-registry-describe-namespace
      registry "skill"
      "Request-local loading of discovered Autolith Skills.")
+    (resource-registry-register (tool-registry-resource-registry registry)
+                                (make-instance 'skill-resolver :scheme "skill"))
     (tool-registry-register
      registry
      (make-instance

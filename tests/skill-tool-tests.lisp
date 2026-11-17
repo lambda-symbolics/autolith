@@ -605,3 +605,53 @@
                               (not (search "Cache projection fixture" anchors)))
                          "durable anchors hold digests and positions, never context"))))))
   nil)
+
+(-> test-skill-description-resource () null)
+(defun test-skill-description-resource ()
+  "Read a shortened catalog description whole through skill:NAME, selecting nothing."
+  (with-test-configuration (configuration)
+    (let* ((description (format nil "~A END-OF-DESCRIPTION"
+                                (make-string 400 :initial-element #\d)))
+           (registry    (make-default-tool-registry :configuration configuration))
+           (context     (make-instance 'tool-context
+                                       :configuration configuration
+                                       :worker        nil
+                                       :conversation  (conversation-create
+                                                       configuration :identifier "skill-resource")
+                                       :registry      registry)))
+      (unwind-protect
+           (flet ((read-uri (uri)
+                    (tool-registry-execute-call
+                     registry
+                     (json-object "namespace" "resource" "name" "read"
+                                  "arguments" (json-encode (json-object "uri" uri)))
+                     context)))
+             (skill-tool-tests--write
+              (skill-global-root configuration) "long/SKILL.sexp"
+              (skill-tests--definition "long" description "LONG-SKILL-BODY"))
+             (call-with-skill-logical-turn
+              (user-message-input-create :text "Pick a skill.")
+              (lambda ()
+                (let ((catalog (skill-catalog-render
+                                (skill-catalog-for-configuration configuration)))
+                      (result  (read-uri "skill:long")))
+                  (test-assert
+                   (and (search (format nil "- long: ~A...~%"
+                                        (make-string 197 :initial-element #\d))
+                                catalog)
+                        (search "`resource.read` of `skill:NAME`" catalog)
+                        (search "skill:NAME"
+                                (tool-description
+                                 (tool-registry-find registry "resource" "read"))))
+                   "the catalog shortens a long description and says where the whole one is")
+                  (test-assert
+                   (and (tool-result-success-p result)
+                        (search description (tool-result-content result))
+                        (not (search "LONG-SKILL-BODY" (tool-result-content result))))
+                   "skill:NAME returns the whole description and no instructions")
+                  (test-assert (null (skill-logical-turn-selection-names))
+                               "reading a description selects nothing")
+                  (test-assert (not (tool-result-success-p (read-uri "skill:missing")))
+                               "an unknown skill name fails")))))
+        (tool-registry-close-runtime-state registry))))
+  nil)

@@ -3034,7 +3034,10 @@ effects automatically.
 ** Executable Skills
 
 Use =skill.load= with an exact catalog name to select prose instructions for the
-logical turn. To publish executable behavior, put a bounded data-only
+logical turn. The catalog shows at most 200 characters of a description, and
+fewer when many skills share its budget; a shortened description ends in
+=...=, and =resource.read= of =skill:NAME= returns the whole one. To publish
+executable behavior, put a bounded data-only
 =EXECUTABLE.sexp= beside =SKILL.md= or =SKILL.sexp=. Declare the Skill and ASDF
 system versions, entrypoint, input/output contracts, capabilities and exact host
 tool names. An executable manifest has this shape:

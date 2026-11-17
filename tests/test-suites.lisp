@@ -934,7 +934,8 @@
   test-skill-provider-context
   test-skill-cache-prefix
   test-skill-edit-tool
-  test-skill-load-presentation)
+  test-skill-load-presentation
+  test-skill-description-resource)
 
 (define-test-suite mcp-configuration
   test-mcp-configuration)

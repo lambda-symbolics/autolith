@@ -149,7 +149,7 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
 (defun skill--catalog-prefix ()
   "Return the Autolith model-visible skill catalog introduction."
   (format nil
-          "## Skills~2%An Autolith skill is a reusable instruction set stored in SKILL.sexp or standard SKILL.md. The entries below contain names and descriptions only. Descriptions may be shortened to keep this catalog bounded.~2%### Available skills~%"))
+          "## Skills~2%An Autolith skill is a reusable instruction set stored in SKILL.sexp or standard SKILL.md. The entries below contain names and descriptions only. A description that ends in ... is shortened; `resource.read` of `skill:NAME` returns it whole.~2%### Available skills~%"))
 
 (-> skill--catalog-guidance () string)
 (defun skill--catalog-guidance ()
