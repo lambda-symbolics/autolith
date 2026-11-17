@@ -9,6 +9,10 @@
    (directory
     :initarg :directory :reader world-repository-group-directory
     :documentation "Validated originating folder displayed above this group's channels.")
+   (origin-observed-p
+    :initarg :origin-observed-p :initform nil :reader world-repository-group-origin-observed-p
+    :type          boolean
+    :documentation "Whether fresh verified Git metadata established this group's originating folder.")
    (channels
     :initarg :channels :accessor world-repository-group-channels
     :documentation "Channels in their supplied presentation order."))
@@ -109,10 +113,10 @@ process-global environment change participates in presentation discovery."
 (defun world-repository-groups (channels current)
   "Gather local repository presentation groups without changing channel workspaces.
 
-Resolve each workspace and common identity once in this call. Main worktree
-folders must be supported by Git metadata; unresolved origins keep their exact
-workspace group. Results are ephemeral and may be reused by pure UI rebuilds.
-Every new gather rechecks both successful and unsuccessful discovery."
+Resolve each workspace and common identity once in this call. Prefer fresh
+verified Git metadata, then the channel's durable originating repository.
+Unattributed channels keep their exact workspace group. This function never
+writes the world store or changes the supplied channel objects."
   (let ((descriptions (make-hash-table :test #'equal))
         (origins      (make-hash-table :test #'equal))
         (groups       nil))
@@ -153,18 +157,176 @@ Every new gather rechecks both successful and unsuccessful discovery."
                (root     (getf metadata :root)))
           (when (and common root (equal common (getf metadata :private)))
             (setf (gethash common origins) root))))
+      ;; Complete the verified origin memo before saved members choose headings.
       (dolist (channel channels)
         (let* ((directory (channel-workspace channel))
-               (common    (getf (description directory) :common))
-               (origin    (and common (origin directory common)))
-               (key       (if origin (concatenate 'string "git:" common) directory))
-               (group     (find key groups :key #'world-repository-group-key :test #'string=)))
+               (common    (getf (description directory) :common)))
+          (when common (origin directory common))))
+      (dolist (channel channels)
+        (let* ((directory       (channel-workspace channel))
+               (common          (getf (description directory) :common))
+               (key             (cond
+                                  ((and common (gethash common origins))
+                                   (concatenate 'string "git:" common))
+                                  ((channel-repository-key channel)
+                                   (channel-repository-key channel))
+                                  (t
+                                   directory)))
+               (observed-origin (and (uiop:string-prefix-p "git:" key)
+                                     (gethash (subseq key 4) origins)))
+               (origin          (or observed-origin (channel-repository-directory channel) directory))
+               (group           (find key groups :key #'world-repository-group-key :test #'string=)))
           (if group
               (setf (world-repository-group-channels group)
                     (append (world-repository-group-channels group) (list channel)))
               (setf groups
                     (append groups
                             (list (make-instance 'world-repository-group
-                                                 :key key :directory (or origin directory)
-                                                 :channels (list channel))))))))
+                                                 :key key :directory origin
+                                                 :origin-observed-p (not (null observed-origin))
+                                                 :channels          (list channel))))))))
       (world-repository-current-groups groups current))))
+
+
+;;;; -- Durable Repository Observations --
+
+(-> world-repository-resolve-directory (string) list)
+(defun world-repository-resolve-directory (directory)
+  "Resolve DIRECTORY to a verified Git key and originating folder, or NIL."
+  (let* ((channel (make-instance 'channel :identifier "repository-observation"
+                                        :owner        "repository-observation"
+                                        :workspace directory :created-at 0 :updated-at 0))
+         (group   (first (world-repository-groups (list channel) nil)))
+         (key     (world-repository-group-key group)))
+    (when (uiop:string-prefix-p "git:" key)
+      (list :key key :directory (world-repository-group-directory group)))))
+
+(defparameter *world-repository-artifact-limit* 4096
+  "Maximum task metadata files considered in one legacy attribution pass.")
+
+(defparameter *world-repository-artifact-characters* 65536
+  "Maximum characters accepted from one task worktree metadata file.")
+
+(defparameter *world-repository-recovery-depth* 16
+  "Maximum exact historical source links followed for a removed checkout.")
+
+(-> world-repository--read-metadata (pathname) list)
+(defun world-repository--read-metadata (pathname)
+  "Read one bounded portable metadata form, rejecting trailing forms and reader evaluation."
+  (handler-case
+      (with-open-file (stream pathname :external-format ':utf-8)
+        (let* ((buffer (make-string (1+ *world-repository-artifact-characters*)))
+               (count  (read-sequence buffer stream)))
+          (when (<= count *world-repository-artifact-characters*)
+            (let ((*read-eval* nil))
+              (multiple-value-bind (form end) (read-from-string buffer nil nil :end count)
+                (when (and (sexp-store:plist-schema-p form
+                                                     :required-keys  '(:version :owner :path :source)
+                                                     :keyword-keys-p t)
+                           (every (lambda (character) (find character '(#\Space #\Tab #\Newline #\Return)))
+                                  (subseq buffer end count)))
+                  form))))))
+    (error () nil)))
+
+(-> world-repository--task-sources (configuration) hash-table)
+(defun world-repository--task-sources (configuration)
+  "Index exact persisted task checkout/source pairs, without consulting task residency.
+
+Conflicting source records make a checkout ambiguous. A saturated scan supplies
+no evidence rather than assuming uniqueness from a truncated inventory."
+  (let ((sources (make-hash-table :test #'equal)))
+    (handler-case
+        (let* ((root    (merge-pathnames "tasks/" (config :data-root configuration)))
+               (pattern (merge-pathnames
+                         (make-pathname :directory '(:relative :wild :wild)
+                                        :name "worktree" :type "sexp") root))
+               (files   (directory pattern)))
+          (when (<= (length files) *world-repository-artifact-limit*)
+            (dolist (file files)
+              (let* ((metadata (world-repository--read-metadata file))
+                     (path     (getf metadata :path))
+                     (source   (getf metadata :source)))
+                (when (and (eql (getf metadata :version) 1)
+                           (non-empty-string-p (getf metadata :owner))
+                           (non-empty-string-p path) (non-empty-string-p source)
+                           (uiop:absolute-pathname-p (platform-pathname path))
+                           (uiop:absolute-pathname-p (platform-pathname source)))
+                  (let* ((path     (world-workspace-name path))
+                         (source   (world-workspace-name source))
+                         (previous (gethash path sources)))
+                    (setf (gethash path sources)
+                          (if (or (eq previous ':ambiguous)
+                                  (and previous (not (equal previous source))))
+                              ':ambiguous source))))))))
+      (error () (clrhash sources)))
+    sources))
+
+(-> world-repository--recover (string hash-table list) list)
+(defun world-repository--recover (directory sources channels)
+  "Follow exact task source evidence for DIRECTORY, refusing cycles or conflicting origins."
+  (let ((seen (make-hash-table :test #'equal)))
+    (loop for source = (gethash directory sources)
+          repeat *world-repository-recovery-depth*
+          do (when (or (null source) (eq source ':ambiguous) (gethash directory seen))
+               (return nil))
+             (setf (gethash directory seen) t)
+             (let ((resolved (world-repository-resolve-directory source)))
+               (when resolved (return resolved)))
+             (let ((identities
+                     (remove-duplicates
+                      (loop for channel in channels
+                            when (and (equal source (channel-workspace channel))
+                                      (channel-repository-key channel))
+                              collect (list :key       (channel-repository-key channel)
+                                            :directory (channel-repository-directory channel)))
+                      :test #'equal)))
+               (when (rest identities) (return nil))
+               (when identities (return (first identities))))
+             (setf directory source))))
+
+(-> world-repository-remember (configuration list list) list)
+(defun world-repository-remember (configuration channels groups)
+  "Persist positive repository observations with workspace guards and return channel replacements.
+
+Discover Git and bounded legacy metadata outside the world transaction. Never
+resurrect a deleted channel or mutate objects shared by a read-only catalogue."
+  (let ((observations nil)
+        (sources      nil))
+    (dolist (group groups)
+      (dolist (channel (world-repository-group-channels group))
+        (let* ((key (world-repository-group-key group))
+               (identity
+                  (cond
+                    ((and (uiop:string-prefix-p "git:" key)
+                          (world-repository-group-origin-observed-p group))
+                     (list :key key :directory (world-repository-group-directory group)))
+                    ((and (null (channel-repository-key channel))
+                          (not (uiop:directory-exists-p (platform-pathname (channel-workspace channel)))))
+                     (unless sources (setf sources (world-repository--task-sources configuration)))
+                     (world-repository--recover (channel-workspace channel) sources channels)))))
+          (when (and identity
+                     (not (and (equal (getf identity :key) (channel-repository-key channel))
+                               (equal (getf identity :directory) (channel-repository-directory channel)))))
+            (push (list channel identity) observations)))))
+    (if (null observations)
+        channels
+        (world--transact
+         configuration
+         (lambda (world)
+           (let ((records      nil)
+                 (replacements (make-hash-table :test #'equal)))
+             (dolist (observation observations)
+               (destructuring-bind (observed identity) observation
+                 (let ((current (world-channel-find world (channel-identifier observed))))
+                   (when (and current
+                              (equal (channel-workspace current) (channel-workspace observed))
+                              (equal (channel-repository-key current) (channel-repository-key observed))
+                              (equal (channel-repository-directory current) (channel-repository-directory observed)))
+                     (let ((updated (world--copy-channel
+                                     current :repository-key (getf identity :key)
+                                     :repository-directory   (getf identity :directory))))
+                       (push (world--channel-record updated) records)
+                       (setf (gethash (channel-identifier current) replacements) updated))))))
+             (values (nreverse records)
+                     (mapcar (lambda (channel)
+                               (or (gethash (channel-identifier channel) replacements) channel)) channels))))))))

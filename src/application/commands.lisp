@@ -1525,7 +1525,14 @@ presentation groups once before building items, using the sidebar's policy."
              (channels
                (application--channels-newest-first application world
                 (remove-if #'channel-inbox-p (world-channels world))))
-             (groups (world-repository-groups channels current)))
+             (groups (world-repository-groups channels current))
+             (remembered
+               (handler-case
+                   (world-repository-remember (application-configuration application) channels groups)
+                 (autolith-error () channels))))
+        (unless (eq remembered channels)
+          (setf channels remembered
+                groups (world-repository-groups channels current)))
         (labels ((item (channel depth group)
                    "Return the picker item of CHANNEL nested DEPTH deep in GROUP."
                    (let* ((identifier (channel-identifier channel))

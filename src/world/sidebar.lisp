@@ -411,16 +411,21 @@ The choice stays when the terminal moves to another channel."
 
 (-> world-sidebar--gather (world-sidebar) list)
 (defun world-sidebar--gather (sidebar)
-  "Return the current catalogue and resolved presentation groups for the UI."
+  "Gather the read-only catalogue, then guard positive repository observations in the durable store."
   (let* ((configuration (world-sidebar-configuration sidebar))
          (statuses      (world-sidebar--statuses sidebar))
          (world         (handler-case (world-channel-catalogue configuration :statuses statuses)
-                          (autolith-error ()
-                            (make-instance 'world))))
-         (channels      (world-sidebar--channels sidebar world)))
+                          (autolith-error () (make-instance 'world))))
+         (channels      (world-sidebar--channels sidebar world))
+         (groups        (world-repository-groups channels (world-sidebar-current sidebar)))
+         (remembered    (handler-case (world-repository-remember configuration channels groups)
+                          (autolith-error () channels))))
+    (unless (eq remembered channels)
+      (setf channels remembered
+            groups (world-repository-groups channels (world-sidebar-current sidebar))))
     (list :inbox    (world-inbox-channel world)
           :channels channels
-          :groups   (world-repository-groups channels (world-sidebar-current sidebar))
+          :groups   groups
           :names    (world-sidebar--names world)
           :statuses statuses
           :pending  (world-sidebar--pending configuration))))

@@ -169,13 +169,18 @@
     (let* ((sidebar  (world-sidebar-create configuration))
            (terminal (make-instance 'recording-terminal :columns 120 :rows 24))
            (root     (make-instance 'channel :identifier "repo-root" :owner "user"
-                                             :workspace "/repo/" :created-at 1 :updated-at 1))
+                                             :workspace "/repo/" :created-at 1 :updated-at 1
+                                             :repository-key "git:/repo/.git/" :repository-directory "/repo/"))
            (child    (make-instance 'channel :identifier "repo-child" :owner "user"
                                              :workspace "/isolated/worktree/" :parent "repo-root"
+                                             :repository-key "git:/repo/.git/" :repository-directory "/repo/"
                                              :created-at 1 :updated-at 1))
-           (group    (make-instance 'world-repository-group :key      "git:/repo/.git/"
-                                                           :directory "/repo/"
-                                                           :channels  (list root child))))
+           (group    (first
+                      (test-call-with-function-replacements
+                       (list (list 'world-repository--git-output
+                                   (lambda (directory arguments)
+                                     (declare (ignore directory arguments)) nil)))
+                       (lambda () (world-repository-groups (list root child) "repo-child"))))))
       (setf (world-sidebar-current sidebar) "repo-child")
       (test-call-with-function-replacements
        (list (list 'world-repository-groups

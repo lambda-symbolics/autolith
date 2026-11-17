@@ -549,6 +549,7 @@ parent is never left behind its retired children."
                (created-at (getf (rest header) :created-at))
                (inbox-p    (world-session--inbox-header-p header))
                (workspace  (world-session--workspace configuration header))
+               (repository (unless inbox-p (world-repository-resolve-directory workspace)))
                (title      (if inbox-p
                                *world-inbox-designator*
                                (world-session--title (getf change :identity) header)))
@@ -577,23 +578,36 @@ parent is never left behind its retired children."
             ((null channel)
              (emit (world--channel-record
                     (make-instance 'channel
-                                   :identifier identifier
-                                   :parent     (unless inbox-p
-                                                 (or (and parent parent-id)
-                                                     (let ((inbox (world-inbox-channel preview)))
-                                                       (and inbox (channel-identifier inbox)))))
-                                   :owner      keeper
-                                   :workspace  workspace
-                                   :title      title
-                                   :inbox-p    inbox-p
-                                   :created-at created-at
-                                   :updated-at (max now created-at)))))
+                                   :identifier           identifier
+                                   :parent               (unless inbox-p
+                                                           (or (and parent parent-id)
+                                                               (let ((inbox (world-inbox-channel preview)))
+                                                                 (and inbox (channel-identifier inbox)))))
+                                   :owner                keeper
+                                   :workspace            workspace
+                                   :repository-key       (getf repository :key)
+                                   :repository-directory (getf repository :directory)
+                                   :title                title
+                                   :inbox-p              inbox-p
+                                   :created-at           created-at
+                                   :updated-at           (max now created-at)))))
             ((or (not (string= (channel-workspace channel) workspace))
                  (not (equal (channel-title channel) title))
+                 (and repository
+                      (or (not (equal (channel-repository-key channel) (getf repository :key)))
+                          (not (equal (channel-repository-directory channel) (getf repository :directory)))))
                  adopted-p)
              (emit (world--channel-record
                     (world--copy-channel channel
                                          :workspace  workspace
+                                         :repository-key
+                                         (if (equal workspace (channel-workspace channel))
+                                             (or (getf repository :key) (channel-repository-key channel))
+                                             (getf repository :key))
+                                         :repository-directory
+                                         (if (equal workspace (channel-workspace channel))
+                                             (or (getf repository :directory) (channel-repository-directory channel))
+                                             (getf repository :directory))
                                          :title      title
                                          :parent     (if adopted-p parent-id (channel-parent channel))
                                          :owner      (if adopted-p keeper (channel-owner channel))

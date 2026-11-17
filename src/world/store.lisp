@@ -125,6 +125,18 @@ A world the follower returns again unchanged needs no second check.")
     :reader        channel-workspace
     :type          non-empty-string
     :documentation "The canonical working directory new work in this channel uses.")
+   (repository-key
+    :initarg       :repository-key
+    :initform      nil
+    :reader        channel-repository-key
+    :type          (option non-empty-string)
+    :documentation "The last positively resolved local Git group identity.")
+   (repository-directory
+    :initarg       :repository-directory
+    :initform      nil
+    :reader        channel-repository-directory
+    :type          (option non-empty-string)
+    :documentation "The originating checkout folder, retained after workspace removal.")
    (title
     :initarg       :title
     :initform      nil
@@ -215,6 +227,25 @@ becomes one hyphen, with no hyphen at either end."
         name
         workspace)))
 
+(-> world-repository-identity-p (t t) boolean)
+(defun world-repository-identity-p (key directory)
+  "Validate an optional repository KEY and DIRECTORY without consulting the filesystem."
+  (or (and (null key) (null directory))
+      (and (non-empty-string-p key)
+           (uiop:string-prefix-p "git:" key)
+           (> (length key) 4)
+           (non-empty-string-p directory)
+           (handler-case
+               (and (uiop:absolute-pathname-p (platform-pathname (subseq key 4)))
+                    (uiop:absolute-pathname-p (platform-pathname directory))
+                    (notany (lambda (path)
+                              (or (wild-pathname-p path)
+                                  (member :up (pathname-directory path))))
+                            (list (platform-pathname (subseq key 4))
+                                  (platform-pathname directory)))
+                    t)
+             (error () nil)))))
+
 (-> world--identifier-list-p (t) boolean)
 (defun world--identifier-list-p (value)
   "Return true when VALUE is a proper list of unique identifiers."
@@ -268,14 +299,16 @@ records stays plain, portable text."
   "Return CHANNEL as one portable readable record."
   (list :channel
         :version    *world-format-version*
-        :id         (world-portable-string (channel-identifier channel))
-        :parent     (world-portable-string (channel-parent channel))
-        :owner      (world-portable-string (channel-owner channel))
-        :workspace  (world-portable-string (channel-workspace channel))
-        :title      (world-portable-string (channel-title channel))
-        :inbox-p    (channel-inbox-p channel)
-        :created-at (channel-created-at channel)
-        :updated-at (channel-updated-at channel)))
+        :id                   (world-portable-string (channel-identifier channel))
+        :parent               (world-portable-string (channel-parent channel))
+        :owner                (world-portable-string (channel-owner channel))
+        :workspace            (world-portable-string (channel-workspace channel))
+        :repository-key       (world-portable-string (channel-repository-key channel))
+        :repository-directory (world-portable-string (channel-repository-directory channel))
+        :title                (world-portable-string (channel-title channel))
+        :inbox-p              (channel-inbox-p channel)
+        :created-at           (channel-created-at channel)
+        :updated-at           (channel-updated-at channel)))
 
 (-> world--record->participant (pathname list) participant)
 (defun world--record->participant (pathname record)
@@ -324,6 +357,8 @@ records stays plain, portable text."
                      (non-empty-string-p (getf properties :parent)))
                  (non-empty-string-p (getf properties :owner))
                  (non-empty-string-p (getf properties :workspace))
+                 (world-repository-identity-p (getf properties :repository-key)
+                                              (getf properties :repository-directory))
                  (or (null (getf properties :title))
                      (world--name-p (getf properties :title)))
                  (typep (getf properties :inbox-p) 'boolean)
@@ -337,14 +372,16 @@ records stays plain, portable text."
              :identifier (let ((identifier (getf properties :id)))
                            (and (stringp identifier) identifier))))
     (make-instance 'channel
-                   :identifier (getf properties :id)
-                   :parent     (getf properties :parent)
-                   :owner      (getf properties :owner)
-                   :workspace  (getf properties :workspace)
-                   :title      (getf properties :title)
-                   :inbox-p    (getf properties :inbox-p)
-                   :created-at (getf properties :created-at)
-                   :updated-at (getf properties :updated-at))))
+                   :identifier           (getf properties :id)
+                   :parent               (getf properties :parent)
+                   :owner                (getf properties :owner)
+                   :workspace            (getf properties :workspace)
+                   :repository-key       (getf properties :repository-key)
+                   :repository-directory (getf properties :repository-directory)
+                   :title                (getf properties :title)
+                   :inbox-p              (getf properties :inbox-p)
+                   :created-at           (getf properties :created-at)
+                   :updated-at           (getf properties :updated-at))))
 
 (-> world--tombstone-identifier (pathname list) string)
 (defun world--tombstone-identifier (pathname record)
@@ -385,14 +422,16 @@ records stays plain, portable text."
   "Return CHANNEL with CHANGES, a plist of initargs, applied."
   (apply #'make-instance 'channel
          (append changes
-                 (list :identifier (channel-identifier channel)
-                       :parent     (channel-parent channel)
-                       :owner      (channel-owner channel)
-                       :workspace  (channel-workspace channel)
-                       :title      (channel-title channel)
-                       :inbox-p    (channel-inbox-p channel)
-                       :created-at (channel-created-at channel)
-                       :updated-at (channel-updated-at channel)))))
+                 (list :identifier           (channel-identifier channel)
+                       :parent               (channel-parent channel)
+                       :owner                (channel-owner channel)
+                       :workspace            (channel-workspace channel)
+                       :repository-key       (channel-repository-key channel)
+                       :repository-directory (channel-repository-directory channel)
+                       :title                (channel-title channel)
+                       :inbox-p              (channel-inbox-p channel)
+                       :created-at           (channel-created-at channel)
+                       :updated-at           (channel-updated-at channel)))))
 
 (-> world--copy (world) world)
 (defun world--copy (world)
@@ -1027,14 +1066,16 @@ identifier is allocated for it."
 HOME is a plist of :id, :workspace, :title and :parent. A missing :id
 allocates a conversation identifier for the channel's history. OPERATION
 names the caller in refusals."
-  (let ((identifier (or (getf home :id)
+  (let* ((workspace  (world-workspace-name (getf home :workspace)))
+         (repository (world-repository-resolve-directory workspace))
+         (identifier (or (getf home :id)
                         (conversation-identifier-generate
                          (configuration-conversation-root configuration)
                          :timestamp now)))
-        (parent     (or (getf home :parent)
-                        (let ((inbox (world-inbox-channel world)))
-                          (and inbox (channel-identifier inbox)))))
-        (title      (getf home :title)))
+         (parent     (or (getf home :parent)
+                         (let ((inbox (world-inbox-channel world)))
+                           (and inbox (channel-identifier inbox)))))
+         (title      (getf home :title)))
     (when (gethash identifier (world--deleted-channel-table world))
       (error 'world-error
              :message    (format nil "Channel ~A was removed; use a new channel identity." identifier)
@@ -1049,13 +1090,15 @@ names the caller in refusals."
              :identifier identifier))
     (when parent (world--require-channel world parent operation))
     (make-instance 'channel
-                   :identifier identifier
-                   :parent     parent
-                   :owner      owner
-                   :workspace  (world-workspace-name (getf home :workspace))
-                   :title      (and title (world--validate-name title operation))
-                   :created-at now
-                   :updated-at now)))
+                   :identifier           identifier
+                   :parent               parent
+                   :owner                owner
+                   :workspace            workspace
+                   :repository-key       (getf repository :key)
+                   :repository-directory (getf repository :directory)
+                   :title                (and title (world--validate-name title operation))
+                   :created-at           now
+                   :updated-at           now)))
 
 (-> world-participant-create
     (configuration &key (:kind participant-kind) (:name string) (:residence (option string))
@@ -1215,21 +1258,26 @@ its collisions in the same transaction; explicit names must already be unique."
     channel)
 (defun world-channel-update
     (configuration identifier &key title workspace (now (get-universal-time)))
-  "Replace the given fields of channel IDENTIFIER and return it."
-  (world--transact
-   configuration
-   (lambda (world)
-     (let* ((channel (world--require-channel world identifier ':update-channel))
-            (updated (world--copy-channel
-                      channel
-                      :title      (if title
-                                      (world--validate-name title ':update-channel)
-                                      (channel-title channel))
-                      :workspace  (if workspace
-                                      (world-workspace-name workspace)
-                                      (channel-workspace channel))
-                      :updated-at (max now (channel-updated-at channel)))))
-       (values (list (world--channel-record updated)) updated)))))
+  "Replace the given channel fields; an execution-directory move replaces repository attribution."
+  (let* ((directory  (and workspace (world-workspace-name workspace)))
+         (repository (and directory (world-repository-resolve-directory directory))))
+    (world--transact
+     configuration
+     (lambda (world)
+       (let* ((channel (world--require-channel world identifier ':update-channel))
+              (moved-p (and directory (not (equal directory (channel-workspace channel)))))
+              (updated (world--copy-channel
+                        channel
+                        :title                (if title
+                                                  (world--validate-name title ':update-channel)
+                                                  (channel-title channel))
+                        :workspace            (or directory (channel-workspace channel))
+                        :repository-key       (if (or moved-p repository) (getf repository :key)
+                                                  (channel-repository-key channel))
+                        :repository-directory (if (or moved-p repository) (getf repository :directory)
+                                                  (channel-repository-directory channel))
+                        :updated-at           (max now (channel-updated-at channel)))))
+         (values (list (world--channel-record updated)) updated))))))
 
 (-> world-participant-move
     (configuration string string &key (:now timestamp) (:expected-residence (option string)))

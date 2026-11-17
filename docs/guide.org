@@ -1661,8 +1661,11 @@ are nested under their parents. Each channel shows its agent's name, then its ti
 
 In the sidebar and =(open)= picker, workspaces from a checkout and its linked
 worktrees share a group under the verified originating checkout. Independent local
-clones form separate groups. Use each workspace's own path when repository
-ownership cannot be established.
+clones form separate groups. The repository identity and originating folder are
+recorded at creation or first verified lookup. Channels with removed worktrees
+use the saved checkout group. Older removed task worktrees can be attributed
+from exact persisted checkout/source records. Without verified or saved
+ownership, each workspace forms its own group.
 
 The groups and channels form a tree. The current group starts open, and so does
 each channel the current one nests in; the rest start closed. A closed node shows
