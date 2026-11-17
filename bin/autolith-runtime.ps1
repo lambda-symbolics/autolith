@@ -141,6 +141,8 @@ if ($env:AUTOLITH_SBCL) {
   if (-not $resolved) { Fail 'AUTOLITH_SBCL does not name an executable.' }
   if (-not (Test-RuntimeCompatible $resolved)) { Fail "AUTOLITH_SBCL does not satisfy SBCL $minimumVersion or newer." }
   $sbclCommand = $resolved
+} elseif (Test-RuntimeCompatible $managedSbcl) {
+  $sbclCommand = $managedSbcl
 } elseif (Test-Path -LiteralPath $runtimeCommandPath -PathType Leaf) {
   $recorded = (Get-Content -LiteralPath $runtimeCommandPath -TotalCount 1)
   if ($recorded) { $recorded = $recorded.Trim() }
@@ -148,7 +150,6 @@ if ($env:AUTOLITH_SBCL) {
     $sbclCommand = $recorded
   }
 }
-if (-not $sbclCommand -and (Test-RuntimeCompatible $managedSbcl)) { $sbclCommand = $managedSbcl }
 if (-not $sbclCommand) {
   $pathSbcl = Resolve-Command 'sbcl'
   if ($pathSbcl -and (Test-RuntimeCompatible $pathSbcl)) { $sbclCommand = $pathSbcl }

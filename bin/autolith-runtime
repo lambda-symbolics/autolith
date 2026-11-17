@@ -315,6 +315,8 @@ if [[ -n ${AUTOLITH_SBCL:-} ]]; then
     fail "AUTOLITH_SBCL does not name an executable."
   runtime_compatible "$sbcl_command" ||
     fail "AUTOLITH_SBCL does not satisfy SBCL $minimum_version or newer."
+elif runtime_compatible "$managed_sbcl"; then
+  sbcl_command=$managed_sbcl
 elif [[ -r "$runtime_command_path" ]]; then
   IFS= read -r recorded_command < "$runtime_command_path" || recorded_command=
   if [[ "$recorded_command" == /* ]] &&
@@ -323,9 +325,6 @@ elif [[ -r "$runtime_command_path" ]]; then
   fi
 fi
 
-if [[ -z "$sbcl_command" ]] && runtime_compatible "$managed_sbcl"; then
-  sbcl_command=$managed_sbcl
-fi
 if [[ -z "$sbcl_command" ]]; then
   path_sbcl=$(runtime_resolve_command sbcl 2>/dev/null || true)
   if [[ -n "$path_sbcl" ]] && runtime_compatible "$path_sbcl"; then

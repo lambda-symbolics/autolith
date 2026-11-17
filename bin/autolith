@@ -67,6 +67,7 @@ select_runtime_command()
 {
   local candidate=
   local recorded_runtime=
+  local bundled_version=
 
   if [[ -n "$configured_sbcl" ]]; then
     candidate=$(command -v -- "$configured_sbcl" 2>/dev/null) || candidate=
@@ -78,6 +79,15 @@ select_runtime_command()
     printf 'Configured SBCL runtime is unavailable: %s; selecting another runtime.\n' \
       "$configured_sbcl" >&2
     configured_sbcl=
+  fi
+  if [[ -r "$source_root/sbcl.version" ]]; then
+    bundled_version=$(< "$source_root/sbcl.version")
+    candidate=$data_home/autolith/runtimes/$bundled_version/installation/bin/sbcl
+    if [[ -n "$bundled_version" && -f "$candidate" && -x "$candidate" ]]; then
+      sbcl_command=$candidate
+      export AUTOLITH_SBCL=$sbcl_command
+      return 0
+    fi
   fi
   if [[ -r "$runtime_command_path" ]]; then
     IFS= read -r recorded_runtime < "$runtime_command_path" || recorded_runtime=

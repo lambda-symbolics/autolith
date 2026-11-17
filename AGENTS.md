@@ -404,12 +404,14 @@ Homebrew host SBCL.
 
 The minimum supported SBCL is 2.6.4, recorded in `sbcl-minimum.version`.
 The bundled release compiler is 2.6.6, recorded separately in `sbcl.version`.
+Set `AUTOLITH_SBCL` to use a specific runtime. Otherwise, an installed bundled
+runtime takes precedence over a compatible recorded runtime or one on `PATH`.
 
 On Windows x86-64, install Git for Windows, Rust with the MSVC toolchain and
 Cargo, `clang` on `PATH`, and Quicklisp under `%USERPROFILE%\quicklisp`, then
-run `script\bootstrap.ps1` from PowerShell. An SBCL 2.6.4 or newer on `PATH` is
-used when present; otherwise the bootstrap installs the official Windows binary
-pinned in `sbcl-windows-releases.sha256` below the data root. `script\check.ps1`
+run `script\bootstrap.ps1` from PowerShell. If no compatible runtime is available,
+the bootstrap installs the official Windows binary pinned in
+`sbcl-windows-releases.sha256` below the data root. `script\check.ps1`
 runs the checks and `bin\autolith.cmd` starts a session.
 
 Run the standalone Windows OpenSSL discovery fixtures without bootstrapping Lisp:

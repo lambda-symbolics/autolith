@@ -793,7 +793,7 @@ printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
     (release-script-tests--write-file recovery-source "")
     (release-script-tests--write-file
      (merge-pathnames "sbcl.version" fixture-root)
-     "2.6.6\n")
+     (format nil "2.6.6~%"))
     (release-script-tests--write-file
      (merge-pathnames "sbcl-minimum.version" fixture-root) "2.6.4")
     (release-script-tests--write-file
@@ -877,6 +877,74 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
          (= #o750 (test-fixture-file-mode
                    *platform* (merge-pathnames relative state-home)))
          "the launcher preserves modes on pre-existing state directories"))
+      (let* ((managed-runtime
+               (merge-pathnames "autolith/runtimes/2.6.6/installation/bin/sbcl" data-home))
+             (recorded-command (merge-pathnames "autolith/runtimes/command" data-home))
+             (recorded-runtime (merge-pathnames "recorded-sbcl" fixture-root))
+             (path-directory   (merge-pathnames "path/" fixture-root))
+             (path-runtime     (merge-pathnames "sbcl" path-directory)))
+        (labels ((install-runtime (pathname version)
+                   "Install a launcher fixture reporting VERSION and its selected pathname."
+                   (release-script-tests--write-file
+                    pathname
+                    (format nil
+                            "#!/bin/sh~%if [ \"${1-}\" = --version ]; then printf 'SBCL ~A\\n'; exit 0; fi~%printf 'SELECTED=%s\\n' \"$0\"~%exec ~A \"$@\"~%"
+                            version
+                            (test-fixture-shell-quote *platform* (namestring fake-sbcl))))
+                   (release-script-tests--chmod "755" pathname)))
+          (install-runtime recorded-runtime "2.6.4")
+          (install-runtime path-runtime "2.6.4")
+          (unwind-protect
+               (dolist (case '((t t t :recorded)
+                               (nil t t :managed)
+                               (nil t nil :managed)
+                               (nil nil t :recorded)
+                               (nil nil nil :path)
+                               (nil :nonexecutable t :recorded)))
+                 (destructuring-bind (explicit-p managed recorded-p expected) case
+                   (if managed
+                       (progn
+                         (install-runtime managed-runtime "2.6.6")
+                         (when (eq managed ':nonexecutable)
+                           (release-script-tests--chmod "644" managed-runtime)))
+                       (when (probe-file managed-runtime)
+                         (delete-file managed-runtime)))
+                   (if recorded-p
+                       (release-script-tests--write-file
+                        recorded-command (format nil "~A~%" (namestring recorded-runtime)))
+                       (when (probe-file recorded-command)
+                         (delete-file recorded-command)))
+                   (let* ((environment
+                            (cons
+                             (format nil "PATH=~A:~A" (namestring path-directory)
+                                     (or (uiop:getenv "PATH") ""))
+                             (substitute
+                              (format nil "AUTOLITH_SBCL=~A"
+                                      (if explicit-p (namestring recorded-runtime) ""))
+                              (format nil "AUTOLITH_SBCL=~A" (namestring fake-sbcl))
+                              environment :test #'equal)))
+                          (selected
+                            (ecase expected
+                              (:managed
+                               managed-runtime)
+                              (:recorded
+                               recorded-runtime)
+                              (:path
+                               path-runtime)))
+                          (output (release-script-tests--run
+                                   (list (namestring launcher) "--from-source")
+                                   :environment environment)))
+                    (test-assert
+                     (let ((line (find-if (lambda (line) (uiop:string-prefix-p "SELECTED=" line))
+                                          (uiop:split-string output :separator '(#\Newline)))))
+                       (and line
+                            (equal (platform-truename *platform* selected)
+                                   (platform-truename *platform*
+                                                      (platform-pathname (subseq line (length "SELECTED=")))))))
+                     (format nil "source launcher runtime choice ~S selects ~A: ~A" case selected output)))))
+            (dolist (pathname (list managed-runtime recorded-command recorded-runtime path-runtime))
+              (when (probe-file pathname)
+                (delete-file pathname))))))
       (let* ((recorded-command
                (merge-pathnames "autolith/runtimes/command" data-home))
              (missing-runtime       (merge-pathnames "missing-sbcl" fixture-root))
@@ -2420,7 +2488,8 @@ esac
                                 (namestring tools-directory)
                                 (or (uiop:getenv "PATH") ""))
                         (format nil "XDG_DATA_HOME=~A" (namestring data-home))
-                        (format nil "AUTOLITH_SBCL=~A" (namestring runtime))
+                        (format nil "AUTOLITH_SBCL=~A"
+                                (if runtime (namestring runtime) ""))
                         (format nil "AUTOLITH_SBCL_SOURCE_ROOT=~A"
                                 (or inherited-source ""))
                         (format nil "AUTOLITH_TEST_SHA256=~A" sha256))
@@ -2432,6 +2501,59 @@ esac
             (run-adapter (fake-runtime version))
           (test-assert (and (zerop status) (search "ADAPTER-SCRIPT" output))
                        (format nil "the adapter accepts supported runtime ~A" version))))
+      (let* ((runtime-four     (fake-runtime "2.6.4"))
+             (runtime-six      (fake-runtime "2.6.6"))
+             (managed-runtime
+               (merge-pathnames "autolith/runtimes/2.6.6/installation/bin/sbcl" data-home))
+             (recorded-command (merge-pathnames "autolith/runtimes/command" data-home))
+             (path-runtime     (merge-pathnames "sbcl" tools-directory)))
+        (uiop:copy-file runtime-four path-runtime)
+        (release-script-tests--chmod "755" path-runtime)
+        (unwind-protect
+             (dolist (case '((t t t nil :recorded)
+                             (nil t t nil :managed)
+                             (nil t nil nil :managed)
+                             (nil nil t nil :recorded)
+                             (nil nil nil nil :path)
+                             (nil nil nil t :path)
+                             (nil :nonexecutable t nil :recorded)))
+               (destructuring-bind (explicit-p managed recorded-p install-p expected) case
+                 (if managed
+                     (progn
+                       (ensure-directories-exist managed-runtime)
+                       (uiop:copy-file runtime-six managed-runtime)
+                       (release-script-tests--chmod
+                        (if (eq managed ':nonexecutable) "644" "755") managed-runtime))
+                     (when (probe-file managed-runtime)
+                       (delete-file managed-runtime)))
+                 (if recorded-p
+                     (release-script-tests--write-file
+                      recorded-command (format nil "~A~%" (namestring runtime-four)))
+                     (when (probe-file recorded-command)
+                       (delete-file recorded-command)))
+                 (multiple-value-bind (output status)
+                     (run-adapter (and explicit-p runtime-four) :install-p install-p)
+                   (let ((selected (ecase expected
+                                     (:managed
+                                      managed-runtime)
+                                     (:recorded
+                                      runtime-four)
+                                     (:path
+                                      path-runtime))))
+                     (test-assert
+                      (and (zerop status)
+                           (search "ADAPTER-SCRIPT" output)
+                           (equal (platform-truename *platform* selected)
+                                  (platform-truename
+                                   *platform*
+                                   (platform-pathname
+                                    (string-trim '(#\Newline #\Return)
+                                                 (uiop:read-file-string recorded-command))))))
+                      (format nil "adapter runtime choice ~S selects ~A, recorded ~A: ~A"
+                              case selected (uiop:read-file-string recorded-command) output))))))
+          (dolist (pathname (list managed-runtime recorded-command path-runtime))
+            (when (probe-file pathname)
+              (delete-file pathname)))))
       (multiple-value-bind (output status)
           (run-adapter (fake-runtime "2.6.7"))
         (test-assert (zerop status)

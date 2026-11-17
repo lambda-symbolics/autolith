@@ -749,6 +749,8 @@ release metadata after the host checksum is available. See
 
 Use SBCL 2.6.4 or newer, the minimum recorded in =sbcl-minimum.version=.
 The bundled release compiler is SBCL 2.6.6, recorded in =sbcl.version=.
+Set =AUTOLITH_SBCL= to use a specific runtime. Otherwise, an installed bundled
+runtime takes precedence over a compatible recorded runtime or one on =PATH=.
 
 For a fresh macOS machine:
 
@@ -811,10 +813,10 @@ launch builds per-user cores under =.autolith-images= beside the release.
 
 To build the source checkout, install Git for Windows, Rust with the MSVC toolchain
 and Cargo, and Quicklisp under =%USERPROFILE%\quicklisp=. Put =clang= on
-=PATH= for the ColorLisp syntax library. An SBCL 2.6.4 or newer on =PATH= is
-used when present; otherwise the bootstrap downloads the official SBCL Windows
-binary pinned in =sbcl-windows-releases.sha256=, verifies its SHA-256, and
-unpacks it below the data root without registering it with Windows. OpenSSL 3
+=PATH= for the ColorLisp syntax library. If no compatible runtime is available,
+bootstrap downloads the official SBCL Windows binary pinned in
+=sbcl-windows-releases.sha256=, verifies its SHA-256, and unpacks it below the
+data root without registering it with Windows. OpenSSL 3
 comes from Git for Windows, from =AUTOLITH_OPENSSL_DIRECTORY=, or from a
 =native\openssl= directory beside the sources.
 
