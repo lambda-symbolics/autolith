@@ -1117,21 +1117,30 @@ The caller must hold CONTROLLER's publication lock."
 (defun application-input-controller--record-failure
     (controller condition backtrace)
   "Record reader CONDITION, preserve pending input, and wake the main thread."
-  (let ((active-p  nil)
-        (persist-p nil))
+  (let ((active-p            nil)
+        (pending-publication nil))
     (with-lock-held ((application-input-controller-lock controller))
       (unless (application-input-controller-failure controller)
         (setf (application-input-controller-failure controller) condition
               (application-input-controller-failure-backtrace controller) backtrace
               (application-input-controller-stopping-p controller) t
-              persist-p t))
+              pending-publication
+              (handler-case
+                  (application-input-controller--capture-pending-publication-locked
+                   controller
+                   (application-input-controller--next-publication-generation-locked controller)
+                   t)
+                (error () nil))))
       (setf active-p (application-input-controller-active-p controller))
       (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
-    (when persist-p
-      ;; A reader failure is a fatal process failure. Publish every accepted input
-      ;; before later stopping-state publishers begin skipping persistence.
-      (application-input-controller--persist-pending controller))
+    (when pending-publication
+      ;; Teardown may clear the queues as soon as it sees the failure. Publish
+      ;; the detached state captured before waking it, never a later empty queue.
+      (handler-case
+          (application-input-controller--publish-pending-publication
+           controller pending-publication nil)
+        (error () nil)))
     (application-input-controller--publish-counts controller)
     (when active-p
       (handler-case

@@ -1805,6 +1805,7 @@
   test-tool-execution-handoff-presentation
   test-recovery-cursor-normalization
   test-fatal-boundaries-keep-backtraces
+  test-reader-failure-preserves-pending-during-stop
   test-repl-transcript-style
   test-activity-line-setting
   test-recovery-diagnosis-prompt
