@@ -3502,6 +3502,56 @@
         (terminal-ui-stop (application-ui application)))))
   nil)
 
+(-> test-reader-failure-preserves-pending-during-stop () null)
+(defun test-reader-failure-preserves-pending-during-stop ()
+  "Retain accepted input when teardown overtakes fatal pending publication."
+  (with-test-configuration (configuration)
+    (let* ((application (mission-test--application configuration))
+           (controller  (make-instance 'application-input-controller
+                                       :application application :main-thread (current-thread)))
+           (persist     (symbol-function 'application-input-controller--persist-pending))
+           (publish     (symbol-function 'application-input-controller--publish-pending-publication))
+           (stopped-p   nil))
+      (setf (application-input-controller application) controller)
+      (unwind-protect
+           (progn
+             (test-assert
+              (and (application-input-controller--enqueue controller ':message "accepted before failure")
+                   (application-input-controller--enqueue controller ':command "help"))
+              "the controller accepts both pending inputs before failure")
+             (flet ((stop-before-publication ()
+                      "Run real teardown once before the fatal publication reaches storage."
+                      (unless stopped-p
+                        (setf stopped-p t)
+                        (application-input-controller-stop controller))))
+               (test-call-with-function-replacements
+                (list
+                 (list 'application-input-controller--persist-pending
+                       (lambda (target &key (error-p nil) (sync-vault-p t))
+                         (stop-before-publication)
+                         (funcall persist target :error-p error-p :sync-vault-p sync-vault-p)))
+                 (list 'application-input-controller--publish-pending-publication
+                       (lambda (target publication error-p)
+                         (stop-before-publication)
+                         (funcall publish target publication error-p))))
+                (lambda ()
+                  (application-input-controller--record-failure
+                   controller (make-condition 'simple-error :format-control "Injected reader failure.")
+                   (list "READER-FRAME")))))
+             (test-assert (and stopped-p
+                               (null (application-input-controller--state controller :work-items)))
+                          "teardown clears the live queue before fatal publication completes")
+             (let ((restored (make-instance 'application-input-controller
+                                            :application application :main-thread (current-thread))))
+               (application-input-controller--load-pending restored)
+               (test-assert
+                (equal (application-input-controller--state restored :work-items)
+                       '((:message "accepted before failure") (:command "help")))
+                "fatal publication retains the accepted FIFO after teardown clears memory")))
+        (setf (application-input-controller application) nil)
+        (terminal-ui-stop (application-ui application)))))
+  nil)
+
 (-> test-repl-transcript-style () null)
 (defun test-repl-transcript-style ()
   "Test messages open with REPL markers and timestamps above in the REPL style."
