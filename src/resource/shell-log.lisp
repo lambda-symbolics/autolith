@@ -73,27 +73,28 @@ A descendant cannot inspect its ancestor's or a sibling's captures."
                                 (conversation-identifier (tool-context-conversation context)))))
           (unless (equal root viewer-root)
             (error 'resource-access-denied :uri uri :operation ':read))))
-      (let* ((directory     (merge-pathnames
-                             (format nil "~A/shell-log/~A/" execution artifact)
-                             (task--artifact-group-root configuration root)))
-             (manifest-path (shell-log--manifest-path directory))
-             (metadata
-               (progn
-                 (shell-log--safe-path configuration directory)
-                 (if (probe-file manifest-path)
-                     (shell-log--read-manifest configuration directory :measure-p nil)
-                     (list :root-conversation root :execution-id execution
-                           :artifact-id artifact :state ':missing)))))
-        (unless (and (equal root (getf metadata :root-conversation))
-                     (equal execution (getf metadata :execution-id))
-                     (equal artifact (getf metadata :artifact-id))
-                     (shell-log--authorized-p metadata context))
-          (error 'resource-access-denied :uri uri :operation ':read))
-        (unless (eq (getf metadata :state) ':missing)
-          (shell-log--measure-captures configuration directory metadata))
-        (make-instance 'shell-log-resource :uri uri :directory directory
-                       :metadata metadata
-                       :stream   (if (string= stream "output") ':output ':error))))))
+      (with-shell-log-lock (configuration)
+        (let* ((directory     (merge-pathnames
+                               (format nil "~A/shell-log/~A/" execution artifact)
+                               (task--artifact-group-root configuration root)))
+               (manifest-path (shell-log--manifest-path directory))
+               (metadata
+                 (progn
+                   (shell-log--safe-path configuration directory)
+                   (if (probe-file manifest-path)
+                       (shell-log--read-manifest configuration directory :measure-p nil)
+                       (list :root-conversation root :execution-id execution
+                             :artifact-id artifact :state ':missing)))))
+          (unless (and (equal root (getf metadata :root-conversation))
+                       (equal execution (getf metadata :execution-id))
+                       (equal artifact (getf metadata :artifact-id))
+                       (shell-log--authorized-p metadata context))
+            (error 'resource-access-denied :uri uri :operation ':read))
+          (unless (eq (getf metadata :state) ':missing)
+            (setf metadata (shell-log--read-manifest configuration directory)))
+          (make-instance 'shell-log-resource :uri uri :directory directory
+                         :metadata metadata
+                         :stream   (if (string= stream "output") ':output ':error)))))))
 
 (defmethod resource-capabilities ((resource shell-log-resource) (context tool-context))
   "Expose only authorized bounded reads."

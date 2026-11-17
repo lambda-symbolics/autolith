@@ -1264,11 +1264,13 @@ worker results become explicit unknown outcomes so provider history stays valid.
   (let ((skill-logical-turn-state   *skill-logical-turn-state*)
         (worker-host-tool-policy    (copy-tree *worker-host-tool-policy*))
         (telemetry-run              *telemetry-run*)
+        (shell-log-publications     *shell-log-publications*)
         (mission-admitted-operation *mission-admitted-operation*))
     (lambda ()
       (let ((*skill-logical-turn-state*   skill-logical-turn-state)
             (*worker-host-tool-policy*    worker-host-tool-policy)
             (*telemetry-run*              telemetry-run)
+            (*shell-log-publications*     shell-log-publications)
             (*mission-admitted-operation* mission-admitted-operation))
         (funcall function)))))
 
@@ -1342,7 +1344,19 @@ worker results become explicit unknown outcomes so provider history stays valid.
     (agent list &key (:observer agent-observer) (:tool-round integer)
                      (:tool-restriction-p boolean))
     null)
-(defun agent--run-tool-wave
+(defun agent--run-tool-wave (agent plans &key observer tool-round tool-restriction-p)
+  "Retain output until all wave results have durable conversation records."
+  (shell-log-call-with-publication
+   (agent-configuration agent)
+   (lambda ()
+     (agent--run-tool-wave-body agent plans :observer observer :tool-round tool-round
+                                           :tool-restriction-p tool-restriction-p))))
+
+(-> agent--run-tool-wave-body
+    (agent list &key (:observer agent-observer) (:tool-round integer)
+                     (:tool-restriction-p boolean))
+    null)
+(defun agent--run-tool-wave-body
     (agent plans &key observer tool-round tool-restriction-p)
   "Execute independent PLANS concurrently and complete them in wire order."
   (dolist (plan plans)

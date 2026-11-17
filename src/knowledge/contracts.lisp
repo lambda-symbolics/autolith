@@ -434,7 +434,10 @@ never change the external action's outcome and never disappear silently."
                      (push (knowledge-assert
                             configuration pattern
                             :evidence (knowledge-observe
-                                       :source  source
+                                       :source  (append source
+                                                        (list :shell-logs
+                                                              (shell-log-result-evidence-references
+                                                               configuration result)))
                                        :digest  (memory-source-text-digest (tool-result-content result))
                                        :excerpt (tool-result-content result)
                                        :adapter (format nil "contract/~A/~(~A~)" identifier basis))

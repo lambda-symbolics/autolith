@@ -133,44 +133,46 @@ resolves to TOOL. Without a registry, match only the canonical name."
   "Execute TOOL with ARGUMENTS under CONTEXT, applying matching contracts.
 
 Match canonical names and unique display aliases through CONTEXT's registry."
-  (when (typep tool 'contracts-reset-tool)
-    (return-from tool-execute-with-contracts (tool-execute tool context arguments)))
-  (let* ((configuration (tool-context-configuration context))
-         (name          (tool-canonical-name tool))
-         (matches       (and configuration
-                             (knowledge-capture-p configuration)
-                             (handler-case (tool-contracts-for-call
-                                            configuration tool arguments
-                                            :registry (tool-context-registry context))
-                               (knowledge-error (condition)
-                                 (return-from tool-execute-with-contracts
-                                   (tool-failure
-                                    (format nil "Contract matching failed for ~A: ~A The call was not made."
-                                             name (autolith-error-message condition))
-                                    :code ':precondition-unknown)))))))
-    (if (null matches)
-        (tool-execute tool context arguments)
-        (multiple-value-bind (refusal admitted)
-            (knowledge-contract-refusal configuration matches)
-          (if (and refusal (knowledge-active-p configuration))
-              (tool-failure refusal :code ':precondition-unmet)
-              (let ((result (tool-execute tool context arguments)))
-                (if (or (not (tool-result-success-p result))
-                        (tool-result-handed-off-p result))
-                    result
-                    (multiple-value-bind (claims errors)
-                        (knowledge-contract-record
-                         configuration (or admitted matches)
-                         :arguments    arguments
-                         :result       result
-                         :tool         name
-                         :conversation (and (tool-context-conversation context)
-                                            (conversation-identifier
-                                             (tool-context-conversation context))))
-                      (declare (ignore claims))
-                      (if errors
-                          (tool-contract--recording-result result errors)
-                          result)))))))))
+  (shell-log-call-with-publication (tool-context-configuration context)
+   (lambda ()
+    (when (typep tool 'contracts-reset-tool)
+      (return-from tool-execute-with-contracts (tool-execute tool context arguments)))
+    (let* ((configuration (tool-context-configuration context))
+           (name          (tool-canonical-name tool))
+           (matches       (and configuration
+                               (knowledge-capture-p configuration)
+                               (handler-case (tool-contracts-for-call
+                                              configuration tool arguments
+                                              :registry (tool-context-registry context))
+                                 (knowledge-error (condition)
+                                   (return-from tool-execute-with-contracts
+                                     (tool-failure
+                                      (format nil "Contract matching failed for ~A: ~A The call was not made."
+                                               name (autolith-error-message condition))
+                                      :code ':precondition-unknown)))))))
+      (if (null matches)
+          (tool-execute tool context arguments)
+          (multiple-value-bind (refusal admitted)
+              (knowledge-contract-refusal configuration matches)
+            (if (and refusal (knowledge-active-p configuration))
+                (tool-failure refusal :code ':precondition-unmet)
+                (let ((result (tool-execute tool context arguments)))
+                  (if (or (not (tool-result-success-p result))
+                          (tool-result-handed-off-p result))
+                      result
+                      (multiple-value-bind (claims errors)
+                          (knowledge-contract-record
+                           configuration (or admitted matches)
+                           :arguments    arguments
+                           :result       result
+                           :tool         name
+                           :conversation (and (tool-context-conversation context)
+                                              (conversation-identifier
+                                               (tool-context-conversation context))))
+                        (declare (ignore claims))
+                        (if errors
+                            (tool-contract--recording-result result errors)
+                            result)))))))))))
 
 (defmethod tool-execute ((tool contracts-reset-tool) context arguments)
   "Abandon contract and diagnosis state without reading it through the reducer."

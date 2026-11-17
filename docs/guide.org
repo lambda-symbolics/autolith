@@ -3456,18 +3456,24 @@ References are included in job inspection, durable tool-result metadata and
 completion notices. Reopen them after restart or compaction without executing
 the command again. Missing, interrupted and pruned captures return diagnostics.
 
-The defaults are 64 MiB per stream, 1 GiB of reserved capture capacity and 256
-retained artifacts. Eligible completed captures can be pruned at the next
-allocation, either after seven days or under capacity pressure. Active captures
-and undelivered completion evidence are protected.
+The defaults are 64 MiB per stream and a 1 GiB aggregate byte budget. Live captures
+reserve their maximum capacity; finished or confirmed abandoned captures count by
+measured bytes. Eligible captures can be pruned at the next allocation after seven
+days or under byte pressure.
+
+Live writers, pending publication and admitted undelivered job completions protect
+their captures. Complete artifacts also receive protection while their exact tool
+or file observations support unretracted, unexpired structured facts in any
+workspace, including future-valid supports. Retraction, replacement or expiry of
+the last support releases that protection.
 
 If delivery is observed before child artifact retention, the observation is
 recorded on each capture. This allows normal pruning after the owner's
 conversation storage is removed.
 
-Adjust =*shell-log-capture-byte-limit*=, =*shell-log-retention-byte-limit*=,
-=*shell-log-retention-count-limit*= and =*shell-log-retention-age*= in trusted
-configuration. Captures that exceed their limit are explicitly marked incomplete.
+Adjust =*shell-log-capture-byte-limit*=, =*shell-log-retention-byte-limit*= and
+=*shell-log-retention-age*= in trusted configuration. Captures that exceed their
+stream limit are explicitly marked incomplete.
 
 Session export collects task metadata independently of local log storage.
 

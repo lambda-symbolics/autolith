@@ -548,48 +548,62 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
       (when (or (job-cancellation-requested-p parent-job)
                 (job-terminal-p parent-job))
         (task-orchestrator--refuse-cancelled-parent parent-job))))
-  (let* ((session-order
+  (let* ((publications *shell-log-publications*)
+         (publication  nil)
+         (session-order
            (first (task-orchestrator-reserve-session-orders orchestrator 1)))
-         (identifier (format nil "exec:~D" session-order))
+         (identifier   (format nil "exec:~D" session-order))
          (entry
           (list :function    (lambda (job)
-                               (task-continuity-record-job job parent-agent)
-                               (tool-execution-job--run job))
+                               (let ((*shell-log-publications*
+                                       (cons (setf publication
+                                                   (make-instance 'shell-log-publication
+                                                                  :configuration (agent-configuration parent-agent)))
+                                             publications)))
+                                 (task-continuity-record-job job parent-agent)
+                                 (tool-execution-job--run job)))
                  :terminal-result-function
                  (lambda (job state result report)
-                   (multiple-value-bind (record final-report final-state)
-                       (funcall terminal-result-function job state result report)
-                     (when (and (typep result 'tool-result)
-                                (null (getf record :details)))
-                       (setf (getf record :details) (tool-result-details result)))
-                     (setf (getf record :details)
-                           (conversation--bounded-tool-details (getf record :details)))
-                     (let* ((metadata (shell-log-job-metadata
-                                       (agent-configuration parent-agent) job))
-                            (details  (getf record :details))
-                            (properties-p
-                              (and (proper-list-p details)
-                                   (evenp (length details))
-                                   (every #'keywordp (plist-keys details))))
-                            (logs     (or (and properties-p (getf details :shell-logs))
-                                          (getf metadata :shell-logs))))
-                       ;; A final result can be stronger evidence than an unwritten
-                       ;; manifest after disk failure. Use storage on abort/no result.
-                       (when logs
-                         (setf (getf record :shell-logs) logs
-                               (getf record :shell-logs-omitted)
-                               (getf metadata :shell-logs-omitted 0)
-                               (getf record :details)
-                               (if properties-p
-                                   (let ((updated (copy-list details)))
-                                     (setf (getf updated :shell-logs) logs)
-                                     updated)
-                                   (list :shell-logs logs :tool-details details)))))
-                     (setf (getf record :details)
-                           (conversation--bounded-tool-details (getf record :details)))
-                     (task-continuity-record-terminal job parent-agent record
-                                                      :state final-state)
-                     (values record final-report final-state)))
+                   (let ((completed-p nil))
+                     (unwind-protect
+                          (multiple-value-bind (record final-report final-state)
+                              (funcall terminal-result-function job state result report)
+                            (when (and (typep result 'tool-result)
+                                       (null (getf record :details)))
+                              (setf (getf record :details) (tool-result-details result)))
+                            (setf (getf record :details)
+                                  (conversation--bounded-tool-details (getf record :details)))
+                            (let* ((metadata (shell-log-job-metadata
+                                              (agent-configuration parent-agent) job))
+                                   (details  (getf record :details))
+                                   (properties-p
+                                     (and (proper-list-p details)
+                                          (evenp (length details))
+                                          (every #'keywordp (plist-keys details))))
+                                   (logs     (or (and properties-p (getf details :shell-logs))
+                                                 (getf metadata :shell-logs))))
+                              ;; A final result can be stronger evidence than an unwritten
+                              ;; manifest after disk failure. Use storage on abort/no result.
+                              (when logs
+                                (setf (getf record :shell-logs) logs
+                                      (getf record :shell-logs-omitted)
+                                      (getf metadata :shell-logs-omitted 0)
+                                      (getf record :details)
+                                      (if properties-p
+                                          (let ((updated (copy-list details)))
+                                            (setf (getf updated :shell-logs) logs)
+                                            updated)
+                                          (list :shell-logs logs :tool-details details)))))
+                            (setf (getf record :details)
+                                  (conversation--bounded-tool-details (getf record :details)))
+                            (task-continuity-record-terminal job parent-agent record
+                                                             :state final-state)
+                            (setf completed-p t)
+                            (values record final-report final-state))
+                       (if completed-p
+                           (shell-log--finish-publication publication)
+                           ; mallet:suppress no-ignore-errors -- preserve failed terminal publication
+                           (ignore-errors (shell-log--finish-publication publication))))))
                  :parent-job (if (typep parent-agent 'task-child-agent)
                                  (task-child-agent-job parent-agent)
                                  cl-jobpond::*current-job*)

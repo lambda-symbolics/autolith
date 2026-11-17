@@ -96,66 +96,72 @@
        cancel-function result-function)
   "Run one authorized command after allocating its private execution-owned capture.
 
-Allocate the capture with interrupts enabled. Transfer ownership at publication,
-so cleanup can release every published capture."
-  (let ((job      *tool-execution-current-job*)
-        (artifact nil))
-    (unwind-protect
-         (progn
-           (shell-log-allocate context :job job :merge-output-p merge-output-p
-                                       :receive (lambda (allocated) (setf artifact allocated)))
-           (let* ((diagnostic nil)
-                  (result
-                    (handler-case
-                        (destructuring-bind (program &rest arguments)
-                            (platform-shell-command-line *platform* command)
-                          (run-sandboxed
-                           program arguments
-                           :policy policy :working-directory directory :environment environment
-                           :timeout timeout :merge-output-p merge-output-p
-                           :output-limit 0 :error-output-limit 0
-                           :capture-directory  (shell-log-capture-directory artifact)
-                           :retain-output-p    t
-                           :capture-byte-limit (shell-log-capture-byte-limit artifact)
-                           :cancel-function
-                           (when (or job cancel-function)
-                             (lambda ()
-                               (or (and job (job-cancellation-requested-p job))
-                                   (and cancel-function (funcall cancel-function)))))
-                           :capture-created-function
-                           (lambda (capture-result)
-                             (shell-log-record-capture artifact capture-result :closed-p nil))
-                           :capture-function
-                           (lambda (capture-result)
-                             (handler-case
-                                 (shell-log-record-capture artifact capture-result)
-                               (error (condition)
-                                 (setf diagnostic
-                                       (bounded-string (princ-to-string condition) :limit 500)))))))
-                      (cl-exec-sandbox:sandbox-process-cleanup-error (condition)
-                        (unless job
-                          (error condition))
-                        (tool-execution-job-await-native-cleanup job condition)
-                        (setf diagnostic (bounded-string (princ-to-string condition) :limit 500))
-                        (or (cl-exec-sandbox:sandbox-execution-error-result condition)
-                            (return-from workspace-tool-run-shell-command
-                              (tool-failure diagnostic))))
-                      (cl-exec-sandbox:sandbox-execution-error (condition)
-                        (setf diagnostic (bounded-string (princ-to-string condition) :limit 500))
-                        (or (cl-exec-sandbox:sandbox-execution-error-result condition)
-                            (return-from workspace-tool-run-shell-command
-                              (tool-failure diagnostic)))))))
-            (when result-function (funcall result-function result))
-            (shell-command-result
-             (shell-output--render-result result artifact output-limit :diagnostic diagnostic)
-             (list :exit-code          (sandbox-result-exit-code result)
-                   :execution-status   (cl-exec-sandbox:sandbox-result-status result)
-                   :shell-logs         (list (shell-log--public-metadata
-                                              (shell-log-artifact-metadata artifact)))
-                   :capture-diagnostic diagnostic)
-             (and (null diagnostic)
-                  (eql (sandbox-result-exit-code result) 0)
-                  (eq (cl-exec-sandbox:sandbox-result-status result) ':exited)))))
-      (when artifact
-        ; mallet:suppress no-ignore-errors -- releasing the log must not mask the command result or failure
-        (ignore-errors (shell-log-release-artifact artifact))))))
+Keep publication ownership through preview construction and native cleanup."
+  (shell-log-call-with-publication (tool-context-configuration context)
+   (lambda ()
+    (let ((job      *tool-execution-current-job*)
+          (artifact nil))
+      (unwind-protect
+           (progn
+             (shell-log-allocate context :job job :merge-output-p merge-output-p
+                                         :receive (lambda (allocated) (setf artifact allocated)))
+             (let* ((diagnostic nil)
+                    (result
+                      (handler-case
+                          (destructuring-bind (program &rest arguments)
+                              (platform-shell-command-line *platform* command)
+                            (run-sandboxed
+                             program arguments
+                             :policy policy :working-directory directory :environment environment
+                             :timeout timeout :merge-output-p merge-output-p
+                             :output-limit 0 :error-output-limit 0
+                             :capture-directory  (shell-log-capture-directory artifact)
+                             :retain-output-p    t
+                             :capture-byte-limit (shell-log-capture-byte-limit artifact)
+                             :cancel-function
+                             (when (or job cancel-function)
+                               (lambda ()
+                                 (or (and job (job-cancellation-requested-p job))
+                                     (and cancel-function (funcall cancel-function)))))
+                             :capture-created-function
+                             (lambda (capture-result)
+                               (shell-log-record-capture artifact capture-result :closed-p nil))
+                             :capture-function
+                             (lambda (capture-result)
+                               (handler-case
+                                   (shell-log-record-capture artifact capture-result)
+                                 (error (condition)
+                                   (setf diagnostic
+                                         (bounded-string (princ-to-string condition) :limit 500)))))))
+                        (cl-exec-sandbox:sandbox-process-cleanup-error (condition)
+                          (with-shell-log-lock ((shell-log-artifact-configuration artifact))
+                            (setf (shell-log-artifact-native-owners artifact)
+                                  (append (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-readers condition)
+                                          (when (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-thread condition)
+                                            (list (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-thread condition))))))
+                          (unless job
+                            (error condition))
+                          (tool-execution-job-await-native-cleanup job condition)
+                          (setf diagnostic (bounded-string (princ-to-string condition) :limit 500))
+                          (or (cl-exec-sandbox:sandbox-execution-error-result condition)
+                              (return-from workspace-tool-run-shell-command
+                                (tool-failure diagnostic))))
+                        (cl-exec-sandbox:sandbox-execution-error (condition)
+                          (setf diagnostic (bounded-string (princ-to-string condition) :limit 500))
+                          (or (cl-exec-sandbox:sandbox-execution-error-result condition)
+                              (return-from workspace-tool-run-shell-command
+                                (tool-failure diagnostic)))))))
+              (when result-function (funcall result-function result))
+              (shell-command-result
+               (shell-output--render-result result artifact output-limit :diagnostic diagnostic)
+               (list :exit-code          (sandbox-result-exit-code result)
+                     :execution-status   (cl-exec-sandbox:sandbox-result-status result)
+                     :shell-logs         (list (shell-log--public-metadata
+                                                (shell-log-artifact-metadata artifact)))
+                     :capture-diagnostic diagnostic)
+               (and (null diagnostic)
+                    (eql (sandbox-result-exit-code result) 0)
+                    (eq (cl-exec-sandbox:sandbox-result-status result) ':exited)))))
+        (when artifact
+          ; mallet:suppress no-ignore-errors -- releasing the log must not mask the command result or failure
+          (ignore-errors (shell-log-release-artifact artifact))))))))

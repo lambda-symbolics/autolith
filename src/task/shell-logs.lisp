@@ -8,9 +8,6 @@
 (defparameter *shell-log-retention-byte-limit* (* 1024 1024 1024)
   "Maximum reserved capture bytes across private artifacts.")
 
-(defparameter *shell-log-retention-count-limit* 256
-  "Maximum artifacts containing capture files.")
-
 (defparameter *shell-log-retention-age* (* 7 24 60 60)
   "Completed logs become age-eligible after this interval; prune on next allocation.")
 
@@ -41,6 +38,12 @@
         :documentation "Optional live job, used to capture final detachment state.")
    (capture-directory :initarg :capture-directory :reader shell-log-capture-directory
                       :documentation "Caller-owned private capture directory.")
+   (capture-owner :initform (current-thread) :accessor shell-log-artifact-capture-owner
+                  :documentation "Capture thread until native capture closure.")
+   (native-owners :initform nil :accessor shell-log-artifact-native-owners
+                  :documentation "Unfinished native cleanup and reader threads.")
+   (publications :initform nil :accessor shell-log-artifact-publications
+                 :documentation "Publication scopes registered before launch.")
    (metadata :initarg :metadata :accessor shell-log-artifact-metadata
              :documentation "Portable durable capture manifest."))
   (:documentation "One invocation's private raw captures and durable ownership."))
@@ -122,7 +125,11 @@
   (let ((entry (gethash (namestring directory) *shell-log-active*))
         (path  (merge-pathnames "owner.lock" directory)))
     (when entry
-      (if (and (consp entry) (thread-alive-p (first entry)) (lease-held-p (rest entry)))
+      (if (and (consp entry)
+               (if (typep (first entry) 'shell-log-artifact)
+                   (shell-log--artifact-owned-p (first entry))
+                   (thread-alive-p (first entry)))
+               (lease-held-p (rest entry)))
           (return-from shell-log--active-p t)
           (shell-log--release-owner directory)))
     (let ((status (platform-path-status *platform* path :follow-links-p nil)))
@@ -184,20 +191,31 @@
 
 (-> shell-log--read-manifest (configuration pathname &key (:measure-p boolean)) list)
 (defun shell-log--read-manifest (configuration directory &key (measure-p t))
-  "Read bounded ownership metadata; optionally reconcile safe capture file sizes.
+  "Read bounded ownership metadata without inspecting or changing live ownership.
+MEASURE-P requires the shell-log lock and reconciles ownership and capture sizes.
 Disable measurement until resource resolution has checked ancestor ownership."
   (let* ((path     (shell-log--safe-path configuration (shell-log--manifest-path directory)))
          (metadata (task-continuity--read path)))
-    (when (and (eq (getf metadata :state) ':active)
-               (not (shell-log--active-p directory)))
-      (setf (getf metadata :state) ':interrupted
-            (getf metadata :status) ':interrupted))
+    (let ((root      (getf metadata :root-conversation))
+          (execution (getf metadata :execution-id))
+          (artifact  (getf metadata :artifact-id)))
+      (unless (and (every #'shell-log--component-p (list root execution artifact))
+                   (uiop:pathname-equal
+                    directory
+                    (merge-pathnames (format nil "~A/shell-log/~A/" execution artifact)
+                                     (task--artifact-group-root configuration root))))
+        (shell-log--fail "Shell capture identity disagrees with its directory." directory)))
     (when measure-p
-      (setf (getf metadata :accounted-bytes)
-            (max (if (member (getf metadata :state) '(:closed :pruned))
-                     0
-                     (getf metadata :reserved-bytes 0))
-                 (shell-log--measure-captures configuration directory metadata))))
+      (let ((live-p (shell-log--active-p directory)))
+        (when (and (eq (getf metadata :state) ':active) (not live-p))
+          (setf (getf metadata :state) ':interrupted
+                (getf metadata :status) ':interrupted))
+        (setf (getf metadata :accounted-bytes)
+              (max (if (or (eq (getf metadata :state) ':pruned)
+                           (and (eq (getf metadata :state) ':closed) (not live-p)))
+                       0
+                       (getf metadata :reserved-bytes 0))
+                   (shell-log--measure-captures configuration directory metadata)))))
     metadata))
 
 (-> shell-log--write-manifest (shell-log-artifact) pathname)
@@ -575,13 +593,15 @@ Read one preserved receipt or the active segment, never the historical transcrip
 
 (-> shell-log--prunable-p (configuration pathname list) boolean)
 (defun shell-log--prunable-p (configuration directory metadata)
-  "Protect active captures and undelivered job completion evidence."
+  "Protect active I/O, publication, actual pending delivery and structured evidence."
+  (declare (special *shell-log-evidence-pins*))
   (and (not (shell-log--active-p directory))
        (not (eq (getf metadata :state) ':active))
-       (or (null (getf metadata :job-id))
-           (null (getf metadata :captures))
-           (shell-log--delivery-recorded-p metadata)
-           (shell-log--delivered-p configuration metadata))
+       (not (and *shell-log-evidence-pins*
+                 (gethash (namestring directory) *shell-log-evidence-pins*)))
+       (or (shell-log--delivery-recorded-p metadata)
+           (shell-log--delivered-p configuration metadata)
+           (not (shell-log--publication-pending-p configuration metadata)))
        t))
 
 (-> shell-log-persist-owner-delivery
@@ -697,9 +717,28 @@ never holds the artifact lock."
           (decf count)))))
   nil)
 
+(-> shell-log--reconcile-reservation (configuration pathname list) list)
+(defun shell-log--reconcile-reservation (configuration directory metadata)
+  "Charge measured bytes after an interrupted writer and its publication owner die.
+
+Capture directories have no resume operation. Recovery allocates a new execution;
+an existing writer or pending publication retains its original reservation."
+  (when (and (eq (getf metadata :state) ':interrupted)
+             (plusp (getf metadata :reserved-bytes 0))
+             (not (shell-log--active-p directory))
+             (not (shell-log--publication-pending-p configuration metadata)))
+    (setf (getf metadata :reserved-bytes) 0
+          (getf metadata :accounted-bytes)
+          (shell-log--measure-captures configuration directory metadata)
+          (getf metadata :reservation-reclaimed-at) (get-universal-time))
+    (shell-log--write-manifest
+     (make-instance 'shell-log-artifact :configuration configuration
+                    :capture-directory directory :metadata metadata)))
+  metadata)
+
 (-> shell-log--prune (configuration &key (:reservation integer)) null)
 (defun shell-log--prune (configuration &key (reservation 0))
-  "Reserve finite storage, pruning only closed receipt-backed captures.
+  "Reserve finite bytes under knowledge-before-shell locks and preserve exact pins.
 Keep manifests as tombstones so old references have truthful diagnostics."
   (let* ((*shell-log-receipt-cache*       (make-hash-table :test #'equal))
          (*shell-log-sync-evidence-cache* (make-hash-table :test #'equal))
@@ -707,16 +746,15 @@ Keep manifests as tombstones so old references have truthful diagnostics."
            (loop for directory in (shell-log--directories configuration)
                  for metadata = (shell-log--scan-manifest configuration directory)
                  when metadata
-                   collect (list directory metadata (getf metadata :accounted-bytes 0))))
+                   collect (let ((reconciled
+                                   (shell-log--reconcile-reservation configuration directory metadata)))
+                             (list directory reconciled (getf reconciled :accounted-bytes 0)))))
          (entries                         (loop for entry in inventory
-                                                unless (eq (getf (second entry) :state) ':pruned)
-                                                  collect entry))
-         (total                           (loop for entry in entries sum (third entry)))
-         (count                           (length entries)))
+                                                unless (eq (getf (second entry) :state) ':pruned) collect entry))
+         (total                           (loop for entry in entries sum (third entry))))
     (dolist (entry (sort entries #'< :key (lambda (entry) (getf (second entry) :created-at 0))))
       (destructuring-bind (directory metadata accounted-bytes) entry
         (when (and (or (> (+ total reservation) *shell-log-retention-byte-limit*)
-                       (>= count *shell-log-retention-count-limit*)
                        (> (- (get-universal-time) (getf metadata :created-at 0))
                           *shell-log-retention-age*))
                    (shell-log--prunable-p configuration directory metadata))
@@ -727,7 +765,6 @@ Keep manifests as tombstones so old references have truthful diagnostics."
                                             (merge-pathnames (getf capture :file) directory))))
               (when (probe-file path) (platform-delete-file *platform* path))))
           (decf total accounted-bytes)
-          (decf count)
           (setf (getf metadata :state) ':pruned
                 (getf metadata :pruned-at) (get-universal-time)
                 (second entry) metadata)
@@ -735,18 +772,16 @@ Keep manifests as tombstones so old references have truthful diagnostics."
            (make-instance 'shell-log-artifact :configuration configuration
                           :capture-directory directory :metadata metadata)))))
     (shell-log--trim-tombstones configuration inventory)
-    (when (or (> (+ total reservation) *shell-log-retention-byte-limit*)
-              (>= count *shell-log-retention-count-limit*))
+    (when (> (+ total reservation) *shell-log-retention-byte-limit*)
       (shell-log--fail "Private shell log storage is full; protected captures cannot be pruned.")))
   nil)
 
 (-> shell-log-prune (configuration) null)
 (defun shell-log-prune (configuration)
-  "Advance a bounded delivery-index batch, then prune under the artifact lock.
-Call without the shell-log lock; historical records are never read under it."
+  "Warm delivery indexes outside retention locks, then prune authoritative evidence."
   (shell-log--backfill-delivery configuration)
-  (with-shell-log-lock (configuration)
-    (shell-log--prune configuration)))
+  (shell-log-call-with-retention-lock configuration
+                                      (lambda () (shell-log--prune configuration))))
 
 (-> shell-log-allocate
     (tool-context &key (:job t) (:merge-output-p boolean) (:receive (option function)))
@@ -760,7 +795,8 @@ artifact with interrupts disabled at the instant it is published, so a caller
 that releases it from an UNWIND-PROTECT cleanup never misses a published
 capture."
   (shell-log--backfill-delivery (tool-context-configuration context))
-  (with-shell-log-lock ((tool-context-configuration context))
+  (shell-log-call-with-retention-lock (tool-context-configuration context)
+   (lambda ()
     (let* ((configuration        (tool-context-configuration context))
            (agent                (tool-context-agent context))
            (parent-job           (and (typep agent 'task-child-agent) (task-child-agent-job agent)))
@@ -814,10 +850,14 @@ capture."
                    (platform-make-private *platform* (merge-pathnames "owner.lock" directory))
                    (shell-log--write-manifest artifact)
                    (sb-sys:without-interrupts
-                     (setf (gethash (namestring directory) *shell-log-active*) (cons (current-thread) lease)
-                           published-p t)
-                     (when receive
-                       (funcall receive artifact)))
+                    (setf (shell-log-artifact-publications artifact)
+                          (remove-if-not #'shell-log--publication-live-p *shell-log-publications*))
+                    (dolist (publication (shell-log-artifact-publications artifact))
+                      (push artifact (shell-log-publication-artifacts publication)))
+                    (setf (gethash (namestring directory) *shell-log-active*) (cons artifact lease)
+                          published-p t)
+                    (when receive
+                      (funcall receive artifact)))
                    artifact))
              (shell-log-error (condition)
                (error condition))
@@ -831,7 +871,7 @@ capture."
             (sb-sys:without-interrupts
               ; mallet:suppress no-ignore-errors -- best-effort removal of an unpublished capture during unwinding
               (ignore-errors
-                (platform-delete-directory-tree *platform* directory :validate t)))))))))
+                (platform-delete-directory-tree *platform* directory :validate t))))))))))
 
 (-> shell-log--capture-metadata (shell-log-artifact t keyword) list)
 (defun shell-log--capture-metadata (artifact capture stream)
@@ -876,33 +916,31 @@ With CLOSED-P false, retain the active reservation and prevent pruning."
            (shell-log--write-manifest artifact)
            (copy-tree metadata))
       (when closed-p
-        (shell-log--release-owner (shell-log-capture-directory artifact))))))
+        (setf (shell-log-artifact-capture-owner artifact) nil)
+        (shell-log--release-unowned artifact)))))
 
 (-> shell-log-release-artifact (shell-log-artifact) null)
 (defun shell-log-release-artifact (artifact)
-  "Idempotently close an abandoned allocation without fabricating capture data.
-Always release the active pin, including when manifest publication fails. Callers
-handling another condition may ignore this logging failure to preserve that cause."
+  "Close abandoned capture data without changing an already closed outcome.
+Release only when native writers and all live publication boundaries finish."
   (with-shell-log-lock ((shell-log-artifact-configuration artifact))
-    (let ((directory (shell-log-capture-directory artifact)))
-      (when (or (gethash (namestring directory) *shell-log-active*)
-                (eq (getf (shell-log-artifact-metadata artifact) :state) ':active))
-        (unwind-protect
-             (let ((metadata (copy-tree (shell-log-artifact-metadata artifact))))
-               (setf (getf metadata :state) ':closed
-                     (getf metadata :status) ':interrupted
-                     (getf metadata :closed-at) (get-universal-time)
-                     (getf metadata :reserved-bytes) 0)
-               (setf (getf metadata :captures)
-                     (mapcar (lambda (capture)
-                               (setf (getf capture :complete-p) nil
-                                     (getf capture :observed-byte-count-known-p) nil
-                                     (getf capture :status) ':interrupted)
-                               capture)
-                             (getf metadata :captures)))
-               (setf (shell-log-artifact-metadata artifact) metadata)
-               (shell-log--write-manifest artifact))
-          (shell-log--release-owner directory)))))
+    (unwind-protect
+         (when (shell-log-artifact-capture-owner artifact)
+           (let ((metadata (copy-tree (shell-log-artifact-metadata artifact))))
+             (setf (getf metadata :state) ':closed
+                   (getf metadata :status) ':interrupted
+                   (getf metadata :closed-at) (get-universal-time))
+             (setf (getf metadata :captures)
+                   (mapcar (lambda (capture)
+                             (setf (getf capture :complete-p) nil
+                                   (getf capture :observed-byte-count-known-p) nil
+                                   (getf capture :status) ':interrupted)
+                             capture)
+                           (getf metadata :captures)))
+             (setf (shell-log-artifact-metadata artifact) metadata)
+             (shell-log--write-manifest artifact)))
+      (setf (shell-log-artifact-capture-owner artifact) nil)
+      (shell-log--release-unowned artifact)))
   nil)
 
 (-> shell-log--public-metadata (list) list)
@@ -963,14 +1001,14 @@ handling another condition may ignore this logging failure to preserve that caus
                        (task--artifact-group-root configuration
                                                   (session-job-root-conversation-identifier job))))
              (entries
-               (progn
-                 (shell-log--safe-path configuration root)
-                 (loop for directory in (when (uiop:directory-exists-p root)
-                                          (uiop:subdirectories root))
-                       collect (handler-case
-                                   (shell-log--public-metadata
-                                    (shell-log--read-manifest configuration directory))
-                                 (error () (shell-log--unavailable-metadata job directory))))))
+                (with-shell-log-lock (configuration)
+                  (shell-log--safe-path configuration root)
+                  (loop for directory in (when (uiop:directory-exists-p root)
+                                           (uiop:subdirectories root))
+                        collect (handler-case
+                                    (shell-log--public-metadata
+                                     (shell-log--read-manifest configuration directory))
+                                  (error () (shell-log--unavailable-metadata job directory))))))
              (ordered (sort entries #'> :key (lambda (entry) (or (getf entry :created-at) 0))))
              (count   (length ordered)))
         (list :shell-logs         (subseq ordered 0 (min 16 count))

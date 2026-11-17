@@ -277,6 +277,24 @@
   test-shell-log-cross-process-lifecycle
   test-shell-log-concurrent-allocation)
 
+(define-test-suite shell-log-evidence
+  test-shell-log-many-small-artifacts
+  test-shell-log-structured-evidence-pins
+  test-shell-log-evidence-expiry-and-replacement
+  test-shell-log-file-evidence-and-capacity
+  test-shell-log-reference-authority
+  test-shell-log-interrupted-reservations
+  test-shell-log-evidence-commit-prune-races
+  test-shell-log-closed-live-reservation
+  test-shell-log-managed-file-write-validation)
+
+(define-test-suite shell-log-legacy-evidence
+  test-shell-log-legacy-exact-provenance
+  test-shell-log-legacy-refusals
+  test-shell-log-legacy-cache-invalidation
+  test-shell-log-legacy-active-supports
+  test-shell-log-legacy-explicit-reuse)
+
 (define-test-suite shell-log-job
   test-shell-log-job-results
   test-shell-log-job-cancellation
@@ -284,6 +302,12 @@
   test-shell-log-durable-tool-details
   test-shell-log-publication-failures
   test-shell-log-command-gates)
+
+(define-test-suite shell-log-publication
+  test-shell-log-publication-owners
+  test-shell-log-publication-native-owners
+  test-shell-log-publication-boundaries
+  test-shell-log-publication-pending)
 
 (define-test-suite mission-schedule
   test-mission-schedule-paused-and-blocked-baseline

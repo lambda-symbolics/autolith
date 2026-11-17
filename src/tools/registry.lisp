@@ -1,5 +1,8 @@
 (in-package #:autolith)
 
+(defvar *shell-log-publications* nil
+  "Internal live publication scopes inherited by tool execution threads.")
+
 ;;;; -- Tool Metadata --
 
 (defclass tool ()

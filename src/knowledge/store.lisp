@@ -204,7 +204,8 @@ Without a configuration, as in standalone tool registries, knowledge is active."
              (:tool
               (and (non-empty-string-p (getf properties :name))
                    (optional-text-p :conversation 200)
-                   (optional-text-p :call 200)))
+                   (optional-text-p :call 200)
+                   (shell-log-evidence-references-p (getf properties :shell-logs))))
              (:memory
               (and (non-empty-string-p (getf properties :id))
                    (memory-source-digest-p (getf properties :digest))))
@@ -881,14 +882,46 @@ The returned base is shared; callers must not modify it."
   (values (knowledge--translate-store-errors
            (lambda () (knowledge--read-current configuration)))))
 
+(-> knowledge-call-with-locked-base (configuration function) t)
+(defun knowledge-call-with-locked-base (configuration function)
+  "Call FUNCTION with the current base while excluding knowledge writers.
+
+The image mutex precedes the process lock. Retention takes these locks before
+shell-log locks and holds them through its final evidence check and deletion."
+  (knowledge--translate-store-errors
+   (lambda ()
+     (with-recursive-lock-held (*knowledge-lock*)
+       (call-with-file-lock
+        (knowledge--lock-pathname configuration)
+        (lambda ()
+          (funcall function (knowledge--read-current configuration))))))))
+
+(define-condition knowledge-evidence-warm-required (knowledge-error)
+  ((base :initarg :base :reader knowledge-evidence-warm-required-base
+         :documentation "Immutable locked snapshot needing legacy attribution.")
+   (evidence :initarg :evidence :reader knowledge-evidence-warm-required-evidence
+             :documentation "Complete old-format evidence set required by the planned write."))
+  (:default-initargs          :code ':legacy-evidence-cache-cold
+                     :message "Legacy evidence attribution must be refreshed outside storage locks.")
+  (:documentation "Internal request to release write locks before bounded legacy attribution."))
+
 (-> knowledge-transact (configuration function) t)
 (defun knowledge-transact (configuration update)
-  "Apply UPDATE to the current knowledge base and append its records atomically.
+  "Apply UPDATE and append validated records atomically, returning its result.
 
-UPDATE receives the shared current base, which it must not modify, and
-returns RECORDS, RESULT, and WRITE-P. The records are validated and folded
-before anything is written; several records are appended as one transaction,
-so an interrupted write leaves none of them. Return RESULT."
+UPDATE plans RECORDS, RESULT, and WRITE-P from the shared base without mutating
+it. Replan after warming old evidence outside storage locks. Every final raw
+reference check and append excludes pruning through the knowledge locks."
+  (loop
+    (handler-case (return (knowledge--transact-locked configuration update))
+      (knowledge-evidence-warm-required (condition)
+        (shell-log-legacy-evidence-references
+         configuration (knowledge-evidence-warm-required-base condition)
+         :include-evidence (knowledge-evidence-warm-required-evidence condition))))))
+
+(-> knowledge--transact-locked (configuration function) t)
+(defun knowledge--transact-locked (configuration update)
+  "Plan, validate and append one write attempt while excluding retention."
   (let ((pathname (configuration-knowledge-path configuration)))
     (knowledge--translate-store-errors
      (lambda ()
@@ -909,6 +942,7 @@ so an interrupted write leaves none of them. Return RESULT."
                     (unless (knowledge--record-valid-p form)
                       (knowledge--fail ':invalid form "A knowledge record is malformed."))
                     (knowledge--reduce pathname (knowledge--copy-base base) form)
+                    (shell-log-validate-evidence-records configuration base records)
                     (sexp-store:log-append pathname form
                                            :initial-forms (list (knowledge--header))
                                            :repair-tail-p nil)))
@@ -1079,6 +1113,9 @@ predicate is refused, because those claims would no longer fit."
 
 The identifier depends on the source, digest, adapter, and workspace, so the
 same observation recorded twice is one piece of evidence."
+  (when (and (eq (first source) :tool)
+             (not (get-properties (rest source) '(:shell-logs))))
+    (setf source (append source (list :shell-logs nil))))
   (let ((record (list :evidence
                       :version *knowledge-format-version*
                       :id          (knowledge-digest-identifier

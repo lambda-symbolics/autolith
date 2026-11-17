@@ -286,9 +286,12 @@
               (progn
                 (setf (symbol-function 'shell-log--write-manifest)
                       (lambda (artifact)
-                        (setf directory (shell-log-capture-directory artifact))
                         (funcall writer artifact)
-                        (shell-log--fail "Injected failure after initial publication.")))
+                        (let ((metadata (shell-log-artifact-metadata artifact)))
+                          (when (and (eq (getf metadata :state) ':active)
+                                     (null (getf metadata :captures)))
+                            (setf directory (shell-log-capture-directory artifact))
+                            (shell-log--fail "Injected failure after initial publication.")))))
                 (test-assert (handler-case (progn (shell-log-allocate context) nil)
                                (shell-log-error () t))
                              "An initial publication failure refuses launch"))
@@ -302,15 +305,14 @@
 (defun test-shell-log-command-gates ()
   "Persist command-gate capture metadata and acknowledge successful or failed evidence."
   (with-test-configuration (configuration root)
-    (let* ((*shell-log-active*                (make-hash-table :test #'equal))
-           (*shell-log-capture-byte-limit*    32)
-           (*shell-log-retention-byte-limit*  32)
-           (*shell-log-retention-count-limit* 1)
-           (configuration                     (configuration-copy configuration :working-directory root))
-           (application                       (mission-test--application configuration))
-           (registry                          (task-augment-tool-registry (application-tool-registry application)))
-           (orchestrator                      (task-run-tool-orchestrator
-                                               (tool-registry-find registry "child" "spawn"))))
+    (let* ((*shell-log-active*               (make-hash-table :test #'equal))
+           (*shell-log-capture-byte-limit*   32)
+           (*shell-log-retention-byte-limit* 32)
+           (configuration                    (configuration-copy configuration :working-directory root))
+           (application                      (mission-test--application configuration))
+           (registry                         (task-augment-tool-registry (application-tool-registry application)))
+           (orchestrator                     (task-run-tool-orchestrator
+                                              (tool-registry-find registry "child" "spawn"))))
       (unwind-protect
            (dolist (exit-code '(0 7))
              (application-mission-start
