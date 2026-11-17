@@ -1531,9 +1531,12 @@
                     (make-instance 'recording-terminal :columns 80) ':control
                     :socket socket)
                  (sb-bsd-sockets:socket-close socket))))
-         (test-assert
-          (equal result (when (eq (first packet) ':exit) (rest packet)))
-          "EOF, detach, revocation and application exit end reception directly")
+          (test-assert
+           (if packet
+               (equal result (when (eq (first packet) ':exit) (rest packet)))
+               (and (eq (first result) ':attachment-lost)
+                    (eq (getf (rest result) :kind) ':unexpected-eof)))
+           "EOF reports attachment loss; detach, revocation and application exit end reception directly")
          (test-call-with-function-replacements
           (list
            (list 'localgroup--attach-record-once

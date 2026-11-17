@@ -474,6 +474,7 @@
                                           (:file "world-tests")
                                           (:file "world-server-tests")
                                           (:file "world-health-tests")
+                                          (:file "client-recovery-tests")
                                           (:file "world-restart-tests")
                                           (:file "client-protocol-tests")
                                           (:file "client-operation-tests")

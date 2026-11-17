@@ -528,68 +528,143 @@ HEADER-P renders field labels rather than status values."
      styled-p))
   nil)
 
+(-> localgroup--client-cleanup-failure (string condition) list)
+(defun localgroup--client-cleanup-failure (stage condition)
+  "Describe one cleanup failure with bounded class-only metadata."
+  (list :stage (bounded-string stage :limit 64)
+        :condition-type
+        (handler-case
+            (let ((name (class-name (class-of condition))))
+              (if (symbolp name) (bounded-string (symbol-name name) :limit 128) "CONDITION"))
+          (error () "CONDITION"))))
+
+(-> localgroup--client-attachment-failure (condition string) list)
+(defun localgroup--client-attachment-failure (condition stage)
+  "Describe a failure after acknowledgment without printing condition payloads."
+  (list* :attachment-lost :kind ':callback-failure
+         :message         "The accepted attachment could not continue terminal I/O."
+         (localgroup--client-cleanup-failure stage condition)))
+
+(-> localgroup--client-cleanup-result ((option list) list list) (values (option list) list))
+(defun localgroup--client-cleanup-result (result metadata failures)
+  "Append bounded cleanup metadata without replacing the primary attachment cause.
+
+Intentional departures retain their exact primary value; cleanup information is
+also returned as the second value. Attachment-loss results carry it in their plist."
+  (let* ((metadata (copy-list metadata))
+         (combined (append (getf metadata :cleanup-failures) failures))
+         (bounded  (subseq combined 0 (min 8 (length combined)))))
+    (when bounded
+      (setf (getf metadata :cleanup-failures) bounded)
+      (when (and (consp result) (eq (first result) ':attachment-lost))
+        (setf result (copy-list result)
+              (getf (rest result) :cleanup-failures) bounded)))
+    (values result metadata)))
+
 (-> localgroup--attach-terminal-loop
     (stream terminal keyword &key (:socket t) (:screen (option localgroup-screen)))
-    (option list))
+    (values (option list) list))
 (defun localgroup--attach-terminal-loop (socket-stream terminal mode &key socket screen)
-  "Relay terminal I/O; return an application exit, a checkpoint transition or a switch request.
+  "Relay terminal I/O and distinguish attachment loss from intentional departure.
 
-SCREEN paints the session's frames and its own side panel on TERMINAL, and
-stays open for the caller; without it the loop paints on a screen of its own
-and closes it. A (:SWITCH :SESSION-ID ID) result asks the caller to attach to
-channel ID instead; this attachment has ended by then."
-  (let* ((output    (make-mode-tracking-output-stream *standard-output*))
-         (owned-p   (null screen))
-         (screen    (or screen (localgroup-screen-create :terminal terminal)))
-         (reconnect nil))
-    (unwind-protect
-         (let ((exit
-                 (image-daemon:daemon-attach-client-run
-                  socket-stream :mode mode :socket socket :output-stream output
-                  :input-ready-function
-                  (lambda ()
-                    ;; The side panel refreshes between keystrokes.
-                    (localgroup-screen-tick screen)
-                    (terminal-input-ready-p terminal))
-                  :read-event-function
-                  (lambda ()
-                    ;; A click in the side panel can ask to move to another
-                    ;; channel; ending the attachment here hands it on.
-                    (let ((event (localgroup-screen-filter-event screen (terminal-read-event terminal))))
-                      (if (and (consp event) (eq (first event) ':switch))
-                          (progn
-                            (setf reconnect event)
-                            ':stream-end)
-                          event)))
-                  :packet-function
-                  (lambda (packet)
-                    (cond
-                      ((localgroup-screen-handle-packet screen packet)
-                       nil)
-                      ((or (and (eq (first packet) ':checkpoint-reconnect)
-                                (non-empty-string-p (getf (rest packet) :id))
-                                (typep (getf (rest packet) :history-position) '(integer 0)))
-                           (and (eq (first packet) ':switch)
-                                (non-empty-string-p (getf (rest packet) :session-id))))
-                       (setf reconnect packet)
-                       t)
+SCREEN belongs to the caller when supplied. Return an application exit, a
+checkpoint transition, a switch request, or (:ATTACHMENT-LOST . DETAILS)."
+  (let* ((output           (make-mode-tracking-output-stream *standard-output*))
+         (owned-p          (null screen))
+         (screen           (or screen (localgroup-screen-create :terminal terminal)))
+         (reconnect        nil)
+         (result           nil)
+         (metadata         nil)
+         (cleanup-failures nil))
+    (flet ((cleanup (stage function)
+             (handler-case (funcall function)
+                           (error (condition)
+                                  (push (localgroup--client-cleanup-failure stage condition)
+                                        cleanup-failures)))))
+      (unwind-protect
+          (handler-case
+           (multiple-value-setq (result metadata)
+             (multiple-value-bind (exit termination)
+                 (image-daemon:daemon-attach-client-run socket-stream :mode mode :socket socket
+                                                        :output-stream output :input-ready-function
+                                                        (lambda ()
+                                                          (localgroup-screen-tick screen)
+                                                          (terminal-input-ready-p terminal))
+                                                        :read-event-function
+                                                        (lambda ()
+                                                          (let ((event
+                                                                 (localgroup-screen-filter-event
+                                                                  screen
+                                                                  (terminal-read-event terminal))))
+                                                            (if (and (consp event)
+                                                                     (eq (first event) ':switch))
+                                                                (progn
+                                                                 (setf reconnect event)
+                                                                 ':stream-end)
+                                                                event)))
+                                                        :packet-function
+                                                        (lambda (packet)
+                                                          (cond
+                                                           ((localgroup-screen-handle-packet screen
+                                                                                             packet)
+                                                            nil)
+                                                           ((or
+                                                             (and
+                                                              (eq (first packet)
+                                                                  ':checkpoint-reconnect)
+                                                              (non-empty-string-p
+                                                               (getf (rest packet) :id))
+                                                              (typep
+                                                               (getf (rest packet)
+                                                                     :history-position)
+                                                               '(integer 0)))
+                                                             (and (eq (first packet) ':switch)
+                                                                  (non-empty-string-p
+                                                                   (getf (rest packet)
+                                                                         :session-id))))
+                                                            (setf reconnect packet) t)
+                                                           (t
+                                                            nil)))
+                                                        :resize-function
+                                                        (lambda ()
+                                                          (let ((terminal-p
+                                                                 (shiftf
+                                                                  *terminal-resize-pending-p* nil)))
+                                                            (when
+                                                                (or
+                                                                 (localgroup-screen-take-resize
+                                                                  screen)
+                                                                 terminal-p)
+                                                              (when terminal-p
+                                                                (multiple-value-bind (rows columns)
+                                                                    (terminal-current-size)
+                                                                  (terminal-set-dimensions terminal
+                                                                                           columns
+                                                                                           :rows
+                                                                                           rows))
+                                                                (localgroup-screen-resized screen))
+                                                              (multiple-value-bind (rows columns)
+                                                                  (localgroup-screen-pane-size
+                                                                   screen)
+                                                                (list :rows rows :columns columns
+                                                                      :styled-p
+                                                                      (terminal-environment-styling-p)))))))
+               (values
+                (cond (reconnect
+                       reconnect)
+                      ((member (getf termination :kind)
+                               '(:unexpected-eof :decoding-failure :callback-failure
+                                 :transport-failure :remote-failure :queue-overflow
+                                 :cleanup-failure))
+                       (cons ':attachment-lost termination))
                       (t
-                       nil)))
-                  :resize-function
-                  (lambda ()
-                    (let ((terminal-p (shiftf *terminal-resize-pending-p* nil)))
-                      (when (or (localgroup-screen-take-resize screen) terminal-p)
-                        (when terminal-p
-                          (multiple-value-bind (rows columns) (terminal-current-size)
-                            (terminal-set-dimensions terminal columns :rows rows))
-                          (localgroup-screen-resized screen))
-                        (multiple-value-bind (rows columns) (localgroup-screen-pane-size screen)
-                          (list :rows rows :columns columns
-                                :styled-p (terminal-environment-styling-p)))))))))
-           (or reconnect exit))
-      (when owned-p
-        (localgroup-screen-close screen))
-      (mode-tracking-output-stream-restore output))))
+                       exit))
+                termination)))
+           (error (condition)
+                  (setf result (localgroup--client-attachment-failure condition "receive"))))
+        (cleanup "screen" (lambda () (when owned-p (localgroup-screen-close screen))))
+        (cleanup "terminal-mode" (lambda () (mode-tracking-output-stream-restore output))))
+      (localgroup--client-cleanup-result result metadata (nreverse cleanup-failures)))))
 
 (-> localgroup--wait-for-handoff-entry
     (configuration string &key (:token string) (:old-pid integer))
@@ -666,30 +741,47 @@ loses a subscription race to another checkpoint."
       (sleep 0.05))))
 
 (-> localgroup-attach-record
-    ((option configuration) cons keyword &key (:panel t)
-     (:screen (option localgroup-screen)) (:notice (option string))
-     (:client-version (option string)) (:attached-function (option function))
-     (:deadline (option integer)))
-    (option list))(defun localgroup-attach-record (configuration entry mode
-                                                   &key panel screen notice (client-version *autolith-version*)
-                                                   attached-function deadline)
-                   "Attach this terminal and follow explicit checkpoint transitions in the same mode.
-PANEL and SCREEN persist across switches. NOTICE appears on the accepted channel.
-Call ATTACHED-FUNCTION after acknowledgment and before terminal input. DEADLINE,
-in internal real-time units, bounds discovery and the initial handshake, not the
-attached terminal loop. Return an exit plist, a switch request, or NIL on detach."
-                   (let ((history-position nil))
-                     (loop
-                       (let ((result (localgroup--attach-record-once
-                                      configuration entry mode :history-position history-position
-                                      :panel panel :screen screen :notice (shiftf notice nil)
-                                      :client-version                            (shiftf client-version nil)
-                                      :attached-function attached-function :deadline deadline)))
-                         (unless (eq (first result) ':checkpoint-reconnect) (return result))
-                         (setf entry (localgroup--wait-for-checkpoint-entry entry (getf (rest result) :id)
-                                                                          :configuration configuration)
-                               history-position (getf (rest result) :history-position)
-                               deadline nil)))))
+    ((option configuration) cons keyword &key (:panel t) (:screen (option localgroup-screen))
+     (:notice (option string)) (:client-version (option string))
+     (:attached-function (option function)) (:deadline (option integer)))
+    (values (option list) list))
+(defun localgroup-attach-record (configuration entry mode
+                                  &key panel screen notice (client-version *autolith-version*)
+                                    attached-function deadline)
+  "Attach this terminal and follow explicit checkpoints in the same mode.
+
+Preserve the primary exit/switch/detach value and return bounded cleanup
+metadata as the second value. A failed checkpoint wait or replacement
+attachment returns attachment loss. The caller owns a supplied PANEL or SCREEN."
+  (let ((history-position nil)
+        (cleanup-failures nil)
+        (reconnecting-p   nil))
+    (loop
+      (handler-case
+          (multiple-value-bind (result metadata)
+              (localgroup--attach-record-once
+               configuration entry mode :history-position history-position
+               :panel panel :screen screen :notice (shiftf notice nil)
+               :client-version                            (shiftf client-version nil)
+               :attached-function attached-function :deadline deadline)
+            (unless (eq (first result) ':checkpoint-reconnect)
+              (return (localgroup--client-cleanup-result result metadata cleanup-failures)))
+            (setf reconnecting-p t
+                  cleanup-failures
+                  (let ((all (append cleanup-failures (getf metadata :cleanup-failures))))
+                    (subseq all 0 (min 8 (length all)))))
+            (setf entry (localgroup--wait-for-checkpoint-entry
+                         entry (getf (rest result) :id) :configuration configuration)
+                  history-position (getf (rest result) :history-position)
+                  deadline nil))
+        (error (condition)
+          (unless reconnecting-p (error condition))
+          (return
+            (localgroup--client-cleanup-result
+             (list* ':attachment-lost :kind ':transport-failure
+                    :message                "The checkpoint attachment could not be restored."
+                    (localgroup--client-cleanup-failure "checkpoint-reconnect" condition))
+             nil cleanup-failures)))))))
 
 (-> localgroup-client-screen-create (&key (:panel t)) localgroup-screen)
 (defun localgroup-client-screen-create (&key panel)
@@ -713,134 +805,135 @@ attached terminal loop. Return an exit plist, a switch request, or NIL on detach
   nil)
 
 (-> localgroup--attach-record-once
-    ((option configuration) cons keyword &key
-     (:history-position (option integer)) (:panel t)
+    ((option configuration) cons keyword &key (:history-position (option integer)) (:panel t)
      (:screen (option localgroup-screen)) (:notice (option string))
      (:client-version (option string)) (:attached-function (option function))
      (:deadline (option integer)))
-    (option list))(defun localgroup--attach-record-once
-                   (configuration entry mode
-                    &key history-position panel screen notice client-version
-                    attached-function deadline)
-                   "Run one attachment and release terminal ownership before any reconnect.
+    (values (option list) list))
+(defun localgroup--attach-record-once
+       (configuration entry mode
+        &key history-position panel screen notice client-version attached-function deadline)
+  "Run one attachment and release terminal ownership before any reconnect.
 
 The session gets the part of the terminal left beside PANEL as its size. A
 SCREEN the caller lends stays the caller's to release."
-                   (let* ((record        (rest entry))
-                          (owned-p       (null screen))
-                          (screen        (or screen (localgroup-client-screen-create :panel panel)))
-                          (terminal      (localgroup-screen-terminal screen))
-                          (socket        nil)
-                          (socket-stream nil)
-                          (resize-watch  nil)
-                          (handoff-entry nil))
-                     (unwind-protect
-                         (progn
-                          (handler-case
-                           (sb-sys:with-deadline (:seconds
-                                                  (if deadline
-                                                      (max 0
-                                                           (/
-                                                            (- deadline
-                                                               (get-internal-real-time))
-                                                            internal-time-units-per-second))
-                                                      *daemon-connect-timeout-seconds*))
-                             (unless (terminal--terminal-mode-or-nil terminal)
-                               (error 'localgroup-error :message
-                                      "Opening a channel requires an interactive terminal."
-                                      :operation ':attach :session-id
-                                      (localgroup--record-session-id record)))
-                             (multiple-value-setq (socket socket-stream)
-                               (daemon-connect (localgroup--record-port record)))
-                             (multiple-value-bind (rows columns)
-                                 (localgroup-screen-pane-size screen)
-                               (daemon-write-packet socket-stream
-                                                    (list :localgroup-request :version
-                                                          *daemon-protocol-version* :token
-                                                          (localgroup--record-token record)
-                                                          :operation ':attach :arguments
-                                                          (append
-                                                           (list :mode mode :rows rows :columns
-                                                                 columns :client-pid
-                                                                 (current-process-id) :styled-p
-                                                                 (terminal-environment-styling-p))
-                                                           (when client-version
-                                                             (list :client-version
-                                                                   client-version))
-                                                           (when notice
-                                                             (list :notice notice))))))
-                             (let ((response (daemon-read-response socket-stream ':attach)))
-                               (cond
-                                ((and response (eq (first response) ':handoff))
-                                 (let ((session-id (getf (rest response) :session-id))
-                                       (old-pid    (getf (rest response) :old-pid))
-                                       (token      (localgroup--record-token record)))
-                                   (unless
-                                       (and (non-empty-string-p session-id)
-                                            (typep old-pid '(integer 1)))
-                                     (error 'localgroup-error :message
-                                            "The localgroup handoff response was malformed."
-                                            :operation ':attach :session-id
-                                            (localgroup--record-session-id record)))
-                                   (close socket-stream)
-                                   (setf socket-stream nil
-                                         socket nil)
-                                   (setf handoff-entry
-                                           (localgroup--wait-for-handoff-entry configuration
-                                                                               session-id :token
-                                                                               token :old-pid
-                                                                               old-pid))))
-                                ((and response (eq (first response) ':attached))
-                                 (let ((history (getf (rest response) :history)))
-                                   (when
-                                       (and (stringp history)
-                                            (not (localgroup-screen-active-p screen)))
-                                     (write-string history *standard-output* :start
-                                                   (if history-position
-                                                       (min (length history)
-                                                            (max 0
-                                                                 (- history-position
-                                                                    (getf (rest response)
-                                                                          :history-start 0))))
-                                                       0))
-                                     (finish-output *standard-output*))))
-                                (t
-                                 (error 'localgroup-error :message
-                                        (or (and response (getf (rest response) :message))
-                                            "The localgroup attachment was rejected.")
-                                        :operation ':attach :session-id
-                                        (localgroup--record-session-id record)))))
-                             (when (and attached-function (not handoff-entry))
-                               (funcall attached-function)))
-                           (sb-sys:deadline-timeout (condition)
-                            (error 'localgroup-error :operation ':attach :session-id
-                                   (localgroup--record-session-id record) :cause condition
-                                   :message
-                                   "The channel attachment timed out before acknowledgment.")))
-                          (when handoff-entry
-                            (return-from localgroup--attach-record-once
-                              (localgroup-attach-record configuration handoff-entry ':control
-                                                        :panel panel :screen
-                                                        (and (not owned-p) screen)
-                                                        :client-version    client-version
-                                                        :attached-function attached-function
-                                                        :deadline          deadline)))
-                          (terminal-start terminal)
-                          (setf resize-watch
-                                  (platform-watch-terminal-resize *platform*
-                                                                  (lambda ()
-                                                                    (setf *terminal-resize-pending-p*
-                                                                            t))))
-                          (localgroup--attach-terminal-loop socket-stream terminal mode :socket
-                                                            socket :screen screen))
-                       (when resize-watch
-                         (platform-unwatch-terminal-resize *platform* resize-watch))
-                       (when owned-p (localgroup-client-screen-release screen))
-                       (when socket-stream
-                         (handler-case (close socket-stream) (stream-error nil nil)))
-                       (when (and socket (null socket-stream))
-                         (handler-case (sb-bsd-sockets:socket-close socket)
-                                       (sb-bsd-sockets:socket-error nil nil))))))
+  (let* ((record           (rest entry))
+         (owned-p          (null screen))
+         (screen           (or screen (localgroup-client-screen-create :panel panel)))
+         (terminal         (localgroup-screen-terminal screen))
+         (socket           nil)
+         (socket-stream    nil)
+         (resize-watch     nil)
+         (handoff-entry    nil)
+         (acknowledged-p   nil)
+         (result           nil)
+         (metadata         nil)
+         (cleanup-failures nil)
+         (pending          nil))
+    (flet ((cleanup (stage function)
+             (handler-case (funcall function)
+                           (error (condition)
+                                  (push (localgroup--client-cleanup-failure stage condition)
+                                        cleanup-failures)))))
+      (unwind-protect
+          (handler-case
+           (multiple-value-setq (result metadata)
+             (block localgroup-client-attachment
+               (progn
+                (handler-case
+                 (sb-sys:with-deadline (:seconds
+                                        (if deadline
+                                            (max 0
+                                                 (/ (- deadline (get-internal-real-time))
+                                                    internal-time-units-per-second))
+                                            *daemon-connect-timeout-seconds*))
+                   (unless (terminal--terminal-mode-or-nil terminal)
+                     (error 'localgroup-error :message
+                            "Opening a channel requires an interactive terminal." :operation
+                            ':attach :session-id (localgroup--record-session-id record)))
+                   (multiple-value-setq (socket socket-stream)
+                     (daemon-connect (localgroup--record-port record)))
+                   (multiple-value-bind (rows columns)
+                       (localgroup-screen-pane-size screen)
+                     (daemon-write-packet socket-stream
+                                          (list :localgroup-request :version
+                                                *daemon-protocol-version* :token
+                                                (localgroup--record-token record) :operation
+                                                ':attach :arguments
+                                                (append
+                                                 (list :mode mode :rows rows :columns columns
+                                                       :client-pid (current-process-id) :styled-p
+                                                       (terminal-environment-styling-p))
+                                                 (when client-version
+                                                   (list :client-version client-version))
+                                                 (when notice (list :notice notice))))))
+                   (let ((response (daemon-read-response socket-stream ':attach)))
+                     (cond
+                      ((and response (eq (first response) ':handoff))
+                       (let ((session-id (getf (rest response) :session-id))
+                             (old-pid    (getf (rest response) :old-pid))
+                             (token      (localgroup--record-token record)))
+                         (unless (and (non-empty-string-p session-id) (typep old-pid '(integer 1)))
+                           (error 'localgroup-error :message
+                                  "The localgroup handoff response was malformed." :operation
+                                  ':attach :session-id (localgroup--record-session-id record)))
+                         (close socket-stream)
+                         (setf socket-stream nil
+                               socket nil)
+                         (setf handoff-entry
+                                 (localgroup--wait-for-handoff-entry configuration session-id
+                                                                     :token token :old-pid
+                                                                     old-pid))))
+                      ((and response (eq (first response) ':attached))
+                       (setf acknowledged-p t)
+                       (let ((history (getf (rest response) :history)))
+                        (when (and (stringp history) (not (localgroup-screen-active-p screen)))
+                         (write-string history *standard-output* :start
+                          (if history-position
+                           (min (length history)
+                             (max 0
+                                  (- history-position
+                                     (getf (rest response) :history-start
+                                           0))))
+                           0))
+                         (finish-output *standard-output*))))
+                      (t
+                       (error 'localgroup-error :message
+                              (or (and response (getf (rest response) :message))
+                                  "The localgroup attachment was rejected.")
+                              :operation ':attach :session-id
+                              (localgroup--record-session-id record)))))
+                   (when (and attached-function (not handoff-entry)) (funcall attached-function)))
+                 (sb-sys:deadline-timeout (condition)
+                  (error 'localgroup-error :operation ':attach :session-id
+                         (localgroup--record-session-id record) :cause condition :message
+                         "The channel attachment timed out before acknowledgment.")))
+                (when handoff-entry
+                  (return-from localgroup-client-attachment
+                    (localgroup-attach-record configuration handoff-entry ':control :panel panel
+                                              :screen (and (not owned-p) screen) :client-version
+                                              client-version :attached-function attached-function
+                                              :deadline                                    deadline)))
+                (terminal-start terminal)
+                (setf resize-watch
+                        (platform-watch-terminal-resize *platform*
+                                                        (lambda ()
+                                                          (setf *terminal-resize-pending-p* t))))
+                (localgroup--attach-terminal-loop socket-stream terminal mode :socket socket
+                                                  :screen                             screen))))
+           (error (condition)
+                  (if acknowledged-p
+                      (setf result (localgroup--client-attachment-failure condition "setup"))
+                      (setf pending condition))))
+        (cleanup "resize-watch"
+         (lambda ()
+           (when resize-watch (platform-unwatch-terminal-resize *platform* resize-watch))))
+        (cleanup "client-screen"
+         (lambda () (when owned-p (localgroup-client-screen-release screen))))
+        (cleanup "stream" (lambda () (when socket-stream (close socket-stream :abort t))))
+        (cleanup "socket" (lambda () (when socket (sb-bsd-sockets:socket-close socket :abort t)))))
+      (when pending (error pending))
+      (localgroup--client-cleanup-result result metadata (nreverse cleanup-failures)))))
 
 (-> localgroup-relay-exit
     (configuration (option list) keyword &key (:session-id (option string)))

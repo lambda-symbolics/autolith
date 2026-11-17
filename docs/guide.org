@@ -1637,6 +1637,12 @@ exits. The launcher publishes the saved heap as the generation and starts it,
 and the server serves every channel again. Terminals reconnect as after any
 checkpoint, and a terminal started during the restart waits for the server.
 
+After an unexpected attachment loss, the terminal reports the failure and
+accepts =r= or an empty Enter to reattach, a channel ID followed by Enter to
+switch, or =q= to detach. Each retry has a bounded connection deadline.
+Reattachment does not open a new channel or resubmit work. Attachment refusals
+and failures after acceptance are reported separately from an application exit.
+
 Use =--detached= to open a new channel in the server without attaching a
 terminal. With =--pristine=, =--detached= starts a rescue session in a
 process of its own instead.
