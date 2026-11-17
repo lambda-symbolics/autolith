@@ -464,6 +464,7 @@ Return the launcher status a hosted session asked for, or NIL."
             (setf due (+ (get-internal-real-time) interval))
             (let ((runtime (world-server-runtime server)))
               (when runtime (world-server--recover-endpoint server runtime)))
+            (world-server--retire-unhealthy-hosts server)
             (world-server--unload-cold-hosts server))))
     (loop
      (let ((job
@@ -555,6 +556,18 @@ channel that cannot be served keeps its message waiting."
          (not (and controller (application-input-controller-busy-p controller)))
          (not (and orchestrator (plusp (task-orchestrator-session-live-count orchestrator)))))))
 
+(-> world-server--retire-unhealthy-hosts (world-server) null)
+(defun world-server--retire-unhealthy-hosts (server)
+  "Request exit or retry cleanup of failed owners without releasing reservations early."
+  (unless (world-server-checkpointing-p server)
+    (dolist (host (world-server--hosts server))
+      (when (world-host-closing-p host)
+        (handler-case (world-server--close-host host)
+          (error (condition)
+            (unless (world-host-failure host)
+              (setf (world-host-failure host) condition)))))))
+  nil)
+
 (-> world-server--unload-cold-hosts (world-server &key (:now real)) null)
 (defun world-server--unload-cold-hosts (server &key (now (get-internal-real-time)))
   "Close every channel of SERVER that stayed idle the configured minutes, and note those just gone idle.
@@ -565,7 +578,7 @@ its agent, serves it again. Nothing is unloaded while a checkpoint runs."
     (let ((limit (* 60 (config :channel-idle-minutes (world-server-configuration server))
                     internal-time-units-per-second)))
       (dolist (host (world-server--hosts server))
-        (if (world-server--host-idle-p host)
+        (if (and (world-host-live-p host) (world-server--host-idle-p host))
             (let ((since (world-host-idle-since host)))
               (cond
                 ((null since)
@@ -756,11 +769,15 @@ A channel nobody serves is served for its agent to read the message."
 
 (-> world-server-channels (world-server) list)
 (defun world-server-channels (server)
-  "Return the localgroup status of every channel SERVER serves."
+  "Return channel snapshots with authoritative host availability."
   (loop for host in (world-server--hosts server)
+        for health = (world-host-health host)
         for session = (application-localgroup-session (world-host-application host))
-        when (and session (world-host-ready-p host) (null (world-host-exit-reason host)))
-          collect (localgroup-status-snapshot session)))
+        collect (if (and session (eq health ':ready))
+                    (append (localgroup-status-snapshot session) (list :host-health health))
+                    (list :localgroup-status :version *daemon-protocol-version*
+                          :session-id        (world-host-channel host)
+                          :state health :host-health health :terminal-attached-p nil))))
 
 (-> world-server-person-unread-changed (world-server) null)
 (defun world-server-person-unread-changed (server)
@@ -1036,28 +1053,59 @@ started must not end one another terminal attached to since."
                  (plusp (image-daemon:relay-observer-count terminal))))
         (application-clients-attached-p application))))
 
+(-> world-host-health (world-host) keyword)
+(defun world-host-health (host)
+  "Return HOST's availability without changing its reservation or lease.
+
+A checkpoint pause and endpoint publication before the input reader starts
+are legitimate lifecycle states, not evidence of owner failure."
+  (let* ((application (world-host-application host))
+         (thread      (world-host-thread host))
+         (controller  (application-input-controller application))
+         (session     (application-localgroup-session application)))
+    (cond
+      ((eq (world-host-state host) ':retired)
+       ':retired)
+      ((eq (world-host-state host) ':closing)
+       ':closing)
+      ((world-host-failure host)
+       ':failed)
+      ((or (world-host-paused-p host) (eq (world-host-exit-reason host) ':checkpoint))
+       ':paused)
+      ((world-host-exit-reason host)
+       ':closing)
+      ((and thread (not (thread-alive-p thread)))
+       ':failed)
+      ((or (eq (world-host-state host) ':starting) (null thread))
+       ':starting)
+      ((and (world-host-ready-p host) controller
+            (not (application-input-controller-exit-requested-p controller))
+            (null (application-input-controller-failure controller))
+            session (localgroup-session-endpoint-live-p session))
+       ':ready)
+      (t
+       ':failed))))
+
 (-> world-host-live-p (world-host) boolean)
 (defun world-host-live-p (host)
-  "Return true while HOST serves its channel and has not begun to end."
-  (and (world-host-ready-p host)
-       (null (world-host-exit-reason host))
-       (let ((controller (application-input-controller (world-host-application host))))
-         (and controller
-              (not (application-input-controller-exit-requested-p controller))))))
+  "Return true when HOST is available for attachment."
+  (eq (world-host-health host) ':ready))
 
 (-> world-host-closing-p (world-host) boolean)
 (defun world-host-closing-p (host)
-  "Return true while HOST is ending but still owns mandatory cleanup and its lease."
-  (not (null (or (eq (world-host-state host) ':closing)
-                 (and (world-host-ready-p host) (not (world-host-live-p host)))))))
+  "Return true while unavailable HOST retains mandatory cleanup ownership."
+  (not (null (member (world-host-health host) '(:closing :failed)))))
 
 (-> world-server--check-host-opening (world-host) null)
 (defun world-server--check-host-opening (host)
-  "Report retained closing ownership instead of constructing a competing application."
-  (when (world-host-closing-p host)
-    (error 'world-error :operation ':closing :identifier (world-host-channel host)
-                       :message (format nil "Channel ~A is closing; its owner is still releasing runtime resources and its conversation lease. Retry after it retires."
-                                        (conversation-identifier-display (world-host-channel host)))))
+  "Refuse unavailable retained owners instead of constructing competitors."
+  (let ((health (world-host-health host)))
+    (when (member health '(:closing :failed :retired :paused))
+      (error 'world-error :operation (if (eq health ':paused) ':checkpointing ':closing)
+                         :identifier (world-host-channel host)
+                         :message    (format nil "Channel ~A is ~A; retry after its owner finishes the transition."
+                                             (conversation-identifier-display (world-host-channel host))
+                                             (string-downcase (symbol-name health))))))
   nil)
 
 (-> world-host-reserved-p (world-host) boolean)
@@ -1695,7 +1743,9 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
                   (world-host-state host) ':paused)
             (sb-thread:condition-broadcast
              (world-server-condition-variable server)))
-          (world-server--release-host server host))))
+          (handler-case (world-server--release-host server host)
+            (error (condition)
+              (world-server--note-failure server host condition))))))
   nil)
 
 (-> world-server--note-ready (world-server world-host) null)
@@ -1712,12 +1762,15 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
           (setf (getf (world-startup-timings startup) :endpoint-ready-at) (get-internal-real-time))))
       (sb-thread:condition-broadcast (world-server-condition-variable server)))
     (when closing-p (world-server--close-host host)))
-  nil)(-> world-server--note-failure (world-server world-host condition) null)
+  nil)
+
+(-> world-server--note-failure (world-server world-host condition) null)
 (defun world-server--note-failure (server host condition)
   "Record CONDITION as what ended HOST's session, so an opener learns why."
   (with-lock-held ((world-server-lock server))
-    (setf (world-host-failure host) condition
-          (world-host-exit-reason host) ':failed)
+    (unless (world-host-failure host)
+      (setf (world-host-failure host) condition))
+    (setf (world-host-exit-reason host) ':failed)
     (sb-thread:condition-broadcast (world-server-condition-variable server)))
   (format *error-output* "~&Channel ~A ended: ~A~%"
           (conversation-identifier-display (world-host-channel host))
@@ -1743,10 +1796,26 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
   (with-lock-held ((world-host-retirement-lock host))
     (unless (eq (world-host-state host) ':retired)
       (setf (world-host-state host) ':closing)
-      (acp-mcp-release-credentials
-       (mcp-tool-registry-manager
-        (application-tool-registry (world-host-application host))))
-      (application-release-conversation-lease (world-host-application host))
+      (let ((application (world-host-application host))
+            (failures    nil))
+        (flet ((attempt (function)
+                 (handler-case (funcall function)
+                   (error (condition) (push condition failures)))))
+          (attempt (lambda () (localgroup-stop application)))
+         (attempt (lambda () (tool-registry-close-runtime-state (application-tool-registry application))))
+         (attempt (lambda () (application-disconnect-task-presentation application)))
+         (attempt (lambda ()
+                    (when (application-worker application)
+                      (lisp-worker-manager-stop (application-worker application)))))
+         (attempt (lambda ()
+                    (acp-mcp-release-credentials
+                     (mcp-tool-registry-manager (application-tool-registry application))))))
+        (when failures
+          (unless (world-host-failure host)
+            (setf (world-host-failure host) (first (last failures))))
+          (error 'world-error :operation ':closing :identifier (world-host-channel host)
+                             :message "Channel cleanup is incomplete; its owner retains the conversation lease."))
+        (application-release-conversation-lease application))
       (with-lock-held ((world-server-lock server))
         (setf (world-server-hosts server)
               (remove host (world-server-hosts server))
@@ -1779,8 +1848,10 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
                          (princ-to-string (world-host-failure host)) :limit
                          400))
                 :operation ':open :identifier (world-host-channel host)))
-        ((world-host-ready-p host)
+        ((world-host-live-p host)
          (return host))
+        ((world-host-closing-p host)
+         (world-server--check-host-opening host))
         ((>= (get-internal-real-time) deadline)
          (error 'world-error :message
                 "The channel did not publish its endpoint in time." :operation
@@ -1802,7 +1873,10 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
           (world-server--release-host (application-world-server application) host)
           (when controller
             (application-input-controller--request-exit controller ':localgroup-kill)))))
-  nil);;;; -- Checkpoints --
+  nil)
+
+
+;;;; -- Checkpoints --
 
 ;;; A fork checkpoint needs the forking thread to be the only live thread.
 ;;; The server's main thread takes it. First it holds every channel's new

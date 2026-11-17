@@ -789,6 +789,8 @@
  test-world-server-move-goal test-world-server-adoption-recovery
  test-world-client-joins-winner test-world-client-switch-navigates
  test-world-client-refusal-ends-start test-world-client-switch-failures
+ test-world-host-health
+ test-world-host-cleanup-retry
  test-application-conversation-maintenance
  test-conversation-maintenance-admission-probe)
 
@@ -1670,6 +1672,8 @@
   test-terminal-non-tty-fallback)
 
 (define-test-suite localgroup
+  test-localgroup-stop-retry
+  test-localgroup-attachment-failure-boundary
   test-localgroup-endpoint-failure-isolation
   test-localgroup-message-dispatch
   test-localgroup-conversation-identity
