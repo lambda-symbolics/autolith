@@ -127,8 +127,8 @@ for ($index = 0; $index -lt $args.Count; $index++) {
 if (-not $scriptPath) { Fail 'no Lisp script was provided.' }
 if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { Fail "Lisp script $scriptPath does not exist." }
 
-$minimumVersion = (Get-Content -LiteralPath (Join-Path $sourceRoot 'sbcl.version') -Raw).Trim()
-if ($minimumVersion -notmatch '^\d+\.\d+\.\d+$') { Fail 'sbcl.version is malformed.' }
+$minimumVersion = (Get-Content -LiteralPath (Join-Path $sourceRoot 'sbcl-minimum.version') -Raw).Trim()
+if ($minimumVersion -notmatch '^\d+\.\d+\.\d+$') { Fail 'sbcl-minimum.version is malformed.' }
 $runtimesRoot = Join-Path (Get-DataRoot) 'runtimes'
 $runtimeCommandPath = Join-Path $runtimesRoot 'command'
 $managedPrefix = Join-Path (Join-Path $runtimesRoot $runtimeRelease) 'installation'

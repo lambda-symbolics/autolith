@@ -1,9 +1,9 @@
 {
   description = "Autolith - a live, self-modifying Common Lisp agent";
 
-  # Autolith pins an exact SBCL (see sbcl.version) and its Quicklisp package
-  # set is generated against a matching nixpkgs. Pin that nixpkgs here so the
-  # build is reproducible; bump it in lockstep whenever sbcl.version changes.
+  # Pin the tested nixpkgs and its Quicklisp package set for reproducible builds.
+  # sbcl.version names the bundled release; sbcl-minimum.version sets the
+  # independent minimum accepted from nixpkgs or the host.
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/d482ef84049d9b7276b83a06e4e4d76983830097";
     crane.url = "github:ipetkov/crane";

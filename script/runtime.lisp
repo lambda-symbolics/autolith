@@ -238,7 +238,7 @@
     (runtime-fail "Lisp script ~A does not exist." script))
   (let* ((source-root        (uiop:pathname-parent-directory-pathname
                               (uiop:pathname-directory-pathname (truename *load-truename*))))
-         (version-pathname   (merge-pathnames "sbcl.version" source-root))
+         (version-pathname   (merge-pathnames "sbcl-minimum.version" source-root))
          (checksums-pathname (merge-pathnames "sbcl-source-releases.sha256" source-root))
          (version            (lisp-implementation-version))
          (runtimes-root      (merge-pathnames "runtimes/" (autolith-application-root :data)))

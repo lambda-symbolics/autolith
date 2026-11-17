@@ -23,7 +23,7 @@
 (let* ((script-path      (truename *load-truename*))
        (script-directory (uiop:pathname-directory-pathname script-path))
        (source-root      (uiop:pathname-parent-directory-pathname script-directory))
-       (version-pathname (merge-pathnames "sbcl.version" source-root))
+       (version-pathname (merge-pathnames "sbcl-minimum.version" source-root))
        (project-setup    (merge-pathnames ".qlot/setup.lisp" source-root))
        (default-core
          (merge-pathnames "active/autolith-active.core"

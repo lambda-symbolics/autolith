@@ -27,6 +27,7 @@
                     "VERSION"
                     "qlfile"
                     "qlfile.lock"
+                    "sbcl-minimum.version"
                     "sbcl.version")
                   lisp-paths)
           #'string<)))

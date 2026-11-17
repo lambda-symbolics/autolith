@@ -747,6 +747,9 @@ release metadata after the host checksum is available. See
 
 ** Source checkout
 
+Use SBCL 2.6.4 or newer, the minimum recorded in =sbcl-minimum.version=.
+The bundled release compiler is SBCL 2.6.6, recorded in =sbcl.version=.
+
 For a fresh macOS machine:
 
 #+BEGIN_SRC sh
@@ -808,7 +811,7 @@ launch builds per-user cores under =.autolith-images= beside the release.
 
 To build the source checkout, install Git for Windows, Rust with the MSVC toolchain
 and Cargo, and Quicklisp under =%USERPROFILE%\quicklisp=. Put =clang= on
-=PATH= for the ColorLisp syntax library. An SBCL 2.6.6 or newer on =PATH= is
+=PATH= for the ColorLisp syntax library. An SBCL 2.6.4 or newer on =PATH= is
 used when present; otherwise the bootstrap downloads the official SBCL Windows
 binary pinned in =sbcl-windows-releases.sha256=, verifies its SHA-256, and
 unpacks it below the data root without registering it with Windows. OpenSSL 3

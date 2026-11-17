@@ -130,7 +130,7 @@ The output pipe also captures threads and grandchild processes."
 (let* ((script-path      (truename *load-truename*))
        (script-directory (uiop:pathname-directory-pathname script-path))
        (source-root      (uiop:pathname-parent-directory-pathname script-directory))
-       (version-pathname (merge-pathnames "sbcl.version" source-root))
+       (version-pathname (merge-pathnames "sbcl-minimum.version" source-root))
        (sbcl-command     (or (uiop:getenv "AUTOLITH_SBCL") "sbcl"))
        (quicklisp-setup  (merge-pathnames "quicklisp/setup.lisp"
                                           (user-homedir-pathname))))

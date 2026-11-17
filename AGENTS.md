@@ -402,9 +402,12 @@ hash-verified source when listed in `sbcl-source-releases.sha256`; otherwise it
 continues without managed implementation sources. It never replaces the
 Homebrew host SBCL.
 
+The minimum supported SBCL is 2.6.4, recorded in `sbcl-minimum.version`.
+The bundled release compiler is 2.6.6, recorded separately in `sbcl.version`.
+
 On Windows x86-64, install Git for Windows, Rust with the MSVC toolchain and
 Cargo, `clang` on `PATH`, and Quicklisp under `%USERPROFILE%\quicklisp`, then
-run `script\bootstrap.ps1` from PowerShell. An SBCL 2.6.6 or newer on `PATH` is
+run `script\bootstrap.ps1` from PowerShell. An SBCL 2.6.4 or newer on `PATH` is
 used when present; otherwise the bootstrap installs the official Windows binary
 pinned in `sbcl-windows-releases.sha256` below the data root. `script\check.ps1`
 runs the checks and `bin\autolith.cmd` starts a session.

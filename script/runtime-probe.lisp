@@ -8,5 +8,5 @@
 
 (let ((source-root (uiop:pathname-parent-directory-pathname
                     (uiop:pathname-directory-pathname *load-truename*))))
-  (autolith-require-minimum-runtime (merge-pathnames "sbcl.version" source-root))
+  (autolith-require-minimum-runtime (merge-pathnames "sbcl-minimum.version" source-root))
   (write-string (lisp-implementation-version)))

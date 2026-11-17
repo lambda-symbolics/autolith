@@ -110,6 +110,8 @@
       (release-script-tests--write-file
        (merge-pathnames "sbcl.version" source) "2.6.6")
       (release-script-tests--write-file
+       (merge-pathnames "sbcl-minimum.version" source) "2.6.4")
+      (release-script-tests--write-file
        (merge-pathnames "sbcl-source.sha256" source) digest)
       (dolist (platform '("OpenBSD" "FreeBSD"))
         (release-script-tests--write-file
@@ -722,6 +724,8 @@ printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
     (release-script-tests--write-file
      (merge-pathnames "sbcl.version" fixture)
      (format nil "~A~%" (lisp-implementation-version)))
+    (release-script-tests--write-file
+     (merge-pathnames "sbcl-minimum.version" fixture) "2.6.4")
     (multiple-value-bind (output error-output status)
         (release-script-tests--run
          (list (lisp-worker-sbcl-command)
@@ -790,6 +794,8 @@ printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
     (release-script-tests--write-file
      (merge-pathnames "sbcl.version" fixture-root)
      "2.6.6\n")
+    (release-script-tests--write-file
+     (merge-pathnames "sbcl-minimum.version" fixture-root) "2.6.4")
     (release-script-tests--write-file
      (merge-pathnames "sbcl-source-releases.sha256" fixture-root)
      (format nil "~A  sbcl-2.6.6-source.tar.bz2~%"
@@ -2368,6 +2374,8 @@ printf '\"%s\"\n' \"$version\" > \"$destination/sbcl-$version/version.lisp-expr\
      (merge-pathnames "sbcl.version" fixture-root)
      (format nil "2.6.6~%"))
     (release-script-tests--write-file
+     (merge-pathnames "sbcl-minimum.version" fixture-root) "2.6.4")
+    (release-script-tests--write-file
      (merge-pathnames "sbcl-source-releases.sha256" fixture-root)
      (format nil "~A  sbcl-2.6.6-source.tar.bz2~%~A  sbcl-2.6.7-source.tar.bz2~%"
              (make-string 64 :initial-element #\0)
@@ -2419,6 +2427,11 @@ esac
                   :ignore-error-status t)
                (declare (ignore error-output))
                (values (or output "") status))))
+      (dolist (version '("2.6.4" "2.6.5" "2.6.6" "2.6.4.guix"))
+        (multiple-value-bind (output status)
+            (run-adapter (fake-runtime version))
+          (test-assert (and (zerop status) (search "ADAPTER-SCRIPT" output))
+                       (format nil "the adapter accepts supported runtime ~A" version))))
       (multiple-value-bind (output status)
           (run-adapter (fake-runtime "2.6.7"))
         (test-assert (zerop status)
@@ -2502,7 +2515,7 @@ esac
           (test-assert (and (zerop status)
                             (search (format nil "version=~A source= " version) output))
                        (format nil "custom runtime ~A keeps its identity without mismatched source" version))))
-      (dolist (version '("2.6.5.termux" "2.6" "2..8" "2.6.8." "2.6.8garbage"))
+      (dolist (version '("2.6.3.termux" "2.6" "2..8" "2.6.8." "2.6.8garbage"))
         (multiple-value-bind (output status)
             (run-adapter (fake-runtime version))
           (declare (ignore output))
@@ -2521,23 +2534,29 @@ esac
           (require-runtime
             (fdefinition
              (find-symbol "AUTOLITH-REQUIRE-MINIMUM-RUNTIME" "CL-USER"))))
-      (test-assert (funcall at-least-p "2.6.6" "2.6.6")
-                   "the version requirement accepts the minimum itself")
-      (test-assert (funcall at-least-p "2.10.0" "2.6.6")
-                   "the version requirement compares fields numerically")
-      (dolist (version '("2.6.8.termux" "2.7.0.123-gabc" "2.6.6-local" "2.6.6+build_1"))
-        (test-assert (funcall at-least-p version "2.6.6")
-                     (format nil "the shared requirement accepts custom build ~S" version)))
-      (dolist (version '("" "2" "2.6" "2..6" "2.6.6." "2.6.6-" "2.6.6+"
-                          "2.6.6/termux" "2.6.6. ../bad" "2.6.6termux" "2.6.5.termux"))
-        (test-assert (not (funcall at-least-p version "2.6.6"))
-                     (format nil "the shared requirement rejects invalid or old build ~S" version)))
-      (test-assert (not (funcall at-least-p "2.6.3" "2.6.6"))
-                   "the version requirement rejects older versions")
-      (test-assert (not (funcall at-least-p "1.9.9" "2.6.6"))
-                   "the version requirement rejects older major series")
-      (dolist (minimum '("garbage" "2..4" "2.6" "2.6.6.1"))
-        (let ((pathname (merge-pathnames "malformed-sbcl.version" fixture-root)))
+      (let ((minimum (string-trim '(#\Space #\Tab #\Newline #\Return)
+                                  (uiop:read-file-string
+                                   (merge-pathnames "sbcl-minimum.version" source-root)))))
+        (dolist (case '(("2.6.3" nil) ("2.6.4" t) ("2.6.5" t) ("2.6.6" t)
+                        ("2.10.0" t) ("2.6.4.guix" t) ("2.6.4-local" t)
+                        ("2.6.4+build_1" t) ("1.9.9" nil) ("2.6.3.termux" nil)
+                        ("" nil) ("2" nil) ("2.6" nil) ("2..6" nil)
+                        ("2.6.4." nil) ("2.6.4-" nil) ("2.6.4+" nil)
+                        ("2.6.4/guix" nil) ("2.6.4. ../bad" nil) ("2.6.4guix" nil)))
+          (destructuring-bind (version accepted-p) case
+            (test-assert (eq (not (null (funcall at-least-p version minimum))) accepted-p)
+                         (format nil "runtime boundary ~S is ~:[rejected~;accepted~]" version accepted-p))))
+        (funcall require-runtime (merge-pathnames "sbcl-minimum.version" source-root)))
+      (test-assert
+       (handler-case
+           (progn
+             (funcall require-runtime (merge-pathnames "missing-sbcl-minimum.version" fixture-root))
+             nil)
+         (file-error ()
+           t))
+       "a missing minimum policy file is rejected")
+      (dolist (minimum '("" "garbage" "2..4" "2.6" "2.6.4.1"))
+        (let ((pathname (merge-pathnames "malformed-sbcl-minimum.version" fixture-root)))
           (release-script-tests--write-file pathname minimum)
           (test-assert
            (handler-case

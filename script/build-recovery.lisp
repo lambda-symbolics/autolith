@@ -18,7 +18,7 @@
 (let* ((script-path      (truename *load-truename*))
        (script-directory (uiop:pathname-directory-pathname script-path))
        (source-root      (uiop:pathname-parent-directory-pathname script-directory))
-       (version-pathname (merge-pathnames "sbcl.version" source-root))
+       (version-pathname (merge-pathnames "sbcl-minimum.version" source-root))
        (arguments        (uiop:command-line-arguments))
        (child-p          (and arguments (string= (first arguments) "--child")))
        (home             (user-homedir-pathname))
@@ -65,6 +65,7 @@
                                   "script/check"
                                   "script/check.lisp"
                                   "qlfile.lock"
+                                  "sbcl-minimum.version"
                                   "sbcl.version"))
                     (source     (uiop:symbol-call '#:sbcl-generations
                                                   '#:make-source-provenance
@@ -93,6 +94,7 @@
                        :check-blob                  (file-identity "script/check")
                        :check-source-blob           (file-identity "script/check.lisp")
                        :dependency-lock-blob        (file-identity "qlfile.lock")
+                       :sbcl-minimum-version-blob   (file-identity "sbcl-minimum.version")
                        :sbcl-version-blob           (file-identity "sbcl.version")))))
 
            (probe-core (pathname sbcl-command)

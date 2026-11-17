@@ -542,7 +542,7 @@ that start fresh Autolith processes. Private XDG roots isolate user preferences.
   "Load the test system and runtime libraries, and cheque with SOURCE-CHECKS-P; return the setup pathname."
   (let ((setup (merge-pathnames ".qlot/setup.lisp" source-root)))
     (load (merge-pathnames "script/runtime-requirement.lisp" source-root))
-    (autolith-require-minimum-runtime (merge-pathnames "sbcl.version" source-root))
+    (autolith-require-minimum-runtime (merge-pathnames "sbcl-minimum.version" source-root))
     (unless (probe-file setup)
       (check--fail "Locked dependencies are missing; run ./script/bootstrap."))
     (load setup)

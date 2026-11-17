@@ -39,7 +39,7 @@ xdg_base_directory()
 
 adapter_path=$(resolve_path "${BASH_SOURCE[0]}")
 source_root=$(CDPATH= cd -P "$(dirname "$adapter_path")/.." && pwd)
-minimum_version=$(tr -d '[:space:]' < "$source_root/sbcl.version")
+minimum_version=$(tr -d '[:space:]' < "$source_root/sbcl-minimum.version")
 source_checksums_path=$source_root/sbcl-source-releases.sha256
 data_home=$(xdg_base_directory "${XDG_DATA_HOME:-}" "$HOME/.local/share")
 runtimes_root=$data_home/autolith/runtimes
@@ -300,7 +300,7 @@ done
 [[ -n "$script_path" ]] || fail "no Lisp script was provided."
 [[ -f "$script_path" ]] || fail "Lisp script $script_path does not exist."
 [[ "$minimum_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-  fail "sbcl.version is malformed."
+  fail "sbcl-minimum.version is malformed."
 [[ -r "$source_checksums_path" ]] ||
   fail "sbcl-source-releases.sha256 is unavailable."
 

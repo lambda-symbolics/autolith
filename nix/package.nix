@@ -6,8 +6,7 @@ let
   colorlispSharedLibraryFlag = if pkgs.stdenv.isDarwin
     then "-dynamiclib"
     else "-shared";
-  expectedSbclVersion = lib.removeSuffix "\n" (builtins.readFile "${src}/sbcl.version");
-  expectedSbclSourceHash = lib.removeSuffix "\n" (builtins.readFile "${src}/sbcl-source.sha256");
+  minimumSbclVersion = lib.removeSuffix "\n" (builtins.readFile "${src}/sbcl-minimum.version");
   fffSourceCommit = lib.removeSuffix "\n" (builtins.readFile "${src}/native/fff/commit");
 
   # Git dependencies come from qlfile.lock, the same lock qlot installs from,
@@ -777,18 +776,13 @@ let
     '';
   });
 
-  sbclSource = pkgs.runCommand "autolith-sbcl-${expectedSbclVersion}-source" {
-    nativeBuildInputs = [ pkgs.bzip2 pkgs.coreutils pkgs.gnutar ];
+  # nixpkgs verifies the source archive for the selected compiler version.
+  sbclSource = pkgs.runCommand "autolith-sbcl-${pkgs.sbcl.version}-source" {
+    nativeBuildInputs = [ pkgs.bzip2 pkgs.coreutils pkgs.gnutar pkgs.gnugrep ];
   } ''
-    actual_hash=$(sha256sum ${pkgs.sbcl.src} | cut -d ' ' -f 1)
-    if [ "$actual_hash" != "${expectedSbclSourceHash}" ]; then
-      echo "SBCL source hash mismatch: expected ${expectedSbclSourceHash}, got $actual_hash" >&2
-      exit 1
-    fi
-
     mkdir -p "$out"
     tar -xjf ${pkgs.sbcl.src} --strip-components=1 -C "$out"
-    test -f "$out/version.lisp-expr"
+    grep -Fxq '"${pkgs.sbcl.version}"' "$out/version.lisp-expr"
     test -f "$out/src/code/list.lisp"
   '';
 
@@ -803,7 +797,7 @@ let
   # SBCL saved cores are intentionally transient here. Their bytes are not
   # reproducible, so the derivation publishes only a deterministic proof that
   # the complete Nix closure can build and probe both required images.
-  imageValidation = pkgs.runCommand "autolith-image-validation-${expectedSbclVersion}" {
+  imageValidation = pkgs.runCommand "autolith-image-validation-${pkgs.sbcl.version}" {
     nativeBuildInputs = [ pkgs.git ];
   } ''
     export HOME="$TMPDIR/home"
@@ -970,7 +964,7 @@ assert lib.assertMsg (lib.subtractLists (builtins.attrNames qlotGitSources) qlot
   "nix/package.nix lists build metadata for libraries no longer in qlfile.lock: ${toString (lib.subtractLists (builtins.attrNames qlotGitSources) qlotLibrariesWithBuildMetadata)}";
 assert with pkgs.stdenv.hostPlatform;
   (isLinux && (isx86_64 || isAarch64)) || (isDarwin && isAarch64);
-assert pkgs.sbcl.version == expectedSbclVersion;
+assert lib.versionAtLeast pkgs.sbcl.version minimumSbclVersion;
 pkgs.writeShellApplication {
   name = "autolith";
   runtimeInputs = [

@@ -23,6 +23,7 @@ on:
       - "VERSION"
       - "tests/**"
       - "sbcl.version"
+      - "sbcl-minimum.version"
       - "sbcl-*-releases.sha256"
       - ".github/workflows/windows-package.yml"
       - ".github/actions/windows-bootstrap/**"

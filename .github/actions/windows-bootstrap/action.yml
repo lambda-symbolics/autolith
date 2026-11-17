@@ -37,7 +37,7 @@ runs:
           ${{ steps.environment.outputs.quicklisp }}
           ${{ steps.environment.outputs.runtimes }}
           ${{ steps.environment.outputs.asdf }}
-        key: windows-2025-${{ runner.arch }}-lisp-v1-${{ hashFiles('qlfile', 'qlfile.lock', 'sbcl.version', 'sbcl-*-releases.sha256', 'script/bootstrap.ps1', 'script/qlot-install.lisp', 'script/runtime-requirement.lisp', 'script/windows-stat.lisp') }}
+        key: windows-2025-${{ runner.arch }}-lisp-v1-${{ hashFiles('qlfile', 'qlfile.lock', 'sbcl.version', 'sbcl-minimum.version', 'sbcl-*-releases.sha256', 'script/bootstrap.ps1', 'script/qlot-install.lisp', 'script/runtime-requirement.lisp', 'script/windows-stat.lisp') }}
 
     - name: Restore pinned FFF library
       id: fff
