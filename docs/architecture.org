@@ -133,6 +133,7 @@ a partially live identity set, or resumes cleanup for a published deletion.
 | cl-rfc8628 | Scoped credential use and coordinated refresh | Credential paths, bootstrap ownership, provider exchanges, checkpoint quiescence |
 | mcparen/managed | Connection lifecycle, discovery snapshots and budgets | Configuration, authorization, tool registry and provider schema projection |
 | cl-lsp | Stdio JSON-RPC, language-server lifecycle, document synchronization and diagnostics | Trusted configuration, project selection, tool operations and edit hooks |
+| lisp-em | Bounded Emacs server protocol framing, socket ownership and quoting | Trusted socket configuration, base64-bound Emacs Lisp forms and JSON result decoding |
 | lambda-debugger | Live restart selection, recovery validation and execution, observable outcomes and typed condition metadata | Control conditions, source evaluation policy, model diagnosis and terminal renderer |
 | surgeon | Definition kinds, apropos, lambda lists, restart choice, definition signatures, exact undo capture and source form spans | Tool rendering, mutation journal, image commits, replay and the contributor and command undo methods |
 | cl-hashline | Visible-line validation, SHA-256 anchors, original-coordinate edits and revision-gated publication callbacks | JSON operations, observation state, bounded reads, temporary files and platform atomic publication |
@@ -484,8 +485,9 @@ image on loopback, loaded by exact path from the person's own sly installation.
 ACP serving and the terminal session own its lifetime; checkpoints quiesce it
 and serve the same port again. Slynk's global debugger, stream redirection and
 log output stay off, so Autolith's threads never report into a sly connection.
-=src/emacs/server.lisp= speaks the Emacs server line protocol over the
-configured Unix socket, with base64 arguments and JSON results.
+=src/emacs/server.lisp= builds base64-argument forms and decodes JSON results;
+=lisp-em= provides the bounded Emacs server protocol client over the configured
+Unix socket.
 =src/emacs/resource.lisp= resolves the =emacs:= scheme: =emacs:current= renders
 the visible windows, region and file buffers, and =emacs:buffer/NAME= snapshots a
 whole widened buffer as a workspace-style observation. Edits reuse the

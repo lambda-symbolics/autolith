@@ -62,6 +62,7 @@
                             #:image-daemon/messages
                             #:ironclad/mac/siphash
                             #:lambda-debugger
+                            #:lisp-em
                             #:ls-flock
                             #:bordeaux-threads
                             #:mcparen/managed

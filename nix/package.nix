@@ -51,7 +51,7 @@ let
     "cl-llm-provider-api" "cl-lsp" "cl-resources" "cl-rfc8252" "cl-rfc8628"
     "cl-skills" "cl-termdown" "cl-worktree" "clasted" "clermaid" "clifff" "clinedi"
     "clinker-transcript" "colordiff" "colorlisp" "daphne" "defingerprinter" "fetch-gist"
-    "idsmall" "image-daemon" "lambda-debugger" "llh2" "ls-compat" "ls-flock" "mcparen"
+    "idsmall" "image-daemon" "lambda-debugger" "lisp-em" "llh2" "ls-compat" "ls-flock" "mcparen"
     "org-templater" "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config"
     "sexp-store" "sophisticated-clipboard" "structlisp" "surgeon" "yolokuva"
   ];
@@ -376,6 +376,14 @@ let
     lispLibs = [ clinedi ];
   };
 
+  lispEm = pkgs.sbcl.buildASDFSystem {
+    pname = "lisp-em";
+    version = qlotVersion "lisp-em";
+    src = qlotSource "lisp-em";
+    systems = [ "lisp-em" ];
+    lispLibs = [ ];
+  };
+
   clTermdown = pkgs.sbcl.buildASDFSystem {
     pname = "cl-termdown";
     version = qlotVersion "cl-termdown";
@@ -616,6 +624,7 @@ let
       colorlisp
       colordiff
       clTermdown
+      lispEm
       dexador
       defingerprinter
       fetchGist

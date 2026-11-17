@@ -154,78 +154,47 @@
                      "Lookup continues to the next PATH directory.")))))
 
 
-;;;; -- Protocol --
-
-(-> test-emacs-server-quoting () null)
-(defun test-emacs-server-quoting ()
-  "Arguments are quoted exactly as server.el quotes them and round-trip."
-  (dolist (case (list (list "plain" "plain")
-                      (list "two words" "two&_words")
-                      (list "-flag" "&-flag")
-                      (list "a&b" "a&&b")
-                      (list (format nil "line~%line") "line&nline")
-                      (list "(insert \"λ - x\")" "(insert&_\"λ&_&-&_x\")")))
-    (destructuring-bind (text quoted) case
-      (test-assert (equal (emacs-server-quote text) quoted)
-                   (format nil "~S quotes as ~S" text quoted))
-      (test-assert (equal (emacs-server-unquote quoted) text)
-                   (format nil "~S unquotes to ~S" quoted text))))
-  nil)
+;;;; -- JSON Envelope and Client Error Projection --
 
 (-> test-emacs-server-fake-replies () null)
 (defun test-emacs-server-fake-replies ()
-  "Printed chunks join, -error becomes an elisp error and slow servers time out."
-  (with-platform-capability (':local-sockets "Emacs server protocol")
+  "Test the Autolith JSON envelope and projection of standalone client failures."
+  (with-platform-capability (':local-sockets "Emacs JSON envelope")
     (let ((directory (emacs-test-short-directory)))
       (unwind-protect
-           (let ((socket  (merge-pathnames "server" directory))
-                 (request nil))
-             (join-thread
-              (prog1 (emacs-test-serve-once
-                      socket
-                      (lambda (line stream)
-                        (setf request line)
-                        (format stream "-emacs-pid 42~%-print \"abc~%-print-nonl &_def\"~%")))
-                (test-assert (equal (emacs-server-evaluate socket "(foo bar)") "\"abc def\"")
-                             "Print chunks join and unquote.")))
-             (test-assert (equal request "-eval (foo&_bar) ")
-                          "The request is one quoted -eval line ending in a space.")
-             (join-thread
-              (prog1 (emacs-test-serve-once
-                      socket
-                      (lambda (line stream)
-                        (declare (ignore line))
-                        (format stream "-error Symbol&-s&_value&_is&_void~%")))
-                (handler-case (progn (emacs-server-evaluate socket "x")
-                                     (test-assert nil "An -error reply signals."))
-                  (emacs-server-error (condition)
-                    (test-assert (eq (emacs-server-error-reason condition) ':elisp-error)
-                                 "An -error reply is an elisp error.")
-                    (test-assert (search "Symbol-s value is void" (autolith-error-message condition))
-                                 "The elisp error message is unquoted.")))))
-             (let ((encoded (usb8-array-to-base64-string (utf8-string-to-octets "{\"λ\":1}"))))
-               (join-thread
-                (prog1 (emacs-test-serve-once
-                        socket
-                        (lambda (line stream)
-                          (declare (ignore line))
-                          (format stream "-print \"~A\"~%" encoded)))
-                  (test-assert (eql (json-get (emacs-server-call
-                                               (emacs-test-configuration directory socket) "t")
-                                              "λ")
-                                    1)
-                               "A base64 JSON value decodes to an object."))))
+           (let* ((socket        (merge-pathnames "server" directory))
+                  (configuration (emacs-test-configuration directory socket)))
+             (dolist (json '("{\"λ\":1}" "[]" "not JSON"))
+               (let* ((encoded (usb8-array-to-base64-string (utf8-string-to-octets json)))
+                      (thread  (emacs-test-serve-once
+                                socket
+                                (lambda (line stream)
+                                  (declare (ignore line))
+                                  (format stream "-print \"~A\"~%" encoded)))))
+                 (unwind-protect
+                      (if (char= (char json 0) #\{)
+                          (test-assert (eql 1 (json-get (emacs-server-call configuration "t") "λ"))
+                                       "A UTF-8 base64 JSON object reaches the caller.")
+                          (handler-case
+                              (progn (emacs-server-call configuration "t")
+                                     (test-assert nil "Invalid JSON envelopes must signal."))
+                            (emacs-server-error (condition)
+                              (test-assert (eq (emacs-server-error-reason condition) ':protocol)
+                                           "Non-object and malformed JSON are protocol failures."))))
+                   (join-thread thread))))
              (let ((thread (emacs-test-serve-once
                             socket
                             (lambda (line stream)
-                              (declare (ignore line stream))
-                              (sleep 0.8)))))
-               (handler-case (progn (emacs-server-evaluate socket "x" :timeout 0.3)
-                                    (test-assert nil "A silent server times out."))
-                 (emacs-server-error (condition)
-                   (test-assert (eq (emacs-server-error-reason condition) ':timeout)
-                                "A silent server is a timeout.")))
-               (join-thread thread)))
+                              (declare (ignore line))
+                              (format stream "-error void&_variable~%")))))
+               (unwind-protect
+                    (handler-case
+                        (progn (emacs-server-call configuration "t")
+                               (test-assert nil "A client failure must reach Autolith."))
+                      (emacs-server-error (condition)
+                        (test-assert (eq (emacs-server-error-reason condition) ':elisp-error)
+                                     "The adapter retains the library failure category.")))
+                 (join-thread thread))))
         (platform-delete-directory-tree *platform* directory :validate t :if-does-not-exist ':ignore))))
   nil)
 

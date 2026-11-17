@@ -1315,13 +1315,6 @@ System application directories are available through AppContainer's system acces
    ':local-sockets
    "Windows SBCL has no filesystem sockets; use the TCP transport."))
 
-(defmethod platform-connect-local ((platform win32-platform) pathname)
-  "Refuse, since Windows SBCL has no filesystem sockets."
-  (declare (ignore pathname))
-  (win32--unavailable
-   ':local-sockets
-   "Windows SBCL has no filesystem sockets; use the TCP transport."))
-
 
 ;;;; -- Anonymous Streaming WinHTTP --
 

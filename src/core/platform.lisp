@@ -550,14 +550,6 @@ for its command and descendants before returning."))
 Return the socket after it accepts up to BACKLOG pending connections. Signal
 PLATFORM-CAPABILITY-UNAVAILABLE without the :LOCAL-SOCKETS capability."))
 
-(defgeneric platform-connect-local (platform pathname)
-  (:documentation
-   "Connect a stream socket to the filesystem endpoint at PATHNAME and return it.
-
-Signal PLATFORM-ERROR with operation :CONNECT, using reason :REFUSED when
-nothing is listening there, and PLATFORM-CAPABILITY-UNAVAILABLE without the
-:LOCAL-SOCKETS capability."))
-
 
 ;;;; -- Status Comparison --
 

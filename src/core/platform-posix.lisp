@@ -659,30 +659,6 @@ Conflicts require an explicit choice. Rename failures warn and retry next lookup
         (ignore-errors (sb-bsd-sockets:socket-close listener))
         (error condition)))))
 
-(defmethod platform-connect-local ((platform posix-platform) pathname)
-  "Connect a Unix stream socket to PATHNAME."
-  (let ((socket (make-instance 'sb-bsd-sockets:local-socket :type ':stream)))
-    (handler-case
-        (progn
-          (sb-bsd-sockets:socket-connect socket (posix--namestring pathname))
-          socket)
-      (sb-bsd-sockets:connection-refused-error (condition)
-        ; mallet:suppress no-ignore-errors -- closing the failed socket must not mask the original failure
-        (ignore-errors (sb-bsd-sockets:socket-close socket))
-        (error 'platform-error
-               :message   (princ-to-string condition)
-               :operation ':connect
-               :pathname  pathname
-               :reason    ':refused))
-      (sb-bsd-sockets:socket-error (condition)
-        ; mallet:suppress no-ignore-errors -- closing the failed socket must not mask the original failure
-        (ignore-errors (sb-bsd-sockets:socket-close socket))
-        (error 'platform-error
-               :message   (princ-to-string condition)
-               :operation ':connect
-               :pathname  pathname
-               :reason    ':failed)))))
-
 (defmethod platform-source-check-command ((platform posix-platform) source-root)
   "Run the executable repository check script on POSIX."
   (declare (ignore platform))

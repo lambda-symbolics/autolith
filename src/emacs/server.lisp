@@ -42,84 +42,14 @@ or :null."
 
 (-> emacs-server-evaluate (pathname string &key (:timeout (real 0))) string)
 (defun emacs-server-evaluate (socket form &key (timeout *emacs-server-timeout*))
-  "Send elisp FORM to the Emacs server at SOCKET and return its printed value.
-
-The request must end with a space before the newline; newer servers reject
-requests without that trailing space."
-  (let ((connection (handler-case (platform-connect-local *platform* socket)
-                      (error (condition)
-                        (error 'emacs-server-error
-                               :message (format nil "The Emacs server at ~A is not reachable: ~A"
-                                                (uiop:native-namestring socket) condition)
-                               :reason  ':unavailable)))))
-    (unwind-protect
-         (let ((stream (sb-bsd-sockets:socket-make-stream
-                        connection :input t :output t :element-type 'character
-                                   :external-format ':utf-8 :buffering ':full
-                                   :timeout timeout)))
-           (handler-case
-               (progn
-                 (write-string "-eval " stream)
-                 (write-string (emacs-server-quote form) stream)
-                 (write-char #\Space stream)
-                 (write-char #\Newline stream)
-                 (finish-output stream)
-                 (emacs-server--read-reply stream))
-             (sb-sys:io-timeout ()
-               (error 'emacs-server-error
-                      :message (format nil "Emacs did not answer within ~A seconds; it may be waiting in the minibuffer."
-                                       timeout)
-                      :reason  ':timeout))
-             (stream-error (condition)
-               (error 'emacs-server-error
-                      :message (format nil "The Emacs server connection failed: ~A" condition)
-                      :reason  ':protocol))))
-      ; mallet:suppress no-ignore-errors -- best-effort socket cleanup must not mask the request outcome
-      (ignore-errors (sb-bsd-sockets:socket-close connection)))))
-
-
-;;;; -- Quoting --
-
-(-> emacs-server-quote (string) string)
-(defun emacs-server-quote (text)
-  "Quote TEXT the way server.el's server-quote-arg does, so it contains no space."
-  (with-output-to-string (stream)
-    (loop for character across text
-          do (case character
-               (#\&
-                (write-string "&&" stream))
-               (#\-
-                (write-string "&-" stream))
-               (#\Newline
-                (write-string "&n" stream))
-               (#\Space
-                (write-string "&_" stream))
-               (t
-                (write-char character stream))))))
-
-(-> emacs-server-unquote (string) string)
-(defun emacs-server-unquote (text)
-  "Undo server.el's &-quoting of TEXT."
-  (with-output-to-string (stream)
-    (loop with index = 0
-          while (< index (length text))
-          do (let ((character (char text index)))
-               (if (and (char= character #\&) (< (1+ index) (length text)))
-                   (progn
-                     (write-char (case (char text (1+ index))
-                                   (#\&
-                                    #\&)
-                                   (#\-
-                                    #\-)
-                                   (#\n
-                                    #\Newline)
-                                   (t
-                                    #\Space))
-                                 stream)
-                     (incf index 2))
-                   (progn
-                     (write-char character stream)
-                     (incf index)))))))
+  "Evaluate FORM through the standalone bounded socket client."
+  (handler-case
+      (lisp-em:evaluate socket form :timeout       timeout
+                                    :maximum-reply *emacs-server-maximum-reply*)
+    (lisp-em:emacs-client-error (condition)
+      (error 'emacs-server-error
+             :message (lisp-em:emacs-client-error-message condition)
+             :reason  (lisp-em:emacs-client-error-reason condition)))))
 
 
 ;;;; -- Private --
@@ -134,37 +64,6 @@ requests without that trailing space."
                                 index
                                 (usb8-array-to-base64-string (utf8-string-to-octets argument))))
           body))
-
-(-> emacs-server--read-reply (stream) string)
-(defun emacs-server--read-reply (stream)
-  "Read reply lines from STREAM until Emacs closes it and return the joined -print text.
-
-The text is the printed value without the newline Emacs appends to it."
-  (let ((value (make-string-output-stream))
-        (size  0))
-    (loop for line = (read-line stream nil nil)
-          while line
-          do (incf size (length line))
-             (when (> size *emacs-server-maximum-reply*)
-               (error 'emacs-server-error
-                      :message "The Emacs reply is larger than the client accepts."
-                      :reason  ':protocol))
-             (cond
-               ((uiop:string-prefix-p "-print-nonl " line)
-                (write-string (emacs-server-unquote (subseq line 12)) value))
-               ((uiop:string-prefix-p "-print " line)
-                (write-string (emacs-server-unquote (subseq line 7)) value))
-               ((uiop:string-prefix-p "-error " line)
-                (error 'emacs-server-error
-                       :message (format nil "Emacs signaled: ~A"
-                                        (string-right-trim '(#\Newline)
-                                                           (emacs-server-unquote (subseq line 7))))
-                       :reason  ':elisp-error))))
-    (let ((text (get-output-stream-string value)))
-      ;; Emacs ends the printed value with one newline of its own.
-      (if (and (plusp (length text)) (char= (char text (1- (length text))) #\Newline))
-          (subseq text 0 (1- (length text)))
-          text))))
 
 (-> emacs-server--decode-reply (string) json-object)
 (defun emacs-server--decode-reply (reply)
