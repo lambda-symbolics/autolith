@@ -762,59 +762,34 @@
   test-world-portable-files
   test-world-generated-identifier-released)
 
-(define-test-suite world-server
-  test-world-server-endpoint-recovery
-  test-world-server-endpoint-precedence
-  test-world-server-endpoint-escalation
-  test-world-server-cold-channels
-  test-world-server-child-maintenance
-  test-world-server-wake-channel
-  test-world-server-stop-reason
-  test-world-server-control-z-detach
-  test-world-server-status-line
-  test-world-client-stop-outcomes
-  test-world-client-exit-observation
-  test-world-server-new-channel
-  test-world-server-tell
-  test-world-server-hosting
-  test-world-server-checkpoint-quiescence
-  test-world-server-checkpoint-cancel
-  test-world-server-restart-marker
-  test-world-server-restart-owned-cleanup
-  test-world-server-restart-cleanup-failures
-  test-world-server-restart-diagnostics
-  test-world-server-restart-checkpoint
-  test-world-server-stop
-  test-world-server-switch
-  test-world-channel-command-admission
-  test-move-picker-available-destinations
-  test-world-server-resume-order
-  test-world-server-open-latest-touched
-  test-world-server-open-passes-damage
-  test-world-server-generation-warning-once
-  test-world-server-open-images-and-new
-  test-world-client-script-submissions
-  test-world-client-script
-  test-world-server-starting-host
-  test-world-server-startup-reservations
-  test-world-server-closing-reservation
-  test-world-server-close-without-search-rebuild
-  test-world-server-launch-options
-  test-world-server-close-unattached
-  test-world-server-close-ownership
-  test-world-server-attachment-moves-nobody
-  test-world-server-person-unread
-  test-world-server-open-before-checkpoint
-  test-world-server-move
-  test-world-execution-owner-claims
-  test-world-execution-owner-staging
-  test-world-server-move-running-child
-  test-world-server-move-goal
-  test-world-server-adoption-recovery
-  test-world-client-joins-winner
-  test-world-client-switch-navigates
-  test-world-client-refusal-ends-start
-  test-world-client-switch-failures)
+(define-test-suite world-server test-world-server-endpoint-recovery
+ test-world-server-endpoint-precedence test-world-server-endpoint-escalation
+ test-world-server-cold-channels test-world-server-child-maintenance
+ test-world-server-wake-channel test-world-server-stop-reason
+ test-world-server-control-z-detach test-world-server-status-line
+ test-world-client-stop-outcomes test-world-client-exit-observation
+ test-world-server-new-channel test-world-server-tell test-world-server-hosting
+ test-world-server-checkpoint-quiescence test-world-server-checkpoint-cancel
+ test-world-server-restart-marker test-world-server-restart-owned-cleanup
+ test-world-server-restart-cleanup-failures
+ test-world-server-restart-diagnostics test-world-server-restart-checkpoint
+ test-world-server-stop test-world-server-switch
+ test-world-channel-command-admission test-move-picker-available-destinations
+ test-world-server-resume-order test-world-server-open-latest-touched
+ test-world-server-open-passes-damage test-world-server-generation-warning-once
+ test-world-server-open-images-and-new test-world-client-script-submissions
+ test-world-client-script test-world-server-starting-host
+ test-world-server-startup-reservations test-world-server-closing-reservation
+ test-world-server-close-without-search-rebuild
+ test-world-server-launch-options test-world-server-close-unattached
+ test-world-server-close-ownership test-world-server-attachment-moves-nobody
+ test-world-server-person-unread test-world-server-open-before-checkpoint
+ test-world-server-move test-world-execution-owner-claims
+ test-world-execution-owner-staging test-world-server-move-running-child
+ test-world-server-move-goal test-world-server-adoption-recovery
+ test-world-client-joins-winner test-world-client-switch-navigates
+ test-world-client-refusal-ends-start test-world-client-switch-failures
+ test-application-conversation-maintenance)
 
 (define-test-suite portable-values
   test-portable-client-values

@@ -61,6 +61,25 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-conversation-lease
     :type          (option conversation-lease)
     :documentation "The process-lifetime exclusive lease on the primary conversation.")
+   (conversation-maintenance-lock
+    :initform      (make-lock "Autolith conversation maintenance")
+    :reader        application-conversation-maintenance-lock
+    :documentation "Serialize deferred-maintenance admission and ownership changes.")
+   (conversation-maintenance-pool
+    :initform      nil
+    :accessor      application-conversation-maintenance-pool
+    :type          (option job-pool)
+    :documentation "The managed repair pool retained until its threads stop.")
+   (conversation-maintenance-job
+    :initform      nil
+    :accessor      application-conversation-maintenance-job
+    :type          (option job)
+    :documentation "The channel's single deferred-repair job, including its terminal state.")
+   (conversation-maintenance-stopping-p
+    :initform      nil
+    :accessor      application-conversation-maintenance-stopping-p
+    :type          boolean
+    :documentation "Whether lease shutdown has prohibited further maintenance admission.")
    (provider
     :initarg       :provider
     :accessor      application-provider
@@ -1130,6 +1149,7 @@ newly acquired lease."
 (-> application-release-conversation-lease (application) null)
 (defun application-release-conversation-lease (application)
   "Release APPLICATION's primary conversation lease idempotently."
+  (application-conversation-maintenance-stop application)
   (when (slot-boundp application 'conversation-lease)
     (let ((lease (application-conversation-lease application)))
       (when lease

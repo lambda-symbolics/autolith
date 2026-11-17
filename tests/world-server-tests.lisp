@@ -2476,7 +2476,85 @@ run once the wake has."
       (and (= discoveries 2) (equal (reverse attempts) '((1) (2)))
            (= acknowledgments 1) (apply #'= deadlines))
       "one changed endpoint is retried before acknowledgment within the original deadline")))
-  nil)(-> test-world-client-refusal-ends-start () null)
+  nil)(-> test-application-conversation-maintenance () null)
+(defun test-application-conversation-maintenance ()
+  "Exercise nonblocking admission, retained shutdown ownership, timeout, and checkpoint resume."
+  (with-test-configuration (configuration)
+    (dolist (scenario '(:close :complete :timeout))
+      (let* ((conversation                                    (conversation-create configuration))
+             (lease                                           (conversation-lease-acquire configuration (conversation-identifier conversation)))
+             (application                                     (make-instance 'application :configuration configuration
+                                                                             :conversation conversation :conversation-lease lease))
+             (ready (sb-thread:make-semaphore)) (gate (sb-thread:make-semaphore))
+             (completed                                       0)
+             (*conversation-maintenance-runtime-milliseconds* (if (eq scenario ':timeout) 30 30000)))
+        (unwind-protect
+             (let* ((job  (application-conversation-maintenance-start
+                           application
+                           :run-function
+                           (lambda (candidate &key check-function)
+                             (test-assert (eq candidate conversation) "maintenance owns the admitted conversation")
+                             (sb-thread:signal-semaphore ready)
+                             (sb-thread:wait-on-semaphore gate)
+                             (funcall check-function)
+                             '(:input-complete-p t :images-complete-p t))
+                           :complete-function
+                           (lambda (candidate admitted result)
+                             (test-assert (and (eq candidate application) (eq admitted conversation)
+                                               (getf result :input-complete-p))
+                                          "completion carries the original owner and completeness")
+                             (incf completed))))
+                    (pool (application-conversation-maintenance-pool application)))
+               (test-assert (sb-thread:wait-on-semaphore ready :timeout 3) "the managed job starts without blocking its caller")
+               (test-assert (and (eq job (application-conversation-maintenance-start application))
+                                 (member (getf (application-conversation-maintenance-status application) :state) '(:running :aborted)))
+                            "repeated admission returns one queryable job while archive work is blocked")
+               (case scenario
+                 (:close
+                  (let ((close (symbol-function 'job-pool-close)))
+                    (test-call-with-function-replacements
+                     (list (list 'job-pool-close (lambda (candidate) (if (eq candidate pool) nil (funcall close candidate)))))
+                     (lambda ()
+                       (test-assert (handler-case (progn (application-release-conversation-lease application) nil)
+                                      (conversation-maintenance-stop-error () t))
+                                    "unfinished managed shutdown refuses actual lease release")
+                       (test-assert (and (eq pool (application-conversation-maintenance-pool application))
+                                         (eq lease (application-conversation-lease application))
+                                         (conversation-lease-held-p lease))
+                                    "a failed join retains the pool and actual owned lease for retry"))))
+                  (application-release-conversation-lease application)
+                  (test-assert (and (eq (getf (job-snapshot job) :state) ':aborted)
+                                    (zerop completed) (null (application-conversation-maintenance-pool application))
+                                    (not (conversation-lease-held-p lease)))
+                               "retry cancels and joins archive work before releasing ownership"))
+                 (:complete
+                  (sb-thread:signal-semaphore gate)
+                  (test-assert (eq (getf (job-await job :timeout-seconds 3) :state) ':completed)
+                               "the managed job publishes its repair result")
+                  (application-conversation-maintenance-stop application)
+                  (test-assert (and (= completed 1) (conversation-lease-held-p lease)
+                                    (null (application-conversation-maintenance-start application)))
+                               "checkpoint pause stops its pool but retains the lease and prevents accidental restart")
+                  (let ((resumed (application-conversation-maintenance-start
+                                  application :resume-p t
+                                  :run-function         (lambda (candidate &key check-function)
+                                                          (declare (ignore candidate)) (funcall check-function)
+                                                          '(:input-complete-p nil :images-complete-p t))
+                                  :complete-function    (lambda (&rest arguments) (declare (ignore arguments)) (incf completed)))))
+                    (test-assert (and (not (eq resumed job))
+                                      (eq (getf (job-await resumed :timeout-seconds 3) :state) ':completed)
+                                      (= completed 1))
+                                 "resumed readiness admits one fresh job only after closed-pool pause, without publishing incomplete input history")))
+                 (:timeout
+                  (let ((snapshot (job-await job :timeout-seconds 3)))
+                    (test-assert (and (eq (getf snapshot :state) ':aborted)
+                                      (eq (getf snapshot :cancellation-reason) ':timeout)
+                                      (zerop completed) (conversation-lease-held-p lease))
+                                 "bounded maintenance times out without releasing its conversation owner")))))
+          (application-release-conversation-lease application)))))
+  nil)
+
+(-> test-world-client-refusal-ends-start () null)
 (defun test-world-client-refusal-ends-start ()
   "Test a start ends with the reason when the world server refuses it, cannot be reached, or cannot be started."
   (with-test-configuration (configuration)

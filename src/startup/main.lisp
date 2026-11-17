@@ -457,6 +457,7 @@ controller's exit reason."
       (setf (terminal-ui-live-output-suspended-p ui) t))
     (labels ((pause-resources ()
                "Stop only the session's own threads, keeping APPLICATION ready to serve again."
+               (application-conversation-maintenance-stop application)
                ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
                (ignore-errors (localgroup-stop application))
                ; mallet:suppress no-ignore-errors -- a failed join must not keep the pause from completing
@@ -585,6 +586,7 @@ controller's exit reason."
                      input-controller)
                     (application-input-controller--start-reader
                      input-controller)
+                    (application-conversation-maintenance-start application :resume-p resume-p)
                     ;; A channel served for a message, or opened while
                     ;; messages waited, reads them now.
                     (when hosted-p

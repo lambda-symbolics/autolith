@@ -319,6 +319,7 @@
                                           (:file "application/prompt-cache")
                                           (:file "application/clients")
                                           (:file "application/runtime")
+                                          (:file "application/conversation-maintenance")
                                           (:file "world/application")
                                           (:file "application/mission")
                                           (:file "application/mission-inference")
