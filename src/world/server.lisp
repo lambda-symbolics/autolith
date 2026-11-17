@@ -1183,6 +1183,13 @@ person's inbox is never a candidate: it is opened only by name."
                                    candidates)
                            #'> :key #'first)))))
 
+(-> world-server--workspace-host-suitable-p (world-host list) boolean)
+(defun world-server--workspace-host-suitable-p (host arguments)
+  "Return whether HOST can accept a workspace open with ARGUMENTS."
+  (not (or (world-host-attached-p host)
+           (getf arguments :mcp-servers)
+           (world-server--launch-conflict host (getf arguments :launch)))))
+
 (-> world-server--latest-host (world-server string list) (values (option world-host) boolean list))
 (defun world-server--latest-host (server workspace arguments)
   "Return the host of WORKSPACE's latest touched free channel, whether it was started now, and the channels passed over.
@@ -1203,9 +1210,7 @@ opening. Return NIL for the host when no channel qualifies."
         (cond
          (host
           (world-server--check-host-opening host)
-          (unless
-              (or (world-host-attached-p host) (getf arguments :mcp-servers)
-                  (world-server--launch-conflict host launch))
+          (when (world-server--workspace-host-suitable-p host arguments)
             (world-server--reconcile-launch server host launch)
             (return (values host nil (nreverse skipped)))))
          (t
@@ -1439,10 +1444,13 @@ no turn or job is running. A request for the current mode needs no change."
                    (find-if
                     (lambda (candidate)
                       (and (equal key (world-startup-key candidate))
-                           (or
-                            (let ((host (world-startup-host candidate)))
-                              (and host (world-host-reserved-p host)))
-                            (world-server--startup-active-p candidate))))
+                           (let ((host (world-startup-host candidate)))
+                             (if host
+                                 (and (world-host-reserved-p host)
+                                      (or conversation-id
+                                          (world-server--workspace-host-suitable-p
+                                           host arguments)))
+                                 (world-server--startup-active-p candidate)))))
                     (world-server-startups server)))
            (unless startup
              (setf startup
