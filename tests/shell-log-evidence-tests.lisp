@@ -435,6 +435,24 @@
            (artifact                       (shell-log-allocate context))
            (directory                      (shell-log-capture-directory artifact)))
       (shell-log-tests--finish artifact #(120))
+      (let ((path (merge-pathnames "output.bin" directory)))
+        (dolist (case '((t nil nil) (t t t) (nil nil t)))
+          (destructuring-bind (relative-p anchored-p managed-p) case
+            (let ((evidence
+                    (knowledge-make-evidence
+                     :source    (list :file     :path (if relative-p
+                                                       (enough-namestring path root)
+                                                       (namestring path))
+                                      :relative relative-p)
+                     :workspace (and anchored-p (namestring root))
+                     :observed-at 100000 :digest (memory-source-text-digest "captured")
+                     :adapter   "file-contract/1")))
+              (test-assert
+               (equal (shell-log--file-evidence-reference configuration (rest evidence)
+                                                         :require-present-p t)
+                      (and managed-p (shell-log-reference artifact)))
+               (format nil "FILE dependency identity with relative=~S workspace=~S"
+                       relative-p anchored-p))))))
       (flet ((assert-file (path item)
                "Observe PATH and assert one fresh support through the actual append boundary."
                (knowledge-assert

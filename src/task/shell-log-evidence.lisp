@@ -109,9 +109,10 @@ existing regular capture in the exact manifest, never another artifact's URI."
          (properties (rest source))
          (path       (and (eq (first source) :file)
                           (if (getf properties :relative)
-                              (merge-pathnames (getf properties :path)
-                                               (uiop:ensure-directory-pathname
-                                                (getf evidence :workspace)))
+                              (and (getf evidence :workspace)
+                                   (merge-pathnames (getf properties :path)
+                                                    (uiop:ensure-directory-pathname
+                                                     (getf evidence :workspace))))
                               (pathname (getf properties :path)))))
          (root       (merge-pathnames "tasks/" (config :data-root configuration)))
          (relative   (and path (uiop:subpathp path root)))
