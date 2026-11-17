@@ -424,7 +424,7 @@
                               "(settings :boot-screen-seconds 2)"
                               "(settings :terminal-theme)")
                   ("/trace" "(trace t)" "(trace nil)" "(effort)")
-                  ("/help" "(help :workspace)" "(help 'switch)")
+                  ("/help" "(help :workspace)" "(help 'open)")
                   ("/vault-store" "(setf (vault-contents 0) '(:message \"new task\"))")
                   ("/data.export" "(data.export pathname :workspace directory)")
                   ("/auth" "(auth \"chatgpt\" :device-code)" ":browser")))
