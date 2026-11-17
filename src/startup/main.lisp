@@ -1211,8 +1211,7 @@ request it conflicts with from one that says nothing."
 (defun main--switch-failure (identifier condition)
   "Return what the terminal is told when its switch to channel IDENTIFIER failed with CONDITION."
   (format nil "could not switch to ~A: ~A"
-          (conversation-identifier-display identifier)
-          (autolith-error-message condition)))
+          (conversation-identifier-display identifier) condition))
 
 (-> main--call-with-channel-loading
     (localgroup-screen string function &key (:start-p boolean) (:boot-p boolean)) t)
@@ -1227,6 +1226,37 @@ request it conflicts with from one that says nothing."
                          :description (channel-loading-progress-description progress)))))
     (funcall function)))
 
+(-> main--attach-world-channel (configuration string keyword &key (:panel t) (:screen localgroup-screen) (:notice (option string)) (:client-version (option string)) (:attached-function function)) (option list))
+(defun main--attach-world-channel (configuration identifier mode &key panel screen notice client-version attached-function)
+  "Discover and attach within one handshake deadline, refreshing a changed endpoint once before acknowledgment."
+  (let ((deadline       (+ (get-internal-real-time)
+                           (ceiling (* internal-time-units-per-second image-daemon:*daemon-connect-timeout-seconds*))))
+        (acknowledged-p nil))
+    (labels ((discover ()
+               "Resolve the endpoint within the remaining transaction deadline."
+               (handler-case
+                   (sb-sys:with-deadline (:seconds (max 0 (/ (- deadline (get-internal-real-time)) internal-time-units-per-second)))
+                     (localgroup--find-record configuration identifier))
+                 (sb-sys:deadline-timeout (condition)
+                   (error 'localgroup-error :operation ':discover :session-id identifier :cause condition
+                          :message "Channel discovery timed out before attachment."))))
+
+             (attach (entry)
+               "Commit navigation only after the endpoint accepts this terminal."
+               (localgroup-attach-record configuration entry mode :panel panel :screen screen
+                                        :notice notice :client-version client-version :deadline deadline
+                                        :attached-function (lambda ()
+                                                             (setf acknowledged-p t)
+                                                             (funcall attached-function)))))
+      (let ((entry (discover)))
+        (handler-case (attach entry)
+          (error (condition)
+            (when acknowledged-p (error condition))
+            (let ((replacement (discover)))
+              (when (or (equal replacement entry) (>= (get-internal-real-time) deadline))
+                (error condition))
+              (attach replacement))))))))
+
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
@@ -1238,19 +1268,10 @@ request it conflicts with from one that says nothing."
     boolean)
 (defun main--run-world-client
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        (attachment-mode ':control)
-                        pick-channel-p recovery-diagnosis launch images)
-  "Serve this terminal as a client of the world server until its channel lets it go.
-
-IMAGES, absolute image namestrings, become the channel's composer draft.
-ATTACHMENT-MODE selects a controlling or read-only terminal for each channel.
-Return T once the terminal's channel lets it go. A channel that asks the
-terminal to switch is left running, and the terminal attaches to the channel
-it named, opening it in the server first without this start's launch
-options; when that channel refuses the open or the terminal's attachment,
-the terminal attaches to the one it left. One screen, with one sidebar of
-the world, follows the terminal from channel to channel, so a switch never
-gives the terminal back in between."
+                        (attachment-mode ':control) pick-channel-p recovery-diagnosis launch images)
+  "Serve one terminal across channel switches, committing navigation after attachment acknowledgment.
+Discovery, endpoint refresh and the attach handshake share a bounded switch transaction.
+A failed switch restores its source, or reports a disconnected terminal if that source disappeared."
   (let* ((panel        (world-sidebar-create configuration))
          (screen       (localgroup-client-screen-create :panel panel))
          (last-channel nil)
@@ -1262,102 +1283,72 @@ gives the terminal back in between."
                (main--call-with-channel-loading
                 screen "Opening channel"
                 (lambda ()
-                  (main--open-world-channel configuration
-                                            :permission-mode    permission-mode
-                                            :immutable-p        immutable-p
-                                            :conversation-id    conversation-id
-                                            :pick-channel-p     pick-channel-p
-                                            :recovery-diagnosis recovery-diagnosis
-                                            :launch             launch
-                                            :images             images
-                                            :boot-presented-p   (not (null (localgroup-screen-boot-ui screen)))))
+                  (main--open-world-channel configuration :permission-mode permission-mode
+                                            :immutable-p immutable-p :conversation-id conversation-id
+                                            :pick-channel-p pick-channel-p :recovery-diagnosis recovery-diagnosis
+                                            :launch launch :images images
+                                            :boot-presented-p              (not (null (localgroup-screen-boot-ui screen)))))
                 :start-p (and (config :fullscreen-p configuration)
-                              (not (null (terminal--terminal-mode-or-nil
-                                          (localgroup-screen-terminal screen)))))
-                 :boot-p (and (config :fullscreen-p configuration)
-                              (config :boot-screen-p configuration)))
-             (loop
-              with origin = nil
-               with client-version = *autolith-version*
-              with notice = nil
-              do
-              (let* ((record (localgroup--find-record configuration session-id))
-                     (exit
-                       (flet ((close-started ()
-                                ;; A channel started for this terminal would
-                                ;; otherwise idle in the server. The server closes
-                                ;; it only while no terminal controls it: another
-                                ;; one may have attached since this one started it.
-                                (when started-p
-                                  ; mallet:suppress no-ignore-errors -- best-effort close of a channel nobody attached to
-                                  (ignore-errors
-                                    (let ((world (world-client-entry configuration)))
-                                      (when world
-                                        (localgroup-query-record world ':close
-                                                                (list :channel           session-id
-                                                                      :unattached-only-p t))))))))
-                         (handler-case
-                             (progn
-                               (setf (world-sidebar-current panel) session-id)
-                               (prog1
-                                   (localgroup-attach-record configuration record attachment-mode
-                                                            :panel          panel
-                                                            :screen         screen
-                                                            :notice         (shiftf notice nil)
-                                                            :client-version (shiftf client-version nil))
-                                 (setf last-channel session-id)))
-                           (localgroup-error (condition)
-                             (close-started)
-                             ;; A switch whose channel refuses this terminal, as
-                             ;; when another terminal controls it, returns it to
-                             ;; the channel it left.
-                             (unless (and origin
-                                          (eq (image-daemon:daemon-error-operation condition) ':attach))
-                               (error condition))
-                             (setf notice (main--switch-failure session-id condition))
-                             (list ':return))
-                           (serious-condition (condition)
-                             (close-started)
-                             (error condition))))))
-                (cond
-                  ((and (consp exit) (eq (first exit) ':return))
-                   (setf session-id origin
-                         origin     nil
-                         started-p  nil))
-                  ((and (consp exit) (eq (first exit) ':switch))
-                    ;; A switch navigates: it states none of this start's launch
-                    ;; options, and a channel that refuses it leaves the terminal
-                    ;; where it was.
-                   (let ((left   session-id)
-                         (target (getf (rest exit) :session-id)))
-                     (handler-case
-                         (progn
-                           (setf (world-sidebar-current panel) target)
-                           (multiple-value-setq (session-id started-p)
-                             (main--call-with-channel-loading
-                              screen
-                              (format nil "Loading channel ~A"
-                                      (conversation-identifier-display target))
-                              (lambda ()
-                                (world-client-open configuration
-                                                   :channel         target
-                                                   :permission-mode permission-mode
-                                                   :immutable-p     immutable-p
-                                                   :switch-p        t))))
-                           (setf origin left))
-                       (localgroup-error (condition)
-                         (setf notice     (main--switch-failure target condition)
-                               session-id left
-                               origin     nil
-                               started-p  nil)))))
-                  (t
-                    (setf final-exit exit)
-                    (return)))))))
-      (unwind-protect
-           (localgroup-client-screen-release screen)
+                              (not (null (terminal--terminal-mode-or-nil (localgroup-screen-terminal screen)))))
+                :boot-p  (and (config :fullscreen-p configuration) (config :boot-screen-p configuration)))
+             (loop with origin = nil
+                   with restoring-p = nil
+                   with client-version = *autolith-version*
+                   with notice = nil
+                   do
+                (let ((exit
+                        (handler-case
+                            (main--attach-world-channel
+                             configuration session-id attachment-mode :panel panel :screen screen
+                             :notice (shiftf notice nil) :client-version (shiftf client-version nil)
+                             :attached-function
+                             (lambda ()
+                               (setf (world-sidebar-current panel) session-id
+                                     last-channel session-id origin nil restoring-p nil started-p nil)))
+                          (error (condition)
+                            (when started-p
+                              ; mallet:suppress no-ignore-errors -- close only a newly started and still unattached target
+                              (ignore-errors
+                                (let ((world (world-client-entry configuration)))
+                                  (when world
+                                    (localgroup-query-record world ':close
+                                                             (list :channel session-id :unattached-only-p t))))))
+                            (cond
+                              (origin
+                               (setf notice (main--switch-failure session-id condition))
+                               (list ':return))
+                              (restoring-p
+                               (setf (world-sidebar-current panel) nil last-channel nil)
+                               (localgroup-screen-show-loading screen "Disconnected")
+                               (list ':disconnected :status 1
+                                     :message               (format nil "Disconnected: the source channel is no longer available. ~A" condition)))
+                              (t
+                               (error condition)))))))
+                  (cond
+                    ((and (consp exit) (eq (first exit) ':return))
+                     (setf session-id origin origin nil started-p nil restoring-p t))
+                    ((and (consp exit) (eq (first exit) ':disconnected))
+                     (setf final-exit (rest exit))
+                     (return))
+                    ((and (consp exit) (eq (first exit) ':switch))
+                     (let ((left session-id) (target (getf (rest exit) :session-id)))
+                       (handler-case
+                           (progn
+                             (multiple-value-setq (session-id started-p)
+                               (main--call-with-channel-loading
+                                screen (format nil "Loading channel ~A" (conversation-identifier-display target))
+                                (lambda ()
+                                  (world-client-open configuration :channel target :permission-mode permission-mode
+                                                     :immutable-p immutable-p :switch-p t))))
+                             (setf origin left))
+                         (error (condition)
+                           (setf notice (main--switch-failure target condition)
+                                 session-id left origin nil started-p nil restoring-p t)))))
+                    (t
+                     (setf final-exit exit) (return)))))))
+      (unwind-protect (localgroup-client-screen-release screen)
         (world-sidebar-stop panel)))
-    (localgroup-relay-exit configuration final-exit attachment-mode
-                           :session-id last-channel)
+    (localgroup-relay-exit configuration final-exit attachment-mode :session-id last-channel)
     t))
 
 (-> main--session-options () list)

@@ -1393,91 +1393,182 @@
         (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
   nil)
 
+(-> test-localgroup-attachment-acknowledgment () null)
+(defun test-localgroup-attachment-acknowledgment ()
+  "Keep ordinary and handoff handshakes bounded, committing before unbounded terminal input."
+  (dolist (mode '(:blocked :accepted :handoff))
+    (let* ((socket (make-instance 'sb-bsd-sockets:inet-socket :type ':stream :protocol ':tcp))
+           (gate   (sb-thread:make-semaphore))
+           (screen (localgroup-screen-create :terminal (make-instance 'recording-terminal :columns 80)))
+           (entry  '("endpoint" :localgroup-session :port 1 :token "test" :session-id "bfirst1"))
+           (acknowledgments 0) (responses 0) (input-p nil))
+      (unwind-protect
+           (test-call-with-function-replacements
+            (list (list 'daemon-connect
+                        (lambda (port)
+                          (declare (ignore port))
+                          (values socket (make-two-way-stream (make-string-input-stream "") (make-string-output-stream)))))
+                  (list 'daemon-read-response
+                        (lambda (candidate operation)
+                          (declare (ignore candidate operation))
+                          (incf responses)
+                          (when (eq mode ':blocked) (sb-thread:wait-on-semaphore gate))
+                          (if (and (eq mode ':handoff) (= responses 1))
+                              '(:handoff :session-id "bfirst1" :old-pid 1)
+                              '(:attached :history ""))))
+                  (list 'localgroup--wait-for-handoff-entry
+                        (lambda (&rest arguments) (declare (ignore arguments)) entry))
+                  (list 'terminal--terminal-mode-or-nil (lambda (terminal) (declare (ignore terminal)) t))
+                  (list 'platform-watch-terminal-resize (lambda (&rest arguments) (declare (ignore arguments)) nil))
+                  (list 'localgroup--attach-terminal-loop
+                        (lambda (&rest arguments)
+                          (declare (ignore arguments))
+                          (setf input-p t)
+                          (test-assert (= acknowledgments 1) "input starts only after one acknowledgment commits navigation")
+                          (sb-thread:wait-on-semaphore gate :timeout 0.06)
+                          nil)))
+            (lambda ()
+              (let ((expired-p
+                      (handler-case
+                          (progn
+                            (localgroup-attach-record nil entry ':control :screen screen
+                                                     :deadline                    (+ (get-internal-real-time)
+                                                                                     (ceiling (* 0.03 internal-time-units-per-second)))
+                                                     :attached-function           (lambda () (incf acknowledgments)))
+                            nil)
+                        (localgroup-error () t))))
+                (test-assert (if (eq mode ':blocked)
+                                 (and expired-p (zerop acknowledgments) (not input-p))
+                                 (and (not expired-p) (= acknowledgments 1) input-p))
+                             "a blocked acknowledgment times out without input, while accepted and handed-off input outlive the handshake deadline"))))
+        (localgroup-client-screen-release screen)
+        (sb-bsd-sockets:socket-close socket))))
+  nil)
+
 (-> test-localgroup-checkpoint-reconnect-boundaries () null)
 (defun test-localgroup-checkpoint-reconnect-boundaries ()
   "Test bounded identity/authentication rejection and ordinary attachment endings."
   (with-test-configuration (configuration)
-    (multiple-value-bind (application controller)
-        (test-localgroup--application configuration)
-      (unwind-protect
-           (let* ((session                                    (localgroup-start application :checkpoint-reconnect-id "expected"))
-                  (record                                     (localgroup--registry-record session))
-                  (entry                                      (cons (image-daemon:daemon-runtime-registry-pathname session) record))
-                  (*localgroup-handoff-start-timeout-seconds* 0.1))
-             (dolist (change (list (list :checkpoint-reconnect-id "stale")
-                                  (list :session-id "different")
-                                  (list :token "different")
-                                  (list :created-at (1+ (image-daemon:daemon-runtime-created-at session)))
-                                  (list :missing nil)
-                                  (list :authentication "invalid")))
-               (let ((candidate (copy-list record))
-                     (old-entry entry))
-                 (case (first change)
-                   (:missing
-                    (setf candidate nil))
-                   (:authentication
-                    (setf (getf (rest candidate) :token) (second change)
-                          old-entry (cons (first entry) (copy-list candidate))))
-                   (otherwise
-                    (setf (getf (rest candidate) (first change)) (second change))))
-                 (test-call-with-function-replacements
-                  (list (list 'image-daemon:daemon-registry-read
-                              (lambda (pathname) (declare (ignore pathname)) candidate)))
-                  (lambda ()
-                    (let ((start (get-internal-real-time)))
-                      (test-assert
-                       (handler-case (progn (localgroup--wait-for-checkpoint-entry old-entry "expected") nil)
-                         (localgroup-error () t))
-                       "a missing, mismatched or unauthenticated endpoint is rejected")
-                      (test-assert (< (/ (- (get-internal-real-time) start)
-                                        internal-time-units-per-second)
-                                     1)
-                                   "endpoint rejection has a bounded wait")))))))
-        (localgroup-stop application)
-        (application-input-controller-stop controller)
-        (application-release-conversation-lease application))))
+   (multiple-value-bind (application controller)
+       (test-localgroup--application configuration)
+     (unwind-protect
+         (let* ((session
+                 (localgroup-start application :checkpoint-reconnect-id
+                                   "expected"))
+                (record                                     (localgroup--registry-record session))
+                (entry
+                 (cons (image-daemon:daemon-runtime-registry-pathname session)
+                       record))
+                (*localgroup-handoff-start-timeout-seconds* 0.1))
+           (dolist
+               (change
+                (list (list :checkpoint-reconnect-id "stale")
+                      (list :session-id "different") (list :token "different")
+                      (list :created-at
+                            (1+
+                             (image-daemon:daemon-runtime-created-at session)))
+                      (list :missing nil) (list :authentication "invalid")))
+             (let ((candidate (copy-list record)) (old-entry entry))
+               (case (first change)
+                 (:missing
+                  (setf candidate nil))
+                 (:authentication
+                  (setf (getf (rest candidate) :token) (second change)
+                        old-entry (cons (first entry) (copy-list candidate))))
+                 (otherwise
+                  (setf (getf (rest candidate) (first change))
+                        (second change))))
+               (test-call-with-function-replacements
+                (list
+                 (list 'image-daemon:daemon-registry-read
+                       (lambda (pathname)
+                         (declare (ignore pathname))
+                         candidate)))
+                (lambda ()
+                  (let ((start (get-internal-real-time)))
+                    (test-assert
+                     (handler-case
+                      (progn
+                       (localgroup--wait-for-checkpoint-entry old-entry
+                                                              "expected")
+                       nil)
+                      (localgroup-error nil t))
+                     "a missing, mismatched or unauthenticated endpoint is rejected")
+                    (test-assert
+                     (<
+                      (/ (- (get-internal-real-time) start)
+                         internal-time-units-per-second)
+                      1)
+                     "endpoint rejection has a bounded wait")))))))
+       (localgroup-stop application)
+       (application-input-controller-stop controller)
+       (application-release-conversation-lease application))))
   (test-call-with-function-replacements
-   (list (list 'terminal-input-ready-p (lambda (terminal) (declare (ignore terminal)) nil))
-         (list 'localgroup--wait-for-checkpoint-entry
-               (lambda (&rest arguments) (declare (ignore arguments))
-                 (error "An ordinary attachment end must not reconnect"))))
+   (list
+    (list 'terminal-input-ready-p
+          (lambda (terminal) (declare (ignore terminal)) nil))
+    (list 'localgroup--wait-for-checkpoint-entry
+          (lambda (&rest arguments)
+            (declare (ignore arguments))
+            (error "An ordinary attachment end must not reconnect"))))
    (lambda ()
-     (dolist (packet '(nil (:detached) (:revoked) (:exit :status 76 :message "restart")))
-       (let* ((wire              (if packet (image-daemon:daemon-packet-string packet) ""))
+     (dolist
+         (packet
+          '(nil (:detached) (:revoked) (:exit :status 76 :message "restart")))
+       (let* ((wire
+               (if packet
+                   (daemon-packet-string packet)
+                   ""))
               (output            (make-string-output-stream))
               (*standard-output* output)
-              (socket            (make-instance 'sb-bsd-sockets:inet-socket :type ':stream :protocol ':tcp))
-              (result            (unwind-protect
-                                      (localgroup--attach-terminal-loop
-                                       (make-string-input-stream wire)
-                                       (make-instance 'recording-terminal :columns 80) ':control :socket socket)
-                                   (sb-bsd-sockets:socket-close socket))))
-         (test-assert (equal result (when (eq (first packet) ':exit) (rest packet)))
-                      "EOF, detach, revocation and application exit end reception directly")
+              (socket
+               (make-instance 'sb-bsd-sockets:inet-socket :type ':stream
+                              :protocol                         ':tcp))
+              (result
+               (unwind-protect
+                   (localgroup--attach-terminal-loop
+                    (make-string-input-stream wire)
+                    (make-instance 'recording-terminal :columns 80) ':control
+                    :socket socket)
+                 (sb-bsd-sockets:socket-close socket))))
+         (test-assert
+          (equal result (when (eq (first packet) ':exit) (rest packet)))
+          "EOF, detach, revocation and application exit end reception directly")
          (test-call-with-function-replacements
-          (list (list 'localgroup--attach-record-once
-                      (lambda (&rest arguments) (declare (ignore arguments)) result)))
-          (lambda ()
-            (test-assert (equal (localgroup-attach-record nil '("unused") ':control) result)
-                         "the outer attachment loop does not wait after ordinary endings")))))))
-  (let ((versions nil)
-        (calls    0))
-    (test-call-with-function-replacements
-     (list (list 'localgroup--attach-record-once
-                 (lambda (configuration entry mode &key history-position panel screen notice client-version)
-                   (declare (ignore configuration entry mode history-position panel screen notice))
-                   (push client-version versions)
-                   (if (= (incf calls) 1)
-                       '(:checkpoint-reconnect :id "saved" :history-position 0)
-                       '(:detached))))
-           (list 'localgroup--wait-for-checkpoint-entry
+          (list
+           (list 'localgroup--attach-record-once
                  (lambda (&rest arguments)
                    (declare (ignore arguments))
-                   '("replacement"))))
+                   result)))
+          (lambda ()
+            (test-assert
+             (equal (localgroup-attach-record nil '("unused") ':control)
+                    result)
+             "the outer attachment loop does not wait after ordinary endings")))))))
+  (let ((versions nil) (calls 0))
+    (test-call-with-function-replacements
+     (list
+      (list 'localgroup--attach-record-once
+            (lambda
+                (configuration entry mode
+                 &key history-position panel screen notice client-version
+                 attached-function deadline)
+              (declare
+               (ignore configuration entry mode history-position panel screen
+                notice attached-function deadline))
+              (push client-version versions)
+              (if (= (incf calls) 1)
+                  '(:checkpoint-reconnect :id "saved" :history-position 0)
+                  '(:detached))))
+      (list 'localgroup--wait-for-checkpoint-entry
+            (lambda (&rest arguments)
+              (declare (ignore arguments))
+              '("replacement"))))
      (lambda ()
-       (localgroup-attach-record nil '("initial") ':control :client-version "0.0.0")))
+       (localgroup-attach-record nil '("initial") ':control :client-version
+                                 "0.0.0")))
     (test-assert (equal (reverse versions) '("0.0.0" nil))
-                 "checkpoint reconnection does not repeat the initial version notice"))
+     "checkpoint reconnection does not repeat the initial version notice"))
   nil)
 
 (-> test-localgroup-checkpoint-source-precheck-order () null)

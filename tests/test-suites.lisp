@@ -813,7 +813,8 @@
   test-world-server-adoption-recovery
   test-world-client-joins-winner
   test-world-client-switch-navigates
-  test-world-client-refusal-ends-start)
+  test-world-client-refusal-ends-start
+  test-world-client-switch-failures)
 
 (define-test-suite portable-values
   test-portable-client-values
@@ -1715,7 +1716,8 @@
   test-localgroup-orphan-reconciliation
   test-localgroup-client-pids
   test-localgroup-startup-reader
-  test-localgroup-attachments)
+  test-localgroup-attachments
+  test-localgroup-attachment-acknowledgment)
 
 (define-test-suite localgroup-handoff
   test-localgroup-handoff-site-arguments
