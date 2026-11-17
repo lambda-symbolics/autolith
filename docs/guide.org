@@ -2428,6 +2428,12 @@ notes and the recent tail, and it names the range of records the request showed
 and nobody summarized. A refusal, a permission failure or an unreachable
 provider ends compaction with an error and leaves the conversation unchanged.
 
+A failed checkpoint produces a private UTF-8 bug report under =compaction-reports/=
+in the configured state directory (=XDG_STATE_HOME/autolith/= on Linux). The
+report contains the error and the last completed provider response, with active
+credentials redacted. Terminal, plain and ACP clients display its absolute path.
+In an interactive terminal, select =(copy bug report to clipboard)= to copy it.
+
 Before either request, Autolith captures a fixed history cutoff. The checkpoint
 includes unresolved calls with correlated actual or interrupted/unknown outputs,
 plus results and steering received during compaction. Running jobs and

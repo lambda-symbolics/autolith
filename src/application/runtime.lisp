@@ -4580,6 +4580,8 @@ clients as :TEXT, :REASONING and :STATUS events."
               (setf (application-idle-compaction-episode application) nil)
               (application-set-activity application "compacting the conversation")
               (terminal-ui-set-compacting ui t))
+             (:compaction-failed
+              (application-present-compaction-report application details))
              (:compaction-completed
               (terminal-ui-set-compacting ui nil)
               (application-refresh-context-meter application)

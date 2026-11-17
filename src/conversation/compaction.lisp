@@ -148,6 +148,9 @@ adopted context brought from another conversation."
     (loop for item in (reverse (conversation-input-items conversation))
           thereis (gethash item continuations))))
 
+(defparameter *conversation-compaction-publication-function* nil
+  "Internal bookkeeping callback for the exact committed compaction record.")
+
 (-> conversation-compaction--publish
     (conversation &key (:compaction conversation-compaction)
                        (:replacement-items list) (:record list)
@@ -159,58 +162,69 @@ adopted context brought from another conversation."
 
 The cutoff describes the provider snapshot. THROUGH-SEQ covers the commit
 boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
-  (with-recursive-lock-held ((conversation-append-lock conversation))
-    (when (and unfinished-work
-               (not (and (task-unfinished-work-snapshot-p unfinished-work)
-                         (equal (getf unfinished-work :owner-conversation)
-                                (conversation-identifier conversation)))))
-      (error 'conversation-invariant-error
-             :message  "The compaction job snapshot is invalid or belongs to another conversation."
-             :pathname (conversation-pathname conversation)
-             :sequence (conversation-next-sequence conversation)))
-    (unless (continuation-p (getf (rest record) :continuation))
-      (error 'conversation-invariant-error
-             :message  "The compaction checkpoint is invalid."
-             :pathname (conversation-pathname conversation)
-             :sequence (conversation-next-sequence conversation)))
-    (let* ((arrivals (conversation-compaction--arrivals conversation compaction))
-           (projection
-             (clinker-transcript:compaction-plan-projection
-              (conversation-compaction--plan compaction)
-              :replacement-items replacement-items
-              :additional-items  arrivals
-              :repair-output     #'conversation-compaction--repair-output))
-           (items    (clinker-transcript:projection-items projection))
-           (ephemeral-items
-             (mapcar (lambda (entry) (getf entry :item))
-                     (conversation-ephemeral-input-entries conversation))))
-        (conversation-compaction--copy-metadata
-         (conversation-projection conversation) projection items)
-        (conversation-compaction--mark-checkpoint
-         projection (first (last replacement-items)) (getf (rest record) :continuation))
-        (setf (getf (rest record) :through-seq)
-              (1- (conversation-next-sequence conversation))
-              (getf (rest record) :cutoff-seq)
-              (conversation-compaction-cutoff-sequence compaction)
-              (getf (rest record) :carry-forward)
-              (mapcar (lambda (item)
-                        (conversation-compaction--serialize-item projection item))
-                      (nthcdr (length replacement-items) items))
-              (getf (rest record) :unfinished-work) unfinished-work)
-        ;; Prepare all state before durable publication, including transient items.
-        (clinker-transcript:projection-replace
-         projection (append items ephemeral-items))
-        (conversation-compaction--copy-metadata
-         (conversation-projection conversation) projection ephemeral-items)
-      (when validate-projection
-        (let ((candidate (conversation-compaction-summary-view conversation nil)))
-          (setf (slot-value candidate 'projection) projection)
-          (funcall validate-projection candidate)))
-      (sb-sys:without-interrupts
-        (let ((published (conversation-append-record conversation record)))
-          (setf (slot-value conversation 'projection) projection
-                (conversation-last-total-tokens conversation) 0)
-          published)))))
+  (let ((publication-function                           *conversation-compaction-publication-function*)
+        (*conversation-compaction-publication-function* nil))
+   (with-recursive-lock-held ((conversation-append-lock conversation))
+     (when (and unfinished-work
+                (not (and (task-unfinished-work-snapshot-p unfinished-work)
+                          (equal (getf unfinished-work :owner-conversation)
+                                 (conversation-identifier conversation)))))
+       (error 'conversation-invariant-error
+              :message  "The compaction job snapshot is invalid or belongs to another conversation."
+              :pathname (conversation-pathname conversation)
+              :sequence (conversation-next-sequence conversation)))
+     (unless (continuation-p (getf (rest record) :continuation))
+       (error 'conversation-invariant-error
+              :message  "The compaction checkpoint is invalid."
+              :pathname (conversation-pathname conversation)
+              :sequence (conversation-next-sequence conversation)))
+     (let* ((arrivals (conversation-compaction--arrivals conversation compaction))
+            (projection
+              (clinker-transcript:compaction-plan-projection
+               (conversation-compaction--plan compaction)
+               :replacement-items replacement-items
+               :additional-items  arrivals
+               :repair-output     #'conversation-compaction--repair-output))
+            (items    (clinker-transcript:projection-items projection))
+            (ephemeral-items
+              (mapcar (lambda (entry) (getf entry :item))
+                      (conversation-ephemeral-input-entries conversation))))
+         (conversation-compaction--copy-metadata
+          (conversation-projection conversation) projection items)
+         (conversation-compaction--mark-checkpoint
+          projection (first (last replacement-items)) (getf (rest record) :continuation))
+         (setf (getf (rest record) :through-seq)
+               (1- (conversation-next-sequence conversation))
+               (getf (rest record) :cutoff-seq)
+               (conversation-compaction-cutoff-sequence compaction)
+               (getf (rest record) :carry-forward)
+               (mapcar (lambda (item)
+                         (conversation-compaction--serialize-item projection item))
+                       (nthcdr (length replacement-items) items))
+               (getf (rest record) :unfinished-work) unfinished-work)
+         ;; Prepare all state before durable publication, including transient items.
+         (clinker-transcript:projection-replace
+          projection (append items ephemeral-items))
+         (conversation-compaction--copy-metadata
+          (conversation-projection conversation) projection ephemeral-items)
+       (when validate-projection
+         (let ((candidate (conversation-compaction-summary-view conversation nil)))
+           (setf (slot-value candidate 'projection) projection)
+           (funcall validate-projection candidate)))
+       (let* ((previous-function *conversation-append-publication-function*)
+              (*conversation-append-publication-function*
+                (lambda (published-conversation published-record)
+                  (when (and publication-function
+                             (eq published-conversation conversation)
+                             (eq published-record record))
+                    (funcall publication-function))
+                  (when previous-function
+                    (funcall previous-function published-conversation published-record)))))
+         (sb-sys:without-interrupts
+           (let ((published (conversation-append-record conversation record)))
+             (setf (slot-value conversation 'projection) projection
+                   (conversation-last-total-tokens conversation) 0)
+             published)))))))
 
 (-> conversation-append-summary
     (conversation list &key (:compaction (option conversation-compaction))

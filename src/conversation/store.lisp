@@ -1665,6 +1665,10 @@ this append's original EOF, including when publication failed after the write."
                     (conversation-persisted-p conversation) t)
               (conversation--note-activity conversation published))))))))
 
+(defparameter *conversation-append-publication-function* nil
+  "Internal callback of conversation and original record after durable append.
+Run before post-publication adapters; callbacks must perform only local bookkeeping.")
+
 (defgeneric conversation-append-record (conversation record)
   (:documentation "Append portable RECORD to CONVERSATION and return the sequenced form."))
 
@@ -1738,6 +1742,8 @@ this append's original EOF, including when publication failed after the write."
                    :pathname (conversation-pathname conversation)
                    :sequence sequence)))
         (incf (conversation-next-sequence conversation))
+        (when *conversation-append-publication-function*
+          (funcall *conversation-append-publication-function* conversation record))
         (conversation--note-activity conversation sequenced)
         (conversation--note-pending-input-identifier conversation sequenced)
         (when picker-search-message

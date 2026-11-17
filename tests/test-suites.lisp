@@ -2151,6 +2151,16 @@
 (define-test-suite input-work
   test-input-work-payload-codec)
 
+(define-test-suite compaction-reports
+  test-compaction-report-save
+  test-compaction-report-agent-failures
+  test-compaction-report-committed-listener-failure
+  test-compaction-report-lifecycle
+  test-compaction-report-secondary-failures
+  test-compaction-report-signal-time-redaction
+  test-compaction-report-production-result-redaction
+  test-compaction-report-headless-announcement)
+
 (define-test-suite compaction-recovery
   test-compaction-recovery-image-projection
   test-compaction-recovery-recent-images

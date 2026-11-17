@@ -1736,6 +1736,8 @@ that maximum. A refusal and a terminal failure are signaled."
                      (when (agent--compaction-failure-terminal-p condition)
                        (error condition))
                      condition))
+                (when (and *compaction-report-context* (typep result 'provider-result))
+                  (compaction-report-capture-result *compaction-report-context* result))
                (incf issued)
                (if (typep result 'provider-result)
                    (multiple-value-bind (continuation problem)
@@ -1921,83 +1923,90 @@ keeps the previous one's notes and names the records nobody summarized.
 Each completed provider request is metered before response validation. Capture
 the durable cutoff before the requests and retain arrivals at publication.
 Return issued request count and optional next-request details."
-  (agent--check-request-budget agent request-number)
-  (agent--prepare-provider-request agent)
-  (let* ((conversation                 (agent-conversation agent))
-         (compaction                   (conversation-compaction-portable-capture
-                                        (conversation-compaction-capture conversation)))
-         (captured-view                (conversation-compaction-view compaction))
-         (request-context              (mission-request-view-context conversation))
-         (recovery
-           (make-compaction-recovery
-            (lambda (details)
-              (conversation-append-provider-metadata
-               conversation (list :compaction-recovery details))
-              (agent-observer-status observer :compaction-recovery details))))
-         (unfinished-work              nil)
-         (*request-context-hurry-up-p* (agent-hurry-up-p agent)))
-    ;; Announce compaction before reading job storage, which can take a while.
-    (agent-observer-status
-     observer
-     :compaction-started
-     (list :total-tokens (conversation-last-total-tokens conversation)))
-    (setf unfinished-work (task-unfinished-work-snapshot agent))
-    (let ((*provider-hosted-tools-enabled-p* (not tool-restriction-p))
-          (family                            (provider-family (agent-provider agent))))
-      (multiple-value-bind (continuation issued)
-          (agent--compaction-checkpoint
-           agent observer compaction
-           :view            (conversation-compaction-summary-view
-                             captured-view
-                             (conversation-input-items-for-family
-                              captured-view family :include-ephemeral-p nil)
-                             family)
-           :tool-namespaces (agent--tool-namespaces agent
-                                                    :tools-p            tools-p
-                                                    :tool-restriction-p tool-restriction-p
-                                                    :tool-allowlist     tool-allowlist
-                                                    :compaction-p       t)
-           :recovery        recovery
-           :request-context request-context
-           :unfinished-work unfinished-work
-           :request-number  request-number)
-        (let* ((next-output-tokens
-                 (if next-request-status-details
-                     (let ((value
-                             (agent-observer-status
-                              observer :provider-request-started
-                              (list :request-number (+ request-number issued 1)
-                                    :tool-rounds    next-request-tool-rounds))))
-                       (or (and (integerp value) (plusp value) value)
-                           (agent--configured-max-output-tokens agent)))
-                     (or *provider-maximum-output-tokens*
-                         (agent--configured-max-output-tokens agent))))
-               (next-request-details
-                 (and next-request-status-details
-                      (list :announced-p           t
-                            :maximum-output-tokens next-output-tokens)))
-               (publication
-                 (list :compaction (compaction-recovery-publication recovery compaction)
-                       :recovery   (compaction-recovery-audit recovery :completed)
-                       :validate-projection
-                       (lambda (candidate)
-                         (agent--validate-compaction-projection
-                          agent candidate
-                          :goal-context          goal-context
-                          :tools-p               tools-p
-                          :tool-rounds           next-request-tool-rounds
-                          :maximum-output-tokens next-output-tokens
-                          :tool-restriction-p    tool-restriction-p
-                          :tool-allowlist        tool-allowlist)))))
-          (with-recursive-lock-held ((conversation-append-lock conversation))
-            (setf unfinished-work (task-unfinished-work-snapshot agent))
-            (apply #'conversation-append-summary
-                   conversation continuation
-                   :unfinished-work unfinished-work
-                   publication))
-          (agent-observer-status
-           observer :compaction-completed (list :provider-requests issued))
-          (values issued next-request-details))))))
+  (compaction-report-call
+   (agent-configuration agent)
+   (lambda (report)
+     (agent--check-request-budget agent request-number)
+     (agent--prepare-provider-request agent)
+     (let* ((conversation                 (agent-conversation agent))
+            (compaction                   (conversation-compaction-portable-capture
+                                           (conversation-compaction-capture conversation)))
+            (captured-view                (conversation-compaction-view compaction))
+            (request-context              (mission-request-view-context conversation))
+            (recovery
+              (make-compaction-recovery
+               (lambda (details)
+                 (conversation-append-provider-metadata
+                  conversation (list :compaction-recovery details))
+                 (agent-observer-status observer :compaction-recovery details))))
+            (unfinished-work              nil)
+            (*request-context-hurry-up-p* (agent-hurry-up-p agent)))
+       ;; Announce compaction before reading job storage, which can take a while.
+       (agent-observer-status
+        observer
+        :compaction-started
+        (list :total-tokens (conversation-last-total-tokens conversation)))
+       (setf unfinished-work (task-unfinished-work-snapshot agent))
+       (let ((*provider-hosted-tools-enabled-p* (not tool-restriction-p))
+             (family                            (provider-family (agent-provider agent))))
+         (multiple-value-bind (continuation issued)
+             (agent--compaction-checkpoint
+              agent observer compaction
+              :view            (conversation-compaction-summary-view
+                                captured-view
+                                (conversation-input-items-for-family
+                                 captured-view family :include-ephemeral-p nil)
+                                family)
+              :tool-namespaces (agent--tool-namespaces agent
+                                                       :tools-p            tools-p
+                                                       :tool-restriction-p tool-restriction-p
+                                                       :tool-allowlist     tool-allowlist
+                                                       :compaction-p       t)
+              :recovery        recovery
+              :request-context request-context
+              :unfinished-work unfinished-work
+              :request-number  request-number)
+           (let* ((next-output-tokens
+                    (if next-request-status-details
+                        (let ((value
+                                (agent-observer-status
+                                 observer :provider-request-started
+                                 (list :request-number (+ request-number issued 1)
+                                       :tool-rounds    next-request-tool-rounds))))
+                          (or (and (integerp value) (plusp value) value)
+                              (agent--configured-max-output-tokens agent)))
+                        (or *provider-maximum-output-tokens*
+                            (agent--configured-max-output-tokens agent))))
+                  (next-request-details
+                    (and next-request-status-details
+                         (list :announced-p           t
+                               :maximum-output-tokens next-output-tokens)))
+                  (publication
+                    (list :compaction (compaction-recovery-publication recovery compaction)
+                          :recovery   (compaction-recovery-audit recovery :completed)
+                          :validate-projection
+                          (lambda (candidate)
+                            (agent--validate-compaction-projection
+                             agent candidate
+                             :goal-context          goal-context
+                             :tools-p               tools-p
+                             :tool-rounds           next-request-tool-rounds
+                             :maximum-output-tokens next-output-tokens
+                             :tool-restriction-p    tool-restriction-p
+                             :tool-allowlist        tool-allowlist)))))
+             (with-recursive-lock-held ((conversation-append-lock conversation))
+               (setf unfinished-work (task-unfinished-work-snapshot agent))
+               (let ((*conversation-compaction-publication-function*
+                       (lambda () (setf (compaction-report-published-p report) t))))
+                 (apply #'conversation-append-summary
+                        conversation continuation
+                        :unfinished-work unfinished-work
+                        publication)))
+             (agent-observer-status
+              observer :compaction-completed (list :provider-requests issued))
+             (values issued next-request-details))))))
+   :notify (lambda (details)
+             (agent-observer-status observer :compaction-failed details))))
 
 (-> agent--run-provider-loop
     (agent agent-observer &key (:goal-context (option string))

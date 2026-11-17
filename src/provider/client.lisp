@@ -782,6 +782,9 @@ and codes follow the Codex reference at commit 6f51c65958."
   (:documentation
    "A completed provider response requires retry, while its reported usage remains valid."))
 
+(defparameter *provider-result-diagnostic-function* nil
+  "Optional completed-result callback invoked before request credentials unwind.")
+
 (defgeneric provider-attempt-turn
     (provider conversation
      &key tool-namespaces event-callback force-refresh goal-context compaction-p)
@@ -827,14 +830,20 @@ are request-scoped and included in transport and result redaction."))
                                             :compaction-p compaction-p)
                  (when (and delivery event-callback)
                    (context-delivery-notify delivery event-callback))
-                 (cl-llm-provider-api::provider-execute-request
-                  adapter request :secrets *provider-active-credential-values*
-                  :event-callback          event-callback
-                  :transport               (lambda (request)
-                                             (provider--open-response-stream
-                                              adapter request :credentials credentials
-                                              :conversation                conversation))
-                  :completion              (lambda () (context-delivery-complete delivery))))
+                (let ((result
+                        (cl-llm-provider-api::provider-execute-request
+                         adapter request :secrets *provider-active-credential-values*
+                         :event-callback          event-callback
+                         :transport               (lambda (request)
+                                                    (provider--open-response-stream
+                                                     adapter request :credentials credentials
+                                                     :conversation                conversation))
+                         :completion              (lambda () (context-delivery-complete delivery)))))
+                  (when *provider-result-diagnostic-function*
+                    ;; Diagnostic capture cannot change paid request settlement.
+                    (handler-case (funcall *provider-result-diagnostic-function* result)
+                      (error () nil)))
+                  result))
             (http-request-failed (condition)
               (provider-signal-transport-failure adapter condition)))))
        :conversation conversation))))
