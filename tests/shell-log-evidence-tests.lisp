@@ -441,8 +441,8 @@
             (let ((evidence
                     (knowledge-make-evidence
                      :source    (list :file     :path (if relative-p
-                                                       (enough-namestring path root)
-                                                       (namestring path))
+                                                        (uiop:unix-namestring (uiop:subpathp path root))
+                                                        (uiop:native-namestring path))
                                       :relative relative-p)
                      :workspace (and anchored-p (namestring root))
                      :observed-at 100000 :digest (memory-source-text-digest "captured")
