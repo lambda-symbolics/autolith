@@ -154,14 +154,31 @@
              "persisted inbox images survive removal of the original source")
             (LET* ((OPERATION
                     (APPLICATION-OPERATION-FIND APPLICATION "channel.send"))
-                   (ARGUMENTS
-                    (APPLICATION-OPERATION--TOOL-ARGUMENTS (LIST :TEXT INPUT)
-                                                           (APPLICATION-OPERATION-BACKEND
-                                                            OPERATION))))
+                   (BACKEND   (APPLICATION-OPERATION-BACKEND OPERATION))
+                   (NATIVE    (LIST :TEXT INPUT))
+                   (ARGUMENTS (APPLICATION-OPERATION--TOOL-ARGUMENTS NATIVE BACKEND)))
               (TEST-ASSERT
-               (STRING= (GETHASH "text" ARGUMENTS)
-                        (USER-MESSAGE-INPUT-TEXT INPUT))
-               "rich input projects through the existing JSON tool arguments")))
+               (AND (STRING= (GETHASH "text" ARGUMENTS)
+                             (USER-MESSAGE-INPUT-TEXT INPUT))
+                    (equalp (gethash "images" arguments)
+                            (map 'vector #'namestring
+                                 (user-message-input-image-pathnames input))))
+               "rich input projects text and images into tool arguments")
+              (test-assert (eq input (getf native :text))
+                           "normalization preserves the caller's rich input")
+              (let ((before (length (world-inbox-deliveries configuration identifier))))
+                (application-operation-invoke operation application native)
+                (test-assert
+                 (= (1+ before) (length (world-inbox-deliveries configuration identifier)))
+                 "rich input sends through the local operation boundary"))
+              (TEST-ASSERT
+               (HANDLER-CASE
+                   (PROGN
+                     (APPLICATION-OPERATION--TOOL-ARGUMENTS
+                      (LIST :TEXT INPUT :IMAGES NIL) BACKEND)
+                     NIL)
+                 (TOOL-ERROR () T))
+               "rich input rejects a second explicit image argument")))
           (LET ((BEFORE
                  (LENGTH (WORLD-INBOX-DELIVERIES CONFIGURATION IDENTIFIER))))
             (DOLIST

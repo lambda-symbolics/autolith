@@ -10,6 +10,24 @@
   ()
   (:documentation "A channel operation performed as the requesting conversation's participant."))
 
+(defclass channel-send-tool (channel-tool)
+  ()
+  (:documentation "A channel message with optional native rich-input expansion."))
+
+(defmethod tool-normalize-local-arguments ((tool channel-send-tool) arguments)
+  "Expand rich text and image paths without changing the caller's argument list."
+  (let ((input (getf arguments :text)))
+    (if (typep input 'user-message-input)
+        (progn
+            (when (nth-value 0 (get-properties arguments '(:images)))
+             (error 'tool-error :tool-name (tool-canonical-name tool) :message
+                    "Rich content already supplies its images."))
+          (let ((normalized (copy-list arguments)))
+            (setf (getf normalized :text) (user-message-input-text input)
+                  (getf normalized :images) (user-message-input-image-pathnames input))
+            normalized))
+        arguments)))
+
 (defmethod tool-child-safe-p ((tool channel-tool))
   "Children are participants too: a task's conversation is a nested channel with its own resident, so it messages, subscribes and unsubscribes like any participant."
   (declare (ignore tool))
@@ -113,17 +131,19 @@
   (tool-registry-describe-namespace
    registry "channel"
    "Messages to channels and subscriptions, as this conversation's participant.")
-  (flet ((register (name description properties required)
+  (flet ((register (name description &key (class 'channel-tool) properties required)
            "Register channel tool NAME."
            (tool-registry-register
             registry
-            (make-instance 'channel-tool
+             (make-instance class
                            :namespace   "channel"
                            :name        name
                            :description description
                            :parameters  (tool-object-schema properties required)))))
     (register "send"
               "Send a message with optional images. Omit channel to address the current channel. It reaches residents, subscribers and @mentions. @parent reaches your parent agent, or the nearest active ancestor or person."
+              :class    'channel-send-tool
+              :properties
               (json-object "channel" (tool-string-property *channel-tool-channel-description*)
                            "text" (tool-string-property
                                    (format nil "The message, 1 to ~:D characters."
@@ -138,13 +158,13 @@
                                        "type" "array"
                                        "description" "Participants to deliver to as well, by name or identifier."
                                        "items" (json-object "type" "string" "minLength" 1)))
-              '("text"))
+              :required '("text"))
     (register "subscribe"
               "Receive future messages of a channel without residing in it."
-              (json-object "channel" (tool-string-property *channel-tool-channel-description*))
-              '("channel"))
+              :properties (json-object "channel" (tool-string-property *channel-tool-channel-description*))
+              :required   '("channel"))
     (register "unsubscribe"
               "Remove your subscription to a channel."
-              (json-object "channel" (tool-string-property *channel-tool-channel-description*))
-              '("channel")))
+              :properties (json-object "channel" (tool-string-property *channel-tool-channel-description*))
+              :required   '("channel")))
   registry)

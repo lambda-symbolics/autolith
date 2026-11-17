@@ -571,6 +571,16 @@ A missing file's failure also carries its observation for resource.edit."
   (declare (ignore tool))
   (subseq content 0 (or (position #\Newline content) (length content))))
 
+(defgeneric tool-normalize-local-arguments (tool arguments)
+  (:documentation
+   "Return TOOL's native argument plist ready for the common JSON conversion.
+ARGUMENTS is a proper alternating key/value list. Preserve caller-owned data."))
+
+(defmethod tool-normalize-local-arguments ((tool tool) arguments)
+  "Use ordinary native arguments without tool-specific expansion."
+  (declare (ignore tool))
+  arguments)
+
 (defgeneric tool-decode-arguments (tool source)
   (:documentation
    "Decode one provider argument SOURCE according to TOOL's JSON requirements."))

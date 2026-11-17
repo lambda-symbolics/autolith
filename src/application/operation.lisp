@@ -642,21 +642,12 @@ such as :|filePath|, was escaped on purpose and keeps its case."
 
 (-> application-operation--tool-arguments (list &optional (option tool)) json-object)
 (defun application-operation--tool-arguments (arguments &optional tool)
-  "Translate native keyword arguments to JSON, expanding rich channel messages."
+  "Translate native keyword arguments to JSON after TOOL's local normalization."
   (unless (and (proper-list-p arguments) (evenp (length arguments)))
     (error 'configuration-error :message
            "A local tool call requires alternating keyword and value arguments."))
-  (when
-      (and (typep tool 'channel-tool) (string= (tool-name tool) "send")
-           (typep (getf arguments :text) 'user-message-input))
-    (when (nth-value 1 (get-properties arguments '(:images)))
-      (error 'tool-error :tool-name "channel.send" :message
-             "Rich content already supplies its images."))
-    (let ((input (getf arguments :text)))
-      (setf arguments (copy-list arguments)
-            (getf arguments :text) (user-message-input-text input)
-            (getf arguments :images)
-            (user-message-input-image-pathnames input))))
+  (when tool
+    (setf arguments (tool-normalize-local-arguments tool arguments)))
   (let ((object (json-object)))
     (loop for (key value) on arguments by (partial #'nthcdr 2)
           for name = (application-operation--json-key key)
