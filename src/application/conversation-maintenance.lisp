@@ -45,9 +45,17 @@ starting performs no archive traversal and does not wait for the job."
             (application-conversation-maintenance-job application) nil))
     (unless (application-conversation-maintenance-stopping-p application)
       (or (application-conversation-maintenance-job application)
-          (let* ((conversation (application-conversation application))
-                 (pool
-                  (or (application-conversation-maintenance-pool application)
+          (let ((conversation (application-conversation application)))
+            (when
+                (and (conversation-persisted-p conversation)
+                     (or
+                      (conversation-input-history-repair-pending-p
+                       conversation)
+                      (conversation-image-artifact-repair-pending-p
+                       conversation)))
+              (let ((pool
+                     (or
+                      (application-conversation-maintenance-pool application)
                       (setf (application-conversation-maintenance-pool
                              application)
                             (make-job-pool :name
@@ -58,25 +66,27 @@ starting performs no archive traversal and does not wait for the job."
                                            :terminal-retention-limit 1
                                            :maximum-runtime-milliseconds
                                            *conversation-maintenance-runtime-milliseconds*)))))
-            (setf (application-conversation-maintenance-job application)
-                  (job-pool-submit pool
-                                   (lambda (job)
-                                     (job-check-cancellation job)
-                                     (let ((result
-                                            (funcall run-function
-                                                     conversation
-                                                     :check-function
-                                                     (lambda ()
-                                                       (job-check-cancellation
-                                                        job)))))
-                                       (job-check-cancellation job)
-                                       (when (getf result :input-complete-p)
-                                         (funcall complete-function
-                                                  application conversation
-                                                  result))
-                                       result))
-                                   :name
-                                   "Deferred conversation archive repair")))))))
+                (setf (application-conversation-maintenance-job application)
+                      (job-pool-submit pool
+                                       (lambda (job)
+                                         (job-check-cancellation job)
+                                         (let ((result
+                                                (funcall run-function
+                                                         conversation
+                                                         :check-function
+                                                         (lambda ()
+                                                           (job-check-cancellation
+                                                            job)))))
+                                           (job-check-cancellation job)
+                                           (when
+                                               (getf result
+                                                     :input-complete-p)
+                                             (funcall complete-function
+                                                      application
+                                                      conversation result))
+                                           result))
+                                       :name
+                                       "Deferred conversation archive repair")))))))))
 
 (-> application-conversation-maintenance-status (application) list)
 (defun application-conversation-maintenance-status (application)

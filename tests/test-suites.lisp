@@ -789,7 +789,8 @@
  test-world-server-move-goal test-world-server-adoption-recovery
  test-world-client-joins-winner test-world-client-switch-navigates
  test-world-client-refusal-ends-start test-world-client-switch-failures
- test-application-conversation-maintenance)
+ test-application-conversation-maintenance
+ test-conversation-maintenance-admission-probe)
 
 (define-test-suite portable-values
   test-portable-client-values
