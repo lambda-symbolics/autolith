@@ -125,9 +125,12 @@
           :generation-files
           (probe (lambda ()
                    (mapcar (lambda (directory)
-                             (list :generation (first (last (pathname-directory directory)))
-                                   :files      (mapcar #'world-restart-tests--file-state
-                                                       (limited (uiop:directory-files directory)))))
+                            (list :generation (first (last (pathname-directory directory)))
+                                  :resume     (world-restart-tests--record-state
+                                               (merge-pathnames "resume.sexp" directory)
+                                               '(:version :phase :pid))
+                                  :files      (mapcar #'world-restart-tests--file-state
+                                                      (limited (uiop:directory-files directory)))))
                            (limited (uiop:subdirectories
                                      (merge-pathnames "generations/" (config :data-root configuration))))))))))
 
@@ -161,6 +164,13 @@
                           (equal (getf generation :generation) "test-generation")
                           (= (getf (first (getf generation :files)) :bytes) 3))
                      "saved-stage evidence contains identity and sizes, not envelope metadata"))
+      (let ((*checkpoint-resume-diagnostic-pathname* (merge-pathnames "resume.sexp" core)))
+        (checkpoint-resume-diagnostic ':channels-resumed)
+        (let ((record (world-restart-tests--record-state
+                       *checkpoint-resume-diagnostic-pathname* '(:version :phase :pid))))
+          (test-assert (and (equal (getf (getf record :fields) :phase) "CHANNELS-RESUMED")
+                            (eql (getf (getf record :fields) :pid) pid))
+                       "a fresh phase file supplies scalar lifecycle evidence independently of process streams")))
       (with-open-file (stream pointer :direction ':output :if-exists ':supersede)
         (write-string "(" stream))
       (test-assert (getf (getf (world-restart-tests--diagnostics configuration pid nil)

@@ -422,13 +422,25 @@ between that process's exit and the boot of the saved core."
 A booted generation resumes its saved session this way, as recovery does,
 apart from the world server.")
 
+(defvar *checkpoint-resume-diagnostic-pathname* nil
+  "The temporary Windows57 phase file retained across exact-heap boots.")
+
 (-> checkpoint-resume-diagnostic (keyword) null)
 (defun checkpoint-resume-diagnostic (phase)
-  "Report scalar startup milestones for the temporary Windows57 diagnostic run."
+  "Record scalar startup milestones without retaining a process output stream."
   ;; Remove this opt-in probe after localizing the saved-core startup failure.
-  (when (uiop:getenv "AUTOLITH_TEST_WINDOWS57_DIAGNOSTICS")
-    (format *error-output* "~&Windows57 resume: phase ~S pid ~D~%" phase (current-process-id))
-    (finish-output *error-output*))
+  (when *checkpoint-resume-diagnostic-pathname*
+    (handler-case
+        (with-open-file (stream *checkpoint-resume-diagnostic-pathname*
+                                :direction ':output :if-exists ':supersede
+                                :if-does-not-exist ':create)
+          (with-standard-io-syntax
+            (write (list :autolith-resume :version 1
+                         :phase (symbol-name phase) :pid (current-process-id))
+                   :stream stream)
+            (terpri stream)))
+      (error ()
+        nil)))
   nil)
 
 (-> checkpoint-resume-main (list) null)
@@ -539,7 +551,10 @@ persisted identity, in this process."
 
 Everything this process still holds is written into the core, so credentials are
 dropped and inherited worker descriptors detached before the image is saved."
-  (declare (ignore generation))
+  (when (uiop:getenv "AUTOLITH_TEST_WINDOWS57_DIAGNOSTICS")
+    (setf *checkpoint-resume-diagnostic-pathname*
+          (merge-pathnames "resume.sexp" (generation-directory generation)))
+    (checkpoint-resume-diagnostic ':save-prepared))
   (setf *credentials-in-request-scope* nil
         *active-secret-use-count* 0
         *secret-use-depth* 0
