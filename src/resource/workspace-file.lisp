@@ -2,34 +2,16 @@
 
 ;;;; -- Workspace File Resources --
 
-(defparameter *workspace-file-resource-maximum-observations* 16
-  "The maximum number of workspace-file observations retained per conversation.")
-
 (defparameter *workspace-file-resource-maximum-bytes* (* 4 1024 1024)
   "The maximum workspace-file snapshot size in UTF-8 bytes for revision-gated editing.")
-
-(defparameter *workspace-file-resource-maximum-retained-bytes* (* 16 1024 1024)
-  "The maximum UTF-8 bytes retained by workspace observations per conversation.")
-
-(defparameter *workspace-file-resource-default-line-count* 400
-  "The lines requested by resource.read when no explicit count is supplied.")
-
-(defparameter *workspace-file-resource-maximum-line-count* 1000
-  "The largest line window accepted by one resource.read call.")
 
 (defparameter *workspace-file-resource-maximum-directory-entries* 1000
   "The most directory entries inspected for one workspace resource snapshot.")
 
-(defparameter *workspace-file-resource-maximum-result-characters* 7600
-  "The maximum characters constructed for one resource tool result.")
-
-(defparameter *workspace-file-resource-anchor-maximum-offset* 3
-  "The largest line-number transcription offset corrected by a hash anchor.")
-
 (defvar *workspace-file-resource-digest-key* (random-data 16)
   "The process-local key used to identify exact workspace-file snapshots.")
 
-(defclass workspace-file-resource (resource)
+(defclass workspace-file-resource (text-resource)
   ((pathname
     :initarg       :pathname
     :reader        workspace-file-resource-pathname
@@ -51,29 +33,27 @@
   (declare (ignore resource))
   (workspace-tool-readable-roots context))
 
-(defclass workspace-file-observation (resource-observation)
+(defclass workspace-file-observation (text-resource-observation)
   ((kind
-    :initarg       :kind
-    :reader        workspace-file-observation-kind
+    :initarg :kind :reader workspace-file-observation-kind
     :type          (member :file :directory :missing)
-    :documentation "Whether the observation represents a file, directory, or missing path.")
-   (stored-lines
-    :initarg       :lines
-    :initform      nil
-    :reader        workspace-file-observation-stored-lines
-    :type          (option vector)
-    :documentation "Optional pre-split logical lines supplied by tests or callers.")
-   (line-ending
-    :initarg       :line-ending
-    :reader        workspace-file-observation-line-ending
-    :type          string
-    :documentation "The LF or CRLF sequence used when reconstructing edited content.")
-   (final-newline-p
-    :initarg       :final-newline-p
-    :reader        workspace-file-observation-final-newline-p
-    :type          boolean
-    :documentation "Whether the exact observed snapshot ended in a line ending."))
-  (:documentation "A complete transient UTF-8 workspace-file snapshot."))
+    :documentation "Whether this snapshot is a file, directory, or missing path."))
+  (:documentation "An exact filesystem snapshot with backend-independent text lines."))
+
+(-> workspace-file-observation-stored-lines (workspace-file-observation) (option vector))
+(defun workspace-file-observation-stored-lines (observation)
+  "Return pre-split file lines supplied by a caller."
+  (text-resource-observation-stored-lines observation))
+
+(-> workspace-file-observation-line-ending (workspace-file-observation) string)
+(defun workspace-file-observation-line-ending (observation)
+  "Return the observed file's line ending."
+  (text-resource-observation-line-ending observation))
+
+(-> workspace-file-observation-final-newline-p (workspace-file-observation) boolean)
+(defun workspace-file-observation-final-newline-p (observation)
+  "Return whether the observed file ends in a line ending."
+  (text-resource-observation-final-newline-p observation))
 
 (defgeneric workspace-file-observation-lines (observation)
   (:documentation "Return OBSERVATION's logical lines for the current operation."))
@@ -81,8 +61,7 @@
 (defmethod workspace-file-observation-lines
     ((observation workspace-file-observation))
   "Return supplied logical lines or split OBSERVATION's exact content lazily."
-  (or (workspace-file-observation-stored-lines observation)
-      (text--split-lines (resource-observation-content observation))))
+  (text-resource-observation-lines observation))
 
 (-> workspace-file--observation-retained-bytes
     (workspace-file-observation)
@@ -92,24 +71,23 @@
   (length (utf8-string-to-octets
            (resource-observation-content observation))))
 
-(defclass workspace-file-observation-state (resource-observation-state)
-  ((visible-ranges
-    :initarg       :visible-ranges
-    :accessor      workspace-file-observation-state-visible-ranges
-    :type          structlisp:integer-interval-set
-    :documentation "Half-open one-based ranges fully shown to the model."))
-  (:documentation "One conversation-local model observation of a workspace file."))
+(defclass workspace-file-observation-state (text-resource-observation-state)
+  ()
+  (:documentation "A concrete file observation state for existing file consumers."))
 
-(defmethod initialize-instance :after
-    ((state workspace-file-observation-state) &key)
-  "Convert the renderer's inclusive ranges into an interval set."
-  (let ((ranges (workspace-file-observation-state-visible-ranges state)))
-    (unless (typep ranges 'structlisp:integer-interval-set)
-      (setf (workspace-file-observation-state-visible-ranges state)
-            (structlisp:make-integer-interval-set
-             :intervals (mapcar (lambda (range)
-                                  (cons (first range) (1+ (second range))))
-                                ranges))))))
+(defgeneric workspace-file-observation-state-visible-ranges (state)
+  (:documentation "Return the fully visible ranges of a file observation state."))
+
+(defmethod workspace-file-observation-state-visible-ranges ((state workspace-file-observation-state))
+  "Adapt the file API to shared text visibility."
+  (text-resource-observation-state-visible-ranges state))
+
+(defgeneric (setf workspace-file-observation-state-visible-ranges) (value state)
+  (:documentation "Replace a file observation state's fully visible ranges."))
+
+(defmethod (setf workspace-file-observation-state-visible-ranges) (value (state workspace-file-observation-state))
+  "Adapt file visibility updates to shared text state."
+  (setf (text-resource-observation-state-visible-ranges state) value))
 
 (defmethod resource-observation-state-family-and-key
     ((observation workspace-file-observation))
@@ -118,33 +96,6 @@
           (list (resource-observation-uri observation)
                 (resource-observation-revision observation)
                 (resource-observation-content observation))))
-
-(defmethod resource-observation-state-weight
-    (alias (state workspace-file-observation-state))
-  "Return STATE's retained workspace snapshot bytes."
-  (declare (ignore alias))
-  (workspace-file--observation-retained-bytes
-   (resource-observation-state-observation state)))
-
-(defmethod resource-observation-state-maximum
-    ((state workspace-file-observation-state))
-  "Return the configured workspace-file observation limit."
-  (declare (ignore state))
-  *workspace-file-resource-maximum-observations*)
-
-(defmethod resource-observation-state-trim-storage
-    ((conversation conversation) (state workspace-file-observation-state))
-  "Evict oldest workspace observations until retained UTF-8 strings fit."
-  (declare (ignore state))
-  (let ((states (conversation-resource-observations conversation)))
-    (loop while (> (fifo-cache-total-weight states)
-                   *workspace-file-resource-maximum-retained-bytes*)
-          do (fifo-cache-delete-first-if
-              (lambda (alias candidate)
-                (declare (ignore alias))
-                (typep candidate 'workspace-file-observation-state))
-              states)))
-  nil)
 
 
 ;;;; -- URI Resolution --
@@ -413,16 +364,6 @@ Directories and missing files keep their ordinary observation."
 
 ;;;; -- Conversation Observation State --
 
-(defmethod resource-observation-state-merge
-    ((state workspace-file-observation-state)
-     (observation workspace-file-observation) &rest initargs)
-  "Merge newly visible inclusive line ranges into STATE."
-  (declare (ignore observation))
-  (dolist (range (getf initargs ':visible-ranges))
-    (structlisp:integer-interval-set-add
-     (workspace-file-observation-state-visible-ranges state)
-     (first range) (1+ (second range))))
-  state)
 
 (defparameter *workspace-file-proposal-observations* nil
   "Conversation, URI and alias keyed baselines owned by one guarded proposal operation.")
@@ -432,79 +373,29 @@ Directories and missing files keep their ordinary observation."
     workspace-file-observation-state)
 (defun workspace-file--find-observation-state (conversation uri alias)
   "Return CONVERSATION's exact URI observation ALIAS or signal stale revision."
-  (let ((state (or (and *workspace-file-proposal-observations*
-                        (gethash (list conversation uri alias)
-                                 *workspace-file-proposal-observations*))
-                   (resource-observation-state-find
-                    (conversation-resource-observations conversation)
-                    alias
-                    'workspace-file-observation-state))))
-    (unless (and state
-                 (string= uri
-                          (resource-observation-uri
-                           (resource-observation-state-observation state))))
-      (error 'resource-revision-stale
-             :uri               uri
-             :expected-revision alias
-             :actual-revision   nil))
-    state))
+  (text-resource--find-state conversation uri alias :family   'workspace-file-observation-state
+                                                   :overrides *workspace-file-proposal-observations*))
 
 
 ;;;; -- Bounded Observation Rendering --
 
 (-> workspace-file--format-ranges (structlisp:integer-interval-set) string)
 (defun workspace-file--format-ranges (ranges)
-  "Return RANGES in concise model-visible inclusive form."
-  (if (structlisp:integer-interval-set-empty-p ranges)
-      "none"
-      (format nil "~{~A~^, ~}"
-              (loop for range across (structlisp:integer-interval-set->vector ranges)
-                    for start = (structlisp:integer-interval-start range)
-                    for end = (1- (structlisp:integer-interval-end range))
-                    collect (if (= start end)
-                                (format nil "~D" start)
-                                (format nil "~D-~D" start end))))))
+  "Format file visibility using the shared text representation."
+  (text-resource--format-ranges ranges))
 
-(-> workspace-file--elisions
-    ((integer 0) structlisp:integer-interval-set boolean) list)
+(-> workspace-file--elisions ((integer 0) structlisp:integer-interval-set boolean) list)
 (defun workspace-file--elisions (total-lines ranges truncated-p)
-  "Return explicit gaps omitted from the cumulative visible RANGES."
-  (let* ((complete (structlisp:make-integer-interval-set
-                    :intervals (list (cons 1 (1+ total-lines)))))
-         (gaps     (structlisp:integer-interval-set-difference complete ranges))
-         (elisions
-            (loop for gap across (structlisp:integer-interval-set->vector gaps)
-                 for start = (structlisp:integer-interval-start gap)
-                 for end = (1- (structlisp:integer-interval-end gap))
-                 collect (format nil "~D-~D ~A" start end
-                                 (cond
-                                   ((= end total-lines)
-                                    "after")
-                                   ((= start 1)
-                                    "before")
-                                   (t
-                                    "between visible ranges"))))))
-    (when truncated-p
-      (setf elisions (append elisions (list "current result truncated"))))
-    elisions))
+  "Return shared text elisions for a file observation."
+  (text-resource--elisions total-lines ranges truncated-p))
 
 (-> workspace-file--read-result
     (workspace-file-observation-state string
      &key (:total-lines (integer 0)) (:truncated-p boolean))
     string)
 (defun workspace-file--read-result (state body &key total-lines truncated-p)
-  "Return one explicit model-facing resource observation result."
-  (let* ((observation (resource-observation-state-observation state))
-         (ranges      (workspace-file-observation-state-visible-ranges state))
-         (elisions    (workspace-file--elisions total-lines ranges truncated-p)))
-    (format nil "URI: ~A~%Revision: ~A~%Kind: ~(~A~)~%Visible lines: ~A of ~D~%Elided: ~A~%Content:~%~A"
-            (resource-observation-uri observation)
-            (resource-observation-state-alias state)
-            (workspace-file-observation-kind observation)
-            (workspace-file--format-ranges ranges)
-            total-lines
-            (if elisions (format nil "~{~A~^; ~}" elisions) "none")
-            body)))
+  "Render a file observation using the shared text result pipeline."
+  (text-resource--read-result state body :total-lines total-lines :truncated-p truncated-p))
 
 
 ;;;; -- Atomic Publication --
@@ -655,122 +546,74 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
         (error 'tool-error :message   (princ-to-string condition)
                            :tool-name "resource.edit")))))
 
-(-> workspace-file--operation-window (list (integer 0))
-    (values (integer 1) (integer 1)))
+(-> workspace-file--operation-window (list (integer 0)) (values (integer 1) (integer 1)))
 (defun workspace-file--operation-window (operations total-lines)
-  "Return a bounded nearby window covering OPERATIONS in the resulting file."
-  (let* ((first-line (reduce #'min operations :key (lambda (op) (getf op :start))))
-         (last-line  (reduce #'max operations :key (lambda (op) (getf op :end))))
-         (start      (max 1 (- first-line 2)))
-         (count      (max 1 (min 120 (+ (- last-line start) 6)))))
-    (values (if (zerop total-lines) 1 (min start total-lines)) count)))
+  "Locate a file edit's refreshed window through the shared text pipeline."
+  (text-resource--operation-window operations total-lines))
 
 
 ;;;; -- Structured Operation Adapter --
 
 (-> workspace-file--json-operation (json-object) list)
 (defun workspace-file--json-operation (operation)
-  "Translate JSON OPERATION fields into library keyword data."
-  (unless (hash-table-p operation)
-    (error 'tool-error :message   "Resource edit operations must be JSON objects."
-                       :tool-name "resource.edit"))
-  (let ((fields '(("op" . :op) ("line" . :line)
-                  ("start-line" . :start-line) ("end-line" . :end-line)
-                  ("anchor" . :anchor) ("start-anchor" . :start-anchor)
-                  ("end-anchor" . :end-anchor) ("content" . :content)))
-        (result nil))
-    (maphash
-     (lambda (key value)
-       (let ((field (assoc key fields :test #'equal)))
-         (unless field
-           (error 'tool-error
-                  :message   (format nil "Unsupported resource edit field ~S." key)
-                  :tool-name "resource.edit"))
-         (when (eq (rest field) ':op)
-           (setf value
-                 (or (and (stringp value)
-                          (rest (assoc value
-                                       '(("replace-lines" . :replace-lines)
-                                         ("delete-lines" . :delete-lines)
-                                         ("insert-before" . :insert-before)
-                                         ("insert-after" . :insert-after)
-                                         ("replace-empty" . :replace-empty))
-                                       :test #'string=)))
-                     value)))
-         (setf result (list* (rest field) value result))))
-     operation)
-    result))
+  "Adapt a file operation to the shared cl-hashline input convention."
+  (text-resource--json-operation operation))
 
-(-> workspace-file--carried-visible-ranges
-    (structlisp:integer-interval-set string string) list)
+(-> workspace-file--carried-visible-ranges (structlisp:integer-interval-set string string) list)
 (defun workspace-file--carried-visible-ranges (ranges old-content new-content)
-  "Return RANGES of OLD-CONTENT that NEW-CONTENT keeps unchanged, renumbered for it.
-
-Lines before the first changed line keep their numbers and lines after the last
-one shift by the change in length; the changed region in between is dropped.
-The result is inclusive ranges, so lines the model saw before its own edit stay
-visible in the revision the edit produced."
-  (let* ((old       (coerce (text--split-lines old-content) 'vector))
-         (new       (coerce (text--split-lines new-content) 'vector))
-         (limit     (min (length old) (length new)))
-         (prefix    (or (mismatch old new :test #'string= :end1 limit :end2 limit) limit))
-         (suffix    (loop for count from 0 below (- limit prefix)
-                          while (string= (aref old (- (length old) count 1))
-                                         (aref new (- (length new) count 1)))
-                          finally (return count)))
-         (kept-from (1+ (- (length old) suffix)))
-         (shift     (- (length new) (length old)))
-         (carried   nil))
-    (loop for range across (structlisp:integer-interval-set->vector ranges)
-          for start = (structlisp:integer-interval-start range)
-          for end = (1- (structlisp:integer-interval-end range))
-          do (when (<= start prefix)
-               (push (list start (min end prefix)) carried))
-             (when (>= end kept-from)
-               (push (list (+ (max start kept-from) shift) (+ end shift)) carried)))
-    (nreverse carried)))
+  "Carry a file revision's unchanged visible ranges through the shared text pipeline."
+  (text-resource--carried-visible-ranges ranges old-content new-content))
 
 (defmethod resource-apply-operations
-    ((resource workspace-file-resource) (context tool-context)
-     &key base-revision operations)
-  "Apply structured original-line OPERATIONS to RESOURCE at BASE-REVISION.
+    ((resource workspace-file-resource) (context tool-context) &key base-revision operations)
+  "Serialize filesystem edits around the shared text edit pipeline."
+  (declare (ignore base-revision operations))
+  (with-recursive-lock-held (*workspace-file-mutation-lock*)
+    (call-next-method)))
 
-Return the new observation, the normalized operations, and the visible ranges
-the new revision keeps from the base one."
-  (let ((conversation (tool-context-conversation context)))
-    (with-recursive-lock-held (*workspace-file-mutation-lock*)
-      (with-recursive-lock-held
-          ((conversation-resource-observation-lock conversation))
-        (let* ((state   (workspace-file--find-observation-state
-                         conversation (resource-uri resource) base-revision))
-               (base    (resource-observation-state-observation state))
-               (current (workspace-file--observe-path resource context)))
-          (unless (workspace-file--same-observation-p current base)
-            (workspace-file--signal-stale resource base current))
-          (when (eq (workspace-file-observation-kind base) ':directory)
-            (error 'tool-error :message   "Workspace directories are read-only resources."
-                               :tool-name "resource.edit"))
-          (handler-case
-              (multiple-value-bind (content normalized)
-                  (cl-hashline:edit-text
-                   (resource-observation-content base)
-                   (if (listp operations)
-                       (mapcar #'workspace-file--json-operation operations)
-                       operations)
-                   :visible-lines         (workspace-file-observation-state-visible-ranges state)
-                   :split-lines           #'text--split-lines
-                   :anchor-maximum-offset *workspace-file-resource-anchor-maximum-offset*)
-                (values (workspace-file--publish resource context
-                                                 :base-observation base
-                                                 :content          content)
-                        normalized
-                        (workspace-file--carried-visible-ranges
-                         (workspace-file-observation-state-visible-ranges state)
-                         (resource-observation-content base)
-                         content)))
-            (cl-hashline:hashline-error (condition)
-              (error 'tool-error :message   (princ-to-string condition)
-                                 :tool-name "resource.edit"))))))))
+(defmethod text-resource-edit-state ((resource workspace-file-resource) conversation revision)
+  "Include guarded workspace proposal baselines when locating a file revision."
+  (workspace-file--find-observation-state conversation (resource-uri resource) revision))
+
+(defmethod text-resource-check-edit-base
+    ((resource workspace-file-resource) (context tool-context) (base workspace-file-observation))
+  "Check the exact filesystem state and refuse directory mutation."
+  (let ((current (workspace-file--observe-path resource context)))
+    (unless (workspace-file--same-observation-p current base)
+      (workspace-file--signal-stale resource base current)))
+  (when (eq (workspace-file-observation-kind base) ':directory)
+    (error 'tool-error :message "Workspace directories are read-only resources." :tool-name "resource.edit")))
+
+(defmethod text-resource-commit
+    ((resource workspace-file-resource) (context tool-context) &key base content)
+  "Publish through the existing filesystem staging and revision checks."
+  (workspace-file--publish resource context :base-observation base :content content))
+
+(defmethod text-resource-read-start ((resource workspace-file-resource) &key start-line line-count total-lines)
+  "Show the last file window, with a note, when the requested start is past EOF."
+  (declare (ignore resource))
+  (if (and (plusp total-lines) (> start-line total-lines))
+      (let ((last-start (max 1 (1+ (- total-lines line-count)))))
+        (resource-tool-note "Start line ~D is past the end of the ~D-line resource; showing lines ~D-~D."
+                            start-line total-lines last-start total-lines)
+        last-start)
+      start-line))
+
+(defmethod text-resource-observation-annotations ((observation workspace-file-observation))
+  "Describe the filesystem snapshot kind."
+  (format nil "Kind: ~(~A~)~%" (workspace-file-observation-kind observation)))
+
+(defmethod text-resource-source-pathname ((observation workspace-file-observation))
+  "Use the observed file pathname for source delimiter annotations."
+  (getf (resource-observation-metadata observation) :pathname))
+
+(defmethod text-resource-read-tool-result ((observation workspace-file-observation) content)
+  "Retain an observed missing path while reporting that no file exists."
+  (if (eq (workspace-file-observation-kind observation) ':missing)
+      (tool-failure (format nil "No file exists at ~A; resource.edit can create it at the revision below.~%~A"
+                            (resource-observation-uri observation) content)
+                    :code ':not-found)
+      (tool-success content)))
 
 
 ;;;; -- Resource Tool Methods --
@@ -837,105 +680,7 @@ already admits the path to the readable roots, so it is not asked again."
 (defmethod resource-tool-read
     ((resource workspace-file-resource) (tool resource-read-tool)
      (context tool-context) (arguments hash-table))
-  "Read a bounded workspace resource window and establish its edit observation."
-  (declare (ignore tool))
-  (let ((start-line
-          (max 1 (or (workspace-tool-integer-argument
-                      arguments "start-line" :fallback 1)
-                     1)))
-        (line-count
-          (min *workspace-file-resource-maximum-line-count*
-               (max 1 (or (workspace-tool-integer-argument
-                           arguments "line-count"
-                           :fallback *workspace-file-resource-default-line-count*)
-                          *workspace-file-resource-default-line-count*)))))
-    (with-recursive-lock-held (*workspace-file-mutation-lock*)
-      (let* ((observation (resource-observe resource context))
-             (lines       (workspace-file-observation-lines observation))
-             (total-lines (length lines)))
-        (when (and (plusp total-lines) (> start-line total-lines))
-          (let ((last-start (max 1 (1+ (- total-lines line-count)))))
-            (resource-tool-note "Start line ~D is past the end of the ~D-line resource; showing lines ~D-~D."
-                                start-line total-lines last-start total-lines)
-            (setf start-line last-start)))
-        (multiple-value-bind (body visible-ranges last-line truncated-p)
-            (text--numbered-line-window
-             lines
-             :start-line           start-line
-             :line-count           line-count
-             :maximum-characters   *workspace-file-resource-maximum-result-characters*
-             :line-anchor-function #'cl-hashline:line-anchor)
-          (declare (ignore last-line))
-          (when (and (plusp total-lines) (null visible-ranges))
-            (error 'tool-error
-                   :message   (format nil "Line ~D exceeds the resource.read result limit and was not observed. Use search.content or shell.run for bounded inspection."
-                                      start-line)
-                   :tool-name "resource.read"))
-          (let ((state
-                   (resource-observation-state-ensure
-                    (tool-context-conversation context) observation
-                    :visible-ranges visible-ranges)))
-            (let ((content (workspace-file--read-result state body
-                                                        :total-lines total-lines
-                                                        :truncated-p truncated-p)))
-              (if (eq (workspace-file-observation-kind observation) ':missing)
-                  (tool-failure
-                   (format nil "No file exists at ~A; resource.edit can create it at the revision below.~%~A"
-                           (resource-uri resource) content)
-                   :code ':not-found)
-                  (tool-success content)))))))))
-
-(defmethod resource-tool-edit
-    ((resource workspace-file-resource) (tool resource-edit-tool)
-     (context tool-context) (arguments hash-table))
-  "Apply structured revision-gated operations and return a refreshed observation."
-  (declare (ignore tool))
-  (let* ((uri             (tool-argument arguments "uri" :required t))
-         (base-revision   (tool-argument arguments "base-revision" :required t))
-         (operation-array (tool-argument arguments "operations" :required t)))
-    (unless (non-empty-string-p base-revision)
-      (error 'tool-error
-             :message   "Resource edit base-revision must be a non-empty string."
-             :tool-name "resource.edit"))
-    (unless (and (vectorp operation-array) (plusp (length operation-array)))
-      (error 'tool-error
-             :message   "Resource edit operations must be a non-empty JSON array."
-             :tool-name "resource.edit"))
-    (let ((operations (coerce operation-array 'list)))
-      (handler-case
-        (multiple-value-bind (observation normalized carried)
-            (resource-apply-operations resource context
-                                       :base-revision base-revision
-                                       :operations    operations)
-          (let ((lines (workspace-file-observation-lines observation)))
-            (multiple-value-bind (start-line line-count)
-                (workspace-file--operation-window normalized (length lines))
-              (multiple-value-bind (body visible-ranges last-line truncated-p)
-                   (text--numbered-line-window
-                    lines
-                    :start-line           start-line
-                    :line-count           line-count
-                    :maximum-characters   *workspace-file-resource-maximum-result-characters*
-                    :line-anchor-function #'cl-hashline:line-anchor)
-                (declare (ignore last-line))
-                (let* ((state
-                          (resource-observation-state-ensure
-                           (tool-context-conversation context) observation
-                           :visible-ranges (append carried visible-ranges)))
-                       (result-content
-                         (format nil "Applied ~{~A~^; ~}.~%~A"
-                                 (mapcar
-                                  (lambda (operation) (getf operation :summary))
-                                  normalized)
-                                 (workspace-file--read-result
-                                  state body :total-lines (length lines)
-                                             :truncated-p truncated-p))))
-                  (tool-success
-                   (lisp-source-edit-result-content
-                    result-content
-                    (workspace-file-resource-pathname resource)
-                    (resource-observation-content observation))))))))
-       (resource-revision-stale ()
-         (tool-failure
-          (format nil "Resource revision ~A is stale, expired, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
-                  base-revision uri)))))))
+  "Serialize filesystem observation and window registration."
+  (declare (ignore tool arguments))
+  (with-recursive-lock-held (*workspace-file-mutation-lock*)
+    (call-next-method)))

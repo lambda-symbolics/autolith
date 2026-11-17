@@ -223,6 +223,7 @@
                                           (:file "tools/diagnosis")
                                           (:file "tools/workspace")
                                           (:file "tools/lisp-paren-check")
+                                          (:file "resource/text")
                                           (:file "resource/workspace-file")
                                           (:file "resource/workspace-changes")
                                           (:file "resource/edit-proposals")

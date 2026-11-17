@@ -1256,15 +1256,15 @@ Never read the current file as a revision-gated preimage."
                 (resource-observation-state-find
                  (conversation-resource-observations conversation)
                  revision
-                 'workspace-file-observation-state)))
+                 'text-resource-observation-state)))
           (unless state
             (return nil))
           (let* ((observation
                    (resource-observation-state-observation state))
-                 (lines (workspace-file-observation-lines observation)))
+                 (lines (text-resource-observation-lines observation)))
             (unless (and (string= uri (resource-observation-uri observation))
                          (structlisp:integer-interval-set-covers-p
-                          (workspace-file-observation-state-visible-ranges state)
+                          (text-resource-observation-state-visible-ranges state)
                           start-line (1+ end-line))
                          (<= end-line (length lines)))
               (return nil))
@@ -1298,7 +1298,7 @@ Never read the current file as a revision-gated preimage."
                 (resource-observation-state-find
                  (conversation-resource-observations conversation)
                  revision
-                 'workspace-file-observation-state)))
+                 'text-resource-observation-state)))
           (unless state
             (return nil))
           (let ((observation
@@ -1309,8 +1309,8 @@ Never read the current file as a revision-gated preimage."
                 (progn
                   (cl-hashline:edit-text
                    (resource-observation-content observation)
-                   (map 'list #'workspace-file--json-operation operations)
-                   :visible-lines         (workspace-file-observation-state-visible-ranges state)
+                   (map 'list #'text-resource--json-operation operations)
+                   :visible-lines         (text-resource-observation-state-visible-ranges state)
                    :split-lines           #'text--split-lines
                    :anchor-maximum-offset *workspace-file-resource-anchor-maximum-offset*)
                   t)

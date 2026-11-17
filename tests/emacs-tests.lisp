@@ -326,6 +326,50 @@
                       (uiop:native-namestring file)))))
   nil)
 
+(-> emacs-test-resource-visibility (pathname tool-context) null)
+(defun emacs-test-resource-visibility (socket context)
+  "Exercise bounded windows and carried edit authority through real buffer resources."
+  (let ((uri (emacs-buffer-uri "*autolith visibility*")))
+    (emacs-server-evaluate
+     socket "(with-current-buffer (get-buffer-create \"*autolith visibility*\") (erase-buffer) (dotimes (index 200) (insert (format \"line %d\\n\" (1+ index)))) (goto-char (point-min)) (narrow-to-region (point-min) (line-beginning-position 2)))")
+    (flet ((read-window (start)
+             (let ((result (emacs-test-invoke
+                            context "resource" "read"
+                            :arguments (json-object "uri" uri "start-line" start "line-count" 1))))
+               (test-assert (tool-result-success-p result) "A widened buffer window succeeds.")
+               (tool-result-content result))))
+      (let* ((tail (read-window 180))
+             (head (read-window 1)))
+        (test-assert (string= (emacs-test-revision tail) (emacs-test-revision head))
+                     "Separate windows of the same buffer revision accumulate visibility.")
+        (test-assert (not (tool-result-success-p
+                           (emacs-test-invoke context "resource" "read"
+                                              :arguments (json-object "uri" uri "start-line" 201))))
+                     "Buffers refuse past-EOF windows rather than showing a different location.")
+        (let* ((edited   (emacs-test-replace-line context uri :revision (emacs-test-revision head)
+                                                            :line 1 :content (format nil "changed~%added")))
+               (revision (and (tool-result-success-p edited) (emacs-test-revision (tool-result-content edited)))))
+          (test-assert revision "A visible buffer line can expand into two lines.")
+          (test-assert (not (tool-result-success-p
+                             (emacs-test-replace-line context uri :revision revision :line 90 :content "unseen")))
+                       "A successful edit does not authorize unseen middle lines.")
+          (test-assert (tool-result-success-p
+                        (emacs-test-replace-line context uri :revision revision :line 181 :content "carried tail"))
+                       "A previously visible unchanged suffix remains editable at its shifted line.")))
+      (test-assert (equal "t" (emacs-server-evaluate
+                               socket "(with-current-buffer \"*autolith visibility*\" (buffer-narrowed-p))"))
+                   "Resource windows and edits restore the buffer's restriction.")))
+  (emacs-server-evaluate
+   socket "(with-current-buffer (get-buffer-create \"*autolith overlong*\") (erase-buffer) (insert (make-string 10000 ?x)))")
+  (let* ((conversation (tool-context-conversation context))
+         (before       (fifo-cache-count (conversation-resource-observations conversation)))
+         (result       (emacs-test-invoke context "resource" "read"
+                                          :arguments (json-object "uri" (emacs-buffer-uri "*autolith overlong*")))))
+    (test-assert (not (tool-result-success-p result)) "An unrenderable buffer line is not observed.")
+    (test-assert (= before (fifo-cache-count (conversation-resource-observations conversation)))
+                 "A refused oversized window grants no retained edit observation."))
+  nil)
+
 (-> test-emacs-tools-real-daemon () null)
 (defun test-emacs-tools-real-daemon ()
   "emacs: resources and emacs.* tools work against a real Emacs daemon."
@@ -360,6 +404,7 @@
                    (emacs-test-resource-authority socket configuration :file file :outside outside)
                    (let ((context (emacs-test-context configuration))
                          (uri     "emacs:buffer/notes.lisp"))
+                     (emacs-test-resource-visibility socket context)
                      (test-assert (search "- emacs:buffer/notes.lisp, visiting"
                                           (emacs-test-read context "emacs:current"))
                                   "emacs:current lists file buffers by their URI.")

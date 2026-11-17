@@ -22,7 +22,7 @@
   ()
   (:documentation "What the person currently sees in Emacs."))
 
-(defclass emacs-buffer-resource (resource)
+(defclass emacs-buffer-resource (text-resource)
   ((name
     :initarg       :name
     :reader        emacs-buffer-resource-name
@@ -30,7 +30,7 @@
     :documentation "The exact Emacs buffer name."))
   (:documentation "One live Emacs buffer, unsaved edits included."))
 
-(defclass emacs-buffer-observation (workspace-file-observation)
+(defclass emacs-buffer-observation (text-resource-observation)
   ((file
     :initarg       :file
     :reader        emacs-buffer-observation-file
@@ -51,8 +51,7 @@
     :reader        emacs-buffer-observation-read-only-p
     :type          boolean
     :documentation "Whether the buffer refuses edits."))
-  (:documentation
-   "A complete buffer text snapshot, retained and edited like a workspace file."))
+  (:documentation "An exact live buffer snapshot independent of filesystem observations."))
 
 
 ;;;; -- Elisp --
@@ -260,31 +259,34 @@ evaluates without interleaving the person's commands.")
                            name (or file ""))
      "resource.read")))
 
-(defmethod resource-apply-operations
-    ((resource emacs-buffer-resource) (context tool-context) &key base-revision operations)
-  "Apply original-line OPERATIONS to the buffer text observed at BASE-REVISION.
+(defmethod text-resource-check-edit-base
+    ((resource emacs-buffer-resource) (context tool-context) (base emacs-buffer-observation))
+  "Authorize the observed buffer identity before editing its retained text."
+  (declare (ignore resource))
+  (emacs-buffer--authorize context base "resource.edit"))
 
-Return the new observation and the normalized operations."
-  (let ((conversation (tool-context-conversation context)))
-    (with-recursive-lock-held ((conversation-resource-observation-lock conversation))
-      (let* ((state (workspace-file--find-observation-state
-                     conversation (resource-uri resource) base-revision))
-             (base  (resource-observation-state-observation state)))
-        (emacs-buffer--authorize context base "resource.edit")
-        (multiple-value-bind (content normalized)
-            (handler-case
-                (cl-hashline:edit-text
-                 (resource-observation-content base)
-                 (mapcar #'workspace-file--json-operation operations)
-                 :visible-lines         (workspace-file-observation-state-visible-ranges state)
-                 :split-lines           #'text--split-lines
-                 :anchor-maximum-offset *workspace-file-resource-anchor-maximum-offset*)
-              (cl-hashline:hashline-error (condition)
-                (error 'tool-error :message   (princ-to-string condition)
-                                   :tool-name "resource.edit")))
-          (values (emacs-buffer--replace resource context :base    base
-                                                          :content content)
-                  normalized))))))
+(defmethod text-resource-commit
+    ((resource emacs-buffer-resource) (context tool-context) &key base content)
+  "Use Emacs's widened identity-and-content CAS without saving the buffer."
+  (emacs-buffer--replace resource context :base base :content content))
+
+(defmethod text-resource-observation-annotations ((observation emacs-buffer-observation))
+  "Describe the buffer's file, major mode, modified state and write protection."
+  (let ((file (emacs-buffer-observation-file observation)))
+    (format nil "File: ~A~%Mode: ~A~%Unsaved changes: ~:[no~;yes~]~:[~;~%Read-only: yes~]~%"
+            (if file (uiop:native-namestring file) "none")
+            (emacs-buffer-observation-mode observation)
+            (emacs-buffer-observation-modified-p observation)
+            (emacs-buffer-observation-read-only-p observation))))
+
+(defmethod text-resource-source-pathname ((observation emacs-buffer-observation))
+  "Annotate Lisp source edits using the buffer's visited file when present."
+  (emacs-buffer-observation-file observation))
+
+(defmethod text-resource-edit-notice ((resource emacs-buffer-resource))
+  "State that a successful buffer edit has not saved its file."
+  (declare (ignore resource))
+  " The buffer is unsaved; the person saves it.")
 
 
 ;;;; -- Resource Tool Methods --
@@ -303,71 +305,6 @@ Return the new observation and the normalized operations."
     (tool-success (format nil "URI: ~A~%Content:~%~A"
                           (resource-uri resource)
                           (resource-observation-content observation)))))
-
-(defmethod resource-tool-read
-    ((resource emacs-buffer-resource) (tool resource-read-tool)
-     (context tool-context) (arguments hash-table))
-  "Read a line window of a live buffer and retain its observation for editing."
-  (declare (ignore tool))
-  (let* ((start-line  (max 1 (or (workspace-tool-integer-argument
-                                  arguments "start-line" :fallback 1)
-                                 1)))
-         (line-count  (min *workspace-file-resource-maximum-line-count*
-                           (max 1 (or (workspace-tool-integer-argument
-                                       arguments "line-count"
-                                       :fallback *workspace-file-resource-default-line-count*)
-                                      *workspace-file-resource-default-line-count*))))
-         (observation (resource-observe resource context))
-         (total-lines (length (workspace-file-observation-lines observation))))
-    (when (and (plusp total-lines) (> start-line total-lines))
-      (error 'tool-error
-             :message   (format nil "Start line ~D is beyond the buffer's ~D lines. Request a valid window."
-                                start-line total-lines)
-             :tool-name "resource.read"))
-    (tool-success (emacs-buffer--window-result context observation
-                                               :start-line start-line
-                                               :line-count line-count))))
-
-(defmethod resource-tool-edit
-    ((resource emacs-buffer-resource) (tool resource-edit-tool)
-     (context tool-context) (arguments hash-table))
-  "Apply revision-gated line operations to a live buffer and show the edited lines."
-  (declare (ignore tool))
-  (let ((uri             (tool-argument arguments "uri" :required t))
-        (base-revision   (tool-argument arguments "base-revision" :required t))
-        (operation-array (tool-argument arguments "operations" :required t)))
-    (unless (non-empty-string-p base-revision)
-      (error 'tool-error
-             :message   "Resource edit base-revision must be a non-empty string."
-             :tool-name "resource.edit"))
-    (unless (and (vectorp operation-array) (plusp (length operation-array)))
-      (error 'tool-error
-             :message   "Resource edit operations must be a non-empty JSON array."
-             :tool-name "resource.edit"))
-    (handler-case
-        (multiple-value-bind (observation normalized)
-            (resource-apply-operations resource context
-                                       :base-revision base-revision
-                                       :operations    (coerce operation-array 'list))
-          (multiple-value-bind (start-line line-count)
-              (workspace-file--operation-window
-               normalized (length (workspace-file-observation-lines observation)))
-            (let ((result (format nil "Applied ~{~A~^; ~}. The buffer is unsaved; the person saves it.~%~A"
-                                  (mapcar (lambda (operation) (getf operation :summary))
-                                          normalized)
-                                  (emacs-buffer--window-result
-                                   context observation :start-line start-line
-                                                       :line-count line-count))))
-              (tool-success
-               (if (emacs-buffer-observation-file observation)
-                   (lisp-source-edit-result-content result
-                                                    (emacs-buffer-observation-file observation)
-                                                    (resource-observation-content observation))
-                   result)))))
-      (resource-revision-stale ()
-        (tool-failure
-         (format nil "Resource revision ~A is stale, expired, or was not observed in this conversation; the buffer may have changed in Emacs. Reread ~A with resource.read and retry against the returned revision."
-                 base-revision uri))))))
 
 
 ;;;; -- Public Functions --
@@ -433,7 +370,6 @@ Return the new observation and the normalized operations."
                                        (format nil "~S" (list name file text)))
                      :content         text
                      :metadata        (list ':buffer name)
-                     :kind            ':file
                      :line-ending     (string #\Newline)
                      :final-newline-p (cl-hashline:final-newline-p text)
                      :file            (and (stringp file) (uiop:parse-native-namestring file))
@@ -504,40 +440,6 @@ Return the new observation and the normalized operations."
               :tool-name "resource.edit"))
       (t
        (emacs-buffer--observation resource reply "resource.edit")))))
-
-(-> emacs-buffer--window-result
-    (tool-context emacs-buffer-observation
-     &key (:start-line (integer 1)) (:line-count (integer 1)))
-    string)
-(defun emacs-buffer--window-result (context observation &key start-line line-count)
-  "Render OBSERVATION's line window, retaining it for edits in CONTEXT's conversation."
-  (let* ((lines       (workspace-file-observation-lines observation))
-         (total-lines (length lines)))
-    (multiple-value-bind (body visible-ranges last-line truncated-p)
-        (text--numbered-line-window
-         lines
-         :start-line           start-line
-         :line-count           line-count
-         :maximum-characters   *workspace-file-resource-maximum-result-characters*
-         :line-anchor-function #'cl-hashline:line-anchor)
-      (declare (ignore last-line))
-      (let* ((state    (resource-observation-state-ensure
-                        (tool-context-conversation context) observation
-                        :visible-ranges visible-ranges))
-             (ranges   (workspace-file-observation-state-visible-ranges state))
-             (elisions (workspace-file--elisions total-lines ranges truncated-p))
-             (file     (emacs-buffer-observation-file observation)))
-        (format nil "URI: ~A~%Revision: ~A~%File: ~A~%Mode: ~A~%Unsaved changes: ~:[no~;yes~]~:[~;~%Read-only: yes~]~%Visible lines: ~A of ~D~%Elided: ~A~%Content:~%~A"
-                (resource-observation-uri observation)
-                (resource-observation-state-alias state)
-                (if file (uiop:native-namestring file) "none")
-                (emacs-buffer-observation-mode observation)
-                (emacs-buffer-observation-modified-p observation)
-                (emacs-buffer-observation-read-only-p observation)
-                (workspace-file--format-ranges ranges)
-                total-lines
-                (if elisions (format nil "~{~A~^; ~}" elisions) "none")
-                body)))))
 
 (-> emacs-current--render (json-object) string)
 (defun emacs-current--render (snapshot)
