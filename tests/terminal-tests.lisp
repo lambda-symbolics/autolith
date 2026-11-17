@@ -795,7 +795,7 @@
                                        :compaction-limit 840000)
         (terminal-ui-set-status active-ui "working")
         (let ((wide (row-text active-ui 120)))
-          (test-assert (search "REPL  ∙ 00:00" wide)
+          (test-assert (search "REPL ∙ 00:00" wide)
                        "a wide context row retains live activity")
           (test-assert
            (search "ctx [===.......|..] 263K / 1.05M used" wide)
@@ -808,7 +808,7 @@
            "a wide context meter is right-aligned"))
         (dolist (width '(25 30 33))
           (let ((intermediate (row-text active-ui width)))
-            (test-assert (search "REPL  ∙ 00:00" intermediate)
+            (test-assert (search "REPL ∙ 00:00" intermediate)
                          (format nil
                                  "an active ~D-column meter retains minimum activity"
                                  width))
@@ -823,9 +823,9 @@
         (let ((intermediate (row-text active-ui 30)))
           (test-assert (search "ctx 263K/1.05M" intermediate)
                        "a 30-column meter retains labelled compact context"))
-        (let ((intermediate (row-text active-ui 33)))
+        (let ((intermediate (row-text active-ui 32)))
           (test-assert (search "[=..|.] 263K/1.05M" intermediate)
-                       "a 33-column meter selects the largest compact bar"))
+                       "a 32-column meter selects the largest compact bar"))
         (terminal-ui-set-context-usage active-ui
                                        :used             1050000
                                        :window           1050000
@@ -840,19 +840,19 @@
                          (format nil
                                  "a high-usage ~D-column meter never overflows its row"
                                  width))))
-        (let ((too-narrow (row-text active-ui 24))
-              (minimum    (row-text active-ui 25))
-              (preferred  (row-text active-ui 26)))
-          (test-assert (not (search "REPL  ∙ 00:00" too-narrow))
+        (let ((too-narrow (row-text active-ui 23))
+              (minimum    (row-text active-ui 24))
+              (preferred  (row-text active-ui 25)))
+          (test-assert (not (search "REPL ∙ 00:00" too-narrow))
                        "below the combined minimum, context displaces activity")
           (test-assert
-           (string= minimum "REPL  ∙ 00:00 1.05M/1.05M")
+           (string= minimum "REPL ∙ 00:00 1.05M/1.05M")
            "the combined minimum uses a one-cell activity and context gap")
           (test-assert
-           (string= preferred "REPL  ∙ 00:00  1.05M/1.05M")
+           (string= preferred "REPL ∙ 00:00  1.05M/1.05M")
            "the next width restores the preferred two-cell gap"))
-        (dolist (width '(25 26 27 28 29 30 31 32 33))
-          (test-assert (search "REPL  ∙ 00:00" (row-text active-ui width))
+        (dolist (width '(24 25 26 27 28 29 30 31 32 33))
+          (test-assert (search "REPL ∙ 00:00" (row-text active-ui width))
                        (format nil
                                "a high-usage ~D-column meter retains activity"
                                width)))
@@ -1112,7 +1112,7 @@
       (multiple-value-bind (text display cursor)
           (terminal-ui--live-content active-ui)
         (declare (ignore display cursor))
-        (test-assert (search "REPL  ∙ 00:00" text)
+        (test-assert (search "REPL ∙ 00:00" text)
                      "live activity starts with its spinner and elapsed clock")
         (let ((lines (uiop:split-string text :separator '(#\Newline))))
           (test-assert
@@ -1131,11 +1131,11 @@
       (multiple-value-bind (text display cursor)
           (terminal-ui--live-content active-ui clock)
         (declare (ignore display cursor))
-        (test-assert (search "REPL  ∙ 00:00" text)
+        (test-assert (search "REPL ∙ 00:00" text)
                      "the wordmark advances without shifting the elapsed clock")
         (let ((spans (terminal-ui--status-spinner-spans-at active-ui clock)))
           (test-assert
-           (and (string= "REPL "
+           (and (string= "REPL"
                          (apply #'concatenate 'string
                                 (mapcar #'terminal-span-text spans)))
                 (eq ':status-accent (terminal-span-style (second spans)))

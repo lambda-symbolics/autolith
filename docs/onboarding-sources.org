@@ -395,7 +395,7 @@ State root:  {{{:state-root}}}@@
 :END:
 The turn timer and other information are in the modeline. A small decorative activity line appears below the modeline:
 
-@@dim:REPL  ∙ 00:04  gpt-6.1-sol · high@@
+@@dim:REPL ∙ 00:04  gpt-6.1-sol · high@@
 @@brand:∙@@ @@dim:pondering@@
 
 Some people hate this Claudism, so you can disable it in =(settings)=.

@@ -1678,7 +1678,7 @@ its parenthesis open, and are dropped once the name closes it itself."
 (-> terminal-ui--status-spinner-spans-at (terminal-ui real) list)
 (defun terminal-ui--status-spinner-spans-at (ui now)
   "Return fixed-width REPL text with the current phase's letter highlighted at NOW."
-  (let ((text         "REPL ")
+  (let ((text         "REPL")
         (bright-index (terminal-ui--status-spinner-phase-at ui now)))
     (remove nil
             (list (and (plusp bright-index)
@@ -1975,7 +1975,7 @@ joins the meter when every segment fits."
                  (terminal-ui-status-details ui))))
          (content                (or activity-content
                                      (terminal-ui-idle-status-details ui)))
-         (minimum-activity-width (text-cell-width "REPL  ∙ 00:00"))
+         (minimum-activity-width (text-cell-width "REPL ∙ 00:00"))
          (complete-context-width
            (and (terminal-ui-context-window ui)
                 (text-cell-width (terminal-ui--context-compact-text ui))))
