@@ -7843,11 +7843,11 @@
                              (conversation-pathname loaded))))
              (test-assert
               (equal
-               (application--conversation-input-history loaded :limit 3)
+               (conversation-input-history-page loaded :limit 3)
                '("/help" "(+ 1 2)" "last user"))
               "editable history restores a bounded view without reading retired chunks")
              (test-assert
-              (null (application--conversation-input-history loaded :limit 0))
+              (null (conversation-input-history-page loaded :limit 0))
               "a disabled editor history returns no inputs")
              (test-assert
               (and baseline

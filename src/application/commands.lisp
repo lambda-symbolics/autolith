@@ -582,29 +582,6 @@ notice preference is on, so enabling it mid-session takes effect immediately."
        (sanitize-text preview :single-line-p t)
        *conversation-preview-width*))))
 
-(-> application--conversation-metadata-tally
-    (conversation-picker-metadata)
-    string)
-(defun application--conversation-metadata-tally (metadata)
-  "Return a compact work-time or turn-count tally for picker METADATA."
-  (let ((working-seconds (conversation-picker-metadata-working-seconds metadata))
-        (user-turn-count (conversation-picker-metadata-user-turn-count metadata)))
-    (cond
-      ((plusp working-seconds)
-       (terminal-ui--duration-text working-seconds))
-      ((plusp user-turn-count)
-       (format nil "~D turn~:P" user-turn-count))
-      (t
-       "0 turns"))))
-
-(-> application--conversation-tally (pathname) string)
-(defun application--conversation-tally (pathname)
-  "Return a compact work-time or turn-count tally for PATHNAME."
-  (let ((metadata (conversation-picker-metadata-find pathname)))
-    (if metadata
-        (application--conversation-metadata-tally metadata)
-        "0 turns")))
-
 (-> application--effort-items (application) list)
 (defun application--effort-items (application)
   "Return picker items for the active model's supported reasoning efforts."

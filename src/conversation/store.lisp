@@ -3296,15 +3296,6 @@ later picker searches read it without scanning the log."
       (conversation-picker-search-find (conversation-pathname conversation))))
   nil)
 
-(-> conversation-picker-search-index-text
-    (conversation-picker-search-index)
-    string)
-(defun conversation-picker-search-index-text (index)
-  "Return INDEX's chronological message corpus as one searchable string."
-  (format nil
-          "~{~A~^~%~}"
-          (conversation-picker-search-index-messages index)))
-
 (-> conversation--record-source-pathname (pathname) pathname)
 (defun conversation--record-source-pathname (pathname)
   "Return the physical segment read when PATHNAME denotes a conversation."

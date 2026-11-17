@@ -2836,10 +2836,7 @@ process without releasing the lease, exercising kernel cleanup."
              (test-assert (= working-seconds 110)
                           "activity summaries reproduce durable working time")
              (test-assert (= user-turn-count 2)
-                          "activity summaries count durable user turns")
-             (test-assert (string= (application--conversation-tally pathname)
-                                   "01:50")
-                          "resume tallies prefer measured working time"))
+                          "activity summaries count durable user turns"))
            (let ((metadata-pathname
                    (conversation-picker-metadata-pathname pathname)))
              (test-assert (probe-file metadata-pathname)
@@ -3107,11 +3104,7 @@ process without releasing the lease, exercising kernel cleanup."
                (test-assert
                 (and index
                      (equal (conversation-picker-search-index-messages index)
-                            expected)
-                     (string=
-                      (conversation-picker-search-index-text index)
-                      "user needle
-assistant needle"))
+                            expected))
                 "closing publishes only chronological visible messages"))
              (multiple-value-bind (index scan-count)
                  (find-with-scan-count)

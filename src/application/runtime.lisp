@@ -2022,14 +2022,6 @@ state and update the title afterward; later failures do not roll back the runtim
       (application-sync-window-title application)
       directory)))
 
-(-> application--conversation-input-history
-    (conversation &key (:limit (integer 0)))
-    list)
-(defun application--conversation-input-history
-    (conversation &key (limit *terminal-history-limit*))
-  "Return the newest LIMIT editable inputs from CONVERSATION's complete sidecar."
-  (conversation-input-history-page conversation :limit limit))
-
 (-> application--load-conversation-input-history (terminal-ui conversation) terminal-ui)
 (defun application--load-conversation-input-history (ui conversation)
   "Install CONVERSATION's bounded newest history and absolute paging callbacks in UI."
