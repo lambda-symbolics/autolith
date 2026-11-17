@@ -124,8 +124,8 @@
   :version "git-0727975d4c74a11be13b39ffe4a33aae74387848"))
 ("cl-skills" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-skills.git" :ref "21a09a7b7195f6c0e1b36d843c518c5c7bee6ac0")
-  :version "git-21a09a7b7195f6c0e1b36d843c518c5c7bee6ac0"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-skills.git" :ref "3a2b0abd73850caa558731cb2ba412d146104fcd")
+  :version "git-3a2b0abd73850caa558731cb2ba412d146104fcd"))
 ("cl-termdown" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-termdown.git" :ref "17249edda7cd28cd90ce4c9788f5ede77453fed7")
