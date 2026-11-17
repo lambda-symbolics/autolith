@@ -428,7 +428,7 @@
     (let* ((terminal    (localgroup-terminal-create))
            (ui          (terminal-ui-create :terminal terminal))
            (application (make-instance 'application :ui ui :configuration configuration))
-           (controller  (application-input-controller-create application))
+           (controller  (application-input-controller-create application :start-reader-p nil))
            (packets     (with-output-to-string (stream)
                           (dolist (event '((:application-command "(quit)")
                                            (:application-command 7)
@@ -457,6 +457,7 @@
                                                                    (terminal-read-event terminal)))
               (test-assert (equal (reverse submitted) '("(new)" "(delete)"))
                            "only the two sidebar commands cross the relay into application submission")))
+        (application-input-controller-stop controller)
         (image-daemon:relay-detach terminal attachment))))
   nil)
 
