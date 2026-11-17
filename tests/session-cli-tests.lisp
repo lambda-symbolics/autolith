@@ -431,12 +431,13 @@
                              "the client attaches to the channel the server opened")
                 record))
         (list 'localgroup-attach-record
-              (lambda (attach-configuration entry mode &key panel screen notice client-version)
-                (declare (ignore attach-configuration notice client-version))
+              (lambda (attach-configuration entry mode &key panel screen notice client-version deadline attached-function)
+                (declare (ignore attach-configuration notice client-version deadline))
                 (test-assert (and panel screen)
                              "plain starts and explicit opens attach with the same world navigation UI")
                 (push (list (rest entry) mode) attached)
                 (when attach-error (error attach-error))
+                (when attached-function (funcall attached-function))
                 (when switch-to
                   (list :switch :session-id (shiftf switch-to nil)))))
         (list 'world-client-entry
