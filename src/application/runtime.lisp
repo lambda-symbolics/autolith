@@ -1096,7 +1096,6 @@ newly acquired lease."
       (unwind-protect
            (let ((conversation
                    (conversation-load-by-id configuration identifier)))
-              (conversation--prune-unreferenced-image-artifacts conversation)
              (setf completed-p t)
              (values conversation lease acquired-p))
         (unless completed-p

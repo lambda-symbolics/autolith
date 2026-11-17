@@ -1095,6 +1095,9 @@
   test-conversation-replay-storage
   test-conversation-replay-command-line
   test-conversation-fork-storage
+  test-conversation-image-archive-ownership
+  test-conversation-image-maintenance-failures
+  test-conversation-image-publication-roots
   test-conversation-fork-rejections
   test-conversation-fork-chunks-and-selectors
   test-conversation-fork-source-tails

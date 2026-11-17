@@ -283,13 +283,14 @@
                (multiple-value-bind (owned lease acquired-p)
                    (application--conversation-load-owned
                     nil configuration "images")
-                 (declare (ignore owned))
                  (unwind-protect
-                      (test-assert
-                       (and acquired-p
-                            (probe-file artifact)
-                            (not (probe-file orphan)))
-                       "owned conversation loading prunes unreferenced image artifacts")
+                       (progn
+                         (conversation--prune-unreferenced-image-artifacts owned)
+                        (test-assert
+                         (and acquired-p
+                              (probe-file artifact)
+                              (not (probe-file orphan)))
+                         "optional maintenance prunes proven unreferenced image artifacts"))
                    (when acquired-p
                      (conversation-lease-release lease)))))
              (delete-file artifact)

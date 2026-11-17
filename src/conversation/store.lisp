@@ -332,6 +332,21 @@
     :reader        conversation-image-artifact-names
     :type          hash-table
     :documentation "The basenames of image artifacts referenced by durable records.")
+   (image-artifact-manifest-complete-p
+    :initform      t
+    :accessor      conversation-image-artifact-manifest-complete-p
+    :type          boolean
+    :documentation "Whether image references cover every retained durable segment.")
+   (image-artifact-repair-pending-p
+    :initform      nil
+    :accessor      conversation-image-artifact-repair-pending-p
+    :type          boolean
+    :documentation "Whether optional maintenance must repair archival image references.")
+   (image-artifact-maintenance-diagnostics
+    :initform      nil
+    :accessor      conversation-image-artifact-maintenance-diagnostics
+    :type          list
+    :documentation "Local failures from optional image maintenance, separate from loading.")
    (resource-observations
     :initform (make-fifo-cache
                :test            #'equal
@@ -1173,6 +1188,12 @@ person's inbox says it is one."
         :model-provider       (conversation-model-provider conversation)
         :reasoning-effort     (conversation-reasoning-effort conversation)
         :chunk-start-sequence chunk-start-sequence
+        :image-artifact-manifest
+        (when (conversation-image-artifact-manifest-complete-p conversation)
+          (list :complete-p t
+                :names      (loop for name being the hash-keys
+                                    of (conversation-image-artifact-names conversation)
+                                  collect name)))
         :working-seconds      (conversation-working-seconds conversation)
         :user-turn-count      (conversation-user-turn-count conversation)
         :last-activity-at     (conversation-last-activity-at conversation)
@@ -1742,6 +1763,7 @@ Run before post-publication adapters; callbacks must perform only local bookkeep
                    :pathname (conversation-pathname conversation)
                    :sequence sequence)))
         (incf (conversation-next-sequence conversation))
+        (conversation--note-image-record conversation sequenced)
         (when *conversation-append-publication-function*
           (funcall *conversation-append-publication-function* conversation record))
         (conversation--note-activity conversation sequenced)
@@ -2253,6 +2275,7 @@ copied."
   (setf (gethash (file-namestring (image-attachment-pathname attachment))
                  (conversation-image-artifact-names conversation))
         t)
+  (image-input--release-publication-root (image-attachment-pathname attachment))
   attachment)
 
 (-> conversation--remember-image-attachments (conversation list) list)
@@ -2273,15 +2296,81 @@ copied."
       '("*.png" "*.jpg" "*.webp" "*.tmp"))
      :test #'equal)))
 
+(-> conversation--note-image-record (conversation list) null)
+(defun conversation--note-image-record (conversation record)
+  "Retain image descriptors immediately after durable RECORD publication."
+  (dolist (descriptor (conversation--record-image-descriptors record))
+    (let ((name (getf descriptor :artifact)))
+      (setf (gethash name (conversation-image-artifact-names conversation)) t)
+      (image-input--release-publication-root
+       (merge-pathnames name (conversation-image-artifact-root conversation)))))
+  nil)
+
+(-> conversation--record-image-descriptors (list) list)
+(defun conversation--record-image-descriptors (record)
+  "Return user and tool image descriptors carried by durable RECORD."
+  (append (getf (rest record) :images)
+          (loop for block in (getf (rest record) :content-blocks)
+                when (and (listp block) (getf block :image))
+                  collect (getf block :image))))
+
+(-> conversation--restore-image-manifest (conversation t) null)
+(defun conversation--restore-image-manifest (conversation manifest)
+  "Restore complete archival roots, retaining everything when metadata is suspect."
+  (let ((valid-p
+          (handler-case
+              (and (listp manifest)
+                   (eq (getf manifest :complete-p) t)
+                   (conversation--header-string-list-p (getf manifest :names))
+                   (every (lambda (name)
+                            (equal name (file-namestring (pathname name))))
+                          (getf manifest :names)))
+            (error ()
+              nil))))
+    (setf (conversation-image-artifact-manifest-complete-p conversation) (not (null valid-p))
+          (conversation-image-artifact-repair-pending-p conversation) (not valid-p))
+    (when valid-p
+      (dolist (name (getf manifest :names))
+        (setf (gethash name (conversation-image-artifact-names conversation)) t))))
+  nil)
+
+(-> conversation-image-artifacts-repair (conversation) null)
+(defun conversation-image-artifacts-repair (conversation)
+  "Repair archival reachability on explicit maintenance, never during channel loading."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (let ((names (make-hash-table :test #'equal)))
+      (conversation-map-records
+       conversation
+       (lambda (record)
+         (dolist (descriptor (conversation--record-image-descriptors record))
+           (setf (gethash (getf descriptor :artifact) names) t))))
+      (let ((record
+              (conversation-append-record
+               conversation
+               (list :image-artifact-manifest
+                     :complete-p t
+                     :names (loop for name being the hash-keys of names collect name)))))
+        (conversation--restore-image-manifest conversation (rest record)))))
+  nil)
+
 (-> conversation--prune-unreferenced-image-artifacts (conversation) null)
 (defun conversation--prune-unreferenced-image-artifacts (conversation)
-  "Delete image artifacts not referenced by CONVERSATION's durable records."
-  (let ((references (conversation-image-artifact-names conversation)))
-    (dolist (pathname
-             (conversation--image-artifact-pathnames
-              (conversation-image-artifact-root conversation)))
-      (unless (gethash (file-namestring pathname) references)
-        (delete-file pathname))))
+  "Reclaim proven orphans only during optional maintenance; retain uncertain roots."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (if (conversation-image-artifact-manifest-complete-p conversation)
+        (handler-case
+            (with-recursive-lock-held (*image-input-publication-lock*)
+              (dolist (pathname (conversation--image-artifact-pathnames
+                                 (conversation-image-artifact-root conversation)))
+                (unless (or (gethash (file-namestring pathname)
+                                    (conversation-image-artifact-names conversation))
+                            (gethash pathname *image-input-publication-roots*)
+                            (equal (pathname-type pathname) "tmp"))
+                  (delete-file pathname))))
+          (error (condition)
+            (push (princ-to-string condition)
+                  (conversation-image-artifact-maintenance-diagnostics conversation))))
+        (setf (conversation-image-artifact-repair-pending-p conversation) t)))
   nil)
 
 (-> user-message-item (string &optional list) json-object)
@@ -2306,17 +2395,19 @@ copied."
                   attachments))
           (nreverse attachments))
       (error (condition)
-        (dolist (attachment attachments)
-          (when (probe-file (image-attachment-pathname attachment))
-            (delete-file (image-attachment-pathname attachment))))
+        (conversation--delete-image-attachments attachments)
         (error condition)))))
 
 (-> conversation--delete-image-attachments (list) null)
 (defun conversation--delete-image-attachments (attachments)
-  "Delete newly prepared ATTACHMENTS after a failed durable append."
-  (dolist (attachment attachments)
-    (when (probe-file (image-attachment-pathname attachment))
-      (delete-file (image-attachment-pathname attachment))))
+  "Discard still-unpublished ATTACHMENTS, including failed append preparation."
+  (with-recursive-lock-held (*image-input-publication-lock*)
+    (dolist (attachment attachments)
+      (let ((pathname (image-attachment-pathname attachment)))
+        (when (gethash pathname *image-input-publication-roots*)
+          (when (probe-file pathname)
+            (delete-file pathname))
+          (remhash pathname *image-input-publication-roots*)))))
   nil)
 
 (-> conversation-append-user-message
@@ -3379,6 +3470,11 @@ later picker searches read it without scanning the log."
   (:method ((kind t) conversation properties)
     nil))
 
+(defmethod conversation--project-record
+    ((kind (eql :image-artifact-manifest)) conversation properties)
+  "Restore an explicitly repaired archival image manifest."
+  (conversation--restore-image-manifest conversation properties))
+
 (-> conversation--invalidate-context-usage (conversation keyword &optional list) null)
 (defun conversation--invalidate-context-usage (conversation kind &optional properties)
   "Discard measured context evidence when KIND replaces its coverage.
@@ -3938,6 +4034,11 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
                                   reasoning-effort)
                              :next-sequence     chunk-start-sequence
                              :input-items       nil)))
+        (conversation--restore-image-manifest
+         conversation (getf properties :image-artifact-manifest))
+        (when (= chunk-start-sequence 1)
+          (setf (conversation-image-artifact-manifest-complete-p conversation) t
+                (conversation-image-artifact-repair-pending-p conversation) nil))
         ;; Headers written before usage totals existed leave them unknown.
         (setf (conversation-usage-totals conversation) (copy-list usage-totals))
         (when (= version 2)

@@ -179,56 +179,71 @@
   (yolokuva:image-inspect (image-input--absolute pathname)
                           :maximum-octets *image-input-maximum-source-bytes*))
 
+(defvar *image-input-publication-lock* (make-recursive-lock "Image publication roots")
+  "Serialize image publication and optional reclamation.")
+
+(defvar *image-input-publication-roots* (make-hash-table :test #'equal)
+  "Prepared artifacts awaiting durable publication or explicit disposal.")
+
+(-> image-input--release-publication-root (pathname) null)
+(defun image-input--release-publication-root (pathname)
+  "Release PATHNAME after durable reference publication or explicit disposal."
+  (with-recursive-lock-held (*image-input-publication-lock*)
+    (remhash pathname *image-input-publication-roots*))
+  nil)
+
 (-> image-input-prepare (pathname pathname) image-attachment)
 (defun image-input-prepare (source artifact-root)
   "Validate SOURCE and publish its prompt-ready form privately beneath ARTIFACT-ROOT.
 
 The prepared image stays within the Codex high-detail limits: a fitting PNG,
 JPEG, or WebP image is copied, anything else becomes a resized PNG."
-  (let ((absolute (image-input--absolute source)))
-    (multiple-value-bind (format width height) (image-input--inspect absolute)
-      (multiple-value-bind (output-format target-width target-height)
-          (apply #'yolokuva:image-preparation format width height
-                 :pathname absolute (image-input--limits))
-        (let* ((identifier (make-identifier))
-               (target     (merge-pathnames
-                            (make-pathname :name identifier
-                                           :type (ecase output-format
-                                                   (:png
-                                                    "png")
-                                                   (:jpeg
-                                                    "jpg")
-                                                   (:webp
-                                                    "webp")))
-                            artifact-root)))
-          (ensure-directories-exist target)
-          (platform-make-private *platform* artifact-root)
-          (handler-case
-              (progn
-                (publish-pathname
-                 target
-                 (lambda (temporary)
-                   (yolokuva:image-write-prepared absolute temporary
-                                                  :source-format format
-                                                  :output-format output-format
-                                                  :width         target-width
-                                                  :height        target-height)))
-                (platform-make-private *platform* target :read-only-p t))
-            (image-input-error (condition)
-              (error condition))
-            (error (condition)
-              (image-input--error
-               absolute
-               :stage   ':persistence
-               :message (format nil "Image ~A could not be stored: ~A" absolute condition)
-               :cause   condition)))
-          (make-instance 'image-attachment
-                         :identifier  identifier
-                         :pathname    target
-                         :source-name (namestring absolute)
-                         :mime-type   (yolokuva:image-mime-type output-format)
-                         :width       target-width
-                         :height      target-height))))))
+  (with-recursive-lock-held (*image-input-publication-lock*)
+   (let ((absolute (image-input--absolute source)))
+     (multiple-value-bind (format width height) (image-input--inspect absolute)
+       (multiple-value-bind (output-format target-width target-height)
+           (apply #'yolokuva:image-preparation format width height
+                  :pathname absolute (image-input--limits))
+         (let* ((identifier (make-identifier))
+                (target     (merge-pathnames
+                             (make-pathname :name identifier
+                                            :type (ecase output-format
+                                                    (:png
+                                                     "png")
+                                                    (:jpeg
+                                                     "jpg")
+                                                    (:webp
+                                                     "webp")))
+                             artifact-root)))
+           (ensure-directories-exist target)
+           (platform-make-private *platform* artifact-root)
+           (handler-case
+               (progn
+                 (publish-pathname
+                  target
+                  (lambda (temporary)
+                    (yolokuva:image-write-prepared absolute temporary
+                                                   :source-format format
+                                                   :output-format output-format
+                                                   :width         target-width
+                                                   :height        target-height)))
+                 (platform-make-private *platform* target :read-only-p t))
+             (image-input-error (condition)
+               (error condition))
+             (error (condition)
+               (image-input--error
+                absolute
+                :stage   ':persistence
+                :message (format nil "Image ~A could not be stored: ~A" absolute condition)
+                :cause   condition)))
+           (setf (gethash target *image-input-publication-roots*) t)
+           (make-instance 'image-attachment
+                          :identifier  identifier
+                          :pathname    target
+                          :source-name (namestring absolute)
+                          :mime-type   (yolokuva:image-mime-type output-format)
+                          :width       target-width
+                          :height      target-height)))))))
 
 
 ;;;; -- Paste Recognition --
