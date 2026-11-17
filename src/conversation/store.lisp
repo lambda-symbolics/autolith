@@ -2368,20 +2368,22 @@ copied."
 
 (-> conversation-image-artifacts-repair (conversation) null)
 (defun conversation-image-artifacts-repair (conversation)
-  "Repair archival reachability on explicit maintenance, never during channel loading."
-  (with-recursive-lock-held ((conversation-append-lock conversation))
-    (let ((names (make-hash-table :test #'equal)))
-      (conversation-map-records
-       conversation
-       (lambda (record)
-         (dolist (descriptor (conversation--record-image-descriptors record))
-           (setf (gethash (getf descriptor :artifact) names) t))))
-      (let ((record
-              (conversation-append-record
-               conversation
-               (list :image-artifact-manifest
-                     :complete-p t
-                     :names (loop for name being the hash-keys of names collect name)))))
+  "Scan archival reachability outside the append lock, then merge and publish roots."
+  (let ((names (make-hash-table :test #'equal)))
+    (conversation-map-records
+     conversation
+     (lambda (record)
+       (conversation-maintenance-check)
+       (dolist (descriptor (conversation--record-image-descriptors record))
+         (setf (gethash (getf descriptor :artifact) names) t))))
+    (with-recursive-lock-held ((conversation-append-lock conversation))
+      (conversation-maintenance-check)
+      (maphash (lambda (name present) (when present (setf (gethash name names) t)))
+               (conversation-image-artifact-names conversation))
+      (let ((record (conversation-append-record
+                     conversation
+                     (list :image-artifact-manifest :complete-p t
+                           :names                   (loop for name being the hash-keys of names collect name)))))
         (conversation--restore-image-manifest conversation (rest record)))))
   nil)
 
