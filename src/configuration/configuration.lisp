@@ -452,7 +452,8 @@ Ordinary native defaults remain lazy and follow the current environment."
   :label                            "Reasoning traces"
   :group                            :transcript
   :documentation                    "Whether provider reasoning summaries are requested and shown."
-  :scope                            :durable)
+  :scope                            :durable
+  :default                          t)
 
 (define-setting :compact-view-p (boolean-setting)
   :label                        "Compact view"
