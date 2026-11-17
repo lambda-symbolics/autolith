@@ -1403,6 +1403,21 @@
                                     (uiop:read-file-string pointer))
                        (namestring capsule))
               "the exact launch pointer names its own crash capsule"))
+           (let* ((capsule
+                    (application-write-crash-capsule
+                     application
+                     (handler-case
+                         (application-ui "credential-value")
+                       (error (condition)
+                         condition))))
+                  (report  (getf (rest (read-portable-form capsule)) :condition)))
+             (test-assert
+              (and (search "APPLICATION-UI" report)
+                   (search "STRING" report))
+              "a failed generic function call names the function and argument classes")
+             (test-assert
+              (not (search "credential-value" (uiop:read-file-string capsule)))
+              "a failed generic function call keeps its arguments out"))
            (let* ((empty        (conversation-create configuration
                                                      :identifier "empty-crash"))
                   (empty-capsule

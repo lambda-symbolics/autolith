@@ -46,6 +46,7 @@
                 #:recovery-report
                 #:recovery-error
                 #:safe-backtrace
+                #:safe-condition-report
                 #:validate-recovery)
   (:import-from #:cl-base64
                 #:base64-string-to-usb8-array

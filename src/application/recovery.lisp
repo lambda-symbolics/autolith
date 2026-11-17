@@ -22,10 +22,14 @@
 
 (-> application-crash-condition-report (serious-condition) string)
 (defun application-crash-condition-report (condition)
-  "Return an allowlisted, secret-free report for crash CONDITION."
+  "Return an allowlisted, secret-free report for crash CONDITION.
+
+For a generic function call that no method accepts, the report names the
+function and the classes of its arguments."
   (if (typep condition 'autolith-error)
       (autolith-error-message condition)
-      (format nil "Unexpected condition of type ~S." (type-of condition))))
+      (format nil "Unexpected condition of type ~S.~@[ ~A~]"
+              (type-of condition) (safe-condition-report condition))))
 
 (-> application-publish-crash-pointer (configuration pathname) null)
 (defun application-publish-crash-pointer (configuration capsule-pathname)
