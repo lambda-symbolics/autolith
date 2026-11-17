@@ -2618,7 +2618,7 @@
                          (:inspect
                           (incf inspections)
                           (test-assert
-                           (= (min 20 (- (terminal-rows terminal) 5))
+                           (= (min 20 (- (terminal-rows terminal) 4))
                               (length (clinedi:selector-window selector)))
                            "the candidate window fits the available height")
                           (test-assert

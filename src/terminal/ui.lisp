@@ -22,6 +22,9 @@
 (defparameter *terminal-ui-compaction-head-cells* 5
   "The maximum width of the travelling compaction head.")
 
+(defparameter *terminal-ui-minimum-activity-cells* (text-cell-width "REPL ∙ 00:00")
+  "The modeline cells kept for the spinner and elapsed clock before activity gives way.")
+
 (defparameter *terminal-ui-picker-search-character-limit* 256
   "The maximum number of characters retained in a modal picker search.")
 
@@ -1371,7 +1374,8 @@ its parenthesis open, and are dropped once the name closes it itself."
    (null
     (or (terminal-ui--animated-status-row-p ui)
         (terminal-ui-idle-status-details ui)
-        (terminal-ui-context-window ui)))))
+        (terminal-ui-context-window ui)
+        (terminal-ui-transcript-position ui)))))
 
 (-> terminal-ui--status-label-visible-p (terminal-ui) boolean)
 (defun terminal-ui--status-label-visible-p (ui)
@@ -1975,7 +1979,7 @@ joins the meter when every segment fits."
                  (terminal-ui-status-details ui))))
          (content                (or activity-content
                                      (terminal-ui-idle-status-details ui)))
-         (minimum-activity-width (text-cell-width "REPL ∙ 00:00"))
+         (minimum-activity-width *terminal-ui-minimum-activity-cells*)
          (complete-context-width
            (and (terminal-ui-context-window ui)
                 (text-cell-width (terminal-ui--context-compact-text ui))))
@@ -1989,74 +1993,81 @@ joins the meter when every segment fits."
          (activity-context-budget
            (- row-width minimum-activity-width context-gap))
          (context
-           (and (terminal-ui-context-window ui)
+           (and complete-context-width
                 (terminal-ui--context-meter-spans
                  ui
                  (if (and content
-                          (>= activity-context-budget
-                              (text-cell-width
-                               (terminal-ui--context-compact-text ui))))
+                          (>= activity-context-budget complete-context-width))
                      activity-context-budget
                      row-width))))
          (worked                 (and content (terminal-ui--worked-spans-at ui now))))
-    (cond
-      (context
-       (let* ((context-width  (terminal--spans-width context))
-              (activity-space (- row-width context-width context-gap))
-              (activity-p     (and content
-                                   (>= activity-space minimum-activity-width)))
-              (worked-with-context-p
-                (and activity-p
-                     worked
-                     (<= (+ (terminal--spans-width content)
-                            2
-                            (terminal--spans-width worked)
-                            2
-                            context-width)
-                         row-width)))
-              (right
-                (if worked-with-context-p
-                    (append worked
-                            (list (terminal-span ':status-plain "  "))
-                            context)
-                    context))
-              (right-width    (terminal--spans-width right))
-              (left-limit
-                (if activity-p
-                    (max 0 (- row-width right-width context-gap))
-                    0))
-              (left           (and activity-p
-                                   (terminal--clip-spans content left-limit)))
-              (padding        (- row-width
-                                 (terminal--spans-width left)
-                                 right-width)))
-         (append
-          left
-          (when (plusp padding)
-            (list (terminal-span
-                   ':status-plain
-                   (make-string padding :initial-element #\Space))))
-          right)))
-      (t
-       (let* ((clipped    (terminal--clip-spans content row-width))
-              (left-width (terminal--spans-width clipped))
-              (gap        (- row-width left-width (terminal--spans-width worked)))
-              (padding    (and (terminal-styled-p (terminal-ui-terminal ui))
-                               (- row-width left-width))))
-         (cond
-           ((and worked (>= gap 2))
-            (append clipped
-                    (list (terminal-span
-                           ':status-plain
-                           (make-string gap :initial-element #\Space)))
-                    worked))
-           ((and padding (plusp padding))
-            (append clipped
-                    (list (terminal-span
-                           ':status-plain
-                           (make-string padding :initial-element #\Space)))))
-           (t
-            clipped)))))))
+    (if context
+        (let* ((context-width (terminal--spans-width context))
+               (activity-p    (and content
+                                   (>= (- row-width context-width context-gap)
+                                       minimum-activity-width)))
+               (right
+                 (if (and activity-p
+                          worked
+                          (<= (+ (terminal--spans-width content)
+                                 2
+                                 (terminal--spans-width worked)
+                                 2
+                                 context-width)
+                              row-width))
+                     (append worked
+                             (list (terminal-span ':status-plain "  "))
+                             context)
+                     context)))
+          (values (and activity-p
+                       (terminal--clip-spans
+                        content
+                        (max 0 (- row-width (terminal--spans-width right) context-gap))))
+                  right))
+        (let ((left (terminal--clip-spans content row-width)))
+          (values left
+                  (and worked
+                       (>= (- row-width
+                              (terminal--spans-width left)
+                              (terminal--spans-width worked))
+                           2)
+                       worked))))))
+
+(-> terminal-ui--status-position-spans (terminal-ui integer) list)
+(defun terminal-ui--status-position-spans (ui row-width)
+  "Return UI's transcript position when ROW-WIDTH also fits activity and context counts."
+  (let ((position (terminal-ui-transcript-position ui)))
+    (when (and position
+               (>= (- row-width (text-cell-width position) 2)
+                   (+ *terminal-ui-minimum-activity-cells*
+                      (if (terminal-ui-context-window ui)
+                          (+ 2 (text-cell-width (terminal-ui--context-compact-text ui)))
+                          0))))
+      (list (terminal-span ':status-accent position)))))
+
+(-> terminal-ui--status-row-at (terminal-ui real integer) list)
+(defun terminal-ui--status-row-at (ui now row-width)
+  "Return UI's modeline spans across ROW-WIDTH cells.
+
+Activity is on the left. The transcript position, the worked time and the
+context meter are right-aligned, in that order."
+  (let* ((position (terminal-ui--status-position-spans ui row-width))
+         (reserved (if position (+ (terminal--spans-width position) 2) 0)))
+    (multiple-value-bind (left right)
+        (terminal-ui--status-sides-at ui now (- row-width reserved))
+      (let* ((right   (append position
+                              (when (and position right)
+                                (list (terminal-span ':status-plain "  ")))
+                              right))
+             (padding (- row-width
+                         (terminal--spans-width left)
+                         (terminal--spans-width right))))
+        (append left
+                (when (and (plusp padding)
+                           (or right (terminal-styled-p (terminal-ui-terminal ui))))
+                  (list (terminal-span ':status-plain
+                                       (make-string padding :initial-element #\Space))))
+                right)))))
 
 (-> terminal-ui--local-activity-row (terminal-ui integer) list)
 (defun terminal-ui--local-activity-row (ui row-width)
@@ -2744,10 +2755,10 @@ lifecycle cleanup belong to Clinedi. HINT accepts text or styled spans."
       (labels ((publish ()
                  (let* ((selector (clinedi:selection-session-selector session))
                         ;; The selector composer reserves three rows; fullscreen
-                        ;; reserves two more for the transcript and legend.
+                        ;; reserves one more for the transcript.
                         (count    (if (terminal-ui-fullscreen-p ui)
                                       (min visible-count
-                                           (max 1 (- (terminal-rows (terminal-ui-terminal ui)) 5)))
+                                           (max 1 (- (terminal-rows (terminal-ui-terminal ui)) 4)))
                                       visible-count)))
                    (unless (= count (selector-visible-count selector))
                      (reinitialize-instance selector :visible-count count))

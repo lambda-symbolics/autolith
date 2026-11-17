@@ -56,6 +56,10 @@ When output exceeds the limit, older output is evicted and can be loaded with (h
    (transcript-space :initform      0
                      :accessor      fullscreen-terminal-ui-transcript-space
                      :documentation "The last frame's transcript height in screen rows.")
+   (position :initform      "LIVE"
+             :accessor      fullscreen-terminal-ui-position
+             :type          string
+             :documentation "Where the last frame's transcript window is, as the modeline shows it.")
    (drag-position :initform      nil
                   :accessor      fullscreen-terminal-ui-drag-position
                   :documentation "The latest (COLUMN ROW) held during transcript selection.")
@@ -76,6 +80,10 @@ When output exceeds the limit, older output is evicted and can be loaded with (h
 (defmethod terminal-ui-fullscreen-p ((ui fullscreen-terminal-ui))
   "Use application-owned transcript scrolling for this UI."
   t)
+
+(defmethod terminal-ui-transcript-position ((ui fullscreen-terminal-ui))
+  "Return where the last frame's transcript window is."
+  (fullscreen-terminal-ui-position ui))
 
 (-> terminal-ui-fullscreen--make-viewport (fullscreen-terminal-ui (integer 1)) clinedi:transcript-viewport)
 (defun terminal-ui-fullscreen--make-viewport (ui width)
@@ -346,52 +354,20 @@ screen after leaving the alternate buffer."
                            (max 0 (- (length lines) count)))))
           (values (subseq lines start (+ start count)) (- row start) column))))))
 
-(-> terminal-ui-fullscreen--legend-items (boolean &key (:evicted-p boolean)) list)
-(defun terminal-ui-fullscreen--legend-items (following-p &key evicted-p)
-  "Return (KEY DESCRIPTION) pairs for the legend, for a tail-following or scrolled view.
-
-EVICTED-P adds how to load output older than the viewport keeps."
-  (append
-   '(("PgUp/PgDn" "scroll")
-     ("Ctrl-PgUp/PgDn" "messages"))
-   (if following-p
-       '(("Ctrl-Home/End" "ends")
-         ("drag" "to copy text"))
-       '(("Ctrl-End" "to follow")))
-   (when evicted-p
-     '(("(history)" "earlier output")))))
-
-(-> terminal-ui-fullscreen--legend-row
-    (fullscreen-terminal-ui &key (:top integer) (:total integer) (:space integer)
-                            (:width integer))
+(-> terminal-ui-fullscreen--position-text
+    (fullscreen-terminal-ui &key (:top integer) (:total integer) (:space integer))
     string)
-(defun terminal-ui-fullscreen--legend-row (ui &key top total space width)
-  "Render the legend separating the transcript from the composer.
+(defun terminal-ui-fullscreen--position-text (ui &key top total space)
+  "Return LIVE while UI follows its newest output, or its visible rows out of TOTAL.
 
-The position uses the legend accent, keys use the plain style, and descriptions
-use the dim style. The modeline foregrounds are used without its background,
-distinguishing the legend from the placeholder and the modeline."
-  (let* ((viewport    (fullscreen-terminal-ui-viewport ui))
-         (following-p (clinedi:transcript-viewport-following-p viewport))
-         (evicted-p   (and (not following-p)
-                           (zerop top)
-                           (plusp (clinedi:transcript-viewport-evicted-count viewport))))
-         (position    (if following-p
-                          " LIVE "
-                          (format nil " ~D-~D / ~D "
-                                  (1+ top) (min total (+ top space)) total)))
-         (spans
-           (append
-            (list (terminal-span ':legend-accent position))
-            (loop for (key description) in (terminal-ui-fullscreen--legend-items
-                                             following-p :evicted-p evicted-p)
-                  for first-p = t then nil
-                  append (list (terminal-span ':legend-dim (if first-p "  " " · "))
-                               (terminal-span ':legend-plain key)
-                               (terminal-span ':legend-dim
-                                              (format nil " ~A" description)))))))
-    (terminal--render-spans (terminal-ui-terminal ui)
-                            (terminal--clip-spans spans width))))
+The first rows of a transcript that evicted output also say how to load it."
+  (let ((viewport (fullscreen-terminal-ui-viewport ui)))
+    (if (clinedi:transcript-viewport-following-p viewport)
+        "LIVE"
+        (format nil "~:[~;(history) loads earlier · ~]~D-~D / ~D"
+                (and (zerop top)
+                     (plusp (clinedi:transcript-viewport-evicted-count viewport)))
+                (1+ top) (min total (+ top space)) total))))
 
 (-> terminal-ui-fullscreen--prompt-prefix
     (fullscreen-terminal-ui &key (:width integer) (:limit (integer 0)) (:now (option real)))
@@ -431,42 +407,48 @@ distinguishing the legend from the placeholder and the modeline."
     (terminal-ui-fullscreen--ensure-width ui width)
     (multiple-value-bind (composer cursor-row cursor-column)
         (terminal-ui-fullscreen--composer ui width height)
-      (let* ((viewport    (fullscreen-terminal-ui-viewport ui))
-             (separator-p (> height (length composer)))
-             (available   (max 0 (- height (length composer) (if separator-p 1 0))))
-             ;; Keep a transcript row even when activity fills the available space.
-             (prefix      (terminal-ui-fullscreen--prompt-prefix
-                           ui :width width :limit (max 0 (1- available)) :now status-now))
-             (space       (- available (length prefix)))
-             (committed   (clinedi:transcript-viewport-row-count viewport))
-             (tail        (terminal-ui-stream-tail ui))
-             (live        (coerce
+      (flet ((prefix (limit)
+               (terminal-ui-fullscreen--prompt-prefix
+                ui :width width :limit limit :now status-now)))
+        (let* ((viewport  (fullscreen-terminal-ui-viewport ui))
+               (available (max 0 (- height (length composer))))
+               ;; Keep a transcript row even when activity fills the available space.
+               (limit     (max 0 (1- available)))
+               (prefix    (prefix limit))
+               (space     (- available (length prefix)))
+               (committed (clinedi:transcript-viewport-row-count viewport))
+               (tail      (terminal-ui-stream-tail ui))
+               (live      (coerce
                            (terminal-ui-fullscreen--display-rows
                             ui (when tail
                                  (append (when (terminal-ui-compact-tail-group ui) (list nil))
                                          (terminal-ui--stream-tail-rows terminal tail width)))
                             width)
                            'vector))
-             (total       (+ committed (length live)))
-             (top         (clinedi:transcript-viewport-layout viewport space
+               (total     (+ committed (length live)))
+               (top       (clinedi:transcript-viewport-layout viewport space
                                                               :extra-rows (length live)))
-             (visible
-               (if (and (zerop total) (terminal-ui-fullscreen-welcome-p ui))
-                   (terminal-ui--welcome-rows ui space)
-                   (loop for index from top below (min total (+ top space))
-                         collect (if (< index committed)
-                                     (clinedi:transcript-viewport-row-display viewport index)
-                                     (aref live (- index committed)))))))
-        (dolist (region (fullscreen-terminal-ui-pinned-actions ui))
-          (incf (first region) (+ space (if separator-p 1 0) 1)))
-        (setf (fullscreen-terminal-ui-transcript-space ui) space)
-        (values
-         (append visible (make-list (max 0 (- space (length visible))) :initial-element "")
-                 (when separator-p
-                   (list (terminal-ui-fullscreen--legend-row
-                          ui :top top :total total :space space :width width)))
-                 prefix composer)
-         (+ space (if separator-p 1 0) (length prefix) cursor-row) cursor-column)))))
+               (position  (terminal-ui-fullscreen--position-text
+                           ui :top top :total total :space space))
+               (visible
+                 (if (and (zerop total) (terminal-ui-fullscreen-welcome-p ui))
+                     (terminal-ui--welcome-rows ui space)
+                     (loop for index from top below (min total (+ top space))
+                           collect (if (< index committed)
+                                       (clinedi:transcript-viewport-row-display viewport index)
+                                       (aref live (- index committed)))))))
+          ;; The modeline says where the transcript is, which is known only once
+          ;; the prefix has taken its rows, so a moved transcript composes it again.
+          (unless (string= position (fullscreen-terminal-ui-position ui))
+            (setf (fullscreen-terminal-ui-position ui) position
+                  prefix                               (prefix limit)))
+          (dolist (region (fullscreen-terminal-ui-pinned-actions ui))
+            (incf (first region) (1+ space)))
+          (setf (fullscreen-terminal-ui-transcript-space ui) space)
+          (values
+           (append visible (make-list (max 0 (- space (length visible))) :initial-element "")
+                   prefix composer)
+           (+ space (length prefix) cursor-row) cursor-column))))))
 
 
 ;;;; -- Physical Frames and Navigation --
