@@ -454,6 +454,8 @@ For a fast delimiter check before loading edited Lisp, use the built-in
 
 - Use primitive-style, imperative commit messages with a title line only,
   shorter than 72 characters.
+- Put ticket references in parentheses at the end of the title, for example
+  `Fix channel startup (AUTO-cecb)`.
 - Do not add `Co-Authored-By` or other attribution trailers.
 - Keep commits tiny, granular, single-purpose, and independently reviewable.
 - Prefer one commit per regression fix, feature slice, or coherent structural
