@@ -18,6 +18,20 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Shell allocation with unresolved legacy evidence
+
+- Problem: missing historical capture metadata blocked shell commands before launch.
+- Behavior: protect every capture when legacy dependencies cannot be resolved;
+  permit new allocation within the storage budget and require exact proof for reuse.
+- Scope and location: tracked retention lock and pruning predicate; live private
+  image commit =17c014d8-4568-437d-b810-2d487d19a46d=, private Git =8f689351=;
+  incident =D1NxDq4= in its reporting child workspace.
+- Verification: 14 focused cases, 97 checks; source checks; active retention
+  assertions; real synchronous/background commands, nonzero exit, separate streams
+  and retained-log reads. Clean-process private replay passed.
+- Removal condition: discard the two private definitions after booting their
+  equivalent tracked implementation.
+
 ** Portable job cancellation snippets
 
 - Problem: inherited readable printing rendered base-string job identifiers as

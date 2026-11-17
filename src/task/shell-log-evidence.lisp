@@ -3,7 +3,7 @@
 ;;;; -- Structured Evidence Dependencies on Managed Captures --
 
 (defvar *shell-log-evidence-pins* nil
-  "Containing artifact directories protected by the locked retention snapshot.")
+  "Protected artifact directories, or :ALL when legacy dependencies are unresolved.")
 
 (defvar *shell-log-legacy-evidence-references* nil
   "Exact old-format evidence references prepared outside retention locks.")
@@ -234,11 +234,18 @@ uncited resident evidence record does not establish a raw dependency."
 (defun shell-log-call-with-retention-lock (configuration function)
   "Call FUNCTION under knowledge-before-shell locks with authoritative evidence pins.
 
-Legacy transcript reads and conversation source locks occur only in the warm
-phase. A changed base or source stamp retries outside both retention locks."
+Legacy transcript reads occur only in the warm phase. Unresolved legacy proof
+protects every capture without blocking unrelated allocation. Evidence reuse
+still requires exact proof. A changed base or source stamp retries outside locks."
   (loop
     (let* ((snapshot (knowledge-base-read configuration))
-           (legacy   (shell-log-legacy-evidence-references configuration snapshot))
+           (legacy   (handler-case
+                         (shell-log-legacy-evidence-references configuration snapshot)
+                       (knowledge-error (condition)
+                         (unless (eq (knowledge-error-code condition)
+                                     ':unresolved-legacy-shell-evidence)
+                           (error condition))
+                         ':all)))
            (retry-p  nil)
            (result
              (knowledge-call-with-locked-base
@@ -250,11 +257,15 @@ phase. A changed base or source stamp retries outside both retention locks."
                                   (zerop (knowledge-base-revision snapshot))
                                   (equal (knowledge-base-pathname base)
                                          (knowledge-base-pathname snapshot))))
-                         (shell-log-legacy-evidence-cache-valid-p configuration snapshot legacy))
+                         (or (eq legacy ':all)
+                             (shell-log-legacy-evidence-cache-valid-p configuration snapshot legacy)))
                     (with-shell-log-lock (configuration)
                       (let ((*shell-log-evidence-pins*
-                              (shell-log-evidence-pins configuration base legacy))
-                            (*shell-log-legacy-evidence-references* legacy))
+                              (if (eq legacy ':all)
+                                  ':all
+                                  (shell-log-evidence-pins configuration base legacy)))
+                            (*shell-log-legacy-evidence-references*
+                              (unless (eq legacy ':all) legacy)))
                         (funcall function)))
                     (setf retry-p t))))))
       (unless retry-p (return result)))))

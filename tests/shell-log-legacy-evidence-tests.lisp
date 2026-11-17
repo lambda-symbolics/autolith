@@ -114,14 +114,17 @@
 
 (-> test-shell-log-legacy-refusals () null)
 (defun test-shell-log-legacy-refusals ()
-  "Refuse missing proof, metadata omission, owner mismatch and divergent digest matches."
+  "Refuse unproved reuse while admitting new captures and retaining possible dependencies."
   (dolist (case '(:missing-digest :missing-owner :different-digest :different-tool
                   :different-owner :missing-details :omitted-details :omitted-logs
                   :malformed-details :ambiguous))
     (with-test-configuration (configuration)
       (let* ((*shell-log-legacy-evidence-cache* nil)
              (*knowledge-base-cache*            (make-hash-table :test #'equal :synchronized t))
-             (owner                             (conversation-create configuration :identifier "legacy-owner"))
+             (*shell-log-active*                (make-hash-table :test #'equal))
+             (context                           (shell-log-tests--context configuration "legacy-owner"))
+             (owner                             (tool-context-conversation context))
+             (artifact                          (shell-log-allocate context))
              (output                            "legacy preview")
              (details                           (case case
                                                   (:omitted-details
@@ -136,6 +139,7 @@
                                                       :conversation (unless (eq case ':missing-owner)
                                                                       (conversation-identifier owner))
                                                       :call         "not-a-provider-call")))
+        (shell-log-tests--finish artifact #(65))
         (shell-log-legacy-tests--append-result
          (if (eq case ':different-owner)
              (conversation-create configuration :identifier "foreign-owner")
@@ -160,7 +164,19 @@
              (knowledge-tests--error-code
               (lambda ()
                 (shell-log-legacy-evidence-references configuration (knowledge-tests--reread configuration)))))
-         (format nil "~A refuses instead of silently abandoning possible raw dependencies" case)))))
+         (format nil "~A refuses instead of silently abandoning possible raw dependencies" case))
+        (let* ((*shell-log-retention-age* -1)
+               (fresh                     (shell-log-allocate context)))
+          (shell-log-tests--finish fresh #(66))
+          (shell-log-prune configuration)
+          (test-assert (and (probe-file (merge-pathnames "output.bin" (shell-log-capture-directory artifact)))
+                            (probe-file (merge-pathnames "output.bin" (shell-log-capture-directory fresh))))
+                       "Unresolved old proof protects captures without preventing new allocation")
+          (let ((*shell-log-retention-byte-limit* 1))
+            (test-assert
+             (handler-case (progn (shell-log-allocate context) nil)
+               (shell-log-error () t))
+             "Unresolved dependencies cannot be pruned to exceed the storage budget"))))))
   nil)
 
 (-> test-shell-log-legacy-cache-invalidation () null)

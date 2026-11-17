@@ -597,6 +597,7 @@ Read one preserved receipt or the active segment, never the historical transcrip
   (declare (special *shell-log-evidence-pins*))
   (and (not (shell-log--active-p directory))
        (not (eq (getf metadata :state) ':active))
+       (not (eq *shell-log-evidence-pins* ':all))
        (not (and *shell-log-evidence-pins*
                  (gethash (namestring directory) *shell-log-evidence-pins*)))
        (or (shell-log--delivery-recorded-p metadata)
