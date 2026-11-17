@@ -1069,7 +1069,8 @@
   test-conversation-input-history-recovery
   test-conversation-input-history-interruption
   test-conversation-input-history-page-load
-  test-conversation-maintenance-concurrent-input)
+  test-conversation-maintenance-concurrent-input
+  test-application-conversation-maintenance-repair)
 
 (define-test-suite conversation-replay
   test-conversation-replay-navigation
