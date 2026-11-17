@@ -1344,13 +1344,14 @@ worker results become explicit unknown outcomes so provider history stays valid.
     (agent list &key (:observer agent-observer) (:tool-round integer)
                      (:tool-restriction-p boolean))
     null)
-(defun agent--run-tool-wave (agent plans &key observer tool-round tool-restriction-p)
-  "Retain output until all wave results have durable conversation records."
+(defun agent--run-tool-wave
+    (agent plans &rest options &key observer tool-round tool-restriction-p)
+  "Retain output through durable wave results, forwarding supplied keywords unchanged."
+  (declare (ignore observer tool-round tool-restriction-p))
   (shell-log-call-with-publication
    (agent-configuration agent)
    (lambda ()
-     (agent--run-tool-wave-body agent plans :observer observer :tool-round tool-round
-                                           :tool-restriction-p tool-restriction-p))))
+     (apply #'agent--run-tool-wave-body agent plans options))))
 
 (-> agent--run-tool-wave-body
     (agent list &key (:observer agent-observer) (:tool-round integer)
