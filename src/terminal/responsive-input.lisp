@@ -2755,12 +2755,7 @@ as the terminal UI's exclusive-input function."
          (ui           (application-ui application))
          (metadata     (when (and call-key ui (terminal-ui-fullscreen-p ui))
                          (list :kind ':annotation :call-key call-key
-                               :annotations (cons (terminal-span ':plain (string #\Newline)) entry)
-                               :origin-function
-                               (lambda ()
-                                 (when (eq conversation (application-conversation application))
-                                   (application--tool-outcome-origin
-                                    application (list :call-key call-key)))))))
+                                :annotations (cons (terminal-span ':plain (string #\Newline)) entry))))
          (fallback     (append entry
                                (list (terminal-span
                                       ':annotation

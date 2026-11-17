@@ -3203,6 +3203,14 @@ The channel's structured clients receive its text as a :PRESENT event."
       (let ((resolved (application--history-outcome-presentation application resolved)))
         (dolist (key '(:state :job-key :retain-output-p :body :body-layout :body-source-characters))
           (setf (getf metadata key) (getf resolved key)))))
+    (when (and (null entry) (member (getf metadata :kind) '(:result :completion)))
+      (setf entry
+            (list (terminal-span
+                   ':tool
+                   (format nil "∙ ~A: ~A"
+                           (or (third (getf metadata :call-key))
+                               (third (getf metadata :job-key)))
+                           (getf metadata :state))))))
     (when (or entry (getf metadata :kind))
       (list (application--record-presentation-identifier application record)
             entry metadata))))
@@ -3239,13 +3247,14 @@ The channel's structured clients receive its text as a :PRESENT event."
   "Present ordered RECORDS with one terminal-region update."
   (terminal-ui-present-records
    (application-ui application)
-   (loop for record in records
-         when (application--record-sequence record)
-           append (let ((presentation
-                          (application--record-presentation
-                           application record :outcomes outcomes
-                           :source-cache                (when source-caches (gethash record source-caches)))))
-                    (when presentation (list presentation))))))
+   (application--associate-tool-outcomes
+    (loop for record in records
+          when (application--record-sequence record)
+            append (let ((presentation
+                           (application--record-presentation
+                            application record :outcomes outcomes
+                            :source-cache                (when source-caches (gethash record source-caches)))))
+                     (when presentation (list presentation)))))))
 
 (-> application--render-position-invalidate (application) null)
 (defun application--render-position-invalidate (application)

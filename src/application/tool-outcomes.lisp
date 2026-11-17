@@ -130,33 +130,26 @@ METADATA-ONLY-P suppresses formatted outcome bodies during history selection."
        (application--job-completion-outcome application (rest record) entry
                                             :metadata-only-p metadata-only-p)))))
 
-(-> application--tool-outcome-origin (application list) (option list))
-(defun application--tool-outcome-origin (application metadata)
-  "Recover an evicted invocation before METADATA's sequence, newest records first."
-  (let ((call-key (getf metadata :call-key))
-        (job-key  (getf metadata :job-key))
-        (before   (getf metadata :seq)))
-    (when (or call-key job-key)
-      (block found
-        (conversation-map-records-reverse
-         (application-conversation application)
-         (lambda (record)
-           (let ((sequence (application--record-sequence record)))
-             (when (or (null before) (null sequence) (< sequence before))
-               (cond
-                 ((and (null call-key) (eq (first record) ':tool-result))
-                  (let* ((handoff (application--tool-execution-handoff record))
-                         (job     (getf (rest handoff) :job)))
-                    (when (equal job-key (application--tool-outcome-key
-                                          application ':job (getf job :id)))
-                      (setf call-key (application--tool-outcome-key
-                                      application ':call (getf (rest record) :call-id))))))
-                 ((and call-key (eq (first record) ':provider-item))
-                  (let ((candidate (application--record-tool-outcome-basic application record nil)))
-                    (when (equal call-key (getf candidate :call-key))
-                      (return-from found
-                        (application--record-presentation application record))))))))))
-        nil))))
+(-> application--associate-tool-outcomes (list) list)
+(defun application--associate-tool-outcomes (presentations)
+  "Associate chronological PRESENTATIONS without reading conversation history."
+  (let ((calls (make-hash-table :test #'equal))
+        (jobs  (make-hash-table :test #'equal)))
+    (dolist (presentation presentations)
+      (let* ((metadata (third presentation))
+             (call-key (getf metadata :call-key))
+             (job-key  (getf metadata :job-key)))
+        (case (getf metadata :kind)
+          (:call
+           (setf (gethash call-key calls) presentation))
+          ((:result :annotation)
+           (let ((origin (gethash call-key calls)))
+             (setf (getf (third presentation) :origin) origin)
+             (when (and origin job-key)
+               (setf (gethash job-key jobs) origin))))
+          (:completion
+           (setf (getf (third presentation) :origin) (gethash job-key jobs)))))))
+  presentations)
 
 (-> application--record-tool-outcome (application list list) (option list))
 (defun application--record-tool-outcome (application record entry)
@@ -170,11 +163,4 @@ METADATA-ONLY-P suppresses formatted outcome bodies during history selection."
               (lambda (columns)
                 (let ((entry (funcall layout columns)))
                   (getf (application--record-tool-outcome-basic application record entry) :body))))))
-    (when (and (member (getf metadata :kind) '(:result :completion))
-               (terminal-ui-fullscreen-p (application-ui application)))
-      (let ((keys (list :call-key (getf metadata :call-key)
-                        :job-key  (getf metadata :job-key)
-                        :seq      (application--record-sequence record))))
-        (setf (getf metadata :origin-function)
-              (lambda () (application--tool-outcome-origin application keys)))))
     metadata))

@@ -1853,8 +1853,10 @@
                      (gethash key (fullscreen-terminal-ui-presentation-records active)))
 
                    (text ()
-                     (clinedi:transcript-viewport-chunk-text
-                      (fullscreen-terminal-ui-viewport active) 0))
+                     (let ((viewport (fullscreen-terminal-ui-viewport active)))
+                       (loop for index below (clinedi:transcript-viewport-chunk-count viewport)
+                             for text = (clinedi:transcript-viewport-chunk-text viewport index)
+                             when (search "(let" text) return text)))
 
                    (click-form (index &key ellipsis-p)
                      (terminal-ui-process-event active ':scroll-top)

@@ -74,8 +74,8 @@
            (annotation
              (list 2 "verdict for original command"
                    (list :kind ':annotation :call-key '(:call "owner" "restored")
-                         :annotations     (list (terminal-span ':annotation (format nil "~%permission verdict")))
-                         :origin-function (lambda () origin)))))
+                         :annotations (list (terminal-span ':annotation (format nil "~%permission verdict")))
+                          :origin     origin))))
       (setf (second origin) entry
             (getf (third origin) :entry-layout) (lambda (width) (declare (ignore width)) entry))
       (terminal-ui-present-records ui (list annotation))
@@ -100,7 +100,7 @@
       (terminal-ui-present-records
        ui (list (list 4 "verdict for missing command in /workspace"
                       (list :kind ':annotation :call-key '(:call "owner" "missing")
-                            :origin-function (lambda () nil)))))
+                             :origin nil))))
       (test-assert (and (= 2 (fullscreen-test--chunk-count ui))
                         (search "missing command in /workspace" (tool-outcome-test--text ui)))
                    "A missing origin displays the self-identifying fallback atomically."))))
@@ -227,7 +227,10 @@
           (unless deferred-p
             (test-assert (null (gethash call-key (fullscreen-terminal-ui-presentation-records ui)))
                          "the invocation is evicted before its background result"))
-          (terminal-ui-present-records ui (list (application--record-presentation application handoff)))
+          (terminal-ui-present-records
+           ui (rest (application--associate-tool-outcomes
+                     (mapcar (lambda (record) (application--record-presentation application record))
+                             (list call handoff)))))
           (setf (terminal-ui-live-output-suspended-p ui) nil)
           (terminal-ui--present-live ui)
           (let* ((index    (fullscreen-terminal-ui-presentation-records ui))
@@ -252,7 +255,10 @@
                    conversation
                    (list :message :role ':user :content "completed" :automatic-p t
                          :job-completion '(:job-id "exec:origin" :outcome :success :summary "completed")))))
-            (terminal-ui-present-records ui (list (application--record-presentation application completion)))
+            (terminal-ui-present-records
+             ui (last (application--associate-tool-outcomes
+                       (mapcar (lambda (record) (application--record-presentation application record))
+                               (list call handoff completion)))))
             (let ((resident (gethash call-key (fullscreen-terminal-ui-presentation-records ui))))
               (test-assert (and resident (eq (getf resident :state) ':success)
                                 (search "original-command" (tool-outcome-test--text ui))
@@ -345,57 +351,48 @@
 
 (-> test-fullscreen-origin-reverse-search () null)
 (defun test-fullscreen-origin-reverse-search ()
-  "Recover nearby origins without reading older segments, and exhaust genuine misses."
-  (with-test-configuration (configuration)
-    (let* ((application  (application-tool-outcome-tests--application configuration))
-           (conversation (application-conversation application)))
-      (dotimes (index 2)
-        (conversation-append-record
-         conversation (list :message :role ':user :content (format nil "old segment ~D" index)))
-        (conversation-append-summary conversation (make-continuation :intent "older checkpoint")))
-      (let* ((call        (application-tool-outcome-history-tests--append
-                           conversation (application-tool-outcome-tests--call 0 "nearby")))
-             (handoff     (application-tool-outcome-tests--result 0 "nearby"))
-             (active      (conversation-storage-active-pathname (conversation-pathname conversation)))
-             (segment-map (fdefinition 'sexp-store:segment-map))
-             (reads       0))
-        (setf (getf (rest handoff) :details)
-              '(:tool-execution :handed-off-p t :job (:id "exec:nearby")))
-        (setf handoff (application-tool-outcome-history-tests--append conversation handoff))
-        (let ((completion (application-tool-outcome-history-tests--append
-                           conversation (application-tool-outcome-tests--completion
-                                         0 "exec:nearby" :outcome ':failure))))
+  "Bound startup association work despite missing origins and damaged sealed history."
+  (dolist (segments '(2 20))
+    (with-test-configuration (configuration)
+      (let* ((application  (application-tool-outcome-tests--application configuration))
+             (conversation (application-conversation application))
+             (map-segment  (symbol-function 'sexp-store:segment-map))
+             (opens        0)
+             (bytes        0))
+        (application-tool-outcome-history-tests--append
+         conversation (application-tool-outcome-tests--call 0 "old-call"))
+        (let ((handoff (application-tool-outcome-tests--result 0 "old-call")))
+          (setf (getf (rest handoff) :details)
+                '(:tool-execution :handed-off-p t :job (:id "exec:old")))
+          (application-tool-outcome-history-tests--append conversation handoff))
+        (dotimes (index segments)
+          (conversation-append-record conversation
+                                      (list :message :role ':user :content (make-string 10000 :initial-element #\x)))
+          (conversation-append-summary conversation (make-continuation :intent (format nil "checkpoint ~D" index))))
+        (dolist (call-id '("old-call" "out-of-page" "missing"))
+          (application-tool-outcome-history-tests--append
+           conversation (application-tool-outcome-tests--result 0 call-id :status ':error)))
+        (application-tool-outcome-history-tests--append
+         conversation (application-tool-outcome-tests--completion 0 "exec:old" :outcome ':failure))
+        (let* ((pathnames (conversation-storage-pathnames (conversation-pathname conversation)))
+               (active    (first (last pathnames))))
+          (with-open-file (stream (first pathnames) :direction ':output :if-exists ':supersede)
+            (write-string "(" stream))
           (test-call-with-function-replacements
-           (list (list 'conversation-map-records
-                       (lambda (&rest arguments)
-                         (declare (ignore arguments))
-                         (error "Origin lookup used forward lifetime mapping.")))
-                 (list 'conversation--map-storage-records
-                       (lambda (&rest arguments)
-                         (declare (ignore arguments))
-                         (error "Origin lookup used forward storage mapping.")))
+           (list (list 'application--history-page-size (lambda () 4))
                  (list 'sexp-store:segment-map
-                       (lambda (function segment &rest arguments)
-                         (test-assert (equal segment active)
-                                      "a nearby origin does not open archived segments")
-                         (incf reads)
-                         (apply segment-map function segment arguments))))
+                       (lambda (function pathname &rest options)
+                         (test-assert (equal pathname active) "startup associations never open sealed origins")
+                         (incf opens)
+                         (multiple-value-bind (position incomplete count start next)
+                             (apply map-segment function pathname options)
+                           (incf bytes position)
+                           (values position incomplete count start next)))))
            (lambda ()
-             (dolist (outcome (list handoff completion))
-               (let* ((presentation (application--record-presentation application outcome))
-                      (origin       (funcall (getf (third presentation) :origin-function))))
-                 (test-assert (equal (first origin)
-                                     (application--record-presentation-identifier application call))
-                              "result and job completion recover the same durable invocation")))
-             (test-assert (= reads 2)
-                          "each origin lookup visits its newest segment only once"))))
-        (dolist (kind '(:call :job))
-          (test-assert
-           (null (application--tool-outcome-origin
-                  application
-                  (list (if (eq kind ':call) ':call-key ':job-key)
-                        (application--tool-outcome-key application kind "missing"))))
-           "an absent origin returns NIL after searching archived segments")))))
+             (application--render-startup-history application 0)))
+          (test-assert (and (= opens 1) (plusp bytes)
+                            (plusp (fullscreen-test--chunk-count (application-ui application))))
+                       "one active page renders standalone outcomes despite unavailable historical origins")))))
   nil)
 
 (-> test-fullscreen-origin-chronology () null)
@@ -421,12 +418,14 @@
             (push (list call handoff completion) pairs)))
         (conversation-append-summary conversation (make-continuation :intent "reused identifiers")))
       (dolist (pair pairs)
-        (dolist (outcome (rest pair))
-          (let* ((presentation (application--record-presentation application outcome))
-                 (origin       (funcall (getf (third presentation) :origin-function))))
-            (test-assert
-             (equal (first origin) (application--record-presentation-identifier application (first pair)))
-             "historical outcomes cannot attach to a later reused call or job identifier"))))))
+        (let ((presentations
+                (application--associate-tool-outcomes
+                 (mapcar (lambda (record) (application--record-presentation application record)) pair))))
+          (dolist (presentation (rest presentations))
+            (let ((origin (getf (third presentation) :origin)))
+              (test-assert
+               (equal (first origin) (application--record-presentation-identifier application (first pair)))
+               "bounded chronological records retain the correct call and handoff origin")))))))
   nil)
 
 (-> test-tool-outcome-selection-metadata () null)

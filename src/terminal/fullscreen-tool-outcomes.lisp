@@ -285,9 +285,8 @@
 
 (-> terminal-ui-fullscreen--restore-outcome (fullscreen-terminal-ui t list) (option string))
 (defun terminal-ui-fullscreen--restore-outcome (ui identifier metadata)
-  "Restore an evicted invocation and its outcome as one indexed viewport chunk."
-  (let* ((resolve (getf metadata :origin-function))
-         (origin  (when resolve (funcall resolve))))
+  "Restore a pre-resolved invocation without performing history I/O in the renderer."
+  (let ((origin (getf metadata :origin)))
     (when origin
       (destructuring-bind (origin-identifier entry origin-metadata) origin
         (let ((next (terminal-ui-fullscreen--apply-outcome (copy-list origin-metadata) metadata)))
