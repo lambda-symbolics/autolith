@@ -192,6 +192,81 @@
         (tool-registry-close-runtime-state registry))))
   nil)
 
+(-> provider-test--tool-result-forms (model-provider conversation) list)
+(defun provider-test--tool-result-forms (provider conversation)
+  "Return, per tool result PROVIDER sends for CONVERSATION, the field that calls it failed.
+
+A result is its own Responses item, a tool_result block or a function
+response. The form is :IS-ERROR or :ERROR for a failed result, NIL for a plain
+one, and the list of unexpected field names for an item with more fields than
+a Responses function-call output has."
+  (let* ((request (provider-request-object provider conversation (json-array)))
+         (body    (or (json-get request "request") request)))
+    (flet ((parts (messages field)
+             "Return every element of FIELD across MESSAGES."
+             (loop for message across messages
+                   for content = (json-get message field)
+                   when (vectorp content)
+                     append (coerce content 'list))))
+      (append
+       (loop for item across (or (json-get body "input") #())
+             when (json-string= (json-get item "type") "function_call_output")
+               collect (loop for field being the hash-keys of item
+                             unless (member field '("type" "call_id" "output") :test #'string=)
+                               collect field))
+       (loop for block in (parts (or (json-get body "messages") #()) "content")
+             when (json-string= (json-get block "type") "tool_result")
+               collect (and (eq (json-get block "is_error") t) ':is-error))
+       (loop for part in (parts (or (json-get body "contents") #()) "parts")
+             for response = (json-get part "functionResponse")
+             when response
+               collect (and (nth-value 1 (gethash "error" (json-get response "response")))
+                            ':error))))))
+
+(-> test-provider-failed-tool-results () null)
+(defun test-provider-failed-tool-results ()
+  "Test Anthropic and Gemini requests mark failed tool results and Codex requests do not."
+  (with-test-configuration (configuration)
+    (let ((cases
+            (list (list (anthropic-provider-create
+                         (configuration-copy configuration :model "claude-haiku-4-5-20251001"))
+                        ':is-error nil)
+                  (list (gemini-code-assist-test--provider) ':error t)
+                  (list (provider-create configuration) nil t))))
+      (loop for (provider failed forced-p) in cases
+            do (let* ((configuration (provider-configuration provider))
+                      (conversation  (conversation-create configuration))
+                      (results
+                        '(("call-1" :output "contents" :success-p t)
+                          ("call-2" :output "fs.read failed: no such file" :success-p nil)
+                          ("call-3" :output "Tool fs.read was not executed." :success-p nil
+                           :category :mechanics)
+                          ("call-4" :output "This call was not executed." :success-p nil
+                           :persistence :next-response))))
+                 (conversation-append-user-message conversation "read the files")
+                 (loop for (call-id . arguments) in results
+                       do (conversation-append-provider-item
+                           conversation
+                           (json-object "type" "function_call" "namespace" "fs" "name" "read"
+                                        "call_id" call-id "arguments" "{}")
+                           :persistence (getf arguments :persistence ':durable))
+                          (apply #'conversation-append-tool-result conversation call-id
+                                 :tool-name "fs.read" arguments))
+                 (test-assert
+                  (equal (provider-test--tool-result-forms provider conversation)
+                         (list nil failed failed failed))
+                  (format nil "~A marks each failed tool result and no successful one"
+                          (type-of provider)))
+                 (let ((reloaded (conversation-load-by-id
+                                  configuration (conversation-identifier conversation))))
+                   (test-assert
+                    (equal (provider-test--tool-result-forms provider reloaded)
+                           (list nil failed failed))
+                    (format nil "~A marks the same durable results after a reload"
+                            (type-of provider)))
+                   (test-compaction-request provider reloaded :forced-p forced-p))))))
+  nil)
+
 (-> test-provider-tool-choice () null)
 (defun test-provider-tool-choice ()
   "Disable tool calls on every wire format while keeping the same tool definitions."

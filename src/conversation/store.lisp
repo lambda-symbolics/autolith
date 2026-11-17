@@ -2021,6 +2021,19 @@ Only a sequenced user message or tool result is remembered."
                           (list :tool tool :status status)))))
       item)))
 
+(-> conversation-item-failed-p (conversation json-object) boolean)
+(defun conversation-item-failed-p (conversation item)
+  "Return true when ITEM is the result of a tool call that failed or was not executed.
+
+A durable result answers from the status of its record, and a result that
+lasts one response from its entry."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (let ((status (getf (gethash item (conversation-item-records conversation)) :status))
+          (entry  (find item (conversation-ephemeral-input-entries conversation)
+                        :key (lambda (entry) (getf entry :item)))))
+      (not (null (or (member status '(:error :mechanics))
+                     (getf entry :failed-p)))))))
+
 (-> conversation-item-text (json-object) string)
 (defun conversation-item-text (item)
   "Return the text of ITEM, a user message or a tool output, without its images."
@@ -2038,15 +2051,17 @@ Only a sequenced user message or tool result is remembered."
        ""))))
 
 (-> conversation--append-ephemeral-input-item
-    (conversation json-object &key (:attachments list))
+    (conversation json-object &key (:attachments list) (:failed-p boolean))
     json-object)
 (defun conversation--append-ephemeral-input-item
-    (conversation item &key attachments)
-  "Append request-local ITEM and record any owned ATTACHMENTS for cleanup."
+    (conversation item &key attachments failed-p)
+  "Append request-local ITEM and record any owned ATTACHMENTS for cleanup.
+
+FAILED-P records that ITEM is the result of a failed tool call."
   (let ((entries
           (append
            (conversation-ephemeral-input-entries conversation)
-           (list (list :item item :attachments attachments)))))
+           (list (list :item item :attachments attachments :failed-p failed-p)))))
     ;; Publish ownership before mutating the provider projection. An interrupt
     ;; after the projection append can then never leave an untagged item.
     (setf (conversation-ephemeral-input-entries conversation) entries)
@@ -2966,7 +2981,8 @@ state before rethrowing its failure; a retry uses the same durable receipt."
                 (conversation--append-ephemeral-input-item
                  conversation
                  item
-                 :attachments attachments)
+                 :attachments attachments
+                 :failed-p    (not (null (member category '(:failure :mechanics)))))
                 (setf retained-p t)))
              item))
       (unless retained-p

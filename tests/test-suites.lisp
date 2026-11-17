@@ -1145,6 +1145,7 @@
   test-provider-request
   test-provider-request-tool-filtering
   test-provider-reserved-web-schema
+  test-provider-failed-tool-results
   test-provider-tool-choice
   test-provider-prompt-cache-ttl
   test-provider-shared-items-breakpoint

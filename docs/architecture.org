@@ -269,6 +269,9 @@ The test fails for that version and every later version.
   message and tool result item names its durable record in projection
   metadata. Carried rows keep that name, so a later checkpoint cites the record
   where it was written, also after another conversation adopted the context.
+  Anthropic and Gemini requests read a tool result's status there and mark a
+  failed result, with =is_error= or an =error= response. Stored items and the
+  other wire formats have no such field.
 - =src/conversation/continuation.lisp= defines the typed checkpoint: the
   =compaction.submit= schema, its validation and the rendering stored beside
   it. The checkpoint record keeps both. The text is what the model reads, so a

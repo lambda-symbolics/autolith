@@ -34,7 +34,9 @@ Return the encoded request and its context delivery."
             :options (list :tool-choice           *provider-tool-choice*
                            :maximum-output-tokens *provider-maximum-output-tokens*
                            :include-thoughts-p
-                           (not (string= (config :reasoning-effort configuration) "none"))))))
+                           (not (string= (config :reasoning-effort configuration) "none"))
+                           :failed-output-p
+                           (partial #'conversation-item-failed-p conversation)))))
     (values (provider-request-object provider projection
                                      (provider-wire-tools provider effective-tools))
             delivery)))

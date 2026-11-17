@@ -160,7 +160,9 @@ instructions and delivers no context."
                              :tool-choice           (unless compaction-p *provider-tool-choice*)
                              :maximum-output-tokens *provider-maximum-output-tokens*
                              :cache-ttl             (provider-prompt-cache-ttl
-                                                     configuration))))))
+                                                     configuration)
+                             :failed-output-p       (partial #'conversation-item-failed-p
+                                                             conversation))))))
     (let ((request (provider-request-object provider projection effective-tools)))
       (anthropic--configure-effort request (config :reasoning-effort configuration))
       (anthropic--apply-binding-policy request conversation)
