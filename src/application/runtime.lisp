@@ -1133,8 +1133,8 @@ newly acquired lease."
   (when (slot-boundp application 'conversation-lease)
     (let ((lease (application-conversation-lease application)))
       (when lease
-        (setf (application-conversation-lease application) nil)
-        (conversation-lease-release lease))))
+        (conversation-lease-release lease)
+        (setf (application-conversation-lease application) nil))))
   nil)
 
 (-> application-create

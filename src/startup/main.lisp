@@ -493,8 +493,6 @@ controller's exit reason."
                  ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
                  (ignore-errors (rlm-environment-pool-flush))
                  (telemetry--call-safely #'telemetry-shutdown))
-               (conversation-picker-search-close
-                (application-conversation application))
                (application-release-conversation-lease application)
                nil)
 

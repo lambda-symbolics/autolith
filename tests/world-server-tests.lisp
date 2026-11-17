@@ -1261,7 +1261,8 @@ run once the wake has."
                 (test-assert
                  (and (eq host starting) (not started-p) (null started))
                  "an open of its workspace joins the starting host nobody controls"))
-              (setf (world-host-failure starting) (make-condition 'error))
+              (setf (world-host-failure starting) (make-condition 'error)
+                    (world-host-state starting) ':retired)
               (multiple-value-bind (host started-p)
                   (world-server--host-for server (list :channel "bstart1"))
                 (test-assert
@@ -1792,60 +1793,186 @@ run once the wake has."
                       "the committed close ends the channel")))))
   nil)
 
+(-> test-world-server-closing-reservation () null)
+(defun test-world-server-closing-reservation ()
+  "Retain routing and lease ownership through blocked cleanup, then reopen exactly once."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry       (world-client-entry configuration))
+            (workspace   (world-tests--workspace root "closing-owned"))
+            (identifier  (getf (rest (world-server-tests--open entry workspace)) :session-id))
+            (host        (world-server--find-host server identifier))
+            (application (world-host-application host))
+            (lease       (application-conversation-lease application))
+            (releasing   (sb-thread:make-semaphore))
+            (release     (sb-thread:make-semaphore))
+            (original    (symbol-function 'conversation-lease-release))
+            (build       (symbol-function 'application--build))
+            (builds      0))
+       (conversation-append-user-message (application-conversation application) "persist before close")
+       (test-call-with-function-replacements
+        (list
+         (list 'conversation-lease-release
+               (lambda (candidate)
+                 (when (eq candidate lease)
+                   (sb-thread:signal-semaphore releasing)
+                   (sb-thread:wait-on-semaphore release))
+                 (funcall original candidate)))
+         (list 'application--build (lambda (&rest arguments) (incf builds) (apply build arguments))))
+        (lambda ()
+          (unwind-protect
+               (progn
+                 (localgroup-query-record entry ':close (list :channel identifier))
+                 (test-assert (sb-thread:wait-on-semaphore releasing :timeout 20)
+                              "cleanup reaches its deterministic lease-release latch")
+                 (test-assert (and (eq host (world-server--find-host server identifier))
+                                   (eq (world-host-state host) ':closing)
+                                   (eq lease (application-conversation-lease application))
+                                   (conversation-lease-held-p lease))
+                              "closing routing and the actual lease handle retain the same owner")
+                 (dolist (arguments (list (list :channel identifier) (list :directory workspace)))
+                   (test-assert
+                    (handler-case (progn (world-server-open server arguments) nil)
+                      (world-error (condition)
+                        (and (eq (world-error-operation condition) ':closing)
+                             (equal identifier (world-error-identifier condition)))))
+                    "named and workspace opens accurately report closing without choosing another conversation"))
+                 (test-assert (and (zerop builds) (world-server-status server)
+                                   (not (sb-thread:holding-mutex-p (world-server-open-lock server))))
+                              "blocked cleanup starts no competing application and leaves global admission available"))
+            (sb-thread:signal-semaphore release))
+          (join-thread (world-host-thread host))
+          (test-assert (and (eq (world-host-state host) ':retired)
+                            (null (world-server--find-host server identifier))
+                            (not (conversation-lease-held-p lease)))
+                       "host retirement follows real lease release")
+          (let* ((opened  (world-server-open server (list :channel identifier)))
+                 (resumed (world-server-open server (list :directory workspace))))
+            (test-assert (and (= builds 1) (getf (rest opened) :started-p)
+                              (equal identifier (getf (rest opened) :session-id))
+                              (equal identifier (getf (rest resumed) :session-id))
+                              (not (getf (rest resumed) :started-p)))
+                         "retirement permits exactly one usable replacement shared with workspace resume")))))))
+  nil)
+
+(-> test-world-server-close-without-search-rebuild () null)
+(defun test-world-server-close-without-search-rebuild ()
+  "Release a stale-search conversation without archive work and retain its lease after a release error."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry        (world-client-entry configuration))
+            (identifier   (getf (rest (world-server-tests--open entry (world-tests--workspace root "close-search"))) :session-id))
+            (host         (world-server--find-host server identifier))
+            (application  (world-host-application host))
+            (conversation (application-conversation application))
+            (lease        (application-conversation-lease application))
+            (original     (symbol-function 'conversation-lease-release))
+            (find-index   (symbol-function 'conversation-picker-search-find))
+            (map-records  (symbol-function 'conversation--map-storage-records))
+            (queries 0) (scans 0))
+       (dotimes (index 128)
+         (conversation-append-user-message conversation (format nil "~D ~A" index (make-string 1024 :initial-element #\x))))
+       (conversation-picker-search-find (conversation-pathname conversation))
+       (conversation-append-user-message conversation "invalidate the prewarmed search sidecar")
+       (test-call-with-function-replacements
+        (list (list 'conversation-lease-release
+                    (lambda (candidate)
+                      (if (eq candidate lease)
+                          (error 'world-error :operation ':close :message "Injected lease-release failure.")
+                          (funcall original candidate)))))
+        (lambda ()
+          (test-assert (handler-case (progn (application-release-conversation-lease application) nil)
+                         (world-error () t))
+                       "the real release error is observable")
+          (test-assert (and (eq lease (application-conversation-lease application))
+                            (conversation-lease-held-p lease))
+                       "a failed release retains the actual owned handle for retry")))
+       (test-call-with-function-replacements
+        (list (list 'conversation-picker-search-find
+                    (lambda (pathname) (incf queries) (funcall find-index pathname)))
+              (list 'conversation--map-storage-records
+                    (lambda (&rest arguments) (incf scans) (apply map-records arguments))))
+        (lambda ()
+          (let ((started (get-internal-real-time)))
+            (world-server-close server identifier)
+            (join-thread (world-host-thread host))
+            (test-assert (and (zerop queries) (zerop scans)
+                              (not (conversation-lease-held-p lease))
+                              (eq (world-host-state host) ':retired)
+                              (>= (- (get-internal-real-time) started) 0))
+                         "closing a large stale cache performs zero search queries or archive scans before releasing ownership")))))))
+  nil)
+
 (-> test-world-server-close-ownership () null)
 (defun test-world-server-close-ownership ()
   "Test a closing host retains exclusive ownership until its serving thread retires."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry       (world-client-entry configuration))
-            (identifier  (getf (rest (world-server-tests--open
-                                      entry (world-tests--workspace root "closing")))
-                               :session-id))
+            (identifier
+             (getf
+              (rest
+               (world-server-tests--open entry
+                (world-tests--workspace root "closing")))
+              :session-id))
             (host        (world-server--find-host server identifier))
             (application (world-host-application host))
             (lease       (application-conversation-lease application))
             (releasing   (sb-thread:make-semaphore))
             (release     (sb-thread:make-semaphore))
             (original    (symbol-function 'conversation-lease-release)))
-       (conversation-append-user-message (application-conversation application) "persist before close")
+       (conversation-append-user-message (application-conversation application)
+                                         "persist before close")
        (test-call-with-function-replacements
-        (list (list 'conversation-lease-release
-                    (lambda (candidate)
-                      (when (eq candidate lease)
-                        (sb-thread:signal-semaphore releasing)
-                        (sb-thread:wait-on-semaphore release))
-                      (funcall original candidate))))
+        (list
+         (list 'conversation-lease-release
+               (lambda (candidate)
+                 (when (eq candidate lease)
+                   (sb-thread:signal-semaphore releasing)
+                   (sb-thread:wait-on-semaphore release))
+                 (funcall original candidate))))
         (lambda ()
           (unwind-protect
-               (progn
-                 (localgroup-query-record entry ':close (list :channel identifier))
-                 (test-assert (sb-thread:wait-on-semaphore releasing :timeout 20)
-                              "the closing host reaches ownership release")
-                 (test-assert (and (null (world-server--find-host server identifier))
-                                   (thread-alive-p (world-host-thread host))
-                                   (member host (world-server--hosts server)))
-                              "a channel leaves routing before its host retires")
-                 (test-assert (and (conversation-lease-held-p lease)
-                                   (conversation-lease-busy-p configuration identifier))
-                              "a closing host keeps its lease until release completes")
-                 (test-assert (handler-case
-                                  (let ((unexpected (conversation-lease-acquire configuration identifier)))
-                                    (conversation-lease-release unexpected)
-                                    nil)
-                                (conversation-in-use (condition)
-                                  (eql (conversation-in-use-owner-pid condition) (current-process-id))))
-                              "admission identifies the closing host's process as the owner"))
+              (progn
+               (localgroup-query-record entry ':close
+                                        (list :channel identifier))
+               (test-assert (sb-thread:wait-on-semaphore releasing :timeout 20)
+                "the closing host reaches ownership release")
+               (test-assert
+                (and (eq host (world-server--find-host server identifier))
+                     (thread-alive-p (world-host-thread host))
+                     (member host (world-server--hosts server)))
+                "a channel leaves routing before its host retires")
+               (test-assert
+                (and (conversation-lease-held-p lease)
+                     (conversation-lease-busy-p configuration identifier))
+                "a closing host keeps its lease until release completes")
+               (test-assert
+                (handler-case
+                 (let ((unexpected
+                        (conversation-lease-acquire configuration identifier)))
+                   (conversation-lease-release unexpected)
+                   nil)
+                 (conversation-in-use (condition)
+                  (eql (conversation-in-use-owner-pid condition)
+                       (current-process-id))))
+                "admission identifies the closing host's process as the owner"))
             (sb-thread:signal-semaphore release))
-          (sb-thread:join-thread (world-host-thread host) :default nil :timeout 20)
-          (test-assert (and (not (thread-alive-p (world-host-thread host)))
-                            (not (conversation-lease-held-p lease))
-                            (not (member host (world-server--hosts server)))
-                            (not (conversation-lease-busy-p configuration identifier)))
-                       "retiring the serving thread releases ownership and removes its host")
-          (let ((opened (localgroup-query-record entry ':open (list :channel identifier))))
-            (test-assert (and (getf (rest opened) :started-p)
-                              (string= identifier (getf (rest opened) :session-id)))
-                         "the retired channel can be opened under a new owner")))))))
+          (sb-thread:join-thread (world-host-thread host) :default nil :timeout
+                                 20)
+          (test-assert
+           (and (not (thread-alive-p (world-host-thread host)))
+                (not (conversation-lease-held-p lease))
+                (not (member host (world-server--hosts server)))
+                (not (conversation-lease-busy-p configuration identifier)))
+           "retiring the serving thread releases ownership and removes its host")
+          (let ((opened
+                 (localgroup-query-record entry ':open
+                                          (list :channel identifier))))
+            (test-assert
+             (and (getf (rest opened) :started-p)
+                  (string= identifier (getf (rest opened) :session-id)))
+             "the retired channel can be opened under a new owner")))))))
   nil)
 
 (-> test-world-server-attachment-moves-nobody () null)

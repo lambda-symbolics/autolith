@@ -20,53 +20,40 @@
 (defparameter *world-server-sweep-seconds* 60
   "How often the server looks for channels gone cold.")
 
-(defclass world-host ()
-  ((application
-    :initarg       :application
-    :reader        world-host-application
-    :type          application
-    :documentation "The hosted application serving one channel.")
-   (thread
-    :initform      nil
-    :accessor      world-host-thread
-    :type          t
-    :documentation "The thread serving the application.")
-   (ready-p
-    :initform      nil
-    :accessor      world-host-ready-p
-    :type          boolean
-    :documentation "Whether the channel's endpoint has been published.")
-   (failure
-    :initform      nil
-    :accessor      world-host-failure
-    :type          (option condition)
-    :documentation "The condition that ended the session, or NIL.")
-   (exit-reason
-    :initform      nil
-    :accessor      world-host-exit-reason
-    :type          (option keyword)
-    :documentation "The session's exit reason once it ended, or NIL while it runs.")
-   (paused-p
-    :initform      nil
-    :accessor      world-host-paused-p
-    :type          boolean
-    :documentation "Whether the session ended for a checkpoint and waits to be served again.")
-   (identity
-    :initform      nil
-    :accessor      world-host-identity
-    :type          list
-    :documentation "The :TOKEN and :CREATED-AT of the endpoint a paused session's clients wait for.")
-   (quiesced-tools
-    :initform      nil
-    :accessor      world-host-quiesced-tools
-    :type          list
-    :documentation "The tool runtimes a checkpoint closed in this channel, restarted when it is served again.")
-   (idle-since
-    :initform      nil
-    :accessor      world-host-idle-since
-    :type          (option real)
-    :documentation "The internal real time the server first found the channel idle, or NIL while it is in use."))
-  (:documentation "One channel's application and the thread serving it.
+(defclass world-host nil
+          ((retirement-lock :initform (make-lock "Autolith host retirement")
+            :reader world-host-retirement-lock :documentation
+            "Serialize final lease release and retries after cleanup failures.")
+           (application :initarg :application :reader world-host-application
+            :type application :documentation
+            "The hosted application serving one channel.")
+           (state :initform ':starting :accessor world-host-state :type
+            (member :starting :ready :closing :paused :retired) :documentation
+            "The owned lifecycle through mandatory cleanup and lease release.")
+           (thread :initform nil :accessor world-host-thread :type t
+            :documentation "The thread serving the application.")
+           (ready-p :initform nil :accessor world-host-ready-p :type boolean
+            :documentation
+            "Whether the channel's endpoint has been published.")
+           (failure :initform nil :accessor world-host-failure :type
+            (option condition) :documentation
+            "The condition that ended the session, or NIL.")
+           (exit-reason :initform nil :accessor world-host-exit-reason :type
+            (option keyword) :documentation
+            "The session's exit reason once it ended, or NIL while it runs.")
+           (paused-p :initform nil :accessor world-host-paused-p :type boolean
+            :documentation
+            "Whether the session ended for a checkpoint and waits to be served again.")
+           (identity :initform nil :accessor world-host-identity :type list
+                     :documentation
+                     "The :TOKEN and :CREATED-AT of the endpoint a paused session's clients wait for.")
+           (quiesced-tools :initform nil :accessor world-host-quiesced-tools
+            :type list :documentation
+            "The tool runtimes a checkpoint closed in this channel, restarted when it is served again.")
+           (idle-since :initform nil :accessor world-host-idle-since :type
+            (option real) :documentation
+            "The internal real time the server first found the channel idle, or NIL while it is in use."))
+          (:documentation "One channel's application and the thread serving it.
 
 A host paused for a checkpoint keeps its application; its thread ended so
 the process could fork, and a new thread serves the application again."))
@@ -923,57 +910,63 @@ started must not end one another terminal attached to since."
 
 (-> world-server-quiesce (world-server list) list)
 (defun world-server-quiesce (server channels)
-  "Close idle unattended hosts in CHANNELS and wait for their leases to be released.
-
-Return channel/state pairs. Attached, running and unavailable hosted channels
-are refused without cancelling their work. Admission and shutdown share the
-endpoint and controller locks; opening another host waits until this batch ends."
-  (with-lock-held ((world-server-open-lock server))
-    (when (world-server-checkpointing-p server)
-      (error 'world-error :message   "The world is checkpointing; retry after it resumes."
-                          :operation ':checkpointing))
-    (let* ((hosts  (loop for channel in channels
-                         for host = (world-server--find-host server channel)
-                         when host collect host))
-           (states (mapcar (lambda (host)
-                             (cons (world-host-channel host)
-                                   (cond
-                                     ((world-host-attached-p host)
-                                      ':attached)
-                                     ((world-server--host-idle-p host)
-                                      ':idle)
-                                     (t
-                                      ':running))))
-                           hosts)))
-      (when (every (lambda (state) (eq (rest state) ':idle)) states)
-        (dolist (host hosts)
-          (let* ((application (world-host-application host))
-                 (session     (application-localgroup-session application))
-                 (controller  (application-input-controller application))
-                 (state       (assoc (world-host-channel host) states :test #'string=)))
-            (setf (rest state)
-                  (if (and session controller)
-                      (with-lock-held ((image-daemon:daemon-runtime-lock session))
-                        (cond
-                          ((world-host-attached-p host)
+  "Close idle unattended hosts in CHANNELS and wait outside admission locks for lease release. Return channel/state pairs; refuse attached, running and unavailable hosts."
+  (progn
+   (with-lock-held ((world-server-open-lock server))
+     (when (world-server-checkpointing-p server)
+       (error 'world-error :message
+              "The world is checkpointing; retry after it resumes." :operation
+              ':checkpointing)))
+   (let* ((hosts
+           (loop for channel in channels
+                 for host = (world-server--find-host server channel)
+                 when host
+                 collect host))
+          (states
+           (mapcar
+            (lambda (host)
+              (cons (world-host-channel host)
+                    (cond ((world-host-attached-p host)
                            ':attached)
-                          ((not (world-server--host-idle-p host))
-                           ':running)
-                          ((application-input-controller--request-idle-exit controller)
-                           (setf (localgroup-session-closing-p session) t)
-                           ':closing)
+                          ((world-server--host-idle-p host)
+                           ':idle)
                           (t
-                           ':hosted)))
-                      ':hosted))))
-        (dolist (host hosts)
-          (let ((state (assoc (world-host-channel host) states :test #'string=)))
-            (when (eq (rest state) ':closing)
-              (let ((thread (world-host-thread host)))
-                (when thread
-                  (sb-thread:join-thread thread :timeout 10 :default nil))
-                (setf (rest state)
-                      (if (and thread (thread-alive-p thread)) ':hosted ':closed)))))))
-      (list :ok :states states))))
+                           ':running))))
+            hosts)))
+     (when (every (lambda (state) (eq (rest state) ':idle)) states)
+       (dolist (host hosts)
+         (let* ((application (world-host-application host))
+                (session     (application-localgroup-session application))
+                (controller  (application-input-controller application))
+                (state
+                 (assoc (world-host-channel host) states :test #'string=)))
+           (setf (rest state)
+                 (if (and session controller)
+                     (with-lock-held ((image-daemon:daemon-runtime-lock
+                                       session))
+                       (cond ((world-host-attached-p host)
+                              ':attached)
+                             ((not (world-server--host-idle-p host))
+                              ':running)
+                             ((application-input-controller--request-idle-exit
+                               controller)
+                              (setf (localgroup-session-closing-p session) t
+                                    (world-host-state host) ':closing)
+                              ':closing)
+                             (t
+                              ':hosted)))
+                     ':hosted))))
+       (dolist (host hosts)
+         (let ((state (assoc (world-host-channel host) states :test #'string=)))
+           (when (eq (rest state) ':closing)
+             (let ((thread (world-host-thread host)))
+               (when thread
+                 (sb-thread:join-thread thread :timeout 10 :default nil))
+               (setf (rest state)
+                     (if (and thread (thread-alive-p thread))
+                         ':hosted
+                         ':closed)))))))
+     (list :ok :states states))))
 
 
 ;;;; -- Moves --
@@ -1052,16 +1045,25 @@ endpoint and controller locks; opening another host waits until this batch ends.
          (and controller
               (not (application-input-controller-exit-requested-p controller))))))
 
+(-> world-host-closing-p (world-host) boolean)
+(defun world-host-closing-p (host)
+  "Return true while HOST is ending but still owns mandatory cleanup and its lease."
+  (not (null (or (eq (world-host-state host) ':closing)
+                 (and (world-host-ready-p host) (not (world-host-live-p host)))))))
+
+(-> world-server--check-host-opening (world-host) null)
+(defun world-server--check-host-opening (host)
+  "Report retained closing ownership instead of constructing a competing application."
+  (when (world-host-closing-p host)
+    (error 'world-error :operation ':closing :identifier (world-host-channel host)
+                       :message (format nil "Channel ~A is closing; its owner is still releasing runtime resources and its conversation lease. Retry after it retires."
+                                        (conversation-identifier-display (world-host-channel host)))))
+  nil)
+
 (-> world-host-reserved-p (world-host) boolean)
 (defun world-host-reserved-p (host)
-  "Return true while HOST holds its channel: still starting, or serving and not ending.
-
-A starting host is a reservation: an open of the same channel or workspace
-waits for it rather than starting another, so one channel never gets two
-hosts, two leases or two threads."
-  (if (world-host-ready-p host)
-      (world-host-live-p host)
-      (null (world-host-failure host))))
+  "Return true until HOST retires after mandatory cleanup and actual lease release."
+  (not (eq (world-host-state host) ':retired)))
 
 (-> world-server--find-host (world-server string) (option world-host))
 (defun world-server--find-host (server identifier)
@@ -1093,6 +1095,7 @@ host to publish its endpoint."
              (host          (world-server--find-host server identifier)))
         (if host
             (progn
+             (world-server--check-host-opening host)
              (when (getf arguments :mcp-servers)
                (error 'world-error :message
                       (format nil
@@ -1199,6 +1202,7 @@ opening. Return NIL for the host when no channel qualifies."
           candidate
         (cond
          (host
+          (world-server--check-host-opening host)
           (unless
               (or (world-host-attached-p host) (getf arguments :mcp-servers)
                   (world-server--launch-conflict host launch))
@@ -1419,54 +1423,56 @@ no turn or job is running. A request for the current mode needs no change."
       (setf existing
               (and conversation-id
                    (world-server--find-host server conversation-id)))
-      (unless existing
-        (with-lock-held ((world-server-lock server))
-          (setf (world-server-startups server)
-                (remove-if
-                 (lambda (candidate)
-                   (and (not (world-server--startup-active-p candidate))
-                        (let ((host (world-startup-host candidate)))
-                          (or (null host)
-                              (not (world-host-reserved-p host))))))
-                 (world-server-startups server)))
-          (setf startup
-                  (find-if
-                   (lambda (candidate)
-                     (and (equal key (world-startup-key candidate))
-                          (or
-                           (let ((host (world-startup-host candidate)))
-                             (and host (world-host-reserved-p host)))
-                           (world-server--startup-active-p candidate))))
-                   (world-server-startups server)))
-          (unless startup
-            (setf startup
-                    (make-instance 'world-startup :key key :identifier
-                                   (symbol-name (gensym "startup-")) :timings
-                                   (list :reserved-at (get-internal-real-time)
-                                         :lock-wait
-                                         (- (get-internal-real-time)
-                                            waiting-at)))
-                  owner-p t)
-            (push startup (world-server-startups server))))
-        (when owner-p
-          (handler-case
-           (setf (world-startup-thread startup)
-                 (make-thread
-                  (lambda ()
-                    (world-server--construct-startup server startup
-                     (lambda ()
-                       (world-server--build-host server :conversation-id
-                        conversation-id :directory directory :arguments
-                        arguments :startup startup))))
-                  :name
-                  (format nil "Autolith ~A"
-                          (world-startup-identifier startup))))
-           (error (condition)
-                  (with-lock-held ((world-server-lock server))
-                    (setf (world-startup-failure startup) condition
-                          (world-startup-phase startup) ':failed)
-                    (sb-thread:condition-broadcast
-                     (world-server-condition-variable server))))))))
+      (progn
+       (when existing (world-server--check-host-opening existing))
+       (unless existing
+         (with-lock-held ((world-server-lock server))
+           (setf (world-server-startups server)
+                 (remove-if
+                  (lambda (candidate)
+                    (and (not (world-server--startup-active-p candidate))
+                         (let ((host (world-startup-host candidate)))
+                           (or (null host)
+                               (not (world-host-reserved-p host))))))
+                  (world-server-startups server)))
+           (setf startup
+                   (find-if
+                    (lambda (candidate)
+                      (and (equal key (world-startup-key candidate))
+                           (or
+                            (let ((host (world-startup-host candidate)))
+                              (and host (world-host-reserved-p host)))
+                            (world-server--startup-active-p candidate))))
+                    (world-server-startups server)))
+           (unless startup
+             (setf startup
+                     (make-instance 'world-startup :key key :identifier
+                                    (symbol-name (gensym "startup-")) :timings
+                                    (list :reserved-at (get-internal-real-time)
+                                          :lock-wait
+                                          (- (get-internal-real-time)
+                                             waiting-at)))
+                   owner-p t)
+             (push startup (world-server-startups server))))
+         (when owner-p
+           (handler-case
+            (setf (world-startup-thread startup)
+                  (make-thread
+                   (lambda ()
+                     (world-server--construct-startup server startup
+                      (lambda ()
+                        (world-server--build-host server :conversation-id
+                         conversation-id :directory directory :arguments
+                         arguments :startup startup))))
+                   :name
+                   (format nil "Autolith ~A"
+                           (world-startup-identifier startup))))
+            (error (condition)
+                   (with-lock-held ((world-server-lock server))
+                     (setf (world-startup-failure startup) condition
+                           (world-startup-phase startup) ':failed)
+                     (sb-thread:condition-broadcast
+                      (world-server-condition-variable server)))))))))
     (values (or existing (world-server--wait-startup server startup)) owner-p)))
 
 (-> world-server--build-host
@@ -1553,13 +1559,15 @@ forgotten again when no thread could start."
                                 :boot-screen-p
                                 (not (getf arguments :switch-p))))
      (error (condition)
-            (application--discard-connection-resources application
-                                                       (application-tool-registry
-                                                        application)
-                                                       (application-worker
-                                                        application))
-            (application-release-conversation-lease application)
-            (world-server--release-host server host) (error condition)))
+            (unwind-protect
+                (application--discard-connection-resources application
+                                                           (application-tool-registry
+                                                            application)
+                                                           (application-worker
+                                                            application))
+              (setf (world-host-failure host) condition)
+              (world-server--release-host server host))
+            (error condition)))
     host))(-> world-server--serve-host
            (world-server world-host &key (:initial-command (option string))
                                          (:recovery-diagnosis (option string))
@@ -1613,8 +1621,10 @@ itself so that threads those threads start inherit it too."
                                   (:notice (or null string list))
                                   (:boot-screen-p boolean))
     null)
-(defun world-server--host (server host &key initial-command recovery-diagnosis adaptation-offer-p
-                                            resume-p reconnect-id notice (boot-screen-p t))
+(defun world-server--host
+       (server host
+        &key initial-command recovery-diagnosis adaptation-offer-p resume-p
+        reconnect-id notice (boot-screen-p t))
   "Serve HOST's application on this thread until its session ends.
 
 A launcher exit condition reaches the attached clients with its status, as a
@@ -1626,72 +1636,75 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
   (let* ((application                 (world-host-application host))
          (configuration               (application-configuration application))
          (bordeaux-threads:*default-special-bindings*
-           (world-server--thread-bindings application))
+          (world-server--thread-bindings application))
          (*active-application*        application)
          (*localgroup-startup-record* nil)
-         (*default-pathname-defaults* (config :working-directory configuration)))
+         (*default-pathname-defaults*
+          (config :working-directory configuration)))
     (unwind-protect
-         (handler-case
-             (handler-bind ((main-launcher-exit-condition
-                              (lambda (condition)
-                                (multiple-value-bind (status message details)
-                                    (main--launcher-exit-text condition)
-                                  (localgroup-finish-attachments application
-                                                                 :status  status
-                                                                 :message message
-                                                                 :details details)))))
-               (setf (world-host-exit-reason host)
-                     (or (application-serve
-                          application
-                          :initial-command    initial-command
-                          :recovery-diagnosis recovery-diagnosis
-                          :adaptation-offer-p adaptation-offer-p
-                          :hosted-p           t
-                          :resume-p           resume-p
-                          :notice             notice
-                          :boot-screen-p      boot-screen-p
-                          :localgroup-identity
-                          (and reconnect-id
-                               (append (world-host-identity host)
-                                       (list :checkpoint-reconnect-id reconnect-id)))
-                          :quiescer           (lambda (function)
-                                                (declare (ignore function))
-                                                (error 'checkpoint-error
-                                                       :message  "A hosted channel checkpoints through its world server."
-                                                       :stage    ':validation
-                                                       :pathname nil))
-                          :ready-function     (lambda (served)
-                                                (declare (ignore served))
-                                                (world-server--note-ready server host)))
-                         ':finished)))
-           (main-launcher-exit-condition (condition)
-             (world-server--note-launcher-exit server host condition))
-           (error (condition)
-             (world-server--note-failure server host condition)))
+        (handler-case
+         (handler-bind ((main-launcher-exit-condition
+                         (lambda (condition)
+                           (multiple-value-bind (status message details)
+                               (main--launcher-exit-text condition)
+                             (localgroup-finish-attachments application :status
+                                                            status :message
+                                                            message :details
+                                                            details)))))
+           (setf (world-host-exit-reason host)
+                 (or
+                  (application-serve application :initial-command
+                                     initial-command :recovery-diagnosis
+                                     recovery-diagnosis :adaptation-offer-p
+                                     adaptation-offer-p :hosted-p t :resume-p
+                                     resume-p :notice notice :boot-screen-p
+                                     boot-screen-p :localgroup-identity
+                                     (and reconnect-id
+                                          (append (world-host-identity host)
+                                                  (list
+                                                   :checkpoint-reconnect-id
+                                                   reconnect-id)))
+                                     :quiescer
+                                     (lambda (function)
+                                       (declare (ignore function))
+                                       (error 'checkpoint-error :message
+                                              "A hosted channel checkpoints through its world server."
+                                              :stage ':validation :pathname
+                                              nil))
+                                     :ready-function
+                                     (lambda (served)
+                                       (declare (ignore served))
+                                       (world-server--note-ready server
+                                                                 host)))
+                  ':finished)))
+         (main-launcher-exit-condition (condition)
+          (world-server--note-launcher-exit server host condition))
+         (error (condition)
+                (world-server--note-failure server host condition)))
       (if (eq (world-host-exit-reason host) ':checkpoint)
           (with-lock-held ((world-server-lock server))
-            (setf (world-host-paused-p host) t)
-            (sb-thread:condition-broadcast (world-server-condition-variable server)))
+            (setf (world-host-paused-p host) t
+                  (world-host-state host) ':paused)
+            (sb-thread:condition-broadcast
+             (world-server-condition-variable server)))
           (world-server--release-host server host))))
   nil)
 
 (-> world-server--note-ready (world-server world-host) null)
 (defun world-server--note-ready (server host)
-  "Record that HOST published its endpoint, closing it again when SERVER is stopping."
-  (let ((stopping-p nil))
+  "Record endpoint readiness without surrendering a close already requested."
+  (let ((closing-p nil))
     (with-lock-held ((world-server-lock server))
-      (progn
-       (setf (world-host-ready-p host) t
-             stopping-p (world-server-stopping-p server))
-       (dolist (startup (world-server-startups server))
-         (when (eq (world-startup-host startup) host)
-           (setf (getf (world-startup-timings startup) :endpoint-ready-at)
-                 (get-internal-real-time)))))
+      (setf closing-p (or (world-server-stopping-p server)
+                         (eq (world-host-state host) ':closing))
+            (world-host-ready-p host) t
+            (world-host-state host) (if closing-p ':closing ':ready))
+      (dolist (startup (world-server-startups server))
+        (when (eq (world-startup-host startup) host)
+          (setf (getf (world-startup-timings startup) :endpoint-ready-at) (get-internal-real-time))))
       (sb-thread:condition-broadcast (world-server-condition-variable server)))
-    (when stopping-p (world-server--close-host host)))
-  nil)
-
-(-> world-server--note-failure (world-server world-host condition) null)
+    (when closing-p (world-server--close-host host)))
+  nil)(-> world-server--note-failure (world-server world-host condition) null)
 (defun world-server--note-failure (server host condition)
   "Record CONDITION as what ended HOST's session, so an opener learns why."
   (with-lock-held ((world-server-lock server))
@@ -1719,22 +1732,29 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
 (-> world-server--release-host (world-server world-host) null)
 (defun world-server--release-host (server host)
   "Forget HOST after its session ended, drop the editor credentials its MCP servers held, and wake whoever waits for it."
-  (acp-mcp-release-credentials
-   (mcp-tool-registry-manager
-    (application-tool-registry (world-host-application host))))
-  (with-lock-held ((world-server-lock server))
-    (setf (world-server-hosts server) (remove host (world-server-hosts server))
-          (world-server-startups server)
-          (remove host (world-server-startups server) :key
-                  #'world-startup-host))
-    (unless (or (world-host-ready-p host) (world-host-failure host))
-      (setf (world-host-failure host)
-            (make-condition 'world-error :message
-                            "The channel's session ended before its endpoint was published."
-                            :operation ':open :identifier
-                            (world-host-channel host))))
-    (sb-thread:condition-broadcast (world-server-condition-variable server)))
-  nil)
+  (with-lock-held ((world-host-retirement-lock host))
+    (unless (eq (world-host-state host) ':retired)
+      (setf (world-host-state host) ':closing)
+      (acp-mcp-release-credentials
+       (mcp-tool-registry-manager
+        (application-tool-registry (world-host-application host))))
+      (application-release-conversation-lease (world-host-application host))
+      (with-lock-held ((world-server-lock server))
+        (setf (world-server-hosts server)
+              (remove host (world-server-hosts server))
+              (world-server-startups server)
+              (remove host (world-server-startups server) :key
+                      #'world-startup-host)
+              (world-host-state host) ':retired)
+        (unless (or (world-host-ready-p host) (world-host-failure host))
+          (setf (world-host-failure host)
+                (make-condition 'world-error :message
+                                "The channel's session ended before its endpoint was published."
+                                :operation ':open :identifier
+                                (world-host-channel host))))
+        (sb-thread:condition-broadcast
+         (world-server-condition-variable server)))
+      nil)))
 
 (-> world-server--wait-ready (world-server world-host) world-host)
 (defun world-server--wait-ready (server host)
@@ -1763,14 +1783,18 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
 
 (-> world-server--close-host (world-host) null)
 (defun world-server--close-host (host)
-  "Ask HOST's session to end the way a localgroup kill does."
-  (let ((controller (application-input-controller (world-host-application host))))
-    (when controller
-      (application-input-controller--request-exit controller ':localgroup-kill)))
-  nil)
-
-
-;;;; -- Checkpoints --
+  "Request exit while retaining ownership, or retry retirement after serving ended."
+  (unless (eq (world-host-state host) ':retired)
+    (setf (world-host-state host) ':closing)
+    (let* ((application (world-host-application host))
+           (controller  (application-input-controller application))
+           (thread      (world-host-thread host)))
+      (if (or (and thread (not (thread-alive-p thread)))
+              (and (null thread) (world-host-failure host)))
+          (world-server--release-host (application-world-server application) host)
+          (when controller
+            (application-input-controller--request-exit controller ':localgroup-kill)))))
+  nil);;;; -- Checkpoints --
 
 ;;; A fork checkpoint needs the forking thread to be the only live thread.
 ;;; The server's main thread takes it. First it holds every channel's new
@@ -2071,7 +2095,8 @@ the host to restart: their job pools own threads the fork must not see."
 (-> world-server--resume-channels
     (world-server application string &key (:notice-function (option function)))
     null)
-(defun world-server--resume-channels (server application reconnect-id &key notice-function)
+(defun world-server--resume-channels
+       (server application reconnect-id &key notice-function)
   "Resume SERVER's paused channels, then admit opens and held turns.
 
 Restart closed tool runtimes first. Report restart failures to the affected
@@ -2082,31 +2107,36 @@ notice directly if it never paused, as when a checkpoint fails early."
           (tools  (shiftf (world-host-quiesced-tools host) nil)))
       (when tools
         (handler-case
-            (tool-registry-resume-runtime-state (application-tool-registry served) :tools tools)
-          (serious-condition (condition)
-            (application-present served
-                                 (application-failure-line
-                                  (format nil "some tools did not restart after the checkpoint: ~A"
-                                          (bounded-string (princ-to-string condition) :limit 400)))))))
+         (tool-registry-resume-runtime-state (application-tool-registry served)
+                                             :tools tools)
+         (serious-condition (condition)
+          (application-present served
+                               (application-failure-line
+                                (format nil
+                                        "some tools did not restart after the checkpoint: ~A"
+                                        (bounded-string
+                                         (princ-to-string condition) :limit
+                                         400)))))))
       (cond
-        ((world-host-paused-p host)
-         (with-lock-held ((world-server-lock server))
-           (setf (world-host-paused-p host) nil
-                 (world-host-ready-p host) nil
-                 (world-host-exit-reason host) nil))
-         (world-server--serve-host server host
-                                   :resume-p     t
-                                   :reconnect-id reconnect-id
-                                   :notice       (and notice-function
-                                                      (funcall notice-function served))))
-        ((and notice-function (eq served application))
-         (application-present served (funcall notice-function served))))))
+       ((world-host-paused-p host)
+        (with-lock-held ((world-server-lock server))
+          (setf (world-host-paused-p host) nil
+                (world-host-ready-p host) nil
+                (world-host-exit-reason host) nil
+                (world-host-state host) ':starting))
+        (world-server--serve-host server host :resume-p t :reconnect-id
+                                  reconnect-id :notice
+                                  (and notice-function
+                                       (funcall notice-function served))))
+       ((and notice-function (eq served application))
+        (application-present served (funcall notice-function served))))))
   (with-lock-held ((world-server-lock server))
     (setf (world-server-checkpointing-p server) nil
-          (world-server-holding-p server)       nil)
+          (world-server-holding-p server) nil)
     (sb-thread:condition-broadcast (world-server-condition-variable server)))
   (dolist (host (world-server--hosts server))
-    (let ((controller (application-input-controller (world-host-application host))))
+    (let ((controller
+           (application-input-controller (world-host-application host))))
       (when controller
         (with-lock-held ((application-input-controller-lock controller))
           (sb-thread:condition-broadcast
