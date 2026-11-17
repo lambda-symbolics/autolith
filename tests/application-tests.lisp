@@ -2270,6 +2270,52 @@
      "a shown hint stops asking for another reader pass"))
   nil)
 
+(-> test-failed-interrupt-hint-stays-due () null)
+(defun test-failed-interrupt-hint-stays-due ()
+  "Test a failed hint pass leaves the reader running and the hint due."
+  (let* ((now         0)
+         (failing-p   nil)
+         (terminal    (make-instance 'recording-terminal :columns 80))
+         (ui          (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (controller
+           (make-instance
+            'application-input-controller
+            :application              application
+            :main-thread              (current-thread)
+            :interrupt-clock-function (lambda ()
+                                        (if failing-p
+                                            (application-ui nil)
+                                            now)))))
+    (setf (application-input-controller application) controller
+          (application-input-controller-active-p controller) t)
+    (application-input-controller--request-active-turn-cancellation
+     controller :force-exit-window-p t)
+    (setf now       1/2
+          failing-p t)
+    (test-assert
+     (null (handler-case
+               (application-input-controller--refresh-interrupt-hint controller)
+             (error (condition)
+               condition)))
+     "a generic function call that fails on the hint path signals nothing")
+    (test-assert
+     (string= (terminal-ui-notice ui) "Interrupting request.")
+     "a failed hint pass retains the earlier interruption notice")
+    (test-assert
+     (application-input-controller-interrupt-hint-time controller)
+     "a failed hint stays due for a later reader pass")
+    (setf failing-p nil)
+    (application-input-controller--refresh-interrupt-hint controller)
+    (test-assert
+     (string= (terminal-ui-notice ui)
+              "Press Ctrl-C again within 2.5 seconds to force exit.")
+     "the hint appears on the first pass that works")
+    (test-assert
+     (null (application-input-controller-interrupt-hint-time controller))
+     "a shown hint stops asking for another reader pass"))
+  nil)
+
 (-> test-active-cancellation-interrupt-window-expiry () null)
 (defun test-active-cancellation-interrupt-window-expiry ()
   "Test an expired active-cancellation window requires a new timely press."

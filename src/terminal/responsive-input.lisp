@@ -403,22 +403,16 @@ only a direct terminal includes the command in this prepared notice."
 
 The notice expires with the force-exit window itself, and a contended
 presentation lock reports no display so a later reader pass can try again."
-  (let* ((application
-           (application-input-controller-application controller))
-         (ui      (application-ui application))
-         (shown-p nil))
-    ; mallet:suppress no-ignore-errors -- a notice that cannot be shown reports no display and is retried
-    (ignore-errors
-      (setf shown-p
-            (nth-value
-             1
-             (terminal-ui-set-notice
-              ui
-              (format nil
-                      "Press Ctrl-C again within ~A seconds to force exit."
-                      (application-input-controller--interrupt-window-text))
-              :duration-seconds remaining-seconds))))
-    (not (null shown-p))))
+  (let ((ui (application-ui
+             (application-input-controller-application controller))))
+    (not (null (nth-value
+                1
+                (terminal-ui-set-notice
+                 ui
+                 (format nil
+                         "Press Ctrl-C again within ~A seconds to force exit."
+                         (application-input-controller--interrupt-window-text))
+                 :duration-seconds remaining-seconds))))))
 
 (-> application-input-controller--refresh-interrupt-hint
     (application-input-controller)
@@ -427,31 +421,38 @@ presentation lock reports no display so a later reader pass can try again."
   "Show CONTROLLER's force-exit hint once cancellation outlives the hint delay.
 
 Waiting keeps a promptly cancelled turn from flashing an option it no longer
-offers, so the hint appears only while forcing exit is still worth explaining."
-  (let ((hint-time         nil)
-        (remaining-seconds nil))
-    (with-lock-held ((application-input-controller-lock controller))
-      (let ((due (application-input-controller-interrupt-hint-time controller))
-            (deadline
-              (application-input-controller-interrupt-deadline controller)))
-        (when (and due deadline)
-          (let ((now
-                  (funcall
-                   (application-input-controller-interrupt-clock-function
-                    controller))))
-            (when (>= now due)
-              (setf hint-time due
-                    remaining-seconds (- deadline now)))))))
-    (when (and remaining-seconds
-               (plusp remaining-seconds)
-               (application-input-controller--show-interrupt-hint
-                controller remaining-seconds))
-      (with-lock-held ((application-input-controller-lock controller))
-        ;; A newer press owns any hint time this pass did not observe.
-        (when (eql (application-input-controller-interrupt-hint-time controller)
-                   hint-time)
-          (setf (application-input-controller-interrupt-hint-time controller)
-                nil)))))
+offers, so the hint appears only while forcing exit is still worth explaining.
+After an error the hint stays due for the next reader pass, and the terminal
+reader keeps running."
+  (handler-case
+      (let ((hint-time         nil)
+            (remaining-seconds nil))
+        (with-lock-held ((application-input-controller-lock controller))
+          (let ((due
+                  (application-input-controller-interrupt-hint-time controller))
+                (deadline
+                  (application-input-controller-interrupt-deadline controller)))
+            (when (and due deadline)
+              (let ((now
+                      (funcall
+                       (application-input-controller-interrupt-clock-function
+                        controller))))
+                (when (>= now due)
+                  (setf hint-time due
+                        remaining-seconds (- deadline now)))))))
+        (when (and remaining-seconds
+                   (plusp remaining-seconds)
+                   (application-input-controller--show-interrupt-hint
+                    controller remaining-seconds))
+          (with-lock-held ((application-input-controller-lock controller))
+            ;; A newer press owns any hint time this pass did not observe.
+            (when (eql (application-input-controller-interrupt-hint-time
+                        controller)
+                       hint-time)
+              (setf (application-input-controller-interrupt-hint-time controller)
+                    nil)))))
+    (error ()
+      nil))
   nil)
 
 (-> application-input-controller--queues

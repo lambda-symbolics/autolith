@@ -1772,6 +1772,7 @@
   test-interrupt-force-window
   test-visible-interrupt-hint-does-not-extend-window
   test-dropped-interrupt-hint-reappears
+  test-failed-interrupt-hint-stays-due
   test-active-cancellation-interrupt-window-expiry
   test-cancellation-completion-clears-interrupt-state
   test-failed-turn-publishes-durable-wreckage
