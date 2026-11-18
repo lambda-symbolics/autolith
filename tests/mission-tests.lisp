@@ -69,7 +69,7 @@
             (test-assert (tool-result-success-p result) "the registered stop operation succeeds")
             (test-assert (= 1 (length records)) "stop stores one dedicated durable notice")
             (test-assert
-             (and (search (string-upcase status)
+             (and (search status
                           (recording-terminal-output (terminal-ui-terminal ui)))
                   (search decision (recording-terminal-output (terminal-ui-terminal ui))))
              "the visible notice explains the stop before a tool result exists")
@@ -162,7 +162,7 @@
         (setf (application-ui application) ui)
         (application-render-records application)
         (test-assert
-         (search "EXHAUSTED" (recording-terminal-output (terminal-ui-terminal ui)))
+         (search "exhausted" (recording-terminal-output (terminal-ui-terminal ui)))
          "the persisted headless notice appears when history is displayed"))))
   nil)
 

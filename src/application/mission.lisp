@@ -176,7 +176,7 @@
 (defun mission--present-terminal-notice (context status evidence)
   "Persist a bounded terminal notice while holding CONTEXT's mission lock."
   (let* ((application (mission-context-application context))
-         (header      (format nil "■ mission ~A" status))
+         (header      (format nil "■ mission ~(~A~)" status))
          (body        (sanitize-text (mission--bounded-text evidence)))
          (style       (if (eq status ':blocked) ':notice ':failure)))
     (application-side-status-present
@@ -185,7 +185,7 @@
          (application--transcript-entry application :style style :header header :body body)
          ;; Startup can restore a terminal mission before a UI is attached.
          (list (terminal-span style header)
-               (terminal-span ':plain (format nil "~%~A" body))))))
+               (terminal-span ':dim (format nil "~%~A" body))))))
   nil)
 
 (-> mission--transition (mission-context keyword t &key (:cancel-p boolean)) null)

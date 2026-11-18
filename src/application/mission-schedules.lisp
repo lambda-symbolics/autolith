@@ -263,11 +263,11 @@
                 (and (consp result) (eq (first result) ':skipped)))
         (application-side-status-present
          application "mission schedule"
-         (list (terminal-span ':notice
-                (format nil "Mission schedule ~A occurrence ~S: ~A (~A)."
-                        (getf wakeup :schedule) (getf wakeup :id)
-                        (if (eq result ':stale-mission) "cancelled" "skipped")
-                        (if (eq result ':stale-mission) "stale mission" (second result)))))))))
+         (application-notice-line
+          (format nil "mission schedule ~A occurrence ~S: ~A (~A)"
+                  (getf wakeup :schedule) (getf wakeup :id)
+                  (if (eq result ':stale-mission) "cancelled" "skipped")
+                  (if (eq result ':stale-mission) "stale mission" (second result))))))))
   wakeups)
 
 (-> mission-schedule--admit (mission-schedule-service) list)
@@ -547,18 +547,14 @@ Explicit failure/unknown keywords are never treated as successful execution."
                                (getf wakeup :id) (getf wakeup :token) (getf wakeup :state)))
          (body         (ecase reason
                          (:provider-failed
-                          "Provider turn failed; not retried. Effects may be partial.")
+                          "provider turn failed; not retried; effects may be partial")
                          (:runner-failed
-                          "Scheduled work failed; not retried. Effects may be partial.")
+                          "scheduled work failed; not retried; effects may be partial")
                          (:admission-refused
-                          "Scheduled work admission refused; not retried.")
+                          "scheduled work admission refused; not retried")
                          (:interrupted
-                          "Scheduled work interrupted; outcome unknown. Effects may be partial.")))
-         (spans        (if (application-ui application)
-                           (application--transcript-entry application :style ':failure
-                                                         :header "Scheduled occurrence" :body body)
-                           (list (terminal-span ':failure "Scheduled occurrence")
-                                 (terminal-span ':plain (format nil "~%~A" body)))))
+                          "scheduled work interrupted; outcome unknown; effects may be partial")))
+         (spans        (application-failure-line (format nil "scheduled occurrence: ~A" body)))
          (record       nil))
     (with-recursive-lock-held (*mission-schedule-notice-lock*)
       (with-recursive-lock-held ((mission-schedule-lock service))

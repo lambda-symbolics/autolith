@@ -149,10 +149,11 @@
     (mission--reject ':invalid "Invalid mission action or arguments."))
   (case action
     (:status
-     (application-present application (format nil "~S" (application-goal application))))
+     (application-present application
+                          (application-lisp-value-entry "mission" (application-goal application))))
     (:start
      (application-mission-start application (first arguments))
-     (application-present application "Mission installed. Use (mission :run) to begin."))
+     (application-present application "Mission installed; (mission :run) begins it."))
     (:run
      (let ((goal (application-goal application)))
        (unless (and (mission-goal-p goal) (eq (getf goal :status) ':active))
