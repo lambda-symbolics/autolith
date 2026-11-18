@@ -71,12 +71,12 @@
 (-> telemetry--enqueue (telemetry-run keyword &key (:attributes list) (:duration-ms t)) hash-table)
 (defun telemetry--enqueue (run kind &key attributes duration-ms)
   "Queue and return a projected span under the consent lock, discarding oldest on overflow."
-  (let* ((kind       (telemetry--wire-value "autolith.event.kind"
-                                           (telemetry--enum kind *telemetry-event-kinds*)))
+  (let* ((event      (telemetry--enum kind *telemetry-event-kinds*))
+         (kind       (telemetry--wire-value "autolith.event.kind" event))
          (controller (telemetry-run-controller run))
          (end        (telemetry--now))
          (duration   (if (typep duration-ms '(integer 0 86400000)) duration-ms 0))
-         (root-p     (string= kind "run"))
+         (root-p     (eq event ':run))
          (span       (json-object
                       "traceId" (telemetry-run-trace-id run)
                       "spanId" (if root-p (telemetry-run-span-id run) (telemetry--id 8))
