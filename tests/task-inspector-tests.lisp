@@ -175,11 +175,11 @@
                    "native transcript integers and explicit true/false authority reach ordinary task dispatch")))
            (terminal-ui-stop (application-ui application))))
        (let ((count (length (task-orchestrator-list-jobs orchestrator))))
-         (task-inspector-action context orchestrator "revive"
+         (task-inspector-action context orchestrator ':revive
                                 :id (session-job-execution-identifier job) :authorized-p t)
          (test-assert (= count (length (task-orchestrator-list-jobs orchestrator)))
                       "Inspector reattachment cannot duplicate a live child"))
-       (task-inspector-action context orchestrator "cancel" :id (session-job-identifier job))
+       (task-inspector-action context orchestrator ':cancel :id (session-job-identifier job))
        (test-assert (job-cancellation-requested-p job)
                     "Inspector cancellation uses the ordinary job lifecycle"))
      (let ((called-p nil)
@@ -325,7 +325,7 @@
               (snapshot-write (merge-pathnames "result.sexp" path)
                               (list :status ':success :conversation-file (namestring transcript)))
               (terminal-ui-resize (application-ui application) 90 :rows 20)
-              (let ((entry (task-inspector-action context orchestrator "transcript"
+              (let ((entry (task-inspector-action context orchestrator ':transcript
                                                    :id (session-job-execution-identifier job)
                                                    :application application :offset 2 :limit 8)))
                 (test-assert (and (terminal-styled-text-p entry)

@@ -211,20 +211,24 @@ clamped at EOF. Live children use their deterministic conversation identity."
          :status      (if (tool-result-success-p result) ':ok ':error)
          :output (tool-result-content result) :details (tool-result-details result))))
 
+(deftype task-inspector-action ()
+  "What the task inspector does with the owned jobs or with one of them."
+  '(member :list :get :transcript :cancel :revive :abandon))
+
 (-> task-inspector-action
-    (tool-context task-orchestrator string &key (:id (option string))
+    (tool-context task-orchestrator task-inspector-action &key (:id (option string))
      (:authorized-p boolean)
      (:offset integer) (:limit integer) (:application (option application)))
     (or string list))
 (defun task-inspector-action (context orchestrator action
                               &key id authorized-p (offset 0)
-                                (limit (if (equal action "list") *task-job-page-default* 4000))
+                                (limit (if (eq action ':list) *task-job-page-default* 4000))
                                 application)
   "Inspect or control owned jobs through ordinary registered job dispatch."
-  (cond
-    ((equal action "list")
+  (ecase action
+    (:list
      (task-inspector-render context orchestrator :application application :offset offset :limit limit))
-    ((equal action "transcript")
+    (:transcript
      (let ((window (task-inspector-transcript context orchestrator id :offset offset :limit limit)))
        (if application
            (application--tool-entry
@@ -247,21 +251,21 @@ clamped at EOF. Live children use their deterministic conversation identity."
                          append (application--tool-field-rows
                                  application (list (list :label "" :value line :style ':code))))))
            (task--write-readable-sexp window))))
-    ((member action '("cancel" "get") :test #'equal)
-     (let ((result (task-continuity-dispatch context "job" action :arguments (json-object "id" id))))
+    ((:cancel :get)
+     (let* ((operation (string-downcase action))
+            (result    (task-continuity-dispatch context "job" operation
+                                                 :arguments (json-object "id" id))))
        (if application
-           (task-inspector--result-entry application context :operation action :result result)
+           (task-inspector--result-entry application context :operation operation :result result)
            (tool-result-content result))))
-    ((member action '("revive" "abandon") :test #'equal)
+    ((:revive :abandon)
      (let ((result (task-continuity-dispatch
                     context "job" "continuity"
-                    :arguments (json-object "action" action "id" id
+                    :arguments (json-object "action" (string-downcase action) "id" id
                                             "authorize" (if authorized-p t (json-false))))))
        (if application
            (task-inspector--result-entry application context :operation "continuity" :result result)
-           (tool-result-content result))))
-    (t
-     (task-continuity--fail "Unknown task inspector action."))))
+           (tool-result-content result))))))
 
 (-> application-task-inspector-slash-arguments (string) list)
 (defun application-task-inspector-slash-arguments (text)
@@ -363,8 +367,7 @@ clamped at EOF. Live children use their deterministic conversation identity."
                         (agent-observer-authorize-tool observer requested-tool tool-arguments)))))
       (unless (typep tool 'task-job-tool)
         (task-continuity--fail "Task inspection is not registered in this session."))
-      (task-inspector-action context (task-job-tool-orchestrator tool)
-                             (string-downcase (symbol-name action))
+      (task-inspector-action context (task-job-tool-orchestrator tool) action
                              :id           id
                              :authorized-p (getf options :authorize)
                              :application  (and (application-ui application) application)
