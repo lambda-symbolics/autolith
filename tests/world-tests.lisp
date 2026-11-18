@@ -367,11 +367,11 @@
             (test-assert (and agent
                               (equal (participant-parent agent) (participant-identifier human))
                               (world-handle-p (participant-name agent))
-                              (equal (participant-name agent) "b-second")
+                              (equal (participant-name agent) (world-session--handle-base "b-second"))
                               (eq (participant-name-source agent) ':initial)
                               (equal (getf (participant-settings agent) :model)
                                      (conversation-model second)))
-                         "a migrated session's agent starts under its short channel ID with the human as parent")
+                         "a migrated session's agent starts under its channel's readable handle with the human as parent")
             (let ((load-world #'world-load)
                   (reads      0))
               (test-call-with-function-replacements
@@ -1032,15 +1032,15 @@
 
 (-> test-world-handles () null)
 (defun test-world-handles ()
-  "Test initial identifier handles, duplicate repair, and checked explicit renaming."
+  "Test initial handles, duplicate repair, and checked explicit renaming."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
       (let ((names (list (participant-name first-agent) (participant-name second-agent))))
-        (test-assert (and (member (conversation-identifier-display "bfirst1") names :test #'string=)
-                          (member (conversation-identifier-display "bsecnd2") names :test #'string=))
-                     "agents in one workspace have their own short identifier handles")
+        (test-assert (and (member (world-session--handle-base "bfirst1") names :test #'string=)
+                          (member (world-session--handle-base "bsecnd2") names :test #'string=))
+                     "agents in one workspace have their own readable handles")
         (world-participant-create configuration
                                   :kind      ':agent
                                   :name      (participant-name first-agent)
@@ -1083,59 +1083,42 @@
                      "all reconciled names are mentionable handles"))))
   nil)
 
-(-> test-world-generated-names () null)
-(defun test-world-generated-names ()
-  "Persist generated name provenance, resolve collisions, and guard explicit names and moves."
+(-> test-world-initial-names () null)
+(defun test-world-initial-names ()
+  "Test a new agent starts with a readable handle that only an explicit rename replaces."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
-      (let* ((first-id  (participant-identifier first-agent))
-             (second-id (participant-identifier second-agent))
-             (base      (make-string *world-handle-limit* :initial-element #\a)))
-        (world-participant-rename configuration second-id base)
-        (let ((unchanged (world-participant-rename configuration second-id "inferred-name"
-                                                  :source ':generated :expected-residence "bsecnd2")))
-          (test-assert (and (equal (participant-name unchanged) base)
-                            (eq (participant-name-source unchanged) ':explicit))
-                       "an explicitly assigned name prevents automatic naming"))
-        (let ((renamed (world-participant-rename configuration first-id base
-                                                 :source ':generated :expected-residence "bfirst1")))
-          (test-assert (and (eq (participant-name-source renamed) ':generated)
-                            (not (string-equal (participant-name renamed) base))
-                            (world-handle-p (participant-name renamed))
-                            (= (length (participant-name renamed)) *world-handle-limit*))
-                       "generated names resolve case-insensitive collisions within the handle limit")
-          (let ((replayed (world--record->participant
-                           #P"world.sexp" (world--participant-record renamed))))
-            (test-assert (and (eq (participant-name-source replayed) ':generated)
-                              (equal (participant-name replayed) (participant-name renamed)))
-                         "world records preserve inferred names and their provenance"))
-          (test-assert (equal (participant-name
-                               (world-participant-rename configuration first-id "another-name"
-                                                         :source ':generated :expected-residence "bfirst1"))
-                             (participant-name renamed))
-                       "automatic naming is applied once"))
-        (world-participant-rename configuration first-id "chosen-name")
-        (test-assert (equal (participant-name
-                             (world-participant-rename configuration first-id "inferred-name"
-                                                       :source ':generated :expected-residence "bfirst1"))
-                           "chosen-name")
-                     "a concurrent explicit rename takes precedence")
-        (let* ((destination   (world-channel-create configuration
-                                                   :owner     (participant-identifier human)
-                                                   :workspace (namestring (config :working-directory configuration))))
-               (moving        (world-participant-create configuration :kind ':agent
-                                                        :name "moving-agent" :name-source ':initial
-                                                        :home               (list :workspace (namestring (config :working-directory configuration)))))
-               (moving-id     (participant-identifier moving))
-               (old-residence (participant-residence moving)))
-          (world-participant-move configuration moving-id (channel-identifier destination))
-          (let ((unchanged (world-participant-rename configuration moving-id "new-task-name"
-                                                    :source ':generated :expected-residence old-residence)))
-            (test-assert (and (equal (participant-name unchanged) (participant-name moving))
-                              (eq (participant-name-source unchanged) ':initial))
-                         "an inference from the old channel cannot rename an agent after a move"))))))
+      (declare (ignore human))
+      (test-assert (and (eq (participant-name-source first-agent) ':initial)
+                        (world-handle-p (participant-name first-agent))
+                        (not (search "first1" (participant-name first-agent) :test #'char-equal))
+                        (string/= (participant-name first-agent) (participant-name second-agent)))
+                   "agents start with readable handles of their own, not their channel identifiers")
+      (test-assert (and (string= (world-session--handle-base "bfirst1") (world-session--handle-base "bfirst1"))
+                        (= 2 (length (uiop:split-string (world-session--handle-base "bfirst1")
+                                                        :separator "-"))))
+                   "a channel always derives the same two-word handle")
+      (let ((renamed (world-participant-rename configuration (participant-identifier first-agent)
+                                               "chosen-name")))
+        (test-assert (and (equal (participant-name renamed) "chosen-name")
+                          (eq (participant-name-source renamed) ':explicit))
+                     "an explicit rename replaces the initial handle"))
+      (test-assert (handler-case
+                       (progn
+                         (world-participant-rename configuration (participant-identifier second-agent)
+                                                   "Chosen-Name")
+                         nil)
+                     (world-error ()
+                       t))
+                   "a name another participant has, whatever its case, is refused")
+      (let ((inferred (world--record->participant
+                       #P"world.sexp"
+                       (world--participant-record
+                        (world--copy-participant second-agent :name "inferred" :name-source ':generated)))))
+        (test-assert (eq (participant-name-source inferred) ':generated)
+                     "records of an older world keep the provenance of an inferred name"))))
   nil)
 
 (-> test-world-composer-mentions () null)
@@ -2536,11 +2519,11 @@ A parent that writes @parent to its own child reaches nobody but the child."
                                      (participant-identifier root-agent)))
                        "a child channel nests under its root and belongs to the root's agent")
           (test-assert (and task-agent
-                            (string= (participant-name task-agent) "exec-one")
+                            (string= (participant-name task-agent) (world-session--handle-base "exec-one"))
                             (eq (participant-name-source task-agent) ':initial)
                             (equal (participant-parent task-agent)
                                    (participant-identifier root-agent)))
-                       "an unnamed child agent starts with its short channel ID under the root's agent")
+                       "an unnamed child agent starts with a readable handle under the root's agent")
           (test-assert (string= (participant-residence (world-human-participant world))
                                 (world-tests--inbox configuration))
                        "the person resides in the inbox")

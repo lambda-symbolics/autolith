@@ -6834,61 +6834,40 @@
 
 (-> test-application-conversation-agent-name () null)
 (defun test-application-conversation-agent-name ()
-  "Infer and persist a session title and agent handle in the same tool-free request."
+  "Test title inference names the session in one tool-free request and leaves the agent's handle alone."
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
            (provider     (make-instance
                           'rlm-inference-test-provider
                           :results
                           (mapcar (lambda (text) (rlm-inference-test-result "naming" text 10))
-                                  '("{\"title\":\"Fix shell activity visibility\",\"agent_name\":\"bad name\"}"
-                                    "{\"title\":\"Fix shell activity visibility\",\"agent_name\":\"shell-visibility\"}"
-                                    "{\"title\":\"Fix shell activity visibility\",\"agent_name\":\"shell-visibility\"}"))))
+                                  '("not JSON"
+                                    "{\"title\":\"Fix shell activity visibility\"}"))))
            (application  (make-instance 'application :configuration configuration
                                        :conversation conversation :provider provider)))
       (dolist (message '("show shell activity" "keep notices with calls" "verify the repair"))
         (conversation-append-user-message conversation message))
-      (let* ((initial    (world-session-participant configuration conversation))
-             (identifier (participant-identifier initial)))
-        (test-assert (and (equal (participant-name initial)
-                                 (conversation-identifier-display (conversation-identifier conversation)))
-                          (eq (participant-name-source initial) ':initial))
-                     "a fresh agent initially uses its case-preserving short ID")
+      (let* ((initial (world-session-participant configuration conversation))
+             (handle  (participant-name initial)))
         (application--maybe-refresh-conversation-title application)
-        (test-assert (and (eq (conversation-title-source conversation) ':initial)
-                          (eq (participant-name-source
-                               (world-participant-find (world-load configuration) identifier)) ':initial))
-                     "an invalid naming response leaves both initial values eligible for retry")
-        (test-call-with-function-replacements
-         (list (list 'world-participant-rename
-                     (lambda (&rest arguments)
-                       (declare (ignore arguments))
-                       (error 'world-error :message   "Fixture name write failed."
-                                           :operation ':rename-participant))))
-         (lambda () (application--maybe-refresh-conversation-title application)))
-        (test-assert (and (eq (conversation-title-source conversation) ':initial)
-                          (eq (participant-name-source
-                               (world-participant-find (world-load configuration) identifier)) ':initial))
-                     "a failed name write leaves the title refresh eligible for retry")
+        (test-assert (eq (conversation-title-source conversation) ':initial)
+                     "an invalid response leaves the initial title eligible for retry")
         (application--maybe-refresh-conversation-title application)
-        (let ((named (world-participant-find (world-load configuration) identifier)))
+        (let ((agent (world-participant-find (world-load configuration) (participant-identifier initial))))
           (test-assert (and (equal (conversation-title conversation) "Fix shell activity visibility")
-                            (eq (conversation-title-source conversation) ':generated)
-                            (equal (participant-name named) "shell-visibility")
-                            (eq (participant-name-source named) ':generated))
-                       "one valid inference sets the title and the persisted agent name")
-          (test-assert (eq (world-participant-designated (world-load configuration) "shell-visibility") named)
-                       "the inferred handle is immediately available to mentions"))
+                            (eq (conversation-title-source conversation) ':generated))
+                       "one valid inference sets the title")
+          (test-assert (and (equal (participant-name agent) handle)
+                            (eq (participant-name-source agent) ':initial))
+                       "the agent keeps the handle it started with"))
         (application--maybe-refresh-conversation-title application)
-        (test-assert (and (= (length (rlm-inference-test-provider-input-snapshots provider)) 3)
-                          (equal (rlm-inference-test-provider-tool-schema-counts provider) '(0 0 0))
+        (test-assert (and (= (length (rlm-inference-test-provider-input-snapshots provider)) 2)
+                          (equal (rlm-inference-test-provider-tool-schema-counts provider) '(0 0))
                           (= (conversation-user-turn-count conversation) 3))
                      "each attempt uses one tool-free inference, without adding a user turn or repeating a successful refresh")))
-    (dolist (text '("not JSON" "[]" "{\"title\":\"Too short\",\"agent_name\":\"valid-name\"}"
-                    "{\"title\":\"A valid session title\",\"agent_name\":\"parent\"}"
-                    "{\"title\":\"A valid session title\",\"agent_name\":42}"))
-      (test-assert (equal (multiple-value-list (application--conversation-title-response text)) '(nil nil))
-                   "malformed title/name pairs cannot be published")))
+    (dolist (text '("not JSON" "[]" "{\"title\":\"Too short\"}" "{\"title\":42}"))
+      (test-assert (null (application--conversation-title-response text))
+                   "a malformed title cannot be published")))
   nil)
 
 (-> test-conversation-picker () null)

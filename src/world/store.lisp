@@ -66,7 +66,7 @@ A world the follower returns again unchanged needs no second check.")
     :initform      ':explicit
     :reader        participant-name-source
     :type          (member :initial :generated :explicit)
-    :documentation "Whether the handle is an initial identifier, an inferred name, or an explicitly assigned name.")
+    :documentation "Whether the handle is the one the agent started with or an explicitly assigned name; older worlds also hold inferred ones.")
    (parent
     :initarg       :parent
     :initform      nil
@@ -1208,49 +1208,28 @@ return it; a no-op returns the existing participant without appending."
                                  (copy-list settings)
                                  (participant-settings participant))))))
 
-(-> world-participant-rename
-    (configuration string string &key (:now timestamp)
-      (:source (member :explicit :generated)) (:expected-residence (option string)))
-    participant)
-(defun world-participant-rename (configuration identifier name
-                                 &key (now (get-universal-time)) (source ':explicit) expected-residence)
-  "Name participant IDENTIFIER NAME and return it.
-
-A generated name replaces only an initial name in EXPECTED-RESIDENCE. Resolve
-its collisions in the same transaction; explicit names must already be unique."
-  (check-type source (member :explicit :generated))
-  (world--update-participant
-   configuration identifier :operation ':rename-participant :now now
-   :change (lambda (world participant)
-             (block nil
-               (when (and (eq source ':generated)
-                          (or (not (eq (participant-kind participant) ':agent))
-                              (not (eq (participant-name-source participant) ':initial))
-                              (null expected-residence)
-                              (not (equal expected-residence (participant-residence participant)))))
-                 (return nil))
-               (unless (world-handle-p name)
-                 (error 'world-error
-                        :message    (format nil "A name is up to ~D letters, digits, hyphens and underscores, so @mentions can use it."
-                                            *world-handle-limit*)
-                        :pathname   nil
-                        :operation  ':rename-participant
-                        :identifier identifier))
-               (when (world-handle-reserved-p name)
-                 (error 'world-error
-                        :message    (format nil "@~A always names the sender's parent; choose another name." name)
-                        :pathname   nil
-                        :operation  ':rename-participant
-                        :identifier identifier))
-               (let ((taken-p (world-participant-named-p world name :except identifier)))
-                 (when (and taken-p (eq source ':explicit))
-                   (error 'world-error
-                          :message    (format nil "Another participant is already named ~A." name)
-                          :pathname   nil
-                          :operation  ':rename-participant
-                          :identifier identifier))
-                 (list :name        (if taken-p (world-unique-handle world name) name)
-                       :name-source source))))))
+(-> world-participant-rename (configuration string string &key (:now timestamp)) participant)
+(defun world-participant-rename (configuration identifier name &key (now (get-universal-time)))
+  "Name participant IDENTIFIER NAME, which no other participant may have, and return it."
+  (flet ((refuse (control &rest arguments)
+           (error 'world-error
+                  :message    (apply #'format nil control arguments)
+                  :pathname   nil
+                  :operation  ':rename-participant
+                  :identifier identifier)))
+    (world--update-participant
+     configuration identifier :operation ':rename-participant :now now
+     :change (lambda (world participant)
+               (declare (ignore participant))
+               (cond
+                 ((not (world-handle-p name))
+                  (refuse "A name is up to ~D letters, digits, hyphens and underscores, so @mentions can use it."
+                          *world-handle-limit*))
+                 ((world-handle-reserved-p name)
+                  (refuse "@~A always names the sender's parent; choose another name." name))
+                 ((world-participant-named-p world name :except identifier)
+                  (refuse "Another participant is already named ~A." name)))
+               (list :name name :name-source ':explicit)))))
 
 (-> world-channel-update
     (configuration string &key (:title (option string)) (:workspace (option string))

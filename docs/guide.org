@@ -1478,10 +1478,11 @@ and transfer failures are 1. Both command groups provide =--help=.
 ** Session titles and resume
 
 A session gets an immediate local title from its first prompt or image. Its agent
-initially uses the short channel ID as its name. After the third actual user turn,
-Autolith may ask the active model for a concise title and a descriptive agent name
-in one inference. Both are saved durably. Use =(rename "NAME")= to assign an
-explicit agent name; automatic naming only replaces the initial ID-based name.
+starts with a readable two-word name, such as =quiet-otter=, and keeps it: only
+=(rename "NAME")= changes an agent's name, so a mention never goes stale while a
+conversation is underway. After the third actual user turn, Autolith may ask the
+active model for a concise title, which is saved durably. =(channel-id)= shows
+the ID of the channel the terminal is in, and returns it when called from Lisp.
 
 Provider-generated refreshes are enabled by default. Use =(titles)=, =(titles t)=,
 or =(titles nil)= to inspect or change the durable global preference.

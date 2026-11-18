@@ -23,7 +23,21 @@
 It is fixed, so every migration gives the person the same identifier.")
 
 (defparameter *world-agent-name* "autolith"
-  "The fallback handle base when an agent's short identifier yields no handle.")
+  "The name an agent without a world participant goes by.")
+
+(defparameter *world-handle-adjectives*
+  '("amber" "bold" "brave" "bright" "calm" "clever" "cosmic" "crisp"
+    "eager" "fair" "gentle" "glad" "golden" "keen" "kind" "lively"
+    "lucky" "mellow" "merry" "nimble" "noble" "patient" "proud" "quick"
+    "quiet" "rapid" "sharp" "silent" "steady" "swift" "vivid" "witty")
+  "The first words of the handles new agents start with.")
+
+(defparameter *world-handle-animals*
+  '("badger" "beaver" "bison" "condor" "crane" "falcon" "ferret" "finch"
+    "gecko" "heron" "ibex" "jackal" "kestrel" "lemur" "lynx" "marten"
+    "osprey" "otter" "owl" "panda" "puffin" "raven" "robin" "seal"
+    "sparrow" "stoat" "tapir" "tern" "vole" "wolf" "wombat" "wren")
+  "The second words of the handles new agents start with.")
 
 (defparameter *world-task-name* "agent"
   "The handle base of a child agent whose conversation records no name of its own.")
@@ -722,18 +736,24 @@ parent is never left behind its retired children."
 
 (-> world-session--handle-base (string) string)
 (defun world-session--handle-base (identifier)
-  "Return the short channel IDENTIFIER as an agent's initial handle."
-  (let ((display (conversation-identifier-display identifier)))
-    (if (world-handle-p display)
-        display
-        (world-handle-base display :fallback *world-agent-name*))))
+  "Return the readable handle the agent of channel IDENTIFIER starts with, the same on every call.
+
+An agent keeps the handle until someone renames it, so a mention never goes
+stale while a conversation is underway."
+  (let ((hash (reduce (lambda (hash character)
+                        (mod (+ (* hash 31) (char-code character)) 1000003))
+                      identifier :initial-value 7)))
+    (multiple-value-bind (rest adjective) (floor hash (length *world-handle-adjectives*))
+      (format nil "~A-~A"
+              (nth adjective *world-handle-adjectives*)
+              (nth (mod rest (length *world-handle-animals*)) *world-handle-animals*)))))
 
 (-> world-session--handle-records (world timestamp) list)
 (defun world-session--handle-records (world now)
   "Return the records renaming WORLD's agents whose names another participant also has.
 
-The oldest participant keeps a shared name; each later agent receives its short
-identifier as an initial handle, so every participant can be mentioned by name."
+The oldest participant keeps a shared name; each later agent receives a fresh
+initial handle, so every participant can be mentioned by name."
   (let ((seen    nil)
         (records nil))
     (dolist (participant (sort (copy-list (world-participants world)) #'<
