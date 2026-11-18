@@ -1163,8 +1163,8 @@ a crash may leave one that a later lease acquisition can reuse safely."
   "Count RECORD in CONVERSATION's messages and channel mentions when it is one.
 
 User input, channel deliveries and assistant replies are messages; tool
-activity is not. A channel delivery's request names the participants it
-mentions."
+activity is not. A channel delivery's request carries the message, which names
+the participants it mentions."
   (let* ((properties (rest record))
          (user-p     (and (eq (first record) ':message)
                           (eq (getf properties :role) ':user)))
@@ -1174,10 +1174,9 @@ mentions."
                    (stringp (getf properties :wire-json))
                    (search "\"assistant\"" (getf properties :wire-json))))
       (incf (conversation-message-count conversation)))
-    (when (equal (getf request :operation) "channel")
-      (dolist (mention (getf (getf request :message) :mentions))
-        (when (stringp mention)
-          (incf (gethash mention (conversation-channel-mention-counts conversation) 0))))))
+    (dolist (mention (getf (getf request :message) :mentions))
+      (when (stringp mention)
+        (incf (gethash mention (conversation-channel-mention-counts conversation) 0)))))
   nil)
 
 (-> conversation--note-activity (conversation list) null)
