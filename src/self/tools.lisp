@@ -384,44 +384,67 @@ before that form is read."
                        (multiple-value-list (eval (self-read-form source))))
         finally (return (values-list result))))
 
+(-> self-evaluate-sources
+    (list &key (:restart-name (option string)) (:restart-value-source (option string)))
+    string)
+(defun self-evaluate-sources (sources &key restart-name restart-value-source)
+  "Evaluate SOURCES in order in this image and return the rendered output and values.
+
+A failure names the failing form when several ran and keeps its restart
+choices, so the caller may retry with RESTART-NAME and RESTART-VALUE-SOURCE."
+  (let ((position 0))
+    (handler-case
+        (multiple-value-bind (result-values output)
+            (self-capture-evaluation
+             (lambda ()
+               (self-call-with-restarts
+                (lambda ()
+                  (self-evaluate-forms sources (lambda (index) (setf position index))))
+                :restart-name         restart-name
+                :restart-value-source restart-value-source)))
+          (self-evaluation-result result-values output))
+      (error (condition)
+        (error (self--positioned-failure condition position (length sources)))))))
+
+(-> self--evaluate-in-active-image
+    (configuration list &key (:restart-name (option string))
+                   (:restart-value-source (option string)))
+    string)
+(defun self--evaluate-in-active-image (configuration sources &key restart-name restart-value-source)
+  "Evaluate SOURCES in the active image, journaling the attempt and its outcome."
+  (with-live-mutation
+    (let ((source (format nil "~{~A~^~%~}" sources)))
+      (mutation-journal-append
+       configuration
+       (list :mutation :kind :eval :proposed source :result ':pending))
+      (handler-case
+          (prog1 (self-evaluate-sources sources
+                                        :restart-name         restart-name
+                                        :restart-value-source restart-value-source)
+            (mutation-journal-append
+             configuration
+             (list :mutation :kind :eval :proposed source :result ':installed)))
+        (error (condition)
+          (mutation-journal-append
+           configuration
+           (list :mutation
+                 :kind      :eval
+                 :proposed  source
+                 :result    ':failed
+                 :condition (princ-to-string condition)))
+          (error condition))))))
+
 (defmethod tool-execute ((tool self-eval-tool)
                          (context tool-context)
                          (arguments hash-table))
   "Evaluate exploratory forms in order in CONTEXT's active image and journal them."
   (declare (ignore tool))
-  (with-live-mutation
-    (let* ((sources              (tool-forms-argument arguments "self.eval"))
-           (source               (format nil "~{~A~^~%~}" sources))
-           (restart-name         (tool-argument arguments "restart"))
-           (restart-value-source (tool-argument arguments "restart-value"))
-           (configuration        (tool-context-configuration context))
-           (position             0))
-      (mutation-journal-append
-       configuration
-       (list :mutation :kind :eval :proposed source :result ':pending))
-      (handler-case
-          (multiple-value-bind (result-values output)
-              (self-capture-evaluation
-               (lambda ()
-                 (self-call-with-restarts
-                  (lambda ()
-                    (self-evaluate-forms sources
-                                         (lambda (index) (setf position index))))
-                  :restart-name         restart-name
-                  :restart-value-source restart-value-source)))
-            (mutation-journal-append
-             configuration
-             (list :mutation :kind :eval :proposed source :result ':installed))
-            (tool-success (self-evaluation-result result-values output)))
-        (error (condition)
-          (mutation-journal-append
-           configuration
-           (list :mutation
-                 :kind :eval
-                 :proposed source
-                 :result    ':failed
-                 :condition (princ-to-string condition)))
-          (error (self--positioned-failure condition position (length sources))))))))
+  (tool-success
+   (self--evaluate-in-active-image
+    (tool-context-configuration context)
+    (tool-forms-argument arguments "self.eval")
+    :restart-name         (tool-argument arguments "restart")
+    :restart-value-source (tool-argument arguments "restart-value"))))
 
 (-> self--positioned-failure (error integer integer) error)
 (defun self--positioned-failure (condition position count)
