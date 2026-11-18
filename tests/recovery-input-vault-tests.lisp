@@ -433,7 +433,7 @@
            (application-command application "/vault")
            (let ((output (recording-terminal-output terminal)))
              (test-assert
-              (and (search "Recovery input vault" output)
+              (and (search "recovery input vault" output)
                    (search "old follow-up" output)
                    (search "/status" output))
               "/vault lists chronological captures with bounded previews"))
@@ -891,7 +891,7 @@
            (recording-terminal-reset terminal)
            (application-command application "/vault-discard")
            (test-assert
-            (and (search "Discarded" (recording-terminal-output terminal))
+            (and (search "discarded" (recording-terminal-output terminal))
                  (not (probe-file current-vault))
                  (not (probe-file pending-pathname))
                  (probe-file other-vault)
@@ -1366,7 +1366,7 @@
                   (setf vault-controls-admitted-p
                         (and (null (application-input-controller--state
                                     controller :work-items))
-                             (search "Discarded this conversation's recovered input."
+                             (search "discarded this conversation's recovered input"
                                      (recording-terminal-output terminal))
                              (null (application-recovery-input-vault-failure
                                     application))

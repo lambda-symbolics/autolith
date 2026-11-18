@@ -996,19 +996,19 @@ The caller must hold CONTROLLER's lock."
 (defun application-recovery-input-vault--actions (&key (restore-p t))
   "Return semantic vault actions, offering restore only for readable captures."
   (append
-   (list (terminal-span ':dim "Use "))
+   (list (terminal-span ':dim "  "))
    (when restore-p
      (list (terminal-span ':code "(vault-restore)")
-           (terminal-span ':dim " to restore, or ")))
+           (terminal-span ':dim " restores, ")))
    (list (terminal-span ':code "(vault-discard)")
-         (terminal-span ':dim " to discard."))))
+         (terminal-span ':dim " discards"))))
 
 (-> application-recovery-input-vault-entry (application list) list)
 (defun application-recovery-input-vault-entry (application captures)
   "Return chronological CAPTURES and storage failures as semantic terminal spans."
   (let ((failure (application-recovery-input-vault-failure application)))
     (append
-     (list (terminal-span ':brand (format nil "Recovery input vault~%")))
+     (list (terminal-span ':brand (format nil "# recovery input vault~%")))
      (application--entry-fields
       (list (list "conversation" ':code
                   (conversation-identifier (application-conversation application)))
@@ -1030,7 +1030,7 @@ The caller must hold CONTROLLER's lock."
        (application--entry-fields (list (list "storage warning" ':failure failure))))
      (if (or captures failure)
         (application-recovery-input-vault--actions :restore-p (not (null captures)))
-        (list (terminal-span ':hint "No recovered input is vaulted for this conversation."))))))
+        (application-hint-line "no recovered input is vaulted for this conversation")))))
 
 (-> application-recovery-input-vault-present (application) null)
 (defun application-recovery-input-vault-present (application)
@@ -1044,8 +1044,8 @@ The caller must hold CONTROLLER's lock."
       (setf (application-recovery-input-vault-failure application) condition)
       (application-present
        application
-       (append (list (terminal-span ':failure
-                                    (format nil "Could not read vault: ~A~%" condition)))
+       (append (application-failure-line (format nil "could not read vault: ~A" condition))
+               (list (terminal-span ':plain (string #\Newline)))
                (application-recovery-input-vault--actions :restore-p nil)))))
   nil)
 
@@ -1165,11 +1165,10 @@ The caller must hold CONTROLLER's lock."
             (application-input-controller-vault-restore controller)))
       (application-present
        application
-       (list (terminal-span
-              (if (plusp count) ':success ':hint)
-              (if (plusp count)
-                  (format nil "Restored ~D recovered input~:P before newer queued work." count)
-                  "No recovered input was available to restore."))))))
+       (if (plusp count)
+           (application-success-line
+            (format nil "restored ~D recovered input~:P before newer queued work" count))
+           (application-hint-line "no recovered input was available to restore")))))
   ':continue)
 
 (define-application-command application--builtin-vault-discard-command
@@ -1190,5 +1189,5 @@ The caller must hold CONTROLLER's lock."
     (application-input-controller-vault-discard controller)
     (application-present
      application
-     (list (terminal-span ':success "Discarded this conversation's recovered input."))))
+     (application-success-line "discarded this conversation's recovered input")))
   ':continue)
