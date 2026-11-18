@@ -52,7 +52,7 @@ let
     "clinker-transcript" "colordiff" "colorlisp" "daphne" "defingerprinter" "fetch-gist"
     "idsmall" "image-daemon" "lambda-debugger" "lisp-em" "llh2" "ls-compat" "ls-flock" "mcparen"
     "org-templater" "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config"
-    "sexp-store" "sophisticated-clipboard" "structlisp" "surgeon" "yolokuva"
+    "sexp-store" "sito" "sophisticated-clipboard" "structlisp" "surgeon" "yolokuva"
   ];
   qlotSourcesWithoutBuildMetadata =
     lib.subtractLists qlotLibrariesWithBuildMetadata (builtins.attrNames qlotGitSources);
@@ -478,6 +478,12 @@ let
     lispLibs = with lispPackages; [ bordeaux-threads ];
   };
 
+  sito = pkgs.sbcl.buildASDFSystem {
+    pname = "sito";
+    version = qlotVersion "sito";
+    src = qlotSource "sito";
+  };
+
   sexpConfig = pkgs.sbcl.buildASDFSystem {
     pname = "sexp-config";
     version = qlotVersion "sexp-config";
@@ -658,6 +664,7 @@ let
       sbclGenerations
       sbclWorkers
       setinka
+      sito
       sexpConfig
       sexpStore
       sophisticatedClipboard

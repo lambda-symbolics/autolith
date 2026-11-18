@@ -71,6 +71,7 @@
                             #:quri
                             #:serapeum
                             #:setinka
+                            #:sito
                             #:sb-posix
                             #:sb-bsd-sockets
                             #:sbcl-generations

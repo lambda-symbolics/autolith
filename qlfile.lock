@@ -80,8 +80,8 @@
   :version "git-d7a92f9ed0cbae10f07b1b9a9c3c5cc179798748"))
 ("clinedi" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/clinedi.git" :ref "f9ffad900220b9c64afb36e356a6101b8fdb714d")
-  :version "git-f9ffad900220b9c64afb36e356a6101b8fdb714d"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/clinedi.git" :ref "a36459f8f3e9fb2c6e3b8d74c971eeb5ee60432f")
+  :version "git-a36459f8f3e9fb2c6e3b8d74c971eeb5ee60432f"))
 ("clermaid" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/clermaid.git" :ref "7a4497aff7514134dd69ab28b7d07c06335b7852")
@@ -222,6 +222,10 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/argo.git" :ref "ff1d0643973278e3b282825fbdc604c1256070a2")
   :version "git-ff1d0643973278e3b282825fbdc604c1256070a2"))
+("sito" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/lambda-symbolics/sito.git" :ref "2147f6fcaaa470c6631ca9037728d77d16284226")
+  :version "git-2147f6fcaaa470c6631ca9037728d77d16284226"))
 ("setinka" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/setinka.git" :ref "ce63dce34287b20ad81f08f6d208e6e18bc3163f")
