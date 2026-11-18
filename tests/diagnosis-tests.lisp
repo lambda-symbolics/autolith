@@ -562,7 +562,7 @@ With WIRE-NAMES-P, probe tools have separate canonical and display names."
            (world       (diagnosis-tests--world-create configuration "stale-endpoint")))
        (flet ((text (entry)
                 (memory-source-tests--text entry)))
-         (test-assert (search "No diagnoses yet." (text (application-diagnoses-entry application)))
+         (test-assert (search "no diagnoses yet" (text (application-diagnoses-entry application)))
                       "(diagnoses) says when there are none")
          (diagnosis-tests--diagnose configuration world (diagnosis-tests--definition))
          (let ((listing (text (application-diagnoses-entry application))))

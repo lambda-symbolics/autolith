@@ -1379,7 +1379,7 @@
               (test-assert (and (search "~ leave for review at 2026-10-22 13:20 UTC" changes)
                                 (search "was leave for review at 2026-10-22 12:20 UTC" changes))
                            "(what-changed) shows the departure moving with its cause"))
-            (test-assert (search "Nothing changed since"
+            (test-assert (search "nothing changed since"
                                  (text (application-knowledge-changes-entry application)))
                          "(what-changed) reports each change once")
             (let* ((view      (application-knowledge--view application))
@@ -1408,7 +1408,7 @@
                                (text (application-knowledge-rule-transition-entry
                                       application "departure" ':admit)))
                        "(admit-rule) admits it again")
-          (test-assert (search "No rule \"nothing\" exists"
+          (test-assert (search "no rule \"nothing\" exists"
                                (text (application-knowledge-rule-transition-entry
                                       application "nothing" ':admit)))
                        "an unknown rule points to (rules)")))))

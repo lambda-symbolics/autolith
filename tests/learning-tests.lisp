@@ -1091,7 +1091,7 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                                                      (json-object "sent" t)))
       (flet ((text (entry)
                (memory-source-tests--text entry)))
-        (test-assert (search "No procedures are learned yet"
+        (test-assert (search "no procedures are learned yet"
                              (text (application-procedures-entry application)))
                      "(procedures) explains when procedures are learned")
         (dolist (quarter '("q1" "q2" "q3"))
@@ -1152,7 +1152,7 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
                              (text (application-procedure-transition-entry
                                     application "make-sales-report" ':admit)))
                      "(admit-procedure) admits it again")
-        (test-assert (search "No procedure is named missing"
+        (test-assert (search "no procedure is named missing"
                              (text (application-procedure-transition-entry
                                     application "missing" ':admit)))
                      "an unknown procedure points to (procedures)")

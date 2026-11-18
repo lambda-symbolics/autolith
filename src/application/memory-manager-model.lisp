@@ -143,16 +143,15 @@
 (-> application-memory-manager-detail (application memory-manager-item) list)
 (defun application-memory-manager-detail (application item)
   "Explain ITEM with the existing evidence and dependent-impact presentation."
-  (let ((result (ecase (memory-manager-item-kind item)
-                  (:note
-                   (application-memory-entry application (memory-manager-item-identifier item)))
-                  (:fact
-                   (let* ((view (application-knowledge--view application))
-                          (node (knowledge-view-node view (memory-manager-item-identifier item))))
-                     (if node
-                         (application-knowledge-fact-entry application view node)
-                         (application-memory--missing (memory-manager-item-identifier item))))))))
-    (if (stringp result) (list (terminal-span ':notice result)) result)))
+  (ecase (memory-manager-item-kind item)
+    (:note
+     (application-memory-entry application (memory-manager-item-identifier item)))
+    (:fact
+     (let* ((view (application-knowledge--view application))
+            (node (knowledge-view-node view (memory-manager-item-identifier item))))
+       (if node
+           (application-knowledge-fact-entry application view node)
+           (application-memory--missing (memory-manager-item-identifier item)))))))
 
 (-> application-memory-manager-editable-p (memory-manager-item) boolean)
 (defun application-memory-manager-editable-p (item)

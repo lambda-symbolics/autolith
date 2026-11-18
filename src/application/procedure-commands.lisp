@@ -17,9 +17,10 @@
          (entries       (knowledge-base-procedures (knowledge-base-read configuration)
                                                    (knowledge--workspace configuration))))
     (if (null entries)
-        (list (terminal-span ':hint "No procedures are learned yet. Autolith learns one when three turns make the same tool calls."))
+        (application-hint-line
+         "no procedures are learned yet; Autolith learns one when three turns make the same tool calls")
         (append
-         (list (terminal-span ':brand "procedures")
+         (list (terminal-span ':brand "# procedures")
                (terminal-span ':dim (format nil "  ~D~%" (length entries))))
          (loop for entry in entries
                append (application-procedures--entry-lines configuration entry))))))
@@ -100,7 +101,7 @@
 
 ;;; (run-procedure), (admit-procedure), (retire-procedure)
 
-(-> application-procedure-run-entry (application string list) (or string list))
+(-> application-procedure-run-entry (application string list) list)
 (defun application-procedure-run-entry (application identifier arguments)
   "Run procedure IDENTIFIER with ARGUMENTS, alternating names and values, and show each call."
   (handler-case
@@ -109,11 +110,11 @@
                                         :parameters parameters :caller ':user))
              (report     (procedure-run-report identifier run)))
         (list (if (eq (getf run :status) ':ok)
-                  (terminal-span ':success "ran  ")
-                  (terminal-span ':failure "stopped  "))
-              (terminal-span ':plain (format nil "~A~%" (sanitize-text report)))))
+                  (terminal-span ':success "✓ ran  ")
+                  (terminal-span ':failure "! stopped  "))
+              (terminal-span ':dim (format nil "~A~%" (sanitize-text report)))))
     (knowledge-error (condition)
-      (autolith-error-message condition))))
+      (application-failure-line (autolith-error-message condition)))))
 
 (-> application-procedures--parameters (list) list)
 (defun application-procedures--parameters (arguments)
@@ -124,21 +125,22 @@
   (loop for (name value) on arguments by (partial #'nthcdr 2)
         collect (cons (string-downcase (string name)) value)))
 
-(-> application-procedure-transition-entry (application string keyword) (or string list))
+(-> application-procedure-transition-entry (application string keyword) list)
 (defun application-procedure-transition-entry (application identifier kind)
   "Admit or retire procedure IDENTIFIER, as KIND says, and confirm what changed."
   (let ((configuration (application-configuration application)))
     (handler-case
         (if (eq kind ':admit)
             (let ((version (procedure-admit configuration identifier)))
-              (list (terminal-span ':success "admitted  ")
+              (list (terminal-span ':success "✓ admitted  ")
                     (terminal-span ':strong (format nil "~A v~D~%" identifier version))))
             (progn
               (procedure-retire configuration identifier)
-              (list (terminal-span ':success "retired  ")
+              (list (terminal-span ':success "✓ retired  ")
                     (terminal-span ':strong (format nil "~A~%" identifier)))))
       (knowledge-error (condition)
-        (format nil "~A Run (procedures) to list them." (autolith-error-message condition))))))
+        (application-failure-line
+         (format nil "~A (procedures) lists them." (autolith-error-message condition)))))))
 
 
 ;;;; -- Command Definitions --
@@ -168,7 +170,7 @@
    application
    (if identifier
        (application-procedure-run-entry application identifier arguments)
-       "Usage: (run-procedure \"ID\" :NAME VALUE ...). Run (procedures) to list them."))
+       (application-failure-line "usage: (run-procedure \"ID\" :NAME VALUE ...). Run (procedures) to list them.")))
   ':continue)
 
 (define-application-command application--builtin-admit-procedure-command
@@ -184,7 +186,7 @@
    application
    (if identifier
        (application-procedure-transition-entry application identifier ':admit)
-       "Usage: (admit-procedure \"ID\"). Run (procedures) to list them."))
+       (application-failure-line "usage: (admit-procedure \"ID\"). Run (procedures) to list them.")))
   ':continue)
 
 (define-application-command application--builtin-retire-procedure-command
@@ -200,5 +202,5 @@
    application
    (if identifier
        (application-procedure-transition-entry application identifier ':retire)
-       "Usage: (retire-procedure \"ID\"). Run (procedures) to list them."))
+       (application-failure-line "usage: (retire-procedure \"ID\"). Run (procedures) to list them.")))
   ':continue)

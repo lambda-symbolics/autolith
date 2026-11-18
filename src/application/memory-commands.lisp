@@ -95,22 +95,22 @@
 (defun application-memory--ambiguous (identifier matches)
   "Return the notice for an IDENTIFIER prefix shared by MATCHES."
   (append
-   (list (terminal-span
-          ':failure
-          (format nil "Memory ID ~A is ambiguous. Enter more characters.~%"
-                  (sanitize-text identifier :single-line-p t))))
+   (application-failure-line
+    (format nil "memory ID ~A is ambiguous; enter more characters"
+            (sanitize-text identifier :single-line-p t)))
    (loop for match in matches
          append (list (terminal-span
-                       ':plain
-                       (format nil "  ~S (memory ~S)~%"
+                       ':dim
+                       (format nil "~%  ~S (memory ~S)"
                                (application-memory--title match)
                                (memory--disambiguation-reference match matches)))))))
 
-(-> application-memory--missing (string) string)
+(-> application-memory--missing (string) list)
 (defun application-memory--missing (identifier)
-  "Return the notice for an IDENTIFIER matching no relevant memory."
-  (format nil "No memory matches ~S. Run (memories) to list them."
-          (sanitize-text identifier :single-line-p t)))
+  "Return the failure for an IDENTIFIER matching no relevant memory."
+  (application-failure-line
+   (format nil "no memory matches ~S; (memories) lists them"
+           (sanitize-text identifier :single-line-p t))))
 
 
 ;;; (memories)
@@ -156,11 +156,10 @@ QUERY narrows the listing with the same lexical ranking recall uses."
                                                              :memories-p (and memories t))))
     (cond
       ((and (null memories) (null facts))
-       (list (terminal-span
-              ':hint
-              (if (non-empty-string-p query)
-                  (format nil "No memories match ~S." (sanitize-text query :single-line-p t))
-                  "No memories are saved for this workspace yet. Ask Autolith to remember something."))))
+       (application-hint-line
+        (if (non-empty-string-p query)
+            (format nil "no memories match ~S" (sanitize-text query :single-line-p t))
+            "no memories are saved for this workspace yet; ask Autolith to remember something")))
       ((null memories)
        facts)
       (t
@@ -171,7 +170,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
                            #'<
                            :key #'application-memory--status-rank)))
          (append
-          (list (terminal-span ':brand "memories")
+          (list (terminal-span ':brand "# memories")
                 (terminal-span
                  ':dim
                  (format nil "  ~D~@[ matching ~S~]~[~:; · ~:*~D stale~]~[~:; · ~:*~D unverified~]~%"
@@ -303,7 +302,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
                                                        :indent (+ indent 2)
                                                        :depth  (1+ depth))))))))
 
-(-> application-memory-entry (application string) (or string list))
+(-> application-memory-entry (application string) list)
 (defun application-memory-entry (application identifier)
   "Return one memory with its evidence, premises, and dependents."
   (let ((configuration (application-configuration application)))
@@ -318,7 +317,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
                              assessor (memory-identifier memory))))
            (append
             (list
-             (terminal-span ':brand "memory  ")
+             (terminal-span ':brand "# memory  ")
              (terminal-span (application-memory--status-style state)
                             (format nil "~(~A~)~@[ · ~A~]~%"
                                     state
@@ -372,10 +371,9 @@ QUERY narrows the listing with the same lexical ranking recall uses."
                 (application-knowledge-fact-entry application view node))
                (:ambiguous
                 (append
-                 (list (terminal-span
-                        ':failure
-                        (format nil "Fact ID ~A is ambiguous. Enter more characters.~%"
-                                (sanitize-text identifier :single-line-p t))))
+                 (application-failure-line
+                  (format nil "fact ID ~A is ambiguous; enter more characters~%"
+                          (sanitize-text identifier :single-line-p t)))
                  (loop for match in fact-matches
                        append (list (terminal-span
                                      ':plain
@@ -389,7 +387,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
 
 ;;; (forget "ID")
 
-(-> application-memory-forget-entry (application string) (or string list))
+(-> application-memory-forget-entry (application string) list)
 (defun application-memory-forget-entry (application identifier)
   "Forget the memory selected by IDENTIFIER and name the memories that relied on it."
   (let ((configuration (application-configuration application)))
@@ -405,7 +403,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
                             (memory-assessor-create configuration)
                             (memory-identifier memory))))
            (append
-            (list (terminal-span ':success "forgot  ")
+            (list (terminal-span ':success "✓ forgot  ")
                   (terminal-span ':strong
                                  (format nil "~A~%" (application-memory--title memory))))
             (when dependents
@@ -421,7 +419,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
         (otherwise
          (application-knowledge-forget-entry application identifier))))))
 
-(-> application-knowledge-forget-entry (application string) (or string list))
+(-> application-knowledge-forget-entry (application string) list)
 (defun application-knowledge-forget-entry (application identifier)
   "Retract the fact selected by IDENTIFIER and name what stopped holding with it."
   (let ((configuration (application-configuration application))
@@ -444,7 +442,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
                                 :key  (lambda (change) (getf change :claim))
                                 :test #'string=)))
               (append
-               (list (terminal-span ':success "forgot  ")
+               (list (terminal-span ':success "✓ forgot  ")
                      (terminal-span ':strong
                                     (format nil "~A~%" (application-knowledge--text node))))
                (when lost
@@ -504,7 +502,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
          application
          (if identifier
              (application-memory-entry application identifier)
-             "Usage: (memory \"ID\"). Run (memories) to list memories."))))
+             (application-failure-line "usage: (memory \"ID\"); (memories) lists memories")))))
   ':continue)
 
 (define-application-command application--builtin-forget-command
@@ -520,5 +518,5 @@ QUERY narrows the listing with the same lexical ranking recall uses."
    application
    (if identifier
        (application-memory-forget-entry application identifier)
-       "Usage: (forget \"ID\"). Run (memories) to list memories."))
+       (application-failure-line "usage: (forget \"ID\"); (memories) lists memories")))
   ':continue)

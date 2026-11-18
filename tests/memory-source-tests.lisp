@@ -658,7 +658,7 @@
              (application  (make-instance 'application
                                           :configuration configuration
                                           :conversation  conversation)))
-        (test-assert (search "No memories are saved"
+        (test-assert (search "no memories are saved"
                              (memory-source-tests--text
                               (application-memories-entry application)))
                      "an empty listing says how memories come to exist")
@@ -758,7 +758,7 @@
                                 (application-memory-entry
                                  application (memory-identifier style))))
                        "a memory without evidence says so")
-          (test-assert (search "No memory matches"
+          (test-assert (search "no memory matches"
                                (memory-source-tests--text
                                 (application-memory-entry application "9999")))
                        "an unknown ID points to (memories)")

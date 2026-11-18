@@ -149,7 +149,7 @@ MEMORIES-P separates it from a memory listing above it."
          (shown (subseq nodes 0 (min (length nodes) *knowledge-command-fact-limit*))))
     (when nodes
       (append
-       (list (terminal-span ':brand (format nil "~:[~;~%~]facts" memories-p))
+       (list (terminal-span ':brand (format nil "~:[~;~%~]# facts" memories-p))
              (terminal-span
               ':dim
               (format nil "  ~D~[~:; · ~:*~D conflicted~]~[~:; · ~:*~D no longer holding~]~%"
@@ -246,7 +246,7 @@ MEMORIES-P separates it from a memory listing above it."
                          (memory-list (application-configuration application)))))
     (append
      (list
-      (terminal-span ':brand "fact  ")
+      (terminal-span ':brand "# fact  ")
       (terminal-span (case status
                        (:supported
                         ':success)
@@ -314,17 +314,15 @@ matches of an ambiguous prefix."
         (knowledge-viewer-changes (application-configuration application) "user" view)
       (cond
         (first-p
-         (list (terminal-span
-                ':hint
-                 (format nil "~D fact~:P hold now. (what-changed) will report changes from here on."
-                        (length (knowledge-view-snapshot view))))))
+         (application-hint-line
+          (format nil "~D fact~:P hold now; (what-changed) reports changes from here on"
+                  (length (knowledge-view-snapshot view)))))
         ((null changes)
-         (list (terminal-span ':hint
-                              (format nil "Nothing changed since ~A."
-                                      (memory--timestamp-string previous)))))
+         (application-hint-line
+          (format nil "nothing changed since ~A" (memory--timestamp-string previous))))
         (t
          (append
-          (list (terminal-span ':brand "what changed")
+          (list (terminal-span ':brand "# what changed")
                 (terminal-span ':dim (format nil "  since ~A~%"
                                              (memory--timestamp-string previous))))
           (loop for change in changes
@@ -373,9 +371,9 @@ matches of an ambiguous prefix."
                                                                        configuration))
                               #'string< :key (lambda (entry) (getf entry :id)))))
     (if (null entries)
-        (list (terminal-span ':hint "No rules are defined. Autolith proposes rules when a derivation recurs."))
+        (application-hint-line "no rules are defined; Autolith proposes rules when a derivation recurs")
         (append
-         (list (terminal-span ':brand "rules")
+         (list (terminal-span ':brand "# rules")
                (terminal-span ':dim (format nil "  ~D~%" (length entries))))
          (loop for entry in entries
                for latest = (first (last (getf entry :versions)))
@@ -400,24 +398,24 @@ matches of an ambiguous prefix."
                                                (subseq command (+ 2 (search ": " command))))
                                              :single-line-p t)))))))))
 
-(-> application-knowledge-rule-transition-entry (application string keyword) (or string list))
+(-> application-knowledge-rule-transition-entry (application string keyword) list)
 (defun application-knowledge-rule-transition-entry (application identifier kind)
   "Admit or retire rule IDENTIFIER, as KIND says, and confirm what changed."
   (let* ((configuration (application-configuration application))
          (entry         (knowledge-base-rule (knowledge-base-read configuration) identifier
                                              :workspace (knowledge--workspace configuration))))
     (if (null entry)
-        (format nil "No rule ~S exists. Run (rules) to list them." identifier)
+        (application-failure-line (format nil "no rule ~S exists; (rules) lists them" identifier))
         (handler-case
             (let ((version (if (eq kind ':admit)
                                (knowledge-admit-rule configuration identifier
                                                      :scope (getf entry :scope) :by "user")
                                (knowledge-retire-rule configuration identifier
                                                       :scope (getf entry :scope)))))
-              (list (terminal-span ':success (if (eq kind ':admit) "admitted  " "retired  "))
+              (list (terminal-span ':success (if (eq kind ':admit) "✓ admitted  " "✓ retired  "))
                     (terminal-span ':strong (format nil "~A v~D~%" identifier version))))
           (knowledge-error (condition)
-            (autolith-error-message condition))))))
+            (application-failure-line (autolith-error-message condition)))))))
 
 
 ;;;; -- Command Definitions --
@@ -459,7 +457,7 @@ matches of an ambiguous prefix."
    application
    (if identifier
        (application-knowledge-rule-transition-entry application identifier ':admit)
-       "Usage: (admit-rule \"ID\"). Run (rules) to list rules."))
+       (application-failure-line "usage: (admit-rule \"ID\"); (rules) lists rules")))
   ':continue)
 
 (define-application-command application--builtin-retire-rule-command
@@ -475,7 +473,7 @@ matches of an ambiguous prefix."
    application
    (if identifier
        (application-knowledge-rule-transition-entry application identifier ':retire)
-       "Usage: (retire-rule \"ID\"). Run (rules) to list rules."))
+       (application-failure-line "usage: (retire-rule \"ID\"); (rules) lists rules")))
   ':continue)
 
 (define-application-command application--builtin-reset-contracts-command

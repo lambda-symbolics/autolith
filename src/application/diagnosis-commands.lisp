@@ -11,10 +11,11 @@
          (saved         (knowledge-base-diagnoses base :workspace workspace))
          (cases         (knowledge-base-diagnosis-cases base workspace)))
     (if (and (null saved) (null cases))
-        (list (terminal-span ':hint (format nil "No diagnoses yet.~:[ Enable Diagnostic probes in (settings) to let the model test hypotheses with probes.~;~]"
-                                            (config :diagnosis-p configuration))))
+        (application-hint-line
+         (format nil "no diagnoses yet~:[; enable Diagnostic probes in (settings) to let the model test hypotheses with probes~;~]"
+                 (config :diagnosis-p configuration)))
         (append
-         (list (terminal-span ':brand "diagnoses")
+         (list (terminal-span ':brand "# diagnoses")
                (terminal-span ':dim (format nil "  ~D saved · ~D recent case~:P~%"
                                             (length saved) (length cases))))
          (loop for diagnosis in saved
