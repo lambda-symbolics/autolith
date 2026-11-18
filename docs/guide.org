@@ -571,8 +571,10 @@ modeline, command, RLM, and task activity rows. Use =PageUp= and =PageDown= for
 page movement. Use =Ctrl-PageUp= and =Ctrl-PageDown= to jump between user and
 assistant messages while skipping reasoning and tool activity. Use =Ctrl-Home= and
 =Ctrl-End= for the oldest and newest transcript positions, and the mouse wheel
-for incremental scrolling. In a terminal attached to a hosted channel,
-=Ctrl-S= hides and shows the channel sidebar; see Local sessions. A message
+for incremental scrolling. The right side of the modeline shows =LIVE= while
+the view follows the newest output, or the visible rows out of all of them. In a
+terminal attached to a hosted channel, =Ctrl-S= moves to the channel sidebar;
+see Local sessions. A message
 jump places the end of the message on the row above the composer. If the
 message is taller than the window, its header appears at the top instead. The
 =--fullscreen= and =--plain= options choose the mode for one launch without
@@ -585,7 +587,7 @@ Holding =Shift= while dragging selects whole screen rows with the terminal
 emulator instead. Fullscreen
 history lives in the application, not the terminal emulator's native scrollback. The viewport keeps about four
 million characters of recent output in memory. At the oldest retained row, the
-legend shows =(history)=. Run =(history)= to load a page of older output.
+modeline shows =(history) loads earlier=. Run =(history)= to load a page of older output.
 
 When saved memories match your input, a dim =@ N relevant memories exist= line
 appears below your message. It shows how many memories were offered to the model
@@ -1658,12 +1660,14 @@ running one.
 *** Channel sidebar
 
 In fullscreen mode, an attached terminal can show the world's channels in a
-sidebar on the left. Your inbox appears as =home ~=, with the number of
+sidebar on the left. Your inbox appears as =home=, with the number of
 messages waiting there unread; that count is kept on disk, so every terminal
-shows the same one. Other channels descend from home and are indented beneath
-it, grouped by repository or workspace, with the current group first. Within a
-group, the channel whose conversation changed last comes first, and child channels
-are nested under their parents. Each channel shows its agent's name, then its title.
+shows the same one. The other channels are grouped by repository or workspace,
+with the current group first. Within a group, the channel whose conversation
+changed last comes first, and child channels are nested under their parents.
+A channel shows its agent's name on one row and its title on the next. Channel
+IDs stay out of the list: the heading shows the current channel's, and a filter
+shows the ID of each match.
 
 In the sidebar and =(open)= picker, workspaces from a checkout and its linked
 worktrees share a group under the verified originating checkout. Independent local
@@ -1674,10 +1678,11 @@ from exact persisted checkout/source records. Without verified or saved
 ownership, each workspace forms its own group.
 
 The groups and channels form a tree. The current group starts open, and so does
-each channel the current one nests in; the rest start closed. A closed node shows
-how many channels it hides and their unread counts. Click a node's =▸= or =▾=
-marker, or a group's row, to open or close it; the sidebar keeps that choice.
-Click a channel or home to switch to it.
+each channel the current one nests in; the rest start closed. A group's row ends
+with the number of its channels. A closed channel says how many channels nest
+below it, and a closed node adds their unread counts to its own. Click a node's
+=▸= or =▾= marker, or a group's row, to open or close it; the sidebar keeps that
+choice. Click a channel or home to switch to it.
 
 | Marker    | Meaning                         |
 |-----------+---------------------------------|
@@ -1688,29 +1693,36 @@ Click a channel or home to switch to it.
 | =·=       | No running session              |
 | =?=       | Runtime state is unknown        |
 
-A channel name in cyan has a terminal attached. A yellow number counts
-messages received since this terminal last viewed the channel; =@= counts
-mentions of you. Each terminal tracks its own unread counts. A channel first
-seen by that terminal starts at zero. The =✉= count shows deliveries waiting
-for a channel that no process serves.
+A yellow number counts messages received since this terminal last viewed the
+channel; =@= counts mentions of you. Each terminal tracks its own unread counts.
+A channel first seen by that terminal starts at zero. =N pending= counts
+deliveries waiting for a channel that no process serves.
 
 If a gather fails, the sidebar retains the last channel rows and marks their
 runtime state unknown until a successful refresh. Failed or closing hosts are
 unavailable for attachment while their owners finish cleanup and release their
 conversation leases.
 
-The sidebar takes about a fifth of a wide terminal's width. Press =Ctrl-S=
-to hide or show it; that preference is kept across channel switches and
-reconnects. When docking the sidebar would leave fewer than 90 transcript
-columns after subtracting the sidebar and its divider, the channel is visible
-by default. Press =Ctrl-S= to open a full-screen channel drawer. Use =↑= and
-=↓= to select, =Enter= to open a channel, and =←= or =→= to close or open a
-tree node. Scroll the tree with the mouse wheel or =PageUp= and =PageDown=.
-In the docked sidebar, click the heading's scroll arrows. The =(new)= and
-=(delete)= buttons share a fixed row below the tree; select either to run
-the command in this terminal's current channel.
-Press =Esc= or =Ctrl-S=, or select the current channel, to return to the
-composer. Opening another channel closes the drawer.
+The sidebar takes about a fifth of a wide terminal's width. The keyboard is
+either in the channel or in the sidebar. Press =Ctrl-S=, or =Ctrl-Tab= where the
+terminal reports it, or click the sidebar, to move there: its heading and the
+rule beside it light up, and the selected channel is highlighted. =Ctrl-Tab=,
+=Esc= or a click in the channel moves back. =Ctrl-S= in a focused sidebar hides
+it; that preference is kept across channel switches and reconnects.
+
+In a focused sidebar, =↑= and =↓= select, =Enter= opens a channel, =←= and =→=
+close and open a tree node, and =PageUp=, =PageDown=, =Home=, =End= and the mouse
+wheel move through the tree. =Del= deletes the selected channel after a
+confirmation. Typing filters: the list becomes the channels whose agent name,
+ID, title or workspace path match, best first, from open and closed groups
+alike. Each word must match; the letters of a word need not be adjacent.
+=Backspace= edits the filter and =Esc= clears it. The =(new)= and =(delete)=
+buttons below the tree run the command in this terminal's current channel.
+
+When docking the sidebar would leave fewer than 90 transcript columns after
+subtracting the sidebar and its divider, the channel is visible by default and
+=Ctrl-S= opens the sidebar as a full-screen drawer, which has the keyboard while
+it is open. Opening a channel closes the drawer.
 
 *** Session endpoints
 

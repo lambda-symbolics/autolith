@@ -420,6 +420,7 @@
                                           (:file "world/restart")
                                           (:file "world/client")
                                           (:file "world/sidebar")
+                                          (:file "world/sidebar-panel")
                                           (:file "startup/active-image"))))
   :in-order-to             ((asdf:test-op (asdf:test-op #:autolith/tests))))
 

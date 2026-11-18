@@ -453,9 +453,9 @@
   "Nothing changes."
   nil)
 
-(defmethod screen-panel-rows ((panel localgroup-tests-panel) terminal &key height width)
+(defmethod screen-panel-rows ((panel localgroup-tests-panel) terminal &key height width focused-p)
   "Return HEIGHT rows padded to WIDTH."
-  (declare (ignore terminal))
+  (declare (ignore terminal focused-p))
   (loop for index below height
         collect (format nil "~vA" width (or (nth index (localgroup-tests-panel-rows panel)) ""))))
 
@@ -583,10 +583,22 @@
       (test-assert (eq (localgroup-screen-filter-event screen ':page-up) ':page-up)
                    "other events pass through")
       (test-assert (and (eq (localgroup-screen-filter-event screen '(:control #\s)) ':ignore)
+                        (localgroup-screen-panel-focused-p screen)
+                        (not (localgroup-screen-take-resize screen))
+                        (eq (localgroup-screen-filter-event screen ':page-up) ':ignore)
+                        (eq (localgroup-screen-filter-event screen ':interrupt) ':interrupt))
+                   "the toggle key moves the keyboard to the panel, which keeps every key but an interrupt")
+      (test-assert (and (eq (localgroup-screen-filter-event screen ':focus-next) ':ignore)
+                        (not (localgroup-screen-panel-focused-p screen))
+                        (eq (localgroup-screen-filter-event screen ':page-up) ':page-up)
+                        (eq (localgroup-screen-filter-event screen ':focus-next) ':ignore)
+                        (localgroup-screen-panel-focused-p screen))
+                   "the focus key moves the keyboard to the session and back")
+      (test-assert (and (eq (localgroup-screen-filter-event screen '(:control #\s)) ':ignore)
                         (localgroup-screen-take-resize screen)
                         (not (localgroup-screen-take-resize screen))
                         (equal (pane) '(6 80)))
-                   "the toggle key hides the panel and notes the pane's new size once")
+                   "the toggle key hides a focused panel and notes the pane's new size once")
       (localgroup-screen-handle-packet
        screen '(:frame :height 6 :width 80 :complete-p t :rows ((0 "wide channel"))
                 :cursor-row 1 :cursor-column 2 :cursor-visible-p t))

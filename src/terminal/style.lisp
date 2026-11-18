@@ -18,7 +18,7 @@
       :agent-spinner :agent-name :child-name :agent-role :agent-tool
       :command-spinner :command-id :command-tool
       :status-plain :status-dim :status-accent
-      :legend-plain :legend-dim :legend-accent :sidebar-action
+      :legend-plain :legend-dim :legend-accent :sidebar-action :sidebar-workspace
       :status-model :status-effort :status-branch
       :compaction-label :progress-track :progress-fill
       :syntax-comment :syntax-keyword :syntax-string :syntax-escape
@@ -132,6 +132,7 @@ neutral bright black because basic terminals cannot tint a row."
       (:legend-dim (:foreground :white))
       (:legend-accent (:foreground :bright-magenta :bold t))
       (:sidebar-action (:foreground :bright-cyan :underline t))
+      (:sidebar-workspace (:foreground :bright-blue :bold t))
       (:compaction-label (:foreground :bright-yellow :bold t))
       (:progress-track (:faint t))
       (:progress-fill (:foreground :bright-yellow :bold t))
@@ -252,6 +253,7 @@ quiet text uses soft blue."
         (:legend-dim (:foreground ,soft))
         (:legend-accent (:foreground ,accent :bold t))
         (:sidebar-action (:foreground ,secondary :underline t))
+        (:sidebar-workspace (:foreground ,accent-soft :bold t))
         (:compaction-label (:foreground ,accent :bold t))
         (:progress-track (:foreground ,soft))
         (:progress-fill (:foreground ,accent :bold t))

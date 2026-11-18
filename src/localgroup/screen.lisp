@@ -12,7 +12,10 @@
   "The largest frame height or width a client accepts from a session.")
 
 (defparameter *localgroup-screen-toggle-event* '(:control #\s)
-  "The key event showing or hiding the side panel.")
+  "The key event that moves to the side panel, and hides a panel that has the focus.")
+
+(defparameter *localgroup-screen-focus-event* ':focus-next
+  "The key event that moves the focus between the side panel and the session.")
 
 (define-condition channel-loading-progress (condition)
   ((step :initarg :step :reader channel-loading-progress-step :type (integer 1 6)
@@ -27,6 +30,21 @@
   (signal 'channel-loading-progress :step step :description description)
   nil)
 
+(-> channel-command-text (t) (option string))
+(defun channel-command-text (event)
+  "Return the command a (:CHANNEL-COMMAND NAME [ID]) EVENT submits, or NIL for anything else.
+
+NAME is :NEW, :OPEN or :DELETE, and only :DELETE takes the channel ID."
+  (when (typep event '(cons (eql :channel-command) (cons keyword list)))
+    (destructuring-bind (name &optional identifier &rest more) (rest event)
+      (cond
+        (more
+         nil)
+        ((and (member name '(:new :open :delete)) (null identifier))
+         (format nil "(~(~A~))" name))
+        ((and (eq name ':delete) (typep identifier '(and string (satisfies identifier-p))))
+         (format nil "(delete ~S)" identifier))))))
+
 
 ;;;; -- Side Panels --
 
@@ -39,19 +57,27 @@
 (defgeneric screen-panel-refresh (panel)
   (:documentation "Gather PANEL's current content and return whether it changed since the last call."))
 
-(defgeneric screen-panel-rows (panel terminal &key height width)
-  (:documentation "Return HEIGHT display rows of PANEL rendered for TERMINAL, each exactly WIDTH cells."))
+(defgeneric screen-panel-rows (panel terminal &key height width focused-p)
+  (:documentation "Return HEIGHT display rows of PANEL rendered for TERMINAL, each exactly WIDTH cells.
+
+FOCUSED-P says the panel takes the keyboard, which it shows."))
 
 (defgeneric screen-panel-click (panel column row)
   (:documentation "Act on a click at COLUMN and ROW of PANEL, both from 1.
 
-Return :REDRAW to repaint, :DISMISS to return to the channel, :CHANNEL-PICKER
-to open the switch picker, (:SWITCH :SESSION-ID ID) to move to channel ID,
-(:APPLICATION-COMMAND TEXT) to submit a command in the attached application,
-or NIL."))
+Return :REDRAW to repaint, :DISMISS to return to the channel,
+(:SWITCH :SESSION-ID ID) to move to channel ID, a (:CHANNEL-COMMAND NAME [ID])
+event to run a channel command in the attached application, or NIL."))
 
 (defgeneric screen-panel-event (panel event)
-  (:documentation "Handle a keyboard or wheel EVENT while PANEL has the whole screen; return a click-style action."))
+  (:documentation "Handle a keyboard or wheel EVENT while PANEL has the focus; return a click-style action."))
+
+(defgeneric screen-panel-focus (panel)
+  (:documentation "Prepare PANEL to take the keyboard."))
+
+(defmethod screen-panel-focus ((panel t))
+  "A panel without a selection has nothing to prepare."
+  nil)
 
 (defmethod screen-panel-event ((panel t) event)
   "Ignore keys for panels without keyboard navigation."
@@ -136,6 +162,11 @@ switches. The default methods leave the choice local to each screen."))
     :accessor      localgroup-screen-drawer-open-p
     :type          boolean
     :documentation "Whether the person explicitly opened the panel on a narrow terminal.")
+   (panel-focus-p
+    :initform      nil
+    :accessor      localgroup-screen-panel-focus-p
+    :type          boolean
+    :documentation "Whether the person moved the keyboard to the panel beside the session.")
    (cursor
     :initform      (list 0 0 t)
     :accessor      localgroup-screen-cursor
@@ -209,6 +240,17 @@ its width and divider. Otherwise it opens only after an explicit toggle."
   "Return true when SCREEN's side panel takes part or all of the terminal."
   (not (eq (localgroup-screen-layout screen) ':session)))
 
+(-> localgroup-screen-panel-focused-p (localgroup-screen) boolean)
+(defun localgroup-screen-panel-focused-p (screen)
+  "Return whether SCREEN's side panel takes the keyboard: beside the session by choice, alone always."
+  (ecase (localgroup-screen-layout screen)
+    (:session
+     nil)
+    (:beside
+     (localgroup-screen-panel-focus-p screen))
+    (:alone
+     t)))
+
 (-> localgroup-screen--panel-width (localgroup-screen) (integer 0))
 (defun localgroup-screen--panel-width (screen)
   "Return the columns SCREEN's side panel takes: none, its share beside the session, or all."
@@ -242,16 +284,16 @@ panel shows it without a resize."
 
 (-> localgroup-screen-filter-event (localgroup-screen t) t)
 (defun localgroup-screen-filter-event (screen event)
-  "Return EVENT as the session should see it, :IGNORE when SCREEN consumed it, or a switch request.
+  "Return EVENT as the session should see it, :IGNORE when SCREEN consumed it, or a panel's request.
 
-The toggle key shows or hides the side panel. A click lands in the panel,
-which acts on it and may ask to move the terminal to another channel with a
-(:SWITCH :SESSION-ID ID) request, or in the session's pane, whose columns
-start after the panel. A drag and its release go to the pane; over the
-panel they stay on the pane's edge, so selecting never takes the panel's
-text. While the panel takes the whole screen, the hidden session gets no
-keys or drags, and a switch hides the panel to show the channel switched
-to."
+The toggle and focus keys move the keyboard to the side panel and back. A
+click lands in the panel, which takes the focus and acts on it, or in the
+session's pane, whose columns start after the panel and which takes the focus
+back. A drag and its release go to the pane; over the panel they stay on the
+pane's edge, so selecting never takes the panel's text. A focused panel gets
+every key and the wheel; the session gets none until the focus returns. A
+panel's (:SWITCH :SESSION-ID ID) request moves the terminal to another channel
+and its channel command goes to the session."
   (unless (localgroup-screen-active-p screen)
     (return-from localgroup-screen-filter-event event))
   (let* ((pointer-p (typep event '(cons (member :click :drag :release) (cons integer (cons integer null)))))
@@ -263,63 +305,73 @@ to."
                                 (localgroup-screen--panel-width screen)))))
          (layout    (first geometry)))
     (cond
+      ((null (localgroup-screen-panel screen))
+       event)
       ((equal event *localgroup-screen-toggle-event*)
-       (localgroup-screen-toggle-panel screen)
+       (if (and (eq layout ':beside) (not (localgroup-screen-panel-focus-p screen)))
+           (localgroup-screen-focus-panel screen t)
+           (localgroup-screen-toggle-panel screen))
        ':ignore)
-      ((eq layout ':alone)
-       (cond
-         ((member event '(:interrupt :end-of-input :stream-end))
-          event)
-         ((eq event ':escape)
-          (localgroup-screen-toggle-panel screen)
-          ':ignore)
-         (click-p
-          (localgroup-screen--panel-click screen (second event) (third event)))
-         (t
-          (localgroup-screen--panel-result
-           screen (screen-panel-event (localgroup-screen-panel screen) event)))))
+      ((equal event *localgroup-screen-focus-event*)
+       (if (eq layout ':beside)
+           (localgroup-screen-focus-panel screen (not (localgroup-screen-panel-focus-p screen)))
+           (localgroup-screen-toggle-panel screen))
+       ':ignore)
+      ((member event '(:interrupt :end-of-input :stream-end))
+       event)
+      ((and click-p (or (eq layout ':alone)
+                        (and (eq layout ':beside) (<= (second event) (1+ (second geometry))))))
+       (localgroup-screen-focus-panel screen t)
+       (localgroup-screen--panel-result
+        screen (screen-panel-click (localgroup-screen-panel screen) (second event) (third event))))
       ((and pointer-p (eq layout ':beside))
        (let ((offset (1+ (second geometry))))
-         (cond
-           ((> (second event) offset)
-            (list (first event) (- (second event) offset) (third event)))
-           (click-p
-            (localgroup-screen--panel-click screen (second event) (third event)))
-           (t
-            ;; A drag over the panel stays on the pane's edge, so a
-            ;; selection never takes the panel's text.
-            (list (first event) 1 (third event))))))
+         (when click-p
+           (localgroup-screen-focus-panel screen nil))
+         ;; A drag over the panel stays on the pane's edge, so a selection
+         ;; never takes the panel's text.
+         (list (first event) (max 1 (- (second event) offset)) (third event))))
+      ((localgroup-screen-panel-focused-p screen)
+       (localgroup-screen--panel-result
+        screen (screen-panel-event (localgroup-screen-panel screen) event)))
       (t
        event))))
 
-(-> localgroup-screen--panel-click (localgroup-screen integer integer) t)
-(defun localgroup-screen--panel-click (screen column row)
-  "Let SCREEN's panel act on a click at COLUMN and ROW; return its switch request or :IGNORE."
-  (localgroup-screen--panel-result
-   screen (screen-panel-click (localgroup-screen-panel screen) column row)))
+(-> localgroup-screen-focus-panel (localgroup-screen boolean) null)
+(defun localgroup-screen-focus-panel (screen focused-p)
+  "Move the keyboard to SCREEN's side panel beside the session, or back when FOCUSED-P is false."
+  (with-lock-held ((localgroup-screen-lock screen))
+    (unless (eq focused-p (localgroup-screen-panel-focus-p screen))
+      (setf (localgroup-screen-panel-focus-p screen) focused-p)
+      (when focused-p
+        (screen-panel-focus (localgroup-screen-panel screen)))
+      (localgroup-screen--paint screen)))
+  nil)
 
 (-> localgroup-screen--panel-result (localgroup-screen t) t)
 (defun localgroup-screen--panel-result (screen result)
-  "Apply a panel RESULT, dismissing the drawer when a channel or picker opens."
-  (when (and (localgroup-screen-drawer-open-p screen)
-             (or (consp result) (member result '(:dismiss :channel-picker))))
-    (localgroup-screen-toggle-panel screen))
+  "Apply a panel RESULT; a channel, a command or a dismissal gives the keyboard back to the session."
+  (when (or (consp result) (eq result ':dismiss))
+    (when (localgroup-screen-drawer-open-p screen)
+      (localgroup-screen-toggle-panel screen))
+    (localgroup-screen-focus-panel screen nil))
   (cond
     ((eq result ':redraw)
      (with-lock-held ((localgroup-screen-lock screen))
        (localgroup-screen--paint screen))
      ':ignore)
-    ((or (consp result) (eq result ':channel-picker))
+    ((consp result)
      result)
     (t
      ':ignore)))
 
 (-> localgroup-screen-toggle-panel (localgroup-screen) null)
 (defun localgroup-screen-toggle-panel (screen)
-  "Toggle SCREEN's side panel and report any pane-size change to the session.
+  "Show or hide SCREEN's side panel and report any pane-size change to the session.
 
-Store the choice on the screen and, if supported, on the panel for reuse
-across attachments."
+A panel shown beside the session takes the focus; a narrow terminal's drawer
+has it while open. Store the choice on the screen and, if supported, on the
+panel for reuse across attachments."
   (let ((panel (localgroup-screen-panel screen)))
     (when (and panel (localgroup-screen-active-p screen))
       (with-lock-held ((localgroup-screen-lock screen))
@@ -330,8 +382,11 @@ across attachments."
               (setf (localgroup-screen-drawer-open-p screen)
                     (not (localgroup-screen-drawer-open-p screen)))
               (setf (screen-panel-shown-p panel) wanted-p
-                    (localgroup-screen-own-panel-shown-p screen) wanted-p))
+                    (localgroup-screen-own-panel-shown-p screen) wanted-p
+                    (localgroup-screen-panel-focus-p screen) wanted-p))
           (unless (eq layout (localgroup-screen-layout screen))
+            (when (localgroup-screen-panel-focused-p screen)
+              (screen-panel-focus panel))
             (unless (= columns (nth-value 1 (localgroup-screen-pane-size screen)))
               (setf (localgroup-screen-resize-pending-p screen) t))
             (terminal-screen-invalidate (localgroup-screen-terminal screen)
@@ -585,12 +640,14 @@ client tells the session, and the next paint rewrites the whole screen."
              (terminal-screen-paint terminal painter (localgroup-screen--composed-rows screen rows)
                                     :cursor-row       cursor-row
                                     :cursor-column    (+ cursor-column 1 (localgroup-screen--panel-width screen))
-                                    :cursor-visible-p cursor-visible-p))
+                                    :cursor-visible-p (and cursor-visible-p
+                                                           (not (localgroup-screen-panel-focus-p screen)))))
             (:alone
              (terminal-screen-paint terminal painter
                                     (screen-panel-rows (localgroup-screen-panel screen) terminal
-                                                       :height (max 1 (terminal-rows terminal))
-                                                       :width  (terminal-columns terminal))
+                                                       :height    (max 1 (terminal-rows terminal))
+                                                       :width     (terminal-columns terminal)
+                                                       :focused-p t)
                                     :cursor-row       0
                                     :cursor-column    0
                                     :cursor-visible-p nil)))))
@@ -600,13 +657,20 @@ client tells the session, and the next paint rewrites the whole screen."
 
 (-> localgroup-screen--composed-rows (localgroup-screen vector) list)
 (defun localgroup-screen--composed-rows (screen frame)
-  "Return FRAME's rows with the side panel's rows before them, separated by a rule."
+  "Return FRAME's rows with the side panel's rows before them, separated by a rule.
+
+The rule is heavy and bright while the panel has the focus."
   (let* ((terminal   (localgroup-screen-terminal screen))
          (height     (max 1 (terminal-rows terminal)))
+         (focused-p  (localgroup-screen-panel-focus-p screen))
          (panel-rows (screen-panel-rows (localgroup-screen-panel screen) terminal
-                                        :height height
-                                        :width  (localgroup-screen--panel-width screen)))
-         (rule       (terminal--render-spans terminal (list (terminal-span ':dim "│")))))
+                                        :height    height
+                                        :width     (localgroup-screen--panel-width screen)
+                                        :focused-p focused-p))
+         (rule       (terminal--render-spans
+                      terminal (list (if focused-p
+                                         (terminal-span ':legend-accent "┃")
+                                         (terminal-span ':dim "│"))))))
     (loop for index below height
           collect (concatenate 'string
                                (or (nth index panel-rows) "")

@@ -836,7 +836,8 @@
   test-world-sidebar-rows
   test-world-sidebar-tree
   test-world-sidebar-layout
-  test-world-sidebar-scrolling
+  test-world-sidebar-keys
+  test-world-sidebar-filter
   test-world-sidebar-command-events
   test-world-sidebar-finds-conversations-once
   test-world-sidebar-visibility
