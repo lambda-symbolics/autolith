@@ -79,7 +79,7 @@ configured window. Read existing metadata only, without discovery or preparation
 (-> compaction-recovery-last-user (list) (integer 0))
 (defun compaction-recovery-last-user (items)
   "Return the latest user boundary, or zero when no such boundary exists."
-  (or (position-if (lambda (item) (json-string= (json-get item "role") "user")) items :from-end t) 0))
+  (or (position-if (lambda (item) (eq (item-role item) ':user)) items :from-end t) 0))
 
 (-> compaction-recovery-linked-p (json-object) boolean)
 (defun compaction-recovery-linked-p (item)
@@ -199,7 +199,7 @@ and legacy image_url parts. Ordinary strings and MIME metadata are retained."
         (anchors 0)
         (images  0))
     (dolist (item (conversation-input-items view))
-      (when (and current (json-string= (json-get item "role") "user"))
+      (when (and current (eq (item-role item) ':user))
         (push (nreverse current) groups)
         (setf current nil))
       (if (or (native-compaction-item-p item)
@@ -222,7 +222,7 @@ and legacy image_url parts. Ordinary strings and MIME metadata are retained."
 (defun compaction-recovery-drop-exchange (view)
   "Drop the oldest whole exchange; never discard the newest exchange."
   (let* ((items (conversation-input-items view))
-         (next  (position-if (lambda (item) (json-string= (json-get item "role") "user"))
+         (next  (position-if (lambda (item) (eq (item-role item) ':user))
                             items :start (min 1 (length items)))))
     (when next
       (conversation-compaction-summary-view view (nthcdr next items)))))

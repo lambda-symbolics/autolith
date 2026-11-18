@@ -79,7 +79,7 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
               (cond
                 ((function-call-output-item-p item)
                  (json-get item "output"))
-                ((equal (json-get item "role") "assistant")
+                ((eq (item-role item) ':assistant)
                  (let ((content (json-get item "content")))
                    (if (stringp content)
                        content
@@ -91,7 +91,7 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
                 (t
                  nil))))
         (when (non-empty-string-p text)
-          (push (list :kind        (if (equal (json-get item "role") "assistant")
+          (push (list :kind        (if (eq (item-role item) ':assistant)
                                       ':assistant
                                       ':tool)
                       :call-id     (json-get item "call_id")

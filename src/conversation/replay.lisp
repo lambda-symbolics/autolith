@@ -53,7 +53,7 @@
                (type (and (json-object-p item) (json-get item "type"))))
           (cond
             ((and (string= (or type "") "message")
-                  (string= (or (json-get item "role") "") "assistant"))
+                  (eq (item-role item) ':assistant))
              (let ((content (response-item-assistant-text item)))
                (and content
                     (list ':assistant :seq sequence :time time

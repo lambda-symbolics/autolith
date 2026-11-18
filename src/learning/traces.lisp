@@ -487,8 +487,8 @@ be learned from releases its payload as soon as that is known."
             (action-trace--check-weight current))
            ((and current
                  (json-object-p item)
-                 (equal (json-get item "type") "message")
-                 (equal (json-get item "role") "assistant")
+                 (message-item-p item)
+                 (eq (item-role item) ':assistant)
                  (non-empty-string-p (response-item-assistant-text item)))
             (setf (action-trace-answered-p current) t)))))
       (:procedure-run

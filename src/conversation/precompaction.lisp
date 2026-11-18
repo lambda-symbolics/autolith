@@ -168,5 +168,5 @@ The copy shows the same durable record as ITEM."
 (defun conversation-precompaction--user-message-p (item)
   "Return true when ITEM is a user message."
   (and (json-object-p item)
-       (equal (json-get item "role") "user")
+       (eq (item-role item) ':user)
        t))

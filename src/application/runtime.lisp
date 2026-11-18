@@ -2749,7 +2749,7 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
   (let ((type (json-get item "type")))
     (cond
       ((and (string= (or type "") "message")
-            (string= (or (json-get item "role") "") "assistant"))
+            (eq (item-role item) ':assistant))
        (let ((text (application--visible-assistant-text item)))
          (when text
            (application--message-entry application
@@ -3050,7 +3050,7 @@ the entry's text as a :PRESENT event."
   (let ((type (json-get item "type")))
     (cond
       ((and (string= (or type "") "message")
-            (string= (or (json-get item "role") "") "assistant"))
+            (eq (item-role item) ':assistant))
        (not (null (application--visible-assistant-text item))))
       ((string= (or type "") "reasoning")
        (and (application-reasoning-traces-p application)

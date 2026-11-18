@@ -2159,14 +2159,12 @@ already owns its metadata and is installed without an additional remap."
 (-> conversation--inherited-reference-message (t) (option json-object))
 (defun conversation--inherited-reference-message (item)
   "Return ITEM's safe user or final-assistant reference message, or NIL."
-  (when (and (json-object-p item)
-             (string= (or (json-get item "type") "") "message"))
-    (let ((role    (json-get item "role"))
+  (when (message-item-p item)
+    (let ((role    (item-role item))
           (phase   (json-get item "phase"))
           (content (json-get item "content")))
-      (when (and (stringp role)
-                 (member role '("user" "assistant") :test #'string=)
-                 (or (not (string= role "assistant"))
+      (when (and (member role '(:user :assistant))
+                 (or (not (eq role ':assistant))
                      (null phase)
                      (and (stringp phase) (string= phase "final_answer")))
                  (vectorp content))
@@ -2176,7 +2174,7 @@ already owns its metadata and is installed without an additional remap."
                       when copy collect copy)))
           (when parts
             (json-object "type" "message"
-                         "role" role
+                         "role" (json-get item "role")
                          "content" (coerce parts 'vector))))))))
 
 (-> conversation--inherited-reference-boundary-item () json-object)
@@ -2193,9 +2191,8 @@ already owns its metadata and is installed without an additional remap."
 (-> conversation--inherited-reference-boundary-p (t) boolean)
 (defun conversation--inherited-reference-boundary-p (item)
   "Return true when ITEM is the exact inherited-reference developer boundary."
-  (and (json-object-p item)
-       (string= (or (json-get item "type") "") "message")
-       (string= (or (json-get item "role") "") "developer")
+  (and (message-item-p item)
+       (eq (item-role item) ':developer)
        (let ((content (json-get item "content")))
          (and (vectorp content)
               (= (length content) 1)

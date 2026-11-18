@@ -28,7 +28,7 @@
   (block nil
     (dolist (item (reverse (conversation-input-items conversation)) nil)
       (when (and (json-object-p item)
-                 (string= (or (json-get item "role") "") "user"))
+                 (eq (item-role item) ':user))
         (return nil))
       (when (interpreter-discipline--one-liner-call-p item)
         (return t)))))

@@ -213,7 +213,7 @@ a child agent."
   "Return the names of the procedures run since CONVERSATION's latest user message."
   (let* ((items (conversation-input-items conversation))
          (start (position-if (lambda (item)
-                               (and (json-object-p item) (equal (json-get item "role") "user")))
+                               (eq (item-role item) ':user))
                              items :from-end t)))
     (loop for item in (and start (nthcdr (1+ start) items))
           for arguments = (and (function-call-item-p item)

@@ -283,29 +283,27 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
     (format nil "~A/alpha/search"
             (subseq endpoint 0 (- (length endpoint) (length "/responses"))))))
 
-(-> web--search-content-item (json-object string) (option json-object))
+(-> web--search-content-item (json-object (member :user :assistant)) (option json-object))
 (defun web--search-content-item (item role)
   "Return ITEM as a standalone-search text content item for ROLE, or NIL."
-  (let ((type (json-get item "type"))
-        (text (json-get item "text")))
+  (let ((type   (json-get item "type"))
+        (text   (json-get item "text"))
+        (native (ecase role
+                  (:user
+                   "input_text")
+                  (:assistant
+                   "output_text"))))
     (when (and (stringp type)
                (stringp text)
-               (or (and (string= role "user")
-                        (member type '("input_text" "text") :test #'string=))
-                   (and (string= role "assistant")
-                        (member type '("output_text" "text") :test #'string=))))
-      (json-object "type" (if (string= role "user")
-                              "input_text"
-                              "output_text")
-                   "text" text))))
+               (member type (list native "text") :test #'string=))
+      (json-object "type" native "text" text))))
 
 (-> web--search-message (json-object) (option json-object))
 (defun web--search-message (item)
   "Return a text-only recent user or assistant ITEM for standalone search."
-  (let ((role (json-get item "role")))
-    (when (and (string= (or (json-get item "type") "") "message")
-               (stringp role)
-               (member role '("user" "assistant") :test #'string=)
+  (let ((role (item-role item)))
+    (when (and (message-item-p item)
+               (member role '(:user :assistant))
                (vectorp (json-get item "content")))
       (let ((content
               (loop for part across (json-get item "content")
@@ -316,7 +314,7 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
                       collect normalized)))
         (when content
           (json-object "type" "message"
-                       "role" role
+                       "role" (json-get item "role")
                        "content" (coerce content 'vector)))))))
 
 (-> web--search-history (conversation configuration) vector)
@@ -334,7 +332,7 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
          (user-indices
            (loop for message in messages
                  for index from 0
-                 when (string= (json-get message "role") "user")
+                 when (eq (item-role message) ':user)
                    collect index))
          (start (if (>= (length user-indices) 2)
                     (nth (- (length user-indices) 2) user-indices)

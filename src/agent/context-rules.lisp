@@ -73,8 +73,8 @@
                    (write-string text stream :end count)
                    (decf remaining count)))))
         (cond
-          ((and (equal (json-get item "type") "message")
-                (equal (json-get item "role") "assistant"))
+          ((and (message-item-p item)
+                (eq (item-role item) ':assistant))
            (let ((content (json-get item "content")))
              (typecase content
                (string

@@ -187,7 +187,7 @@ returning NIL stops projection but not counting. Return total, start and next."
                                (getf fields :content)))
                         (:provider-item
                          (let ((item (json-decode (getf fields :wire-json))))
-                           (cond ((equal (json-get item "type") "message")
+                           (cond ((message-item-p item)
                                   (line "Assistant: " (response-item-assistant-text item)))
                                  ((reasoning-item-p item)
                                   (line "Thought: " (response-item-reasoning-summary item)))

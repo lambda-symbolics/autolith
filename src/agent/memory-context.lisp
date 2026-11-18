@@ -259,7 +259,7 @@ idsmall references for the offered memories."
   "Return a number identifying CONVERSATION's current user turn."
   (count-if (lambda (item)
               (and (json-object-p item)
-                   (string= (or (json-get item "role") "") "user")))
+                   (eq (item-role item) ':user)))
             (conversation-input-items conversation)))
 
 (-> memory-context-recall-viewer (conversation) string)

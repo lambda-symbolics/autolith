@@ -38,7 +38,7 @@
       (loop for item in (reverse (conversation-input-items
                                   (application-conversation application)))
             when (and (json-object-p item)
-                      (equal (json-get item "role") "user"))
+                      (eq (item-role item) ':user))
               do (let ((text (context--message-text item)))
                    (when (non-empty-string-p text)
                      (return text))))

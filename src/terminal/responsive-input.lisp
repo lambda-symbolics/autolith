@@ -2790,7 +2790,7 @@ as the terminal UI's exclusive-input function."
   (when (slot-boundp application 'conversation)
     (let ((item (find-if (lambda (item)
                            (and (json-object-p item)
-                                (string= (or (json-get item "role") "") "user")))
+                                (eq (item-role item) ':user)))
                          (conversation-input-items (application-conversation application))
                          :from-end t)))
       (and item (context--message-text item)))))

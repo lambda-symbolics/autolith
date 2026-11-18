@@ -463,7 +463,7 @@ stays cached across midnight; this separate block carries the change instead."
                      (conversation-input-items
                       (request-context-conversation context)))
         when (and (json-object-p item)
-                  (string= (or (json-get item "role") "") "user"))
+                  (eq (item-role item) ':user))
           do (return (context--message-text item))))
 
 
