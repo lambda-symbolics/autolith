@@ -168,7 +168,7 @@
 (defun test-task-worktree-options ()
   "Test opt-in isolation and strict explicit source/artifact policies."
   (test-assert (null (task-worktree-normalize-options nil)) "Shared workspace is the default.")
-  (test-assert (equal '(:baseline "HEAD" :dirty-policy :reject :artifact-kind "patch")
+  (test-assert (equal '(:baseline "HEAD" :dirty-policy :reject :artifact-kind :patch)
                       (task-worktree-normalize-options (json-object))) "Default policy rejects dirty source.")
   (test-assert (equal ':ignore (getf (task-worktree-normalize-options
                                       (json-object "dirtyPolicy" "ignore")) :dirty-policy))
@@ -446,7 +446,7 @@
             (record-root (merge-pathnames "legacy-result/" (config :data-root configuration)))
             (record      (merge-pathnames "worktree.sexp" record-root)))
        (ensure-directories-exist record)
-       (snapshot-write record (task-worktree--metadata legacy "patch" (namestring record)))
+       (snapshot-write record (task-worktree--metadata legacy ':patch (namestring record)))
        (task-worktree-discard configuration "legacy-task"
                               :pathname (merge-pathnames "conversation.sexp" record-root))
        (test-assert (not (probe-file legacy-path)) "Discard removes the verified legacy checkout.")

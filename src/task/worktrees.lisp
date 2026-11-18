@@ -40,8 +40,9 @@
       (task-worktree--error "isolation.dirtyPolicy must be reject or ignore."))
     (unless (member kind '("patch" "commit-range") :test #'equal)
       (task-worktree--error "isolation.artifactKind must be patch or commit-range."))
-    (list :baseline baseline :dirty-policy (if (string= dirty "reject") ':reject ':ignore)
-          :artifact-kind kind)))
+    (list :baseline      baseline
+          :dirty-policy  (if (string= dirty "reject") ':reject ':ignore)
+          :artifact-kind (if (string= kind "patch") ':patch ':commit-range))))
 
 (-> task-worktree-options-schema () hash-table)
 (defun task-worktree-options-schema ()
@@ -212,7 +213,7 @@ without changing the host environment."
   (format nil "~A/~A" (task-job-root-conversation-identifier job)
           (task-job-execution-identifier job)))
 
-(-> task-worktree--metadata (cl-worktree:worktree string string) list)
+(-> task-worktree--metadata (cl-worktree:worktree (member :patch :commit-range) string) list)
 (defun task-worktree--metadata (handle kind metadata-path)
   "Return the portable task identity needed for extraction and recovery."
   (list :version 1 :id (cl-worktree:worktree-id handle)
@@ -377,7 +378,8 @@ The source is never reset or stashed, and child cleanup is always explicit."
 (defun task-worktree--extract (manager metadata)
   "Extract the selected complete artifact, including an interrupted child's edits."
   (let ((handle (task-worktree--find-handle manager metadata)))
-    (if (equal (getf metadata :artifact-kind) "commit-range")
+    ;; Metadata written before the kind was a keyword holds its name as a string.
+    (if (member (getf metadata :artifact-kind) '(:commit-range "commit-range") :test #'equal)
         (cl-worktree:extract-commit-range manager handle :owner (getf metadata :owner))
         (cl-worktree:extract-patch manager handle :owner (getf metadata :owner)))))
 
@@ -501,7 +503,7 @@ waiting for Git or the lifecycle lock during terminal publication."
                      (flet ((owned (handles)
                               (loop for handle in handles
                                     when (uiop:string-prefix-p prefix (cl-worktree:worktree-owner handle))
-                                      collect (task-worktree--metadata handle "patch" ""))))
+                                      collect (task-worktree--metadata handle ':patch ""))))
                        (list :active (owned active) :absent (owned absent))))))
                 ((equal action "cleanup-orphan")
                  (let* ((source (workspace-tool-path context (tool-argument arguments "source" :required t)
