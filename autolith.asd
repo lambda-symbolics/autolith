@@ -374,6 +374,7 @@
                                           (:file "application/lisp-machine")
                                           (:file "application/async-lisp-output")
                                           (:file "application/async-lisp")
+                                          (:file "terminal/input-dispatch")
                                           (:file "terminal/responsive-input")
                                           (:file "application/client-operations")
                                           (:file "application/client-protocol")
