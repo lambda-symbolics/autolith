@@ -72,7 +72,7 @@
 (defun data-transfer-report-entry (action report)
   "Return a terminal receipt with styled paths, aligned counts, and scope."
   (append
-   (list (terminal-span ':success (format nil "~A~%" action)))
+   (list (terminal-span ':success (format nil "✓ ~(~A~)~%" action)))
    (application--entry-fields
     (append
      (list (list "archive" ':code
@@ -83,7 +83,7 @@
                (list "workspace" ':code
                      (uiop:native-namestring (pathname (getf report :workspace))))
                (list "scope" ':dim
-                     (format nil "All data across ~D workspaces."
+                     (format nil "all data across ~D workspaces"
                              (length (getf report :workspaces))))))))))
 
 (define-application-command application--builtin-data-export-command

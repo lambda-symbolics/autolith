@@ -153,7 +153,7 @@
                        :plans 14 :papercuts 15 :files 16))
          (entry  (data-transfer-report-entry "Exported" report)))
     (test-assert (terminal-styled-text-p entry) "transfer receipt is a semantic transcript entry")
-    (test-assert (command-view-tests--role-p entry ':success "Exported") "completed transfer uses success severity")
+    (test-assert (command-view-tests--role-p entry ':success "✓ exported") "completed transfer uses success severity")
     (test-assert (command-view-tests--role-p entry ':code path) "archive pathname has code styling")
     (test-assert (command-view-tests--role-p entry ':dim "conversations") "count labels are subordinate metadata")
     (test-assert (command-view-tests--role-p entry ':plain "11") "transfer counts remain visible data")
