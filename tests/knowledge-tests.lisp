@@ -1328,6 +1328,15 @@
                                     (context-contribution-evidence changes))
                             (eq (context-contribution-lifetime changes) ':next-request))
                        "the next turn explains how a fact the model was given changed")
+          (let ((event (and changes (context-contribution-provider-event changes))))
+            (test-assert (and event
+                              (= (knowledge-change-event-count event)
+                                 (length (knowledge-change-event-identifiers event)))
+                              (equal (knowledge-change-event-identifiers event)
+                                     (knowledge-change-contribution-identifiers changes))
+                              (every #'non-empty-string-p
+                                     (knowledge-change-event-identifiers event)))
+                         "the presentation event names the changed fact for the person to look up"))
           (test-assert (equal (context-contribution-evidence changes)
                               (context-contribution-evidence
                                (knowledge-tests--contribution
@@ -1339,9 +1348,24 @@
                             (knowledge-tests--recall configuration conversation)
                             "knowledge-changes"))
                      "each change is explained once")
-        (test-assert (equal (application--knowledge-changes-notice 1)
+        (let ((notice (application--knowledge-changes-notice 2 :ids '("c-1234567890" "c-abcdefghij"))))
+          (test-assert (equal (terminal--spans-text notice)
+                              (format nil "@ 2 facts given earlier changed · (memory ~S) · (memory ~S)"
+                                      (application-memory--short "c-1234567890")
+                                      (application-memory--short "c-abcdefghij")))
+                       "the person sees that facts the model relied on changed, with a lookup of each")
+          (test-assert (equal (remove-duplicates
+                               (mapcar #'termdown:widget-action
+                                       (remove-if-not #'termdown:widget-p notice))
+                               :test #'equal)
+                              (list (list ':insert (format nil "(memory ~S)"
+                                                           (application-memory--short "c-1234567890")))
+                                    (list ':insert (format nil "(memory ~S)"
+                                                           (application-memory--short "c-abcdefghij")))))
+                       "a click on a lookup puts it in the composer"))
+        (test-assert (equal (terminal--spans-text (application--knowledge-changes-notice 1))
                             "@ 1 fact given earlier changed")
-                     "the person sees that a fact the model relied on changed"))))
+                     "without identifiers the notice only counts"))))
   nil)
 
 (-> test-knowledge-commands () null)

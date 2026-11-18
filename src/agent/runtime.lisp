@@ -711,7 +711,8 @@ retries stay auditable next to the request they belong to."
       (knowledge-change-event
        (agent-observer-status
         observer :knowledge-changes
-        (list :count (knowledge-change-event-count event))))
+        (list :count (knowledge-change-event-count event)
+              :ids   (copy-list (knowledge-change-event-identifiers event)))))
       (plan-change-event
        (agent-observer-status
         observer :plan-changes

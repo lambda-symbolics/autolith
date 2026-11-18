@@ -60,14 +60,24 @@
   ((count :initarg       :count
           :reader        knowledge-change-contribution-count
           :type          (integer 1)
-          :documentation "How many changed facts the advice explains."))
+          :documentation "How many changed facts the advice explains.")
+   (identifiers :initarg       :identifiers
+                :initform      nil
+                :reader        knowledge-change-contribution-identifiers
+                :type          list
+                :documentation "The claim identifiers of the changed facts."))
   (:documentation "Advice explaining changes to facts a conversation was given."))
 
 (defclass knowledge-change-event (provider-event)
   ((count :initarg       :count
           :reader        knowledge-change-event-count
           :type          (integer 1)
-          :documentation "How many changed facts were explained to the model."))
+          :documentation "How many changed facts were explained to the model.")
+   (identifiers :initarg       :identifiers
+                :initform      nil
+                :reader        knowledge-change-event-identifiers
+                :type          list
+                :documentation "The claim identifiers of the changed facts."))
   (:documentation "A presentation event for delivered knowledge-change advice."))
 
 (defmethod context--copy-contribution :around
@@ -83,15 +93,17 @@
 
 (defmethod context--copy-contribution :around
     ((contribution knowledge-change-contribution) contributor source)
-  "Preserve the change count when attaching contribution provenance."
+  "Preserve the changed facts when attaching contribution provenance."
   (change-class (call-next-method) 'knowledge-change-contribution
-                :count (knowledge-change-contribution-count contribution)))
+                :count       (knowledge-change-contribution-count contribution)
+                :identifiers (copy-list (knowledge-change-contribution-identifiers contribution))))
 
 (defmethod context-contribution-provider-event
     ((contribution knowledge-change-contribution))
-  "Project the number of explained changes without their contents."
+  "Project the explained changes as their count and claim identifiers, without their contents."
   (make-instance 'knowledge-change-event
-                 :count (knowledge-change-contribution-count contribution)))
+                 :count       (knowledge-change-contribution-count contribution)
+                 :identifiers (copy-list (knowledge-change-contribution-identifiers contribution))))
 
 (defmethod context-contribution-provider-event
     ((contribution memory-context-contribution))
@@ -332,7 +344,10 @@ each is explained once, retries included."
                                                   :lifetime          ':next-request
                                                   :deduplication-key "knowledge-changes")
                                                  'knowledge-change-contribution
-                                                 :count (length changes))))))))))
+                                                 :count       (length changes)
+                                                 :identifiers (mapcar (lambda (change)
+                                                                        (getf change :claim))
+                                                                      changes))))))))))
           (setf (gethash identifier *memory-context-turn-changes*) (cons turn advice))
           advice))))
 

@@ -4182,24 +4182,29 @@ STALE and UNVERIFIED count memories whose evidence changed or could not be check
                                       (when (plusp facts)
                                         (format nil "~D ~:[~;relevant ~]fact~P"
                                                 facts (zerop count) facts)))))))
-    (append
-     (list (terminal-span style text))
-     (loop for id in ids
-           for call = (format nil "(memory ~S)" id)
-           for action = (list ':insert call)
-           append (cons (terminal-span style " · ")
-                        (mapcar (lambda (token)
-                                  (termdown:make-widget (terminal-span-style token)
-                                                       (terminal-span-text token)
-                                                       action))
-                                (or (syntax--highlight-spans
-                                     call :language *application-common-lisp-language*)
-                                    (list (terminal-span ':code call)))))))))
+    (cons (terminal-span style text)
+          (application--lookup-spans style ids))))
 
-(-> application--knowledge-changes-notice ((integer 1)) string)
-(defun application--knowledge-changes-notice (count)
-  "Return the notice that COUNT facts given earlier changed."
-  (format nil "@ ~D fact~:P given earlier changed" count))
+(-> application--lookup-spans (terminal-style list) list)
+(defun application--lookup-spans (style ids)
+  "Return a highlighted, click-to-insert (memory ID) lookup for each of IDS, each after a STYLE separator."
+  (loop for id in ids
+        for call = (format nil "(memory ~S)" id)
+        for action = (list ':insert call)
+        append (cons (terminal-span style " · ")
+                     (mapcar (lambda (token)
+                               (termdown:make-widget (terminal-span-style token)
+                                                    (terminal-span-text token)
+                                                    action))
+                             (or (syntax--highlight-spans
+                                  call :language *application-common-lisp-language*)
+                                 (list (terminal-span ':code call)))))))
+
+(-> application--knowledge-changes-notice ((integer 1) &key (:ids list)) list)
+(defun application--knowledge-changes-notice (count &key ids)
+  "Return the notice that COUNT facts given earlier changed, with a click-to-insert lookup of each of IDS."
+  (cons (terminal-span ':notice (format nil "@ ~D fact~:P given earlier changed" count))
+        (application--lookup-spans ':notice (mapcar #'application-memory--short ids))))
 
 (-> application--procedures-learned-notice (list) string)
 (defun application--procedures-learned-notice (learned)
@@ -4493,9 +4498,8 @@ clients as :TEXT, :REASONING and :STATUS events."
              (:knowledge-changes
               (application-present
                application
-               (list (terminal-span
-                      ':notice
-                      (application--knowledge-changes-notice (getf details :count))))))
+               (application--knowledge-changes-notice (getf details :count)
+                                                      :ids (getf details :ids))))
              (:procedure-offers
               (unless procedure-offers-shown-p
                 (application-present
