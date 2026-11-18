@@ -2912,7 +2912,7 @@ A channel message shows its sender and channel instead of an operation."
     (otherwise
      nil)))
 
-(defparameter *application-compaction-label* " context compacted "
+(defparameter *application-compaction-label* " CONTEXT COMPACTED "
   "The label centered in the transcript rule marking a context compaction.")
 
 (-> application--compaction-rule (application &key (:recovery list)) terminal-styled-text)
