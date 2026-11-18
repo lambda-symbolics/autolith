@@ -57,6 +57,20 @@
 
 ;;;; -- Resource Protocol --
 
+(defparameter *resource-edit-kinds*
+  '(:replace-lines :delete-lines :insert-before :insert-after :replace-empty
+    :agenda-add :agenda-update :agenda-remove
+    :memory-remember :memory-replace :memory-forget
+    :papercut-report :papercut-close)
+  "The operations a resource edit names with its op, each spelled as its lower-case name.")
+
+(-> resource-edit-kind (t) (option keyword))
+(defun resource-edit-kind (name)
+  "Return the edit kind that NAME, an operation's op, spells, or NIL when it spells none."
+  (and (stringp name)
+       (find name *resource-edit-kinds*
+             :test (lambda (name kind) (string= name (string-downcase kind))))))
+
 (defparameter *resource-readable-schemes* nil
   "Optional exact URI schemes permitted during one restricted tool call.")
 

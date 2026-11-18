@@ -339,11 +339,11 @@ An edit may produce an overlong line; its successful publication is still report
          (unless field
            (error 'tool-error :message (format nil "Unsupported resource edit field ~S." key) :tool-name "resource.edit"))
          (when (eq (rest field) ':op)
+           ;; Another resource's operation stays as written, for the refusal to quote.
            (setf value
-                 (or (and (stringp value)
-                          (rest (assoc value '(("replace-lines" . :replace-lines) ("delete-lines" . :delete-lines)
-                                               ("insert-before" . :insert-before) ("insert-after" . :insert-after)
-                                               ("replace-empty" . :replace-empty)) :test #'string=)))
+                 (or (find (resource-edit-kind value)
+                           '(:replace-lines :delete-lines :insert-before :insert-after
+                             :replace-empty))
                      value)))
          (setf result (list* (rest field) value result))))
      operation)

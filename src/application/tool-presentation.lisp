@@ -1118,57 +1118,57 @@ structural discriminator as a readable heading instead."
 (-> application--resource-operation-heading (json-object integer) string)
 (defun application--resource-operation-heading (operation index)
   "Return a readable verb phrase for resource edit OPERATION at INDEX."
-  (let ((name       (let ((value (json-get operation "op")))
-                      (if (stringp value) value "")))
+  (let ((name       (json-get operation "op"))
         (start      (json-get operation "start-line"))
         (end        (json-get operation "end-line"))
         (anchor     (json-get operation "line"))
         (identifier (json-get operation "id")))
-    (format nil "operation ~D · ~A"
-            index
-            (cond
-              ((string= name "replace-lines")
-               (if (and (integerp start) (integerp end))
-                   (format nil "replace lines ~D-~D" start end)
-                   "replace lines"))
-              ((string= name "delete-lines")
-               (if (and (integerp start) (integerp end))
-                   (format nil "delete lines ~D-~D" start end)
-                   "delete lines"))
-              ((string= name "insert-before")
-               (if (integerp anchor)
-                   (format nil "insert before line ~D" anchor)
-                   "insert before line"))
-              ((string= name "insert-after")
-               (if (integerp anchor)
-                   (format nil "insert after line ~D" anchor)
-                   "insert after line"))
-              ((string= name "replace-empty")
-               "replace empty file")
-              ((string= name "agenda-add")
-               "add agenda item")
-              ((string= name "agenda-update")
-               (if (non-empty-string-p identifier)
-                   (format nil "update agenda item ~A" identifier)
-                   "update agenda item"))
-              ((string= name "agenda-remove")
-               (if (non-empty-string-p identifier)
-                   (format nil "remove agenda item ~A" identifier)
-                   "remove agenda item"))
-              ((string= name "memory-remember")
-               "remember memory")
-              ((string= name "memory-replace")
-               "replace memory")
-              ((string= name "memory-forget")
-               "forget memory")
-              ((string= name "papercut-report")
-               "report papercut")
-              ((string= name "papercut-close")
-               "close papercut")
-              ((non-empty-string-p name)
-               name)
-              (t
-               "invalid operation")))))
+    (flet ((lines (verb)
+             "Return VERB with the operation's line range when it names one."
+             (if (and (integerp start) (integerp end))
+                 (format nil "~A lines ~D-~D" verb start end)
+                 (format nil "~A lines" verb)))
+
+           (anchored (phrase)
+             "Return PHRASE with the operation's anchor line when it names one."
+             (format nil "~A line~@[ ~D~]" phrase (and (integerp anchor) anchor)))
+
+           (item (phrase)
+             "Return PHRASE with the operation's item identifier when it names one."
+             (format nil "~A~@[ ~A~]" phrase (and (non-empty-string-p identifier) identifier))))
+      (format nil "operation ~D · ~A"
+              index
+              (case (resource-edit-kind name)
+                (:replace-lines
+                 (lines "replace"))
+                (:delete-lines
+                 (lines "delete"))
+                (:insert-before
+                 (anchored "insert before"))
+                (:insert-after
+                 (anchored "insert after"))
+                (:replace-empty
+                 "replace empty file")
+                (:agenda-add
+                 "add agenda item")
+                (:agenda-update
+                 (item "update agenda item"))
+                (:agenda-remove
+                 (item "remove agenda item"))
+                (:memory-remember
+                 "remember memory")
+                (:memory-replace
+                 "replace memory")
+                (:memory-forget
+                 "forget memory")
+                (:papercut-report
+                 "report papercut")
+                (:papercut-close
+                 "close papercut")
+                (otherwise
+                 (if (non-empty-string-p name)
+                     name
+                     "invalid operation")))))))
 
 (-> application--file-resource-path (string) (option string))
 (defun application--file-resource-path (uri)
@@ -1281,7 +1281,7 @@ Never read the current file as a revision-gated preimage."
       (loop for operation across operations
             for index from 0
             do
-               (let* ((name    (json-get operation "op"))
+               (let* ((kind    (resource-edit-kind (json-get operation "op")))
                       (start   (json-get operation "start-line"))
                       (end     (json-get operation "end-line"))
                       (line    (json-get operation "line"))
@@ -1289,27 +1289,27 @@ Never read the current file as a revision-gated preimage."
                       (added-count
                         (and (stringp content)
                              (length (text--split-lines content)))))
-                 (cond
-                   ((string= name "replace-lines")
+                 (case kind
+                   (:replace-lines
                     (push (list index
                                 start
                                 start
                                 (- added-count (1+ (- end start))))
                           coordinates))
-                   ((string= name "delete-lines")
+                   (:delete-lines
                     (push (list index
                                 start
                                 nil
                                 (- (1+ (- end start))))
                           coordinates))
-                   ((member name '("insert-before" "insert-after") :test #'string=)
+                   ((:insert-before :insert-after)
                     (push (list index
                                 line
                                 (+ line
-                                   (if (string= name "insert-after") 1 0))
+                                   (if (eq kind ':insert-after) 1 0))
                                 added-count)
                           coordinates))
-                   ((string= name "replace-empty")
+                   (:replace-empty
                     (push (list index 0 1 added-count) coordinates)))))
       (loop with delta = 0
             for coordinate in (stable-sort coordinates #'< :key #'second)
@@ -1331,7 +1331,7 @@ Never read the current file as a revision-gated preimage."
 
 When exact resulting coordinates are unavailable, added rows fall back to
 OPERATION's own declared target line so they stay numbered."
-  (let* ((name    (json-get operation "op"))
+  (let* ((kind    (resource-edit-kind (json-get operation "op")))
          (start   (json-get operation "start-line"))
          (end     (json-get operation "end-line"))
          (line    (json-get operation "line"))
@@ -1339,8 +1339,7 @@ OPERATION's own declared target line so they stay numbered."
          (new-start-line
            (or new-start-line
                (cond
-                 ((and (stringp name)
-                       (string= name "insert-after")
+                 ((and (eq kind ':insert-after)
                        (integerp line))
                   (1+ line))
                  ((integerp line)
@@ -1350,17 +1349,16 @@ OPERATION's own declared target line so they stay numbered."
                  (t
                   nil)))))
     (cond
-      ((and (stringp name)
-            (member name '("replace-lines" "delete-lines") :test #'string=)
+      ((and (member kind '(:replace-lines :delete-lines))
             (integerp start)
             (integerp end)
             (plusp start)
             (<= start end)
-            (or (string= name "delete-lines") (stringp content)))
+            (or (eq kind ':delete-lines) (stringp content)))
        (let* ((old-text
                 (application--workspace-resource-observed-text
                  application uri revision :start-line start :end-line end))
-              (new-text (if (string= name "replace-lines") content "")))
+              (new-text (if (eq kind ':replace-lines) content "")))
          (if old-text
              (change-viewer-render
               :removed-content    old-text
@@ -1381,14 +1379,12 @@ OPERATION's own declared target line so they stay numbered."
                   :width         width
                   :content-spans (list (terminal-span ':dim message))
                   :span-function #'syntax--terminal-span))
-                (when (string= name "replace-lines")
+                (when (eq kind ':replace-lines)
                   (change-viewer-render
                    :added-content    new-text
                    :added-start-line new-start-line
                    :source-path      path)))))))
-      ((and (stringp name)
-            (member name '("insert-before" "insert-after" "replace-empty")
-                    :test #'string=)
+      ((and (member kind '(:insert-before :insert-after :replace-empty))
             (stringp content))
        (change-viewer-render
         :added-content    content
