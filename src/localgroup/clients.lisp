@@ -4,7 +4,8 @@
 
 ;;; A structured client opens a channel's localgroup endpoint with the :client
 ;;; operation, naming itself with :name and saying with :approves-p whether
-;;; it answers approvals, and keeps the connection. The server answers with
+;;; it answers approvals and with :evaluates-p whether it evaluates Common
+;;; Lisp forms, and keeps the connection. The server answers with
 ;;;
 ;;;   (:attached :client-id ID :session-id CHANNEL :state STATE)
 ;;;
@@ -13,12 +14,14 @@
 ;;; :details DETAILS), (:present :text TEXT), (:approval :id ID :kind KIND
 ;;; :title TITLE :entry TEXT :options OPTIONS), (:approval-settled :id ID
 ;;; :value CHOICE), (:work-finished :kind KIND :outcome OUTCOME :idle-p
-;;; IDLE-P) and (:state :state STATE). The client writes commands, each with
-;;; an :id it chooses:
+;;; IDLE-P) and (:state :state STATE). A client that evaluates is also sent
+;;; (:evaluation :id ID :forms SOURCES [:restart NAME] [:restart-value
+;;; SOURCE]). The client writes commands, each with an :id it chooses:
 ;;;
 ;;;   (:submit :id N :text TEXT [:images PATHNAMES] [:steer-p BOOLEAN])
 ;;;   (:cancel :id N)
 ;;;   (:answer :id N :approval ID :value CHOICE)
+;;;   (:evaluated :id N :evaluation ID :succeeded-p BOOLEAN :text TEXT)
 ;;;   (:mode :id N :value MODE)
 ;;;   (:state :id N)
 ;;;   (:operation :id N :method METHOD :params PARAMS)
@@ -49,6 +52,7 @@
          (client      (channel-client-create
                        :name           (if (non-empty-string-p name) name "client")
                        :approves-p     (getf arguments :approves-p t)
+                       :evaluates-p    (not (null (getf arguments :evaluates-p)))
                        :stream         stream
                        :socket         socket
                        :transport-lock (image-daemon:daemon-runtime-lock session))))
@@ -133,6 +137,11 @@
            (unless (and (stringp approval) (stringp value))
              (refuse "An answer names the approval and the chosen value."))
            (list :accepted-p (application-answer-approval application approval value))))
+        (:evaluated
+         (list :accepted-p
+               (application-answer-evaluation application (getf arguments :evaluation)
+                                              :succeeded-p (getf arguments :succeeded-p)
+                                              :text        (getf arguments :text))))
         (:mode
          (let ((mode (getf arguments :value)))
            (unless (member mode (application-client-permission-modes))
@@ -246,16 +255,19 @@
 
 (-> localgroup-client-connect
     (cons &key (:name string) (:event-function function) (:approves-p boolean)
-          (:after-sequence (option integer)) (:cancelled-p (option function)))
+          (:evaluates-p boolean) (:after-sequence (option integer))
+          (:cancelled-p (option function)))
     localgroup-client-connection)
 (defun localgroup-client-connect (entry &key (name "client") event-function (approves-p t)
-                                           after-sequence cancelled-p)
+                                           evaluates-p after-sequence cancelled-p)
   "Connect to the channel of localgroup endpoint ENTRY as a structured client NAME.
 
 EVENT-FUNCTION is called on the reader thread with each event, and with
 (:closed) once the connection ends. Replies go to the command that waits
 for them. APPROVES-P says whether this client answers approvals; one that
-does not leaves them to a terminal or another client."
+does not leaves them to a terminal or another client. With EVALUATES-P the
+connection runs the forms the channel sends in this image and answers them
+itself; EVENT-FUNCTION never sees those requests."
   (let ((record (rest entry))
         (socket nil)
         (stream nil))
@@ -269,6 +281,7 @@ does not leaves them to a terminal or another client."
                                      :token     (localgroup--record-token record)
                                      :operation ':client
                                      :arguments (list :name name :approves-p approves-p
+                                                      :evaluates-p    evaluates-p
                                                       :after-sequence after-sequence)))
           (let ((greeting (localgroup-client--read-greeting stream cancelled-p)))
             (unless (eq (first greeting) ':attached)
@@ -285,7 +298,8 @@ does not leaves them to a terminal or another client."
                                              :attached greeting)))
               (setf (localgroup-client-connection-reader-thread connection)
                     (make-thread (lambda ()
-                                   (localgroup-client--read connection event-function))
+                                   (localgroup-client--read connection event-function
+                                                            :evaluates-p evaluates-p))
                                  :name (format nil "Autolith ~A client reader" name)))
               connection)))
       (error (condition)
@@ -350,29 +364,49 @@ writes are serialized separately so blocked I/O cannot prevent teardown."
       (join-thread thread)))
   nil)
 
-(-> localgroup-client--read (localgroup-client-connection (option function)) null)
-(defun localgroup-client--read (connection event-function)
-  "Read events and pending replies, then close the socket and report (:closed)."
+(-> localgroup-client--evaluate (localgroup-client-connection list) null)
+(defun localgroup-client--evaluate (connection request)
+  "Evaluate the channel's REQUEST on a thread of its own and send CONNECTION's answer."
+  (make-thread (lambda ()
+                 (handler-case
+                     (apply #'localgroup-client-call connection :evaluated
+                            (client-evaluate-request request))
+                   ;; The connection ended while the forms ran; nobody waits for the answer.
+                   (localgroup-error ()
+                     nil)))
+               :name "Autolith client evaluation")
+  nil)
+
+(-> localgroup-client--read
+    (localgroup-client-connection (option function) &key (:evaluates-p boolean))
+    null)
+(defun localgroup-client--read (connection event-function &key evaluates-p)
+  "Read events and pending replies, then close the socket and report (:closed).
+
+With EVALUATES-P, evaluation requests are run and answered here."
   (unwind-protect
        (loop for packet = (handler-case (daemon-read-packet (localgroup-client-connection-stream connection))
                             (error ()
                               nil))
              while packet
-             do (if (eq (first packet) ':reply)
-                    (with-lock-held ((localgroup-client-connection-lock connection))
-                      (let ((identifier (getf (rest packet) :id))
-                            (replies    (localgroup-client-connection-replies connection)))
-                        (when (nth-value 1 (gethash identifier replies))
-                          (setf (gethash identifier replies) packet)
-                          (sb-thread:condition-broadcast
-                           (localgroup-client-connection-condition-variable connection)))))
-                    (progn
-                      (when (eq (first packet) ':checkpoint-reconnect)
-                        (with-lock-held ((localgroup-client-connection-lock connection))
-                          (setf (localgroup-client-connection-checkpoint-reconnect-id connection)
-                                (getf (rest packet) :id))))
-                      (when event-function
-                        (funcall event-function packet)))))
+             do (cond
+                  ((eq (first packet) ':reply)
+                   (with-lock-held ((localgroup-client-connection-lock connection))
+                     (let ((identifier (getf (rest packet) :id))
+                           (replies    (localgroup-client-connection-replies connection)))
+                       (when (nth-value 1 (gethash identifier replies))
+                         (setf (gethash identifier replies) packet)
+                         (sb-thread:condition-broadcast
+                          (localgroup-client-connection-condition-variable connection))))))
+                  ((and evaluates-p (eq (first packet) ':evaluation))
+                   (localgroup-client--evaluate connection packet))
+                  (t
+                   (when (eq (first packet) ':checkpoint-reconnect)
+                     (with-lock-held ((localgroup-client-connection-lock connection))
+                       (setf (localgroup-client-connection-checkpoint-reconnect-id connection)
+                             (getf (rest packet) :id))))
+                   (when event-function
+                     (funcall event-function packet)))))
     (localgroup-client--disconnect connection)
     ; mallet:suppress no-ignore-errors -- the server may have closed the connection already
     (ignore-errors (sb-bsd-sockets:socket-close (localgroup-client-connection-socket connection)))

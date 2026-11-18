@@ -26,6 +26,12 @@
     :reader        channel-client-approves-p
     :type          boolean
     :documentation "Whether the client answers approvals, as an editor does and a script does not.")
+   (evaluates-p
+    :initarg       :evaluates-p
+    :initform      nil
+    :reader        channel-client-evaluates-p
+    :type          boolean
+    :documentation "Whether the client evaluates Common Lisp forms, as one written in Lisp may.")
    (attachment
     :accessor      channel-client-attachment
     :type          image-daemon:attachment
@@ -74,6 +80,11 @@
     :initform      nil
     :accessor      client-hub-approval
     :documentation "The approval the channel waits on, or NIL.")
+   (evaluations
+    :initform      nil
+    :accessor      client-hub-evaluations
+    :type          list
+    :documentation "The evaluations the channel waits for clients to finish.")
    (usage
     :initform      nil
     :accessor      client-hub-usage
@@ -304,11 +315,14 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
 ;;;; -- One Client --
 
 (-> channel-client-create
-    (&key (:socket t) (:stream stream) (:transport-lock t) (:name string) (:approves-p boolean))
+    (&key (:socket t) (:stream stream) (:transport-lock t) (:name string) (:approves-p boolean)
+          (:evaluates-p boolean))
     channel-client)
-(defun channel-client-create (&key socket stream transport-lock (name "client") (approves-p t))
+(defun channel-client-create
+    (&key socket stream transport-lock (name "client") (approves-p t) evaluates-p)
   "Create a structured client and its deferred output attachment."
-  (let ((client (make-instance 'channel-client :name name :approves-p approves-p)))
+  (let ((client (make-instance 'channel-client :name name :approves-p approves-p
+                                               :evaluates-p evaluates-p)))
     (setf (channel-client-attachment client)
           (make-instance 'channel-client-transport
                          :client client :socket socket :stream stream :mode ':read-only
@@ -336,6 +350,10 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
 (defun channel-client-close (client)
   "Detach CLIENT and reap its writer outside hub and attachment locks."
   (image-daemon:attachment-close (channel-client-attachment client)))
+
+(defmethod attachment-evaluates-p ((transport channel-client-transport))
+  "Return whether TRANSPORT's structured client said it evaluates Common Lisp forms."
+  (channel-client-evaluates-p (channel-client-transport-client transport)))
 
 (defmethod image-daemon:attachment-release-transport ((transport channel-client-transport))
   "Shut down TRANSPORT, unregister its client and wake approvals; the daemon closes it."

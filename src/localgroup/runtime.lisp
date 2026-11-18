@@ -447,6 +447,15 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
                                 (cons (integer 1 10000)
                                  (cons (integer 1 10000) null))))))))
 
+(-> localgroup--accept-client-packet (application list) boolean)
+(defun localgroup--accept-client-packet (application packet)
+  "Take a terminal client's own PACKET, the answer to an evaluation, and return whether one waited for it."
+  (and (typep packet 'client-evaluation-reply)
+       (destructuring-bind (&key evaluation succeeded-p text) (rest packet)
+         (application-answer-evaluation application evaluation
+                                        :succeeded-p succeeded-p
+                                        :text        text))))
+
 (-> localgroup--version-mismatch-notice (application t) (option terminal-styled-text))
 (defun localgroup--version-mismatch-notice (application client-version)
   "Return an informational transcript note when CLIENT-VERSION differs from this server."
@@ -541,8 +550,9 @@ operation. Drain through the sole attachment writer outside endpoint locks."
                     (styled-p  (not (null (getf arguments :styled-p)))))
                (setf terminal (localgroup--terminal session)
                      attachment
-                       (localgroup-attachment-create socket stream mode :client-pid
-                                                     (getf arguments :client-pid))
+                       (localgroup-attachment-create socket stream mode
+                                                     :client-pid  (getf arguments :client-pid)
+                                                     :evaluates-p (getf arguments :evaluates-p))
                      stage "admission")
                (unless
                    (if (eq mode ':read-only)
@@ -576,8 +586,11 @@ operation. Drain through the sole attachment writer outside endpoint locks."
                                           (application-failure-line
                                            (bounded-string notice :limit 500))))))
                (setf stage "input")
-               (image-daemon:relay-read-attachment terminal attachment :event-validator
-                                                   #'localgroup--terminal-event-p)))
+               (image-daemon:relay-read-attachment
+                terminal attachment
+                :event-validator #'localgroup--terminal-event-p
+                :packet-function (lambda (packet)
+                                   (localgroup--accept-client-packet application packet)))))
            (error (condition) (capture condition) (retain-failure)
                   (let* ((message (localgroup--attachment-failure-message failure))
                          (packet

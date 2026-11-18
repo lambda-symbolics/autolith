@@ -572,6 +572,7 @@ checkpoint transition, a switch request, or (:ATTACHMENT-LOST . DETAILS)."
   (let* ((output           (make-mode-tracking-output-stream *standard-output*))
          (owned-p          (null screen))
          (screen           (or screen (localgroup-screen-create :terminal terminal)))
+         (evaluator        (make-instance 'client-evaluator))
          (reconnect        nil)
          (result           nil)
          (metadata         nil)
@@ -608,6 +609,9 @@ checkpoint transition, a switch request, or (:ATTACHMENT-LOST . DETAILS)."
                                                            ((localgroup-screen-handle-packet screen
                                                                                              packet)
                                                             nil)
+                                                           ((eq (first packet) ':evaluation)
+                                                            (client-evaluator-start evaluator
+                                                                                    packet))
                                                            ((or
                                                              (and
                                                               (eq (first packet)
@@ -625,6 +629,9 @@ checkpoint transition, a switch request, or (:ATTACHMENT-LOST . DETAILS)."
                                                             (setf reconnect packet) t)
                                                            (t
                                                             nil)))
+                                                        :outgoing-function
+                                                        (lambda ()
+                                                          (client-evaluator-take evaluator))
                                                         :resize-function
                                                         (lambda ()
                                                           (let ((terminal-p
@@ -863,7 +870,8 @@ SCREEN the caller lends stays the caller's to release."
                                                 (append
                                                  (list :mode mode :rows rows :columns columns
                                                        :client-pid (current-process-id) :styled-p
-                                                       (terminal-environment-styling-p))
+                                                       (terminal-environment-styling-p)
+                                                       :evaluates-p t)
                                                  (when client-version
                                                    (list :client-version client-version))
                                                  (when notice (list :notice notice))))))

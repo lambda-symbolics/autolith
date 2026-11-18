@@ -829,6 +829,11 @@
   test-client-protocol-cursor-tail
   test-client-protocol-write-failure)
 
+(define-test-suite client-evaluation
+  test-client-evaluation-request
+  test-client-evaluation-structured-client
+  test-client-evaluation-terminal-client)
+
 (define-test-suite world-sidebar
   test-world-repository-groups
   test-world-repository-group-refresh

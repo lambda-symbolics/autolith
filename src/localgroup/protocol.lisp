@@ -44,6 +44,17 @@
   (:documentation "A transmitted request lost its reply; its execution outcome is unknown."))
 
 
+;;;; -- Client Capabilities --
+
+(defgeneric attachment-evaluates-p (attachment)
+  (:documentation "Return true when ATTACHMENT's client evaluates the Common Lisp forms it is sent."))
+
+(defmethod attachment-evaluates-p ((attachment image-daemon:attachment))
+  "Answer that a client evaluates nothing unless it said so when it attached."
+  (declare (ignore attachment))
+  nil)
+
+
 ;;;; -- image-daemon Host Wiring --
 
 (setf image-daemon:*daemon-error-class* 'localgroup-error)

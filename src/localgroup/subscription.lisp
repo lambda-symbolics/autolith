@@ -42,7 +42,10 @@
    (name :initarg :name :initform "client" :reader channel-subscription-name
          :documentation "The transport client name.")
    (approves-p :initarg :approves-p :initform t :reader channel-subscription-approves-p
-               :documentation "Whether this client answers approvals."))
+               :documentation "Whether this client answers approvals.")
+   (evaluates-p :initarg :evaluates-p :initform nil :reader channel-subscription-evaluates-p
+                :type          boolean
+                :documentation "Whether this client evaluates the forms its channel sends."))
   (:documentation "A channel subscription with ordered delivery and exact submission completion."))
 
 (define-condition channel-subscription-unavailable (autolith-error)
@@ -128,6 +131,7 @@
                                    (channel-subscription-identifier subscription))
            :name           (channel-subscription-name subscription)
            :approves-p     (channel-subscription-approves-p subscription)
+           :evaluates-p    (channel-subscription-evaluates-p subscription)
            :event-function (lambda (event) (channel-subscription-event subscription event)))))
     (setf (channel-subscription-connection subscription) connection)
     (channel-subscription-finish-attachment
@@ -336,6 +340,7 @@ Explicit rejection, including an expired replay cursor, is terminal."
               (return (localgroup-client-connect
                        entry :name     (channel-subscription-name subscription)
                        :approves-p     (channel-subscription-approves-p subscription)
+                       :evaluates-p    (channel-subscription-evaluates-p subscription)
                        :after-sequence sequence :cancelled-p #'cancelled-p
                        :event-function (lambda (event) (channel-subscription-event subscription event))))
             (localgroup-error (condition)

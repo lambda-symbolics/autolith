@@ -8,22 +8,30 @@
     :initform      nil
     :reader        localgroup-attachment-client-pid
     :type          (option (integer 1))
-    :documentation "The attaching terminal process's reported PID, when supplied."))
+    :documentation "The attaching terminal process's reported PID, when supplied.")
+   (evaluates-p
+    :initarg       :evaluates-p
+    :initform      nil
+    :reader        attachment-evaluates-p
+    :type          boolean
+    :documentation "Whether the terminal client said it evaluates Common Lisp forms."))
   (:documentation "A terminal attachment with Autolith's client process identity."))
 
 (-> localgroup-attachment-create
-    (t stream keyword &key (:client-pid t))
+    (t stream keyword &key (:client-pid t) (:evaluates-p t))
     localgroup-attachment)
-(defun localgroup-attachment-create (socket stream mode &key client-pid)
+(defun localgroup-attachment-create (socket stream mode &key client-pid evaluates-p)
   "Validate CLIENT-PID and start a terminal attachment over SOCKET and STREAM.
 
-An omitted PID supports clients that predate terminal process reporting."
+An omitted PID supports clients that predate terminal process reporting.
+EVALUATES-P records that the client evaluates the forms it is sent."
   (unless (or (null client-pid) (typep client-pid '(integer 1)))
     (error 'localgroup-error :message  "The terminal client PID must be a positive integer."
                             :operation ':attach))
   (image-daemon:attachment-start
    (make-instance 'localgroup-attachment :socket socket :stream stream :mode mode
-                                        :client-pid client-pid)))
+                                        :client-pid  client-pid
+                                        :evaluates-p (not (null evaluates-p)))))
 
 (defclass localgroup-terminal (terminal image-daemon:relay)
   ((screen-active-p
@@ -120,6 +128,13 @@ clients. A direct interactive terminal belongs to the current process."
                       when pid collect pid))
                #'<)))
       (values (when (terminal-interactive-p terminal) (current-process-id)) nil)))
+
+(-> localgroup-terminal-controller (terminal) (option image-daemon:attachment))
+(defun localgroup-terminal-controller (terminal)
+  "Return the attachment controlling TERMINAL, or NIL when no client controls it."
+  (when (typep terminal 'localgroup-terminal)
+    (with-lock-held ((image-daemon:relay-lock terminal))
+      (image-daemon:relay-controller terminal))))
 
 (-> localgroup-terminal-resize
     (localgroup-terminal &key (:rows integer) (:columns integer) (:styled-p t))

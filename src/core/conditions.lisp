@@ -567,6 +567,13 @@ treats it like any other refused item."))
   ()
   (:documentation "A tool call was refused by the user or by policy."))
 
+(define-condition client-evaluation-error (tool-error)
+  ()
+  (:default-initargs :tool-name "self.eval")
+  (:documentation "No client evaluated the forms sent to it.
+
+The code is :NO-CLIENT, :FAILED, :CLIENT-LEFT, :TIMEOUT or :CANCELLED."))
+
 (defgeneric tool-failure-code (condition)
   (:documentation
    "Return CONDITION's stable machine-readable tool failure category.")
