@@ -63,9 +63,21 @@
   ()
   (:documentation "A self tool omitted when Autolith runs in immutable mode."))
 
-(defclass lisp-eval-tool (lisp-tool)
+(defclass lisp-source-input ()
+  ()
+  (:documentation "A tool whose call carries Common Lisp source the transcript lays out and expands."))
+
+(defgeneric tool-source-argument (tool)
+  (:documentation "Return the name of the argument that holds TOOL's Common Lisp source."))
+
+(defclass lisp-eval-tool (lisp-source-input lisp-tool)
   ()
   (:documentation "Evaluate a sequence of Common Lisp forms in the worker."))
+
+(defmethod tool-source-argument ((tool lisp-eval-tool))
+  "Name the forms a worker evaluation runs."
+  (declare (ignore tool))
+  "forms")
 
 (defclass lisp-load-system-tool (lisp-tool)
   ()
@@ -111,13 +123,23 @@
   ()
   (:documentation "Save one named REPL as an immutable worker image."))
 
-(defclass self-eval-tool (mutable-self-tool)
+(defclass self-eval-tool (lisp-source-input mutable-self-tool)
   ()
   (:documentation "Evaluate one exploratory form in the active image."))
 
-(defclass self-redefine-tool (mutable-self-tool)
+(defmethod tool-source-argument ((tool self-eval-tool))
+  "Name the forms an active-image evaluation runs."
+  (declare (ignore tool))
+  "forms")
+
+(defclass self-redefine-tool (lisp-source-input mutable-self-tool)
   ()
   (:documentation "Compile and install one exploratory top-level definition."))
+
+(defmethod tool-source-argument ((tool self-redefine-tool))
+  "Name the definition an exploratory installation compiles."
+  (declare (ignore tool))
+  "definition")
 
 (defclass self-set-tool (mutable-self-tool)
   ()
@@ -131,9 +153,14 @@
   ()
   (:documentation "Record a verdict for the open tuning experiment."))
 
-(defclass self-persist-definition-tool (mutable-self-tool)
+(defclass self-persist-definition-tool (lisp-source-input mutable-self-tool)
   ()
   (:documentation "Install and privately commit one complete definition."))
+
+(defmethod tool-source-argument ((tool self-persist-definition-tool))
+  "Name the definition a durable installation commits."
+  (declare (ignore tool))
+  "definition")
 
 (defclass self-status-tool (self-tool)
   ()
@@ -143,9 +170,14 @@
   ()
   (:documentation "Restore and discard one effective exploratory mutation."))
 
-(defclass self-exercise-tool (mutable-self-tool)
+(defclass self-exercise-tool (lisp-source-input mutable-self-tool)
   ()
   (:documentation "Run and journal one focused live-mutation exercise."))
+
+(defmethod tool-source-argument ((tool self-exercise-tool))
+  "Name the form a live-mutation exercise runs."
+  (declare (ignore tool))
+  "form")
 
 (defclass self-diff-tool (self-tool)
   ()

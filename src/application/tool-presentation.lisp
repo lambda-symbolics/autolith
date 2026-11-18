@@ -663,8 +663,7 @@ structural discriminator as a readable heading instead."
                  (format nil "~{~A~^~%~}" (map 'list #'display-source value))
                  (display-source (application--presentation-value (or value ""))))))
          (input-key
-           (when (and (terminal-ui-fullscreen-p (application-ui application))
-                      (equal (function-call-canonical-name call) "lisp.eval"))
+           (when (terminal-ui-fullscreen-p (application-ui application))
              (application--tool-outcome-key application ':call (json-get call "call_id"))))
          (rows      (application--source-preview-rows
                      source
@@ -1526,36 +1525,9 @@ OPERATION's own declared target line so they stay numbered."
               (application--shell-command-rows command)))))
 
 (defmethod application-tool-call-entry
-    ((tool lisp-eval-tool) (application application) (call hash-table))
-  "Present lisp.eval forms as bounded Lisp source, one form per line."
-  (declare (ignore tool))
-  (application--lisp-call-entry application call "forms"))
-
-(defmethod application-tool-call-entry
-    ((tool self-eval-tool) (application application) (call hash-table))
-  "Present self.eval forms and any selected restart separately."
-  (declare (ignore tool))
-  (application--lisp-call-entry application call "forms"))
-
-(defmethod application-tool-call-entry
-    ((tool self-exercise-tool) (application application) (call hash-table))
-  "Present a self.exercise form as bounded Lisp source."
-  (declare (ignore tool))
-  (application--lisp-call-entry application call "form"))
-
-(defmethod application-tool-call-entry
-    ((tool self-redefine-tool) (application application) (call hash-table))
-  "Present a self.redefine definition and any selected restart separately."
-  (declare (ignore tool))
-  (application--lisp-call-entry application call "definition"))
-
-(defmethod application-tool-call-entry
-    ((tool self-persist-definition-tool)
-     (application application)
-     (call hash-table))
-  "Present a durable definition and any selected restart separately."
-  (declare (ignore tool))
-  (application--lisp-call-entry application call "definition"))
+    ((tool lisp-source-input) (application application) (call hash-table))
+  "Present the call's Lisp source as bounded, highlighted source and its other arguments above it."
+  (application--lisp-call-entry application call (tool-source-argument tool)))
 
 (defmethod application-tool-call-entry
     ((tool self-set-tool) (application application) (call hash-table))

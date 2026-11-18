@@ -1864,6 +1864,56 @@
                  "existing multiline formatting and malformed source are displayed verbatim"))
   nil)
 
+(-> fullscreen-test--lisp-source-tools-expand () null)
+(defun fullscreen-test--lisp-source-tools-expand ()
+  "Click the source of every tool that takes Lisp and see it laid out in place."
+  (loop for (namespace name argument) in '(("lisp" "eval" "forms") ("self" "eval" "forms")
+                                           ("self" "redefine" "definition")
+                                           ("self" "exercise" "form"))
+        for source = "(let ((start (get-internal-real-time))) (list :elapsed (- (get-internal-real-time) start) :expanded-marker t))"
+        do (with-test-configuration (configuration)
+             (let* ((terminal     (make-instance 'recording-terminal :columns 60 :rows 30))
+                    (ui           (fullscreen-test--ui terminal))
+                    (conversation (conversation-create configuration))
+                    (application  (make-instance 'application :configuration configuration
+                                                 :tool-registry              (make-default-tool-registry)
+                                                 :conversation conversation :ui ui))
+                    (call         (application-tool-outcome-history-tests--append
+                                   conversation
+                                   (list :provider-item :wire-json
+                                         (json-encode
+                                          (agent-test-call
+                                           :call-id "source-input" :namespace namespace :name name
+                                           :arguments (json-encode
+                                                       (json-object argument
+                                                                    (if (string= argument "forms")
+                                                                        (vector source)
+                                                                        source))))))))
+                    (key          (application--tool-outcome-key application ':call "source-input")))
+               (with-terminal-ui (active ui)
+                 (application-tool-outcome-tests--present application call)
+                 (terminal-ui-process-event active ':scroll-top)
+                 (let* ((frame  (map 'list #'clinedi:ansi-strip (fullscreen-test--frame active)))
+                        (row    (1+ (position-if (lambda (line) (search "(let" line)) frame)))
+                        (column (+ 2 (search "(let" (nth (1- row) frame)))))
+                   (test-assert (equal (terminal-ui-fullscreen--click-action active column row)
+                                       (list ':toggle-tool-input key))
+                                (format nil "~A.~A source takes the click that expands it" namespace name))
+                   (fullscreen-test--click active column row)
+                   (let ((expanded (map 'list #'clinedi:ansi-strip (fullscreen-test--frame active))))
+                     (test-assert (and (getf (gethash key (fullscreen-terminal-ui-presentation-records
+                                                           active))
+                                             :input-expanded-p)
+                                       (some (lambda (line) (search ":expanded-marker t" line)) expanded)
+                                       (some (lambda (line)
+                                               (let ((start (search "(list :elapsed" line)))
+                                                 (and start
+                                                      (not (search "(let" line)))))
+                                             expanded))
+                                  (format nil "~A.~A source expands to its laid out form"
+                                          namespace name))))))))
+  nil)
+
 (-> fullscreen-test--lisp-async-input-expansion () null)
 (defun fullscreen-test--lisp-async-input-expansion ()
   "Click clipped form text and ellipses through live handoff, completion and history."
@@ -1985,6 +2035,7 @@
 (defun test-terminal-fullscreen-lisp-input-expansion ()
   "Expand Lisp input by clicking its source, then reflow, fold an outcome and collapse."
   (fullscreen-test--lisp-input-formatting)
+  (fullscreen-test--lisp-source-tools-expand)
   (fullscreen-test--lisp-async-input-expansion)
   (with-test-configuration (configuration)
     (let* ((terminal    (make-instance 'recording-terminal :columns 100 :rows 48))
