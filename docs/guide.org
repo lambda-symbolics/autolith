@@ -2550,7 +2550,7 @@ not evidence from the provider. Set it to zero to use the provider policy.
 Both settings persist across restarts. The ChatGPT estimate alone never
 permits idle precompaction; that route has no declared lifetime by default.
 
-=(settings :prompt-cache-ttl "1h")= asks the Anthropic API and OpenRouter
+=(settings :prompt-cache-ttl :1h)= asks the Anthropic API and OpenRouter
 Claude models to keep cache entries for one hour instead of five minutes. A
 one-hour cache write costs twice the base input price, against 1.25 times for
 five minutes. The longer lifetime can avoid rewrites after pauses of five

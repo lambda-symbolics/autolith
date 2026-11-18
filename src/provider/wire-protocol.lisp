@@ -51,10 +51,20 @@ The public OpenAI API retention contract does not establish this route's TTL."
 
 The lifetime asks the provider to keep cache entries; it is separate from the
 local retention estimate, which only schedules idle compaction."
-  (let ((ttl (config :prompt-cache-ttl configuration)))
-    (if (string= ttl "5m")
-        nil
-        ttl)))
+  (ecase (config :prompt-cache-ttl configuration)
+    (:5m
+     nil)
+    (:1h
+     "1h")))
+
+(-> provider-prompt-cache-ttl-seconds (configuration) (integer 1))
+(defun provider-prompt-cache-ttl-seconds (configuration)
+  "Return the cache lifetime CONFIGURATION requests, in seconds."
+  (ecase (config :prompt-cache-ttl configuration)
+    (:5m
+     300)
+    (:1h
+     3600)))
 
 
 ;;;; -- Reusable Request Prefixes --

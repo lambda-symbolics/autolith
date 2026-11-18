@@ -153,7 +153,7 @@
      (:code "(setf (config :fullscreen-p) nil)")
      (:plain "; t restores the fullscreen default."))
     ((:plain "Claude caches a prompt for five minutes. If you often pause longer, ")
-     (:code "(setf (config :prompt-cache-ttl) \"1h\")")
+     (:code "(setf (config :prompt-cache-ttl) :1h)")
      (:plain " asks Anthropic and OpenRouter Claude models for one hour, at twice the cache-write price."))
     ((:plain "Visit ")
      (:code "https://almightylisp.com/")

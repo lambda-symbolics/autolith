@@ -23,7 +23,7 @@
         (let ((provider (if (eq class 'anthropic-api-key-provider)
                             (anthropic-provider-create configuration)
                             (openrouter-provider-create configuration))))
-          (dolist (case '(("5m" 300) ("1h" 3600)))
+          (dolist (case '((:5m 300) (:1h 3600)))
             (destructuring-bind (ttl seconds) case
               (setf (config :prompt-cache-ttl configuration) ttl)
               (test-assert (= seconds (provider-prompt-cache-retention-seconds provider configuration))

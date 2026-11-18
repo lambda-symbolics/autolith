@@ -19,16 +19,7 @@
 
 (defmethod provider-prompt-cache-lifetime ((provider anthropic-api-key-provider))
   "Return the requested cache lifetime in seconds."
-  (let ((ttl (config :prompt-cache-ttl (provider-configuration provider))))
-    (if (stringp ttl)
-        (cond
-          ((string= ttl "5m")
-           300)
-          ((string= ttl "1h")
-           3600)
-          (t
-           nil))
-        nil)))
+  (provider-prompt-cache-ttl-seconds (provider-configuration provider)))
 
 (defmethod provider-account-label ((provider anthropic-api-key-provider))
   "Return the Anthropic service name for user-visible errors."

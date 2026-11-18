@@ -342,13 +342,13 @@
 (-> test-precompaction-known-lifetime-expiry () null)
 (defun test-precompaction-known-lifetime-expiry ()
   "Expire declared lifetimes while keeping unknown routes stable through real agent preparation."
-  (dolist (case '((anthropic-api-key-provider "claude-sonnet-5" "5m" 0 300)
-                  (anthropic-api-key-provider "claude-sonnet-5" "1h" 0 3600)
-                  (openrouter-chat-completions-provider "openrouter/anthropic/claude-sonnet-4.5" "5m" 0 300)
-                  (openrouter-chat-completions-provider "openrouter/anthropic/claude-sonnet-4.5" "1h" 0 3600)
-                  (codex-subscription-provider "test" "5m" 1800 1800)
-                  (openrouter-chat-completions-provider "openrouter/openai/gpt-test" "5m" 0 nil)
-                  (scripted-provider "test" "5m" 0 nil)))
+  (dolist (case '((anthropic-api-key-provider "claude-sonnet-5" :5m 0 300)
+                  (anthropic-api-key-provider "claude-sonnet-5" :1h 0 3600)
+                  (openrouter-chat-completions-provider "openrouter/anthropic/claude-sonnet-4.5" :5m 0 300)
+                  (openrouter-chat-completions-provider "openrouter/anthropic/claude-sonnet-4.5" :1h 0 3600)
+                  (codex-subscription-provider "test" :5m 1800 1800)
+                  (openrouter-chat-completions-provider "openrouter/openai/gpt-test" :5m 0 nil)
+                  (scripted-provider "test" :5m 0 nil)))
     (destructuring-bind (class model ttl override lifetime) case
       (with-test-configuration (configuration)
         (setf (configuration-validation-deferred-p configuration) t

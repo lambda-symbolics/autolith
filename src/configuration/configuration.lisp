@@ -531,12 +531,12 @@ Ordinary native defaults remain lazy and follow the current environment."
   :label                          "Cache lifetime"
   :group                          :behavior
   :documentation                  "The cache lifetime requested for supported Claude routes: 5m, or 1h at twice the cache-write price."
-  :type                           'non-empty-string
+  :type                           'keyword
   :scope                          :durable
   :options                        (lambda (configuration)
                                     (declare (ignore configuration))
-                                    (list "5m" "1h"))
-  :default                        "5m")
+                                    (list ':5m ':1h))
+  :default                        ':5m)
 
 (define-setting :simple-technical-english-p (boolean-setting)
   :label                                    "Simple Technical English"

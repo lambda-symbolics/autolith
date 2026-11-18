@@ -99,16 +99,7 @@
         (model         (config :model (provider-configuration provider))))
     (when (and (stringp model)
                (uiop:string-prefix-p "openrouter/anthropic/claude" model))
-        (let ((ttl (config :prompt-cache-ttl configuration)))
-          (if (stringp ttl)
-              (cond
-                ((string= ttl "5m")
-                 300)
-                ((string= ttl "1h")
-                 3600)
-                (t
-                 nil))
-              nil)))))
+      (provider-prompt-cache-ttl-seconds configuration))))
 
 (defmethod openai-compatible-provider-output-ceiling-field
     ((provider openrouter-chat-completions-provider))
