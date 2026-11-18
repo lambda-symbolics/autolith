@@ -2154,41 +2154,55 @@ re-emitting untrusted serialized JSON."
                    (application--failure-result-rows
                     output :tool-name (getf (rest record) :tool)))))))
 
+(-> application--tool-execution-handoff-status (list) string)
+(defun application--tool-execution-handoff-status (handoff)
+  "Return HANDOFF's job state in words, with its job.cancel call while the job can be cancelled."
+  (let* ((job   (getf (rest handoff) :job))
+         (state (getf job :state)))
+    (format nil "~A · ~A"
+            (case state
+              (:queued
+               "queued in background")
+              (:running
+               (if (eq (getf (rest handoff) :handoff-reason) ':grace-expired)
+                   "still running in background"
+                   "running in background"))
+              (:completed
+               "result ready")
+              (:failed
+               "failed")
+              ((:cancelled :aborted)
+               "cancelled")
+              (otherwise
+               "background handoff"))
+            (if (member state '(:queued :running))
+                (terminal-ui--job-cancel-text (getf job :id))
+                (getf job :id)))))
+
+(-> application--tool-execution-handoff-annotation (list) list)
+(defun application--tool-execution-handoff-annotation (handoff)
+  "Return HANDOFF's job state as spans that follow its call's closing parenthesis."
+  (terminal-ui--job-cancel-widget
+   (list (terminal-span ':annotation
+                        (format nil "  ~A" (application--tool-execution-handoff-status handoff))))
+   (getf (getf (rest handoff) :job) :id)))
+
 (-> application--tool-execution-handoff-entry (application string list) list)
 (defun application--tool-execution-handoff-entry (application tool-name handoff)
   "Present TOOL-NAME's background HANDOFF as job state and identity, not as serialized output.
 
 A job that is still queued or running offers its job.cancel call. The agent's
 tool result, the user's own tool call and the user's background evaluation all
-show this entry."
+show this entry outside the fullscreen transcript, which notes the state on
+the call itself."
   (let* ((job         (getf (rest handoff) :job))
-         (state       (getf job :state))
-         (reason      (getf (rest handoff) :handoff-reason))
-         (description (getf job :description))
-         (status      (case state
-                        (:queued
-                         "queued in background")
-                        (:running
-                         (if (eq reason ':grace-expired)
-                             "still running in background"
-                             "running in background"))
-                        (:completed
-                         "result ready")
-                        (:failed
-                         "failed")
-                        ((:cancelled :aborted)
-                         "cancelled")
-                        (otherwise
-                         "background handoff"))))
+         (description (getf job :description)))
     (terminal-ui--job-cancel-widget
      (application--tool-entry
       application
-      :style  (if (eq state ':failed) ':failure ':notice)
+      :style  (if (eq (getf job :state) ':failed) ':failure ':notice)
       :header (format nil "↪ ~A" (application--tool-display-name application tool-name))
-      :detail (format nil "~A · ~A" status
-                      (if (member state '(:queued :running))
-                          (terminal-ui--job-cancel-text (getf job :id))
-                          (getf job :id)))
+      :detail (application--tool-execution-handoff-status handoff)
       :rows   (unless (application-compact-view-p application)
                (application--tool-field-rows
                 application
@@ -2196,7 +2210,7 @@ show this entry."
                  (when (non-empty-string-p description)
                    (list (list :label "task"
                                :value (bounded-string description :limit 200))))
-                 (when (eq reason ':grace-expired)
+                 (when (eq (getf (rest handoff) :handoff-reason) ':grace-expired)
                    (list (list :label "handoff"
                                :value "blocking wait expired")))))))
      (getf job :id))))

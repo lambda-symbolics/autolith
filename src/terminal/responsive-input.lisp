@@ -2749,8 +2749,7 @@ as the terminal UI's exclusive-input function."
                                (tool-context-call-id context))))
          (ui           (application-ui application))
          (metadata     (when (and call-key ui (terminal-ui-fullscreen-p ui))
-                         (list :kind ':annotation :call-key call-key
-                                :annotations (cons (terminal-span ':plain (string #\Newline)) entry))))
+                         (list :kind ':annotation :call-key call-key :annotations entry)))
          (fallback     (append entry
                                (list (terminal-span
                                       ':annotation

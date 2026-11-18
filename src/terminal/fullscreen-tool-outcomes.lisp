@@ -34,6 +34,14 @@
              do (setf header-p nil))
      body)))
 
+(-> terminal-ui-fullscreen--annotate (list list) list)
+(defun terminal-ui-fullscreen--annotate (entry annotations)
+  "Return call ENTRY with ANNOTATIONS on its first line, after the call's closing parenthesis."
+  (if annotations
+      (multiple-value-bind (header body) (terminal--split-first-line entry)
+        (append header annotations body))
+      entry))
+
 (-> terminal-ui-fullscreen--index-record (fullscreen-terminal-ui list) null)
 (defun terminal-ui-fullscreen--index-record (ui record)
   "Index immutable resident RECORD by its chunk, call and optional job identity."
@@ -114,11 +122,11 @@
     (multiple-value-bind (text display regions)
         (terminal-ui--finalized-content
          ui (if (eq (getf record :kind) ':call)
-                (if transform
-                     (append (funcall transform entry (getf record :state) body)
-                             (getf record :annotations))
-                     (terminal-ui-fullscreen--record-entry
-                      entry (getf record :state) (append (getf record :annotations) body)))
+                (terminal-ui-fullscreen--annotate
+                 (if transform
+                     (funcall transform entry (getf record :state) body)
+                     (terminal-ui-fullscreen--record-entry entry (getf record :state) body))
+                 (append (getf record :annotations) (getf record :handoff)))
                 entry)
          :group (getf record :group))
       (values (concatenate 'string prefix text) (concatenate 'string prefix display)
@@ -133,7 +141,8 @@
              (if (functionp value) (funcall value) (or value 0)))))
     (+ (weight :source-characters)
        (weight :body-source-characters)
-       (loop for span in (getf record :annotations) sum (length (terminal-span-text span)))
+       (loop for span in (append (getf record :annotations) (getf record :handoff))
+             sum (length (terminal-span-text span)))
        (let ((markdown (getf record :markdown)))
          (if markdown
              (+ (length (getf markdown :source))
@@ -196,7 +205,8 @@
   (if (eq (getf metadata :kind) ':annotation)
       (setf (getf record :annotations)
             (append (getf record :annotations) (getf metadata :annotations)))
-      (dolist (key '(:state :retain-output-p :body :body-layout :body-source-characters :entry-transform))
+      (dolist (key '(:state :retain-output-p :handoff :body :body-layout :body-source-characters
+                     :entry-transform))
         (setf (getf record key) (getf metadata key))))
   record)
 

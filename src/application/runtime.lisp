@@ -3235,7 +3235,8 @@ the entry's text as a :PRESENT event."
               (loop for name in names sum (length name)))))
     (when resolved
       (let ((resolved (application--history-outcome-presentation application resolved)))
-        (dolist (key '(:state :job-key :retain-output-p :body :body-layout :body-source-characters))
+        (dolist (key '(:state :job-key :retain-output-p :handoff :body :body-layout
+                       :body-source-characters))
           (setf (getf metadata key) (getf resolved key)))))
     (when (and (null entry) (member (getf metadata :kind) '(:result :completion)))
       (setf entry

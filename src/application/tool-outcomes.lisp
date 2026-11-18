@@ -13,20 +13,7 @@
 (-> application--entry-body (list) list)
 (defun application--entry-body (entry)
   "Return ENTRY from its first body newline, preserving styled widgets."
-  (loop for tail on entry
-        for span = (first tail)
-        for text = (terminal-span-text span)
-        for newline = (position #\Newline text)
-        when newline
-          return (if (zerop newline)
-                     tail
-                     (cons (if (termdown:widget-p span)
-                               (termdown:make-widget (terminal-span-style span)
-                                                    (subseq text newline)
-                                                    (termdown:widget-action span))
-                               (terminal-span (terminal-span-style span)
-                                              (subseq text newline)))
-                           (rest tail)))))
+  (nth-value 1 (terminal--split-first-line entry)))
 
 (-> application--tool-outcome-body (application list) list)
 (defun application--tool-outcome-body (application rows)
@@ -60,10 +47,9 @@
             :entry-transform (when (and (eq state ':failure)
                                         (equal (getf properties :tool) "resource.edit"))
                                #'application--resource-edit-failure-entry)
-            :body            (unless metadata-only-p
+            :handoff         (and handoff (application--tool-execution-handoff-annotation handoff))
+            :body            (unless (or metadata-only-p handoff)
                                (cond
-                                 (handoff
-                                  (cons (terminal-span ':plain (string #\Newline)) entry))
                                  ((and (eq state ':success) entry
                                        (typep (application--find-tool application (getf properties :tool))
                                               'papercut-report-tool))

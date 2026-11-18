@@ -1914,6 +1914,9 @@
             (test-assert (and (eq (getf (resident) :state) ':pending)
                               (search "job.cancel" (text)))
                          "the async handoff keeps its pending state and cancellation action")
+            (test-assert (search "(lisp.eval :async true :repl \"startup-profile\")  running in background"
+                                 (text))
+                         "the handoff follows the call's closing parenthesis")
             (click-form 0)
             (test-assert (not (getf (resident) :input-expanded-p)) "the first form collapses the input")
             (dolist (target '((1 nil) (0 t)))

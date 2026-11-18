@@ -478,6 +478,27 @@ A theme that does not define STYLE renders it plainly instead of failing the row
                                      (make-string remaining :initial-element #\Space))))
         clipped)))
 
+(-> terminal--split-first-line (list) (values list list))
+(defun terminal--split-first-line (spans)
+  "Return SPANS up to their first newline, and the rest from that newline on.
+
+A span the newline falls in is cut in two, a widget keeping its action in both."
+  (loop for (span . more) on spans
+        for text = (terminal-span-text span)
+        for newline = (position #\Newline text)
+        if newline
+          return (flet ((part (start end)
+                          (let ((piece (subseq text start end)))
+                            (if (termdown:widget-p span)
+                                (termdown:make-widget (terminal-span-style span) piece
+                                                      (termdown:widget-action span))
+                                (terminal-span (terminal-span-style span) piece)))))
+                   (values (append head (when (plusp newline) (list (part 0 newline))))
+                           (cons (part newline nil) more)))
+        else
+          collect span into head
+        finally (return (values head nil))))
+
 (-> terminal--bar-spans ((integer 0) (integer 0) (integer 0)) list)
 (defun terminal--bar-spans (width start end)
   "Return a WIDTH-cell progress bar filled from cell START below END."
