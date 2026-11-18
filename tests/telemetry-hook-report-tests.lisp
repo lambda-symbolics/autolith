@@ -19,14 +19,14 @@
                     (lambda ()
                       (setf report (papercut-report configuration :title "Repeated resource failure"
                                                    :content              "The same resource read keeps failing."
-                                                   :tool "resource.read" :issue-kind "broken_tool"))
+                                                   :tool "resource.read" :issue-kind ':broken-tool))
                       (telemetry-note-tool :tool "resource.read" :outcome "error" :duration-ms 1)
                       (when flushed-p (telemetry-flush))
                       (loop repeat 2
                             do (multiple-value-bind (duplicate duplicate-p)
                                    (papercut-report configuration :title "Repeated resource failure"
                                                     :content             "The same resource read keeps failing."
-                                                    :tool "resource.read" :issue-kind "broken_tool")
+                                                    :tool "resource.read" :issue-kind ':broken-tool)
                                  (test-assert (and duplicate-p (equal (papercut-identifier duplicate)
                                                                      (papercut-identifier report)))
                                               (format nil "~A: The repeated report reuses its durable incident." (first case))))))))))
@@ -62,7 +62,7 @@
        (let* ((flushed-p  (second case))
               (report     (papercut-report configuration :title "Repeated private resource failure"
                                            :content             "The same resource read keeps failing."
-                                           :tool "resource.read" :issue-kind "broken_tool"))
+                                           :tool "resource.read" :issue-kind ':broken-tool))
               (identifier (papercut-identifier report))
               (identity   nil))
          (test-assert (null (papercut-telemetry-id report))
@@ -79,7 +79,7 @@
                         (multiple-value-bind (duplicate duplicate-p)
                             (papercut-report configuration :title "Repeated private resource failure"
                                              :content             "The same resource read keeps failing."
-                                             :tool "resource.read" :issue-kind "broken_tool")
+                                             :tool "resource.read" :issue-kind ':broken-tool)
                           (test-assert (and duplicate-p (equal identifier (papercut-identifier duplicate)))
                                        (format nil "~A: Consent does not create another incident." (first case)))
                           (setf identity (papercut-telemetry-id duplicate))
@@ -174,10 +174,10 @@
                     (telemetry-flush)
                     (papercut-report configuration :title "Flushed fixture failure"
                                      :content             "A resource read failed before this report."
-                                     :tool "resource.read" :issue-kind "broken_tool")
+                                     :tool "resource.read" :issue-kind ':broken-tool)
                     (papercut-report configuration :title "Another fixture issue"
                                      :content             "An independent issue must not claim the same attempt."
-                                     :tool "resource.read" :issue-kind "other"))))))
+                                     :tool "resource.read" :issue-kind ':other))))))
             (tool    (first (test-telemetry-hooks--kind (first bodies) "tool")))
             (reports (test-telemetry-hooks--kind (second bodies) "report"))
             (report  (first reports)))
@@ -204,7 +204,7 @@
                                 (lambda ()
                                   (papercut-report configuration :title "Later run fixture issue"
                                                    :content             "Do not link a previous run's failure."
-                                                   :tool "resource.read" :issue-kind "other"))))))
+                                                   :tool "resource.read" :issue-kind ':other))))))
               (later-report (first (test-telemetry-hooks--kind (first later) "report"))))
          (test-assert (null (test-telemetry--attribute later-report "autolith.tool.span_id"))
                       "Failure identities never cross runs."))
@@ -286,7 +286,7 @@
                       (test-assert (tool-result-success-p report) "Resource reporting accepts metadata.")
                       (let ((papercut (find "fs.view-image" (papercut-list configuration)
                                             :key #'papercut-tool :test #'equal)))
-                        (test-assert (equal (papercut-issue-kind papercut) "broken_tool")
+                        (test-assert (eq (papercut-issue-kind papercut) ':broken-tool)
                                      "The structured category survives reading the durable store.")
                         (papercut-assess configuration (papercut-identifier papercut)
                                          :verdict ':improved :note "Private fixture assessment.")
@@ -325,11 +325,11 @@
                     (setf first-id (papercut-identifier
                                     (papercut-report configuration :title "Shell output missing"
                                                      :content             "Fixture command stdout disappears."
-                                                     :tool "shell.run" :issue-kind "broken_tool"))
+                                                     :tool "shell.run" :issue-kind ':broken-tool))
                           second-id (papercut-identifier
                                      (papercut-report configuration :title "Image decoder fails"
                                                       :content             "Fixture picture pixels are corrupted."
-                                                      :tool "fs.view-image" :issue-kind "performance")))))))))
+                                                      :tool "fs.view-image" :issue-kind ':performance)))))))))
        (telemetry-shutdown)
        (let* ((later-bodies
                 (test-telemetry-hooks--capture

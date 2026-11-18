@@ -628,7 +628,7 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
             (loop repeat 2
                   do (telemetry-note-tool :tool "external.private-tool" :outcome "success" :duration-ms 2
                                           :arguments (json-object "secret" "private-argument")))
-            (telemetry-note-report :report-id report-id :tool "shell.run" :issue-kind "broken_tool"
+            (telemetry-note-report :report-id report-id :tool "shell.run" :issue-kind ':broken-tool
                                  :summary-function (lambda () (incf reads) "raw-summary-fixture"))
             (telemetry-note-repair :report-id report-id :target "self.redefine" :repair-kind "redefine_function" :outcome "applied")))
          (telemetry-call-with-run configuration

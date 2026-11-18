@@ -157,14 +157,34 @@ and no thread of the new process can hold the lock yet."
              (setf context (copy-list (getf properties :repair-context))))))))
     context))
 
+(-> self-repair--choice
+    (tool hash-table string &key (:context tool-context) (:catalog list) (:message string))
+    (option keyword))
+(defun self-repair--choice (tool arguments name &key context catalog message)
+  "Return the CATALOG keyword ARGUMENTS' NAME spells, NIL when absent, refusing an unknown one with MESSAGE."
+  (let ((value (tool-argument arguments name)))
+    (when value
+      (or (telemetry--enum value catalog)
+          (error 'source-mutation-error
+                 :message   message
+                 :tool-name (tool-canonical-name tool)
+                 :pathname  (configuration-journal-path (tool-context-configuration context)))))))
+
 (defmethod tool-execute :around ((tool mutable-self-tool)
                                  (context tool-context)
                                  (arguments hash-table))
   "Validate explicit incident links before any mutable self operation."
   (let* ((configuration (tool-context-configuration context))
          (incident      (tool-argument arguments "incident"))
-         (kind          (tool-argument arguments "repair-kind"))
-         (scope         (tool-argument arguments "verification-scope"))
+         (kind          (self-repair--choice tool arguments "repair-kind"
+                                             :context context
+                                             :catalog *telemetry-repair-kinds*
+                                             :message "Unknown public repair kind."))
+         (scope         (self-repair--choice tool arguments "verification-scope"
+                                             :context context
+                                             :catalog (remove ':none *telemetry-verification-scopes*
+                                                              :key #'first)
+                                             :message "Unknown verification scope."))
          (diagnostic    (telemetry-diagnostic-text (tool-argument arguments "diagnostic")))
          (inherited     (self-repair--journal-context
                          configuration (tool-argument arguments "mutation")))
@@ -175,15 +195,6 @@ and no thread of the new process can hold the lock yet."
              :message   "The explicit incident does not match the selected mutation."
              :tool-name (tool-canonical-name tool)
              :pathname  (configuration-journal-path configuration)))
-    (when (and kind (not (member kind '("redefine_function" "change_setting" "change_tool_strategy" "other")
-                                 :test #'equal)))
-      (error 'source-mutation-error :message  "Unknown public repair kind."
-                                   :tool-name (tool-canonical-name tool)
-                                   :pathname  (configuration-journal-path configuration)))
-    (when (and scope (not (member scope '("focused" "full") :test #'equal)))
-      (error 'source-mutation-error :message  "Unknown verification scope."
-                                   :tool-name (tool-canonical-name tool)
-                                   :pathname  (configuration-journal-path configuration)))
     (let ((*self-repair-context*
             (append (list :diagnostic diagnostic)
                     (when kind (list :repair-kind kind))
@@ -215,18 +226,18 @@ and no thread of the new process can hold the lock yet."
       (setf (getf metadata :repair-kind)
             (case kind
               ((:definition :durable-definition)
-               "redefine_function")
+               ':redefine-function)
               (:set
-               "change_setting")
+               ':change-setting)
               (otherwise
-               "other"))))
+               ':other))))
     (let ((scope (case kind
                    (:exercise
-                    (or (getf *self-repair-context* :verification-scope) "focused"))
+                    (or (getf *self-repair-context* :verification-scope) ':focused))
                    (:verification
-                    (or (getf properties :verification-scope) "focused"))
+                    (or (getf properties :verification-scope) ':focused))
                    (otherwise
-                    "none"))))
+                    ':none))))
       (setf (getf metadata :diagnostic) (getf *self-repair-context* :diagnostic)
             (getf metadata :operation) *telemetry-tool-name*
             (getf metadata :verification-scope) scope)

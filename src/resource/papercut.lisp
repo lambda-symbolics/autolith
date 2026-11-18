@@ -401,7 +401,7 @@
         :required '("op" "title" "content"))
        (list :kind       ':report
              :diagnostic (telemetry-diagnostic-text (tool-argument operation "diagnostic"))
-             :issue-kind (papercut--issue-kind (or (tool-argument operation "issue-kind") "other"))
+             :issue-kind (papercut--issue-kind (or (tool-argument operation "issue-kind") ':other))
              :tool       (telemetry--tool (tool-argument operation "tool"))
              :title      (papercut-resource--required-text
                           operation "title" :field "title"
@@ -560,16 +560,14 @@
                         (format nil "Reported papercut ~A." (papercut-identifier papercut)))
                     (resource-uri item-resource)))))
               (:assess
-               (papercut--note-repair result
-                                     (string-downcase (symbol-name (getf operation :verdict)))
-                                     (getf operation :diagnostic))
+               (papercut--note-repair result (getf operation :verdict) (getf operation :diagnostic))
                (values
                 (papercut-resource--item-observation-from-report resource result)
                 (format nil "Assessed papercut ~A as ~(~A~)."
                         (papercut-resource-identifier resource) (getf operation :verdict))
                 nil))
               (:close
-               (papercut--note-repair result "closed" (getf operation :diagnostic))
+               (papercut--note-repair result ':closed (getf operation :diagnostic))
                (values
                 (papercut-resource--closed-observation
                  resource result (getf operation :resolution))

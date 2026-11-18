@@ -29,15 +29,15 @@ This opt-in checker may run for minutes without output."))
   (:documentation "A mutation checker backed by explicit boundary callbacks."))
 
 (defgeneric mutation-checker-verification-scope (checker)
-  (:documentation "Return the public scope of CHECKER's actual active-state checks."))
+  (:documentation "Return the public scope of CHECKER's actual active-state checks, :FOCUSED or :FULL."))
 
 (defmethod mutation-checker-verification-scope ((checker mutation-checker))
   "Classify structural and injected checks as focused unless explicitly specialized."
-  "focused")
+  ':focused)
 
 (defmethod mutation-checker-verification-scope ((checker full-suite-mutation-checker))
   "Classify the complete in-image test suite as a full check."
-  "full")
+  ':full)
 
 (defgeneric mutation-checker-check-active (checker configuration definition-source)
   (:documentation

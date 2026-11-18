@@ -115,7 +115,7 @@
                    (setf incident (papercut-identifier
                                    (papercut-report configuration :title "Private repair fixture"
                                                     :content             "Private repair content"
-                                                    :tool "shell.run" :issue-kind "broken_tool")))
+                                                    :tool "shell.run" :issue-kind ':broken-tool)))
                    (call "set" (json-object "symbol" "*test-telemetry-repair-setting*"
                                             "value" ":private-repair-value" "incident" incident
                                             "repair-kind" "change_tool_strategy"))
@@ -180,7 +180,7 @@
                              "Checker context retains its executing operation.")
                 (test-assert (equal (test-telemetry--attribute span "autolith.repair.attempt.id") attempt)
                              "Aggregate checker results retain mutation attempt context."))
-              (test-assert (equal (mutation-checker-verification-scope (make-instance 'full-suite-mutation-checker)) "full")
+              (test-assert (eq (mutation-checker-verification-scope (make-instance 'full-suite-mutation-checker)) ':full)
                            "Only the full-suite checker declares full-suite verification.")
               (let ((reverted (find "reverted" (test-telemetry-hooks--kind later-body "repair")
                                     :key  (lambda (span) (test-telemetry--attribute span "autolith.repair.outcome"))

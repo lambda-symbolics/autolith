@@ -44,6 +44,10 @@ so its repeats share fewer words than reports from different sessions do.")
 (defvar *papercut-seen-identifiers* nil
   "Historical identities available during a store transaction.")
 
+(deftype papercut-issue-kind ()
+  "The category a papercut report states for its problem."
+  '(member :broken-tool :misleading-success :authorization :performance :other))
+
 (defclass papercut ()
   ((identifier
     :initarg       :identifier
@@ -74,8 +78,8 @@ so its repeats share fewer words than reports from different sessions do.")
     :type          non-empty-string
     :documentation "The complete user-visible problem report.")
    (issue-kind
-    :initarg :issue-kind :initform "other" :reader papercut-issue-kind
-    :type string :documentation "The explicit structured category of the observed problem.")
+    :initarg :issue-kind :initform ':other :reader papercut-issue-kind
+    :type papercut-issue-kind :documentation "The explicit structured category of the observed problem.")
    (diagnostic
     :initarg :diagnostic :initform nil :reader papercut-diagnostic
     :type          (option string)
@@ -144,14 +148,15 @@ so its repeats share fewer words than reports from different sessions do.")
         :telemetry-id        (papercut-telemetry-id papercut)
         :source-conversation (papercut-source-conversation papercut)))
 
-(-> papercut--issue-kind (t) string)
+(-> papercut--issue-kind (t) papercut-issue-kind)
 (defun papercut--issue-kind (value)
-  "Validate an explicit issue category without inferring it from private prose."
-  (unless (member value '("broken_tool" "misleading_success" "authorization" "performance" "other")
-                  :test #'equal)
-    (error 'papercut-error :message "Unknown papercut issue category."
-                          :pathname #P"papercuts.sexp" :identifier nil))
-  value)
+  "Return the issue category VALUE names, without inferring one from private prose.
+
+VALUE is the category or its public spelling, as a tool call and a store
+written before 0.67.58 give it; the spelling is read from stores until 0.69.0."
+  (or (telemetry--enum value *telemetry-issue-kinds*)
+      (error 'papercut-error :message "Unknown papercut issue category."
+                            :pathname #P"papercuts.sexp" :identifier nil)))
 
 (-> papercut--note-report (papercut boolean) null)
 (defun papercut--note-report (papercut duplicate-p)
@@ -166,17 +171,17 @@ so its repeats share fewer words than reports from different sessions do.")
                                                             (papercut-title papercut))))))
   nil)
 
-(-> papercut--note-repair (papercut string (option string)) null)
+(-> papercut--note-repair (papercut keyword (option string)) null)
 (defun papercut--note-repair (papercut outcome summary)
-  "Export an assessment verdict or closure without claiming passed checks."
+  "Export an assessment verdict or the :CLOSED closure as OUTCOME, without claiming passed checks."
   (telemetry--call-safely
    (lambda ()
      (telemetry-note-repair :report-id       (papercut-telemetry-id papercut)
                            :incident-id      (papercut-telemetry-id papercut)
-                           :event-kind       (if (equal outcome "closed") "closure" "assessment")
+                           :event-kind       (if (eq outcome ':closed) ':closure ':assessment)
                            :target           (papercut-tool papercut)
                            :issue-kind       (papercut-issue-kind papercut)
-                           :repair-kind "other" :outcome outcome :verified nil
+                           :repair-kind ':other :outcome outcome :verified nil
                            :operation        *telemetry-tool-name*
                            :summary-function (lambda () summary))))
   nil)
@@ -297,7 +302,7 @@ so its repeats share fewer words than reports from different sessions do.")
                        :content             (papercut--validate-text
                                              content "content" *papercut-content-limit*)
                        :diagnostic          (telemetry-diagnostic-text (getf (rest record) :diagnostic))
-                       :issue-kind          (papercut--issue-kind (getf (rest record) :issue-kind "other"))
+                       :issue-kind          (papercut--issue-kind (getf (rest record) :issue-kind ':other))
                        :tool                (telemetry--tool (getf (rest record) :tool))
                        :telemetry-id        (getf (rest record) :telemetry-id)
                        :source-conversation source-conversation)
@@ -587,11 +592,11 @@ only needs *PAPERCUT-DUPLICATE-SESSION-SIMILARITY*. The closest match wins."
     (configuration &key (:title non-empty-string) (:content non-empty-string)
                         (:diagnostic (option string))
                         (:source-conversation (option string))
-                        (:issue-kind string) (:tool (option string))
+                        (:issue-kind papercut-issue-kind) (:tool (option string))
                         (:active list))
     (values list list boolean))
 (defun papercut--report-unlocked
-    (configuration &key title content diagnostic source-conversation (issue-kind "other") tool active)
+    (configuration &key title content diagnostic source-conversation (issue-kind ':other) tool active)
   "Return the records to append and (PAPERCUT DUPLICATE-P) for a report.
 
 When the report repeats an ACTIVE papercut, persist any newly consented telemetry
@@ -600,7 +605,7 @@ identity and return that existing papercut with DUPLICATE-P true."
          (duplicate (papercut--duplicate configuration
                                          (remove-if-not
                                           (lambda (item)
-                                            (and (equal (papercut-issue-kind item) issue-kind)
+                                            (and (eq (papercut-issue-kind item) issue-kind)
                                                  (equal (papercut-tool item) (telemetry--tool tool))))
                                           active)
                                          :title               title
@@ -631,10 +636,10 @@ identity and return that existing papercut with DUPLICATE-P true."
 (-> papercut-report
     (configuration &key (:title string) (:content string)
                    (:diagnostic (option string))
-                   (:issue-kind string) (:tool (option string))
+                   (:issue-kind papercut-issue-kind) (:tool (option string))
                    (:source-conversation (option string)))
     (values papercut boolean))
-(defun papercut-report (configuration &key title content diagnostic source-conversation (issue-kind "other") tool)
+(defun papercut-report (configuration &key title content diagnostic source-conversation (issue-kind ':other) tool)
   "Record one new user-visible report about a problem in the current workspace.
 
 Return the recorded papercut and NIL, or, when the report repeats an active
@@ -723,7 +728,7 @@ its first consented telemetry identity without recording another report."
                  (papercut--assess-unlocked
                   configuration identifier :active active :verdict verdict
                                            :note validated-note :diagnostic diagnostic))))))
-      (papercut--note-repair papercut (string-downcase (symbol-name verdict)) diagnostic)
+      (papercut--note-repair papercut verdict diagnostic)
       papercut)))
 
 (-> papercut--mark-closed-unlocked
@@ -776,7 +781,7 @@ its first consented telemetry identity without recording another report."
                (lambda (active)
                  (papercut--mark-closed-unlocked
                   configuration identifier validated-resolution :active active :diagnostic diagnostic))))))
-      (papercut--note-repair papercut "closed" diagnostic)
+      (papercut--note-repair papercut ':closed diagnostic)
       papercut)))
 
 
