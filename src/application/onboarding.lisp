@@ -70,14 +70,14 @@ provider output or condition details in onboarding state."
                        (application--pick-identifier
                         application
                         :title         (onboarding-source-text "auth-provider-title")
-                        :items         (cons (list :name "skip" :argument nil
+                        :items         (cons (list :name "skip" :value ':skip :argument nil
                                                    :description (onboarding-source-text "auth-skip"))
                                              (application--authentication-provider-items application))
                         :visible-count (application--authentication-provider-visible-count application)
                         :initial-name "skip" :search-p t :on-event on-event)))
                  (unless name
                    (return-from selection ':cancelled))
-                 (when (string= name "skip")
+                 (when (eq name ':skip)
                    (return-from selection ':skipped))
                  (let* ((provider  (application--authentication-provider application name))
                         (chatgpt-p (typep provider 'codex-subscription-provider))
@@ -87,19 +87,16 @@ provider output or condition details in onboarding state."
                              application
                              :title        (onboarding-source-text "auth-method-title")
                              :items
-                             (list (list :name "browser" :argument nil
+                             (list (list :name "browser" :value ':browser :argument nil
                                          :description (onboarding-source-text "auth-browser"))
-                                   (list :name "device-code" :argument nil
+                                   (list :name "device-code" :value ':device-code :argument nil
                                          :description (onboarding-source-text "auth-device-code")))
                              :initial-name "browser" :on-event on-event))))
                    (when (or (not chatgpt-p) method)
                      (return-from selection
                        (handler-case
                            (progn
-                             (application-authenticate
-                              application name
-                              (when method
-                                (if (string= method "browser") ':browser ':device-code)))
+                             (application-authenticate application name method)
                              ':authenticated)
                          (authentication-error () ':failed)
                          (end-of-file () ':cancelled)))))))))

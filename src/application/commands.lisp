@@ -1446,10 +1446,10 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
                  (:empty-notice (option string)) (:hint (or string list))
                  (:visible-count (integer 1))
                  (:initial-name (option string))
-                 (:initial-value (option string))
+                 (:initial-value (or null string keyword))
                  (:search-p boolean) (:search-key function)
                  (:on-event (option function)))
-    (option string))
+    (or null string keyword))
 (defun application--pick-identifier
     (application &key (title "select") items (usage "") empty-notice hint
                       (visible-count *terminal-ui-visible-completions*)
@@ -1487,10 +1487,12 @@ INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT to TERMINAL-UI-SELECT."
   "Return the remove/keep confirmation items for channel ITEM."
   (list
    (list :name        "remove"
+         :value       ':remove
          :argument    nil
          :description (format nil "delete ~A for good: its agent, its history and the channels nested in it"
                               (string-trim " " (getf item :name))))
    (list :name        "keep"
+         :value       ':keep
          :argument    nil
          :description "keep this channel")))
 
@@ -1654,7 +1656,7 @@ searches every task directory."
                            (selected-value (and pending (getf pending :value))))
                        (cond
                          ((and choice
-                               (string= (getf choice :name) "remove")
+                               (eq (getf choice :value) ':remove)
                                pending)
                            ;; End the modal before filesystem cleanup. Clinedi calls
                            ;; this callback under the presentation lock.
@@ -1799,12 +1801,15 @@ searches every task directory."
   "Return the AUTOLITH.org creation choices for an eligible resumed project."
   (list
    (list :name        "create"
+         :value       ':create
          :argument    nil
          :description "create a documented project adaptation ledger")
    (list :name        "not-now"
+         :value       ':not-now
          :argument    nil
          :description "ask again after five days")
    (list :name        "never"
+         :value       ':never
          :argument    nil
          :description "never ask again for this repository or path")))
 
@@ -1833,8 +1838,8 @@ searches every task directory."
                      :title "create AUTOLITH.org?"
                      :items (application--project-adaptation-offer-items)
                      :usage "Choose create, not-now, or never.")))
-              (cond
-                ((and choice (string= choice "create"))
+              (case choice
+                (:create
                  (handler-case
                      (let ((pathname
                              (project-adaptation-notes-create project-root)))
@@ -1845,12 +1850,12 @@ searches every task directory."
                      (project-adaptation--offer-retry
                       configuration project-root)
                      (error condition))))
-                ((and choice (string= choice "never"))
+                (:never
                  (project-adaptation-offer-refuse configuration project-root)
                  (application-present
                   application
                   "AUTOLITH.org offers are disabled permanently for this path."))
-                ((and choice (string= choice "not-now"))
+                (:not-now
                  (application-present
                   application
                   "The AUTOLITH.org offer is deferred for five days.")))))

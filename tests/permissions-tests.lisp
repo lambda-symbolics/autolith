@@ -194,7 +194,7 @@
                                                                        :terminal (make-instance 'recording-terminal))
                                           :provider                   (make-instance 'rlm-inference-test-provider
                                                                                      :results nil)))
-           (choice         "once")
+           (choice         ':once)
            (pick-count     0)
            (classify-count 0)
            (decision       ':full-access))
@@ -235,11 +235,11 @@
                       "once permits an external call")
          (test-assert (eq (application-permission-mode application) ':ask)
                       "once does not change session policy")
-         (dolist (rejected '("deny" "sandbox" "allow" nil))
+         (dolist (rejected '(:deny :sandbox :allow nil))
            (setf choice rejected)
            (test-assert (eq (application-authorize-tool application tool arguments) ':deny)
                         "cancelled, stale, and sandbox choices deny external calls"))
-         (setf choice "always")
+         (setf choice ':always)
          (test-assert (eq (application-authorize-tool application tool arguments) ':allow)
                       "always persists the exact external call")
          (setf (application-permission-state application) (permissions-load configuration))
@@ -251,10 +251,10 @@
                                               (configuration-permissions-path configuration))))
                       "external permission files contain hashes, not argument payloads")
          (setf arguments (json-object "record" "one" "extra" t)
-               choice "deny")
+               choice ':deny)
          (test-assert (eq (application-authorize-tool application tool arguments) ':deny)
                       "changed arguments require a new grant")
-         (setf choice "full")
+         (setf choice ':full)
          (test-assert (eq (application-authorize-tool application tool arguments) ':allow)
                       "full grants session-wide external access")
          (let ((before pick-count))
@@ -264,7 +264,7 @@
                              (= before pick-count))
                         "shell and external calls share the same full-access session mode"))
          (setf (application-permission-mode application) ':ask
-               choice "auto")
+               choice ':auto)
          (test-assert (and (eq (application-authorize-tool application tool arguments) ':allow)
                            (eq (application-permission-mode application) ':auto))
                       "auto selects the shared session policy")
@@ -278,7 +278,7 @@
          (setf decision ':sandboxed)
          (test-assert (eq (application-authorize-tool application tool arguments) ':deny)
                       "a classifier cannot grant a remote call a local sandbox")
-         (setf (application-permission-mode application) ':sandboxed choice "deny")
+         (setf (application-permission-mode application) ':sandboxed choice ':deny)
          (test-assert (eq (application-authorize-tool application tool arguments) ':deny)
                       "local sandbox mode requires separate external approval")))))
   nil)
@@ -375,7 +375,7 @@
       (handler-case
        (progn
         (application--apply-command-authorization-choice application key root
-                                                         :choice "always"
+                                                         :choice ':always
                                                          :kind   ':external-tool)
         nil)
        (permissions-error nil t))

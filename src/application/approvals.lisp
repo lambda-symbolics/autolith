@@ -18,12 +18,12 @@
     :initarg       :choices
     :reader        channel-approval-choices
     :type          list
-    :documentation "The names of the choices an answer may pick.")
+    :documentation "The choices an answer may pick: each item's value, or else its name.")
    (answer
     :initform      nil
     :accessor      channel-approval-answer
-    :type          (option string)
-    :documentation "The choice a client picked, or NIL while none has."))
+    :type          (or null string keyword)
+    :documentation "The choice picked, or NIL while none has."))
   (:documentation "One approval a channel waits on."))
 
 
@@ -45,19 +45,25 @@
              (application-clients-approving-p application))
          t)))
 
+(-> application--approval-wire-value ((or null string keyword)) (option string))
+(defun application--approval-wire-value (choice)
+  "Return CHOICE as the lowercase text clients name it by."
+  (and choice (string-downcase choice)))
+
 (-> application-select-approval
     (application &key (:kind keyword) (:title string) (:items list) (:entry string))
-    (option string))
+    (or null string keyword))
 (defun application-select-approval (application &key kind title items entry)
-  "Offer the approval TITLE with picker ITEMS to the terminal and the clients, and return the chosen name.
+  "Offer the approval TITLE with picker ITEMS to the terminal and the clients, and return the choice.
 
-KIND says what is approved, such as :command or :external-tool, and ENTRY
-describes the request in plain text for clients. Return NIL when the
-approval is dismissed, the turn is cancelled, or nobody is left to answer."
+A choice is an item's :VALUE, or its :NAME without one. KIND says what is
+approved, such as :command or :external-tool, and ENTRY describes the request
+in plain text for clients. Return NIL when the approval is dismissed, the
+turn is cancelled, or nobody is left to answer."
   (let* ((hub      (application-client-hub application))
          (ui       (application-ui application))
-         (approval (make-instance 'channel-approval
-                                  :choices (mapcar (lambda (item) (getf item :name)) items)))
+         (choices  (mapcar (lambda (item) (or (getf item :value) (getf item :name))) items))
+         (approval (make-instance 'channel-approval :choices choices))
          (choice   nil))
     (with-lock-held ((client-hub-lock hub))
       (setf (client-hub-approval hub) approval))
@@ -68,10 +74,10 @@ approval is dismissed, the turn is cancelled, or nobody is left to answer."
            :kind    kind
            :title   title
            :entry   entry
-           :options (mapcar (lambda (item)
-                              (list :value       (getf item :name)
+           :options (mapcar (lambda (item value)
+                              (list :value       (application--approval-wire-value value)
                                     :description (getf item :description)))
-                            items)))
+                            items choices)))
     (unwind-protect
          (setf choice
                (if (and ui (terminal-interactive-p (terminal-ui-terminal ui)))
@@ -97,10 +103,10 @@ approval is dismissed, the turn is cancelled, or nobody is left to answer."
       (application-clients-publish application
                                    (list :approval-settled
                                          :id    (channel-approval-identifier approval)
-                                         :value choice)))
+                                         :value (application--approval-wire-value choice))))
     choice))
 
-(-> application--await-approval (application channel-approval) (option string))
+(-> application--await-approval (application channel-approval) (or null string keyword))
 (defun application--await-approval (application approval)
   "Wait until a client answers APPROVAL and return the answer, or NIL once the turn is cancelled or no approving client is left."
   (let ((hub        (application-client-hub application))
@@ -134,13 +140,16 @@ takes nothing."
              (string= identifier (channel-approval-identifier approval))
              (application--claim-approval hub approval value))))))
 
-(-> application--claim-approval (client-hub channel-approval (option string)) boolean)
+(-> application--claim-approval (client-hub channel-approval (or null string keyword)) boolean)
 (defun application--claim-approval (hub approval value)
-  "Claim APPROVAL for VALUE while holding HUB's lock, returning whether it won."
-  (when (and (eq approval (client-hub-approval hub))
-             (null (channel-approval-answer approval))
-             value
-             (member value (channel-approval-choices approval) :test #'string=))
-    (setf (channel-approval-answer approval) value)
-    (condition-notify (client-hub-condition-variable hub))
-    t))
+  "Claim APPROVAL for the choice VALUE names while holding HUB's lock, returning whether it won.
+
+A client names a choice by its wire text, the terminal by the choice itself."
+  (let ((choice (and value
+                     (find value (channel-approval-choices approval) :test #'string-equal))))
+    (when (and choice
+               (eq approval (client-hub-approval hub))
+               (null (channel-approval-answer approval)))
+      (setf (channel-approval-answer approval) choice)
+      (condition-notify (client-hub-condition-variable hub))
+      t)))

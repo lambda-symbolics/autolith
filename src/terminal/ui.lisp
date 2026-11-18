@@ -81,7 +81,7 @@ offered only while the typed prefix no longer matches its primary."
     (and (listp value)
          (non-empty-string-p (getf value :name))
          (typep (getf value :argument) '(option string))
-         (typep (getf value :value) '(option string))
+         (typep (getf value :value) '(or null string keyword))
          (typep (getf value :primary) '(option string))
          (stringp description)
          (or (null description-spans)
@@ -2680,11 +2680,11 @@ indicator with a completion marker."
 (-> terminal-ui-select
     (terminal-ui &key (:title string) (:items list) (:hint (or string list))
      (:visible-count (integer 1)) (:initial-name (option string))
-     (:initial-value (option string)) (:search-p boolean)
+     (:initial-value (or null string keyword)) (:search-p boolean)
      (:search-key function) (:resize-callback (option function))
      (:on-event (option function)) (:poll-interval (option real))
      (:status-kind keyword) (:external-event-function (option function)))
-    (option string))
+    (or null string keyword))
 (defun terminal-ui-select
     (ui &key (title "select") items hint
           (visible-count *terminal-ui-visible-completions*)
@@ -2695,7 +2695,8 @@ indicator with a completion marker."
           external-event-function)
   "Select an application entry through Clinedi's filtered modal session.
 
-Entries carry :NAME and optionally a distinct :VALUE. ON-EVENT receives
+Entries carry :NAME and optionally a distinct :VALUE, a keyword for a fixed
+choice. Return the chosen entry's value, or its name without one. ON-EVENT receives
 (EVENT SELECTOR) and may return NIL, :CONTINUE, (:ACCEPT VALUE), (:CANCEL),
 or (:REPLACE TITLE ITEMS [HINT [VALUE]]). EXTERNAL-EVENT-FUNCTION, polled
 with the terminal, returns an event from outside it, such as a client's

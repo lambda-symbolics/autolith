@@ -22,7 +22,7 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-(-> channel-deletion-tests--choose ((option string) function) t)
+(-> channel-deletion-tests--choose ((member nil :keep :remove) function) t)
 (defun channel-deletion-tests--choose (choice function)
   "Run FUNCTION with the real approval boundary and a terminal choosing CHOICE."
   (test-call-with-function-replacements
@@ -52,7 +52,7 @@
                          (find "(delete" (application-operation-completion-entries application)
                                :key (lambda (item) (getf item :name)) :test #'equal))
                     "delete has a canonical project binding and completion")
-       (dolist (choice '(nil "keep"))
+       (dolist (choice '(nil :keep))
          (channel-deletion-tests--choose
           choice
           (lambda () (application-operation-call application "delete")))
@@ -74,7 +74,7 @@
           (configuration-error () t))
         "the inbox is protected before confirmation")
        (channel-deletion-tests--choose
-        "remove"
+        ':remove
         (lambda ()
           (test-assert (eq (application-lisp-evaluation-status
                             (application-lisp-evaluate "(delete \"delete-other-o\")" :application application))
@@ -98,7 +98,7 @@
               (path       (conversation-pathname (application-conversation application)))
               (inbox      (channel-identifier (world-inbox-channel (world-load configuration)))))
          (channel-deletion-tests--choose
-          "remove"
+          ':remove
           (lambda ()
             (flet ((invoke ()
                      "Invoke deletion through the real local input lifecycle on success."
@@ -176,7 +176,7 @@
                              (not (conversation-lease-busy-p configuration inbox)))
                         "failed handoffs retain the child runtime and release the inbox lease")
            (channel-deletion-tests--choose
-            "remove"
+            ':remove
             (lambda ()
               (test-assert
                (eq (application-lisp-evaluation-status
@@ -240,7 +240,7 @@
                                 (null (world-server--find-host server inbox)))
                            "hosted cancellation neither opens an inbox nor changes the client's attachment")
               (channel-deletion-tests--choose
-               "remove"
+               ':remove
                (lambda ()
                  (application-clients-call-as-work
                   application
@@ -312,7 +312,7 @@
                  (lambda ()
                    (let ((inbox (channel-identifier (world-inbox-channel (world-load configuration)))))
                      (channel-deletion-tests--choose
-                      "remove"
+                      ':remove
                       (lambda ()
                         (application-clients-call-as-work
                          application
@@ -371,7 +371,7 @@
                     (application-input-controller-begin-external-work controller)
                     (application-input-controller-enqueue-work controller (list :message "pending input")))
                 (channel-deletion-tests--choose
-                 "remove"
+                 ':remove
                  (lambda ()
                    (test-assert (handler-case (progn (application-operation-call application "delete") nil)
                                   (task-error () t))

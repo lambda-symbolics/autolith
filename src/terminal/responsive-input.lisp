@@ -2712,28 +2712,28 @@ as the terminal UI's exclusive-input function."
   (let ((sandbox-available-p (and sandbox-available-p (not external-tool-p))))
     (append
      (list
-      (list :name "auto" :argument nil
+      (list :name "auto" :value ':auto :argument nil
             :description
             (if sandbox-available-p
                 "classify automatically this session as sandboxed, full access, or denied"
                 "classify automatically this session as full access or denied"))
-      (list :name "once" :argument nil
+      (list :name "once" :value ':once :argument nil
             :description
             (if external-tool-p
                 "allow this exact external call once; no local sandbox applies"
                 "allow this command once with full user privileges"))
-      (list :name "always" :argument nil
+      (list :name "always" :value ':always :argument nil
             :description
             (format nil "always allow this exact ~A in ~A"
                     (if external-tool-p "external call and arguments" "command with full user privileges")
                     (application--abbreviated-directory (namestring directory)))))
      (when sandbox-available-p
-       (list (list :name "sandbox" :argument nil
+       (list (list :name "sandbox" :value ':sandbox :argument nil
                    :description "allow sandboxed commands for this session")))
      (list
-      (list :name "full" :argument nil
+      (list :name "full" :value ':full :argument nil
             :description "let it ride with full user privileges for this session")
-      (list :name "deny" :argument nil
+      (list :name "deny" :value ':deny :argument nil
             :description (if external-tool-p "do not call the external tool"
                              "do not run the command"))))))
 
@@ -2889,13 +2889,13 @@ the commands of one instruction rather than the whole session."
 
 (-> application--apply-command-authorization-choice
     (application string pathname
-     &key (:choice (option string)) (:kind keyword) (:request (option string)))
+     &key (:choice (option keyword)) (:kind keyword) (:request (option string)))
     keyword)
 (defun application--apply-command-authorization-choice
     (application command directory &key choice (kind ':command) request)
   "Apply a shared permission CHOICE, rejecting unavailable grants."
-  (cond
-    ((string= (or choice "") "auto")
+  (case choice
+    (:auto
      (setf (application-permission-mode application) ':auto)
      (multiple-value-bind (decision reason)
          (if (eq kind ':external-tool)
@@ -2905,12 +2905,12 @@ the commands of one instruction rather than the whole session."
        (application--apply-classified-command-permission
         application (or request command) directory :decision decision
                                                    :reason   reason)))
-    ((string= (or choice "") "full")
+    (:full
      (setf (application-permission-mode application) ':full-access)
      ':full-access)
-    ((string= (or choice "") "once")
+    (:once
      ':full-access)
-    ((string= (or choice "") "always")
+    (:always
      (permissions-allow
       :configuration (application-configuration application)
       :state         (application-permission-state application)
@@ -2918,13 +2918,13 @@ the commands of one instruction rather than the whole session."
       :directory     directory
       :kind          kind)
      ':full-access)
-    ((string= (or choice "") "sandbox")
+    (:sandbox
      (if (and (eq kind ':command) (application--command-sandbox-available-p))
          (progn
            (setf (application-permission-mode application) ':sandboxed)
            ':sandboxed)
          ':deny))
-    (t
+    (otherwise
      ':deny)))
 
 (-> application--ask-command-permission

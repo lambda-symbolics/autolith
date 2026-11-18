@@ -491,7 +491,7 @@
                                  (clinedi:ansi-strip
                                   (recording-terminal-output terminal))))
                     "argument editing rejects submitted images and restores saved attachments")))
-               (let ((choices           (list "ask-autolith" "AUTOLITH-RECOVERY-1"))
+               (let ((choices           (list ':ask-autolith "AUTOLITH-RECOVERY-1"))
                      (cancel-count      0)
                      (all-items-valid-p t)
                      (proposal
@@ -509,7 +509,7 @@
                                       (every #'terminal-completion-p items)
                                       (every (lambda (item)
                                                (typep (getf item :value)
-                                                      '(option string)))
+                                                      '(or null string keyword)))
                                              items)))
                            (pop choices)))
                    (list 'application-debugger-start-diagnosis
@@ -553,7 +553,7 @@
                                    "selected diagnosis recovery returns replacement values")
                       (test-assert (string= selected-restart-name "RETURN-VALUES")
                                    "diagnosis resolves a stable name to its recovery object")))))
-               (let ((choices      (list "ask-autolith" "0"))
+               (let ((choices      (list ':ask-autolith "0"))
                      (cancel-count 0))
                  (test-call-with-function-replacements
                   (list
@@ -592,7 +592,7 @@
                             (equal values '(:continued))
                             (string= selected-restart-name "CONTINUE"))
                        "selecting a live restart cancels an active diagnosis"))))))
-             (let ((choices               (list "ask-autolith" "diagnosis-info" "0"))
+             (let ((choices               (list ':ask-autolith ':diagnosis-info "0"))
                    (cancel-count          0)
                    (explanation-visible-p nil))
                (test-call-with-function-replacements
@@ -606,8 +606,8 @@
                                   (replacement-items (third replacement)))
                              (setf explanation-visible-p
                                    (some (lambda (item)
-                                           (and (string= (getf item :value)
-                                                         "diagnosis-info")
+                                           (and (eq (getf item :value)
+                                                    ':diagnosis-info)
                                                 (search "The failure is understood."
                                                         (getf item :description))))
                                          replacement-items))))

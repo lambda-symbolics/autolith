@@ -457,7 +457,7 @@ Autolith diagnosis may propose validated executable recoveries."
                         (description  (format nil "diagnosis  ~A" bounded-text)))
                    (list :name        "diagnosis"
                          :argument    nil
-                         :value       "diagnosis-info"
+                         :value       ':diagnosis-info
                          :group       "Autolith diagnosis"
                          :description description
                          :description-spans
@@ -473,7 +473,7 @@ Autolith diagnosis may propose validated executable recoveries."
                     (if running-p
                         (list (list :name        "cancel-diagnosis"
                                     :argument    nil
-                                    :value       "cancel-diagnosis"
+                                    :value       ':cancel-diagnosis
                                     :group       "Autolith diagnosis"
                                     :description "cancel diagnosis"
                                     :description-spans
@@ -503,7 +503,7 @@ Autolith diagnosis may propose validated executable recoveries."
                  (append live-items
                          (list (list :name        "ask-autolith"
                                      :argument    nil
-                                     :value       "ask-autolith"
+                                     :value       ':ask-autolith
                                      :group       "Autolith diagnosis"
                                      :description "Ask Autolith why this failed"
                                      :description-spans
@@ -607,14 +607,10 @@ Autolith diagnosis may propose validated executable recoveries."
            (cond
              ((null choice)
               (return (values nil nil)))
-             ((string= choice "ask-autolith")
+             ((eq choice ':ask-autolith)
               (let ((diagnosis-choice (diagnose)))
                 (cond
-                  ((or (null diagnosis-choice)
-                       (and (stringp diagnosis-choice)
-                            (member diagnosis-choice
-                                    '("cancel-diagnosis" "diagnosis-info")
-                                    :test #'string=)))
+                  ((member diagnosis-choice '(nil :cancel-diagnosis :diagnosis-info))
                    nil)
                   ((typep diagnosis-choice 'recovery)
                    (return (values diagnosis-choice nil)))

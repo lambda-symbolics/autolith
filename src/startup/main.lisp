@@ -270,11 +270,11 @@ presents the warning in the first channel it opens only."
 (-> application--update-choice-items () list)
 (defun application--update-choice-items ()
   "Return the explicit user choices for a packaged release update."
-  '((:name "Not now" :argument nil
+  '((:name "Not now" :value :not-now :argument nil
      :description "continue with the installed release")
-    (:name "Update now" :argument nil
+    (:name "Update now" :value :update :argument nil
      :description "install the verified release and restart")
-    (:name "Skip this version" :argument nil
+    (:name "Skip this version" :value :skip :argument nil
      :description "hide this exact release until a newer one appears")))
 
 (-> application--offer-startup-update (application) null)
@@ -294,12 +294,12 @@ presents the warning in the first channel it opens only."
                 :title           (format nil "Autolith ~A is available" (subseq tag 1))
                 :items           (application--update-choice-items)
                 :resize-callback #'application-pending-terminal-size)))
-        (cond
-          ((string= (or choice "") "Update now")
+        (case choice
+          (:update
            (error 'update-requested
                   :message (format nil "Update to Autolith ~A." (subseq tag 1))
                   :tag     tag))
-          ((string= (or choice "") "Skip this version")
+          (:skip
            (update-state-dismiss (application-configuration application) tag)
            (setf (application-update-availability application) nil)
            (application-present

@@ -147,12 +147,14 @@ but unconfirmed final candidate."
       (handler-case
           (save-rule nil)
         (context-rule-save-conflict ()
-          (when (equal "replace"
-                       (application--pick-identifier
-                        application :title "Replace saved correction?"
-                        :items             (list (list :name "cancel" :argument nil :description "keep the saved rule")
-                                                 (list :name "replace" :argument nil :description (getf rule :id)))
-                        :initial-name      "cancel"))
+          (when (eq ':replace
+                    (application--pick-identifier
+                     application :title "Replace saved correction?"
+                     :items             (list (list :name "cancel" :value ':cancel :argument nil
+                                                    :description "keep the saved rule")
+                                              (list :name "replace" :value ':replace :argument nil
+                                                    :description (getf rule :id)))
+                     :initial-name      "cancel"))
             (save-rule t)))))))
 
 (-> application-complain (application &optional (option string)) null)
@@ -178,30 +180,32 @@ but unconfirmed final candidate."
         (let ((choice
                 (application--pick-identifier
                  application :title "Save correction"
-                 :items             (list (list :name "workspace" :argument nil
+                 :items             (list (list :name "workspace" :value ':workspace :argument nil
                                                 :description (if matched-p "save for this workspace"
                                                                  "save unconfirmed for this workspace"))
-                                          (list :name "global" :argument nil
+                                          (list :name "global" :value ':global :argument nil
                                                 :description (if matched-p "save for all workspaces"
                                                                  "save unconfirmed for all workspaces"))
-                                          (list :name "amend" :argument nil :description "regenerate with feedback")
-                                          (list :name "cancel" :argument nil :description "discard this candidate"))
+                                          (list :name "amend" :value ':amend :argument nil
+                                                :description "regenerate with feedback")
+                                          (list :name "cancel" :value ':cancel :argument nil
+                                                :description "discard this candidate"))
                  :initial-name      "cancel")))
           (cond
-            ((member choice '("workspace" "global") :test #'equal)
+            ((member choice '(:workspace :global))
              (when (or matched-p
-                       (equal "save-unconfirmed"
-                              (application--pick-identifier
-                               application :title "Save an unconfirmed correction?"
-                               :items             (list (list :name "cancel" :argument nil
-                                                              :description "discard this candidate")
-                                                        (list :name "save-unconfirmed" :argument nil
-                                                              :description "save despite no observed match"))
-                               :initial-name      "cancel")))
-               (application-complaint--save application rule
-                                            (if (equal choice "workspace") ':workspace ':global)))
+                       (eq ':save-unconfirmed
+                           (application--pick-identifier
+                            application :title "Save an unconfirmed correction?"
+                            :items             (list (list :name "cancel" :value ':cancel :argument nil
+                                                           :description "discard this candidate")
+                                                     (list :name "save-unconfirmed" :value ':save-unconfirmed
+                                                           :argument    nil
+                                                           :description "save despite no observed match"))
+                            :initial-name      "cancel")))
+               (application-complaint--save application rule choice))
              (return))
-            ((equal choice "amend")
+            ((eq choice ':amend)
              (setf feedback (application-complaint--read-text application "Amend correction")
                    previous-rule rule)
              (unless feedback

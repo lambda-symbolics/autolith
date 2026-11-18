@@ -586,7 +586,7 @@
                        (lambda (&rest arguments)
                          (declare (ignore arguments))
                          (incf selections)
-                         "Skip this version")))
+                         ':skip)))
                 (lambda ()
                   (with-terminal-ui (active-ui ui)
                     (test-assert
@@ -976,7 +976,7 @@
                           (declare (ignore ignored))
                           (setf authorization-item-names
                                 (mapcar (lambda (item) (getf item ':name)) items))
-                          "once")))
+                          ':once)))
                  (lambda ()
                    (test-assert
                     (eq (application-authorize-command
@@ -1000,7 +1000,7 @@
                     "the manual command picker retains full-access approvals without a sandbox")
                    (test-assert
                     (eq (application--apply-command-authorization-choice
-                         application "git log" root :choice "once")
+                         application "git log" root :choice ':once)
                         ':full-access)
                     "once grants full access without changing session mode")
                    (test-assert
@@ -1008,7 +1008,7 @@
                     "once preserves manual permission mode")
                    (test-assert
                     (eq (application--apply-command-authorization-choice
-                         application "git log" root :choice "always")
+                         application "git log" root :choice ':always)
                         ':full-access)
                     "always grants full access when the sandbox is unavailable")
                    (test-assert
@@ -1028,7 +1028,7 @@
                 (lambda ()
                   (test-assert
                    (eq (application--apply-command-authorization-choice
-                        application "printf picked" root :choice "auto")
+                        application "printf picked" root :choice ':auto)
                        ':full-access)
                    "auto classifies the pending command immediately")))
                (test-assert

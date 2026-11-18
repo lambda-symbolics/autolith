@@ -176,17 +176,17 @@ turn, external work on another thread, pending input, and live asynchronous jobs
          (channel (world--require-channel world target ':delete-channel)))
     (when (channel-inbox-p channel)
       (error 'configuration-error :message "The inbox cannot be deleted."))
-    (when (equal "remove"
-                 (application-select-approval
-                  application
-                  :kind  ':channel-deletion
-                  :title "Delete channel?"
-                  :entry (format nil "Delete channel ~A and every channel nested in it."
-                                 (conversation-identifier-display target))
-                  :items (reverse
-                          (application--channel-remove-confirm-items
-                           (list :name (or (channel-title channel)
-                                           (conversation-identifier-display target)))))))
+    (when (eq ':remove
+              (application-select-approval
+               application
+               :kind  ':channel-deletion
+               :title "Delete channel?"
+               :entry (format nil "Delete channel ~A and every channel nested in it."
+                              (conversation-identifier-display target))
+               :items (reverse
+                       (application--channel-remove-confirm-items
+                        (list :name (or (channel-title channel)
+                                        (conversation-identifier-display target)))))))
       ;; Nothing, including client movement, precedes explicit confirmation.
       (if (member current (channel--subtree world target) :test #'string=)
           (application--delete-current-channel application target)
