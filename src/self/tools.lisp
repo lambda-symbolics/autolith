@@ -406,6 +406,19 @@ choices, so the caller may retry with RESTART-NAME and RESTART-VALUE-SOURCE."
       (error (condition)
         (error (self--positioned-failure condition position (length sources)))))))
 
+(-> self--evaluation-target (hash-table) (member :server :client))
+(defun self--evaluation-target (arguments)
+  "Return the image ARGUMENTS' forms run in: the server's unless they name the client."
+  (multiple-value-bind (value present-p) (gethash "target" arguments)
+    (cond
+      ((or (not present-p) (equal value "server"))
+       ':server)
+      ((equal value "client")
+       ':client)
+      (t
+       (error 'tool-error :tool-name "self.eval"
+                          :message   "target must be server or client.")))))
+
 (-> self--evaluate-in-active-image
     (configuration list &key (:restart-name (option string))
                    (:restart-value-source (option string)))
@@ -437,14 +450,24 @@ choices, so the caller may retry with RESTART-NAME and RESTART-VALUE-SOURCE."
 (defmethod tool-execute ((tool self-eval-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Evaluate exploratory forms in order in CONTEXT's active image and journal them."
+  "Evaluate exploratory forms in order, in CONTEXT's active image or in the attached client's.
+
+Only the active image's evaluations are journaled: the client's image is not
+part of the reconstructible state."
   (declare (ignore tool))
-  (tool-success
-   (self--evaluate-in-active-image
-    (tool-context-configuration context)
-    (tool-forms-argument arguments "self.eval")
-    :restart-name         (tool-argument arguments "restart")
-    :restart-value-source (tool-argument arguments "restart-value"))))
+  (let ((sources              (tool-forms-argument arguments "self.eval"))
+        (restart-name         (tool-argument arguments "restart"))
+        (restart-value-source (tool-argument arguments "restart-value")))
+    (tool-success
+     (ecase (self--evaluation-target arguments)
+       (:server
+        (self--evaluate-in-active-image (tool-context-configuration context) sources
+                                        :restart-name         restart-name
+                                        :restart-value-source restart-value-source))
+       (:client
+        (agent-observer-evaluate-on-client (tool-context-observer context) sources
+                                           :restart-name         restart-name
+                                           :restart-value-source restart-value-source))))))
 
 (-> self--positioned-failure (error integer integer) error)
 (defun self--positioned-failure (condition position count)

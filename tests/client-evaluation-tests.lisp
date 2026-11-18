@@ -164,3 +164,67 @@
            ; mallet:suppress no-ignore-errors -- the endpoint may have closed the socket already
            (ignore-errors (sb-bsd-sockets:socket-close socket)))))))
   nil)
+
+(-> test-self-eval-client-target () null)
+(defun test-self-eval-client-target ()
+  "Test self.eval sends its forms to the client only when asked, and journals only the active image's."
+  (with-test-configuration (configuration)
+    (let* ((asked    nil)
+           (registry (make-default-tool-registry))
+           (observer (callback-agent-observer-create
+                      :client-evaluation-callback
+                      (lambda (sources &key restart-name restart-value-source)
+                        (push (list sources restart-name restart-value-source) asked)
+                        "Values:
+from the client")))
+           (context  (make-instance 'tool-context
+                                    :configuration configuration
+                                    :worker        nil
+                                    :conversation  (conversation-create configuration
+                                                                        :identifier "client-eval")
+                                    :observer      observer)))
+      (labels ((run (run-context &rest arguments)
+                 "Execute self.eval with ARGUMENTS through the registry in RUN-CONTEXT."
+                 (tool-registry-execute-call
+                  registry
+                  (json-object "namespace" "self"
+                               "name" "eval"
+                               "arguments" (json-encode (apply #'json-object arguments)))
+                  run-context))
+
+               (journaled ()
+                 "Return how many records the mutation journal holds."
+                 (length (mutation-journal-read-records configuration))))
+        (let ((before (journaled))
+              (result (run context "forms" (vector "(+ 1 2)") "target" "client"
+                                   "restart" "CONTINUE")))
+          (test-assert (and (tool-result-success-p result)
+                            (search "from the client" (tool-result-content result)))
+                       "target client returns what the client answered")
+          (test-assert (equal asked '((("(+ 1 2)") "CONTINUE" nil)))
+                       "the client receives the forms and the chosen restart")
+          (test-assert (= (journaled) before)
+                       "a client evaluation leaves the mutation journal alone"))
+        (dolist (arguments (list (list "forms" (vector "(+ 1 2)"))
+                                 (list "forms" (vector "(+ 1 2)") "target" "server")))
+          (let ((before (journaled))
+                (result (apply #'run context arguments)))
+            (test-assert (and (tool-result-success-p result)
+                              (search "3" (tool-result-content result))
+                              (= (length asked) 1)
+                              (> (journaled) before))
+                         (format nil "~S evaluates in the active image and journals it"
+                                 (rest (rest arguments))))))
+        (test-assert (not (tool-result-success-p
+                           (run context "forms" (vector "(+ 1 2)") "target" "browser")))
+                     "an unknown target is refused")
+        (let ((result (run (make-instance 'tool-context
+                                          :configuration configuration
+                                          :worker        nil
+                                          :conversation  (tool-context-conversation context))
+                           "forms" (vector "(+ 1 2)") "target" "client")))
+          (test-assert (and (not (tool-result-success-p result))
+                            (search "No attached client evaluates Lisp"
+                                    (tool-result-content result)))
+                       "without a presenting observer there is no client to ask")))))
+  nil)

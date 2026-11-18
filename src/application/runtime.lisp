@@ -4654,7 +4654,12 @@ clients as :TEXT, :REASONING and :STATUS events."
          (application-authorize-command application command directory))
        :tool-authorization-callback
        (lambda (tool arguments)
-         (application-authorize-tool application tool arguments))))))
+         (application-authorize-tool application tool arguments))
+       :client-evaluation-callback
+       (lambda (sources &key restart-name restart-value-source)
+         (application-evaluate-on-client application sources
+                                         :restart-name         restart-name
+                                         :restart-value-source restart-value-source))))))
 
 ;;; Tool calls made on the application's behalf
 

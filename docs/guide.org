@@ -3007,6 +3007,15 @@ same tool. Qualify the target symbol in the source, or supply the =package=
 argument to select its reader package. Use qualified symbols with =self.set=
 for foreign global bindings.
 
+=self.eval= runs its forms in the active image, which in a world is the
+server's. With =target= set to =client= they run in the attached client's
+image instead: the terminal process that composes the screen and draws the
+sidebar, or a structured client written in Lisp. The controlling terminal is
+asked first, then the structured client attached last. A client says when it
+attaches whether it evaluates, so one in another language is never asked and
+the call fails. Client evaluations are not journaled and do not survive the
+client.
+
 Installation, discard and replay temporarily unlock the reader and target
 packages, then restore their locks. New definition records include the target's
 owning package separately from the reader package. Replay skips stale definitions

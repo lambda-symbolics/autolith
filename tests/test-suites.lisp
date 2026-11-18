@@ -832,7 +832,8 @@
 (define-test-suite client-evaluation
   test-client-evaluation-request
   test-client-evaluation-structured-client
-  test-client-evaluation-terminal-client)
+  test-client-evaluation-terminal-client
+  test-self-eval-client-target)
 
 (define-test-suite world-sidebar
   test-world-repository-groups

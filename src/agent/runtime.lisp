@@ -62,7 +62,13 @@
     :initform      nil
     :reader        callback-agent-observer-tool-authorization-callback
     :type          (option function)
-    :documentation "The optional function authorizing one external tool call."))
+    :documentation "The optional function authorizing one external tool call.")
+   (client-evaluation-callback
+    :initarg       :client-evaluation-callback
+    :initform      nil
+    :reader        callback-agent-observer-client-evaluation-callback
+    :type          (option function)
+    :documentation "The optional function evaluating forms in the attached client's image."))
   (:documentation "An agent observer implemented by ordinary terminal-facing callbacks."))
 
 (defclass serialized-agent-observer (agent-observer)
@@ -255,6 +261,13 @@ messages return NIL and use the agent's normal append path."))
 (defgeneric agent-observer-authorize-tool (observer tool arguments)
   (:documentation "Return :ALLOW or :DENY for external TOOL and ARGUMENTS."))
 
+(defgeneric agent-observer-evaluate-on-client
+    (observer sources &key restart-name restart-value-source)
+  (:documentation "Evaluate SOURCES in the image of the client OBSERVER presents to.
+
+Return the rendered output and values, or signal CLIENT-EVALUATION-ERROR.
+RESTART-NAME and RESTART-VALUE-SOURCE retry a failure as self.eval does."))
+
 (defgeneric agent-observer-call-with-tool-execution (observer identifier function)
   (:documentation "Call tool FUNCTION within OBSERVER's execution ownership and bindings."))
 
@@ -385,6 +398,31 @@ messages return NIL and use the agent's normal append path."))
         (funcall callback tool arguments)
         ':deny)))
 
+(defmethod agent-observer-evaluate-on-client
+    (observer (sources list) &key restart-name restart-value-source)
+  "Refuse: an agent presenting to nobody has no client to ask."
+  (declare (ignore observer sources restart-name restart-value-source))
+  (error 'client-evaluation-error
+         :code    ':no-client
+         :message "No attached client evaluates Lisp. Use target server, or attach a terminal."))
+
+(defmethod agent-observer-evaluate-on-client
+    ((observer callback-agent-observer) (sources list) &key restart-name restart-value-source)
+  "Evaluate SOURCES through OBSERVER's callback, refusing when absent."
+  (let ((callback (callback-agent-observer-client-evaluation-callback observer)))
+    (if callback
+        (funcall callback sources
+                 :restart-name         restart-name
+                 :restart-value-source restart-value-source)
+        (call-next-method))))
+
+(defmethod agent-observer-evaluate-on-client
+    ((observer serialized-agent-observer) (sources list) &key restart-name restart-value-source)
+  "Forward SOURCES to OBSERVER's delegate without holding the callback lock through the wait."
+  (agent-observer-evaluate-on-client (serialized-agent-observer-delegate observer) sources
+                                     :restart-name         restart-name
+                                     :restart-value-source restart-value-source))
+
 (defmethod agent-observer-text
     ((observer serialized-agent-observer) (text string))
   "Forward assistant TEXT to OBSERVER's delegate under its callback lock."
@@ -474,12 +512,13 @@ recorded as automatic input that the transcript shows as that operation."
      (:steering-entry-callback (option function))
      (:pending-operations-callback (option function))
      (:command-authorization-callback (option function))
-     (:tool-authorization-callback (option function)))
+     (:tool-authorization-callback (option function))
+     (:client-evaluation-callback (option function)))
     callback-agent-observer)
 (defun callback-agent-observer-create
     (&key text-callback reasoning-callback status-callback steering-callback
       steering-persisted-callback steering-entry-callback pending-operations-callback
-      command-authorization-callback tool-authorization-callback)
+      command-authorization-callback tool-authorization-callback client-evaluation-callback)
   "Create an observer backed by optional presentation callbacks."
   (make-instance 'callback-agent-observer
                  :text-callback                  text-callback
@@ -490,7 +529,8 @@ recorded as automatic input that the transcript shows as that operation."
                  :steering-entry-callback        steering-entry-callback
                  :pending-operations-callback    pending-operations-callback
                  :command-authorization-callback command-authorization-callback
-                 :tool-authorization-callback    tool-authorization-callback))
+                 :tool-authorization-callback    tool-authorization-callback
+                 :client-evaluation-callback     client-evaluation-callback))
 
 (-> agent-create
     (&key (:configuration configuration) (:provider (option model-provider))
