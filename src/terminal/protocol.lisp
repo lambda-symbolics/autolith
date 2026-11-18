@@ -348,6 +348,11 @@ panels while such frames show, as during the boot screen."))
     :accessor      terminal-ui-completion-dismissed-p
     :type          boolean
     :documentation "Whether Escape has hidden passive completion suggestions.")
+   (completion-memo
+    :initform      nil
+    :accessor      terminal-ui-completion-memo
+    :type          list
+    :documentation "The draft, cursor and root the passive completions were last matched for.")
    (selector
     :initform      nil
     :accessor      terminal-ui-selector

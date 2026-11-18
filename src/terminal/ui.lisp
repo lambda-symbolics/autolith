@@ -772,15 +772,28 @@ name. Path completions apply when no command prefix matches."
           (append (terminal-ui--matching-mention-completions ui text cursor)
                   (terminal-ui--matching-path-completions ui text cursor))))))
 
+(-> terminal-ui--clear-completions (terminal-ui) null)
+(defun terminal-ui--clear-completions (ui)
+  "Offer no completions until UI's draft is matched again."
+  (selector-set-items (terminal-ui-completion-selector ui) nil)
+  (setf (terminal-ui-completion-memo ui) nil)
+  nil)
+
 (-> terminal-ui--reconcile-completions (terminal-ui) list)
 (defun terminal-ui--reconcile-completions (ui)
-  "Return UI's current matches, resetting the selection when the set changes."
-  (let ((selector (terminal-ui-completion-selector ui)))
-    (if (terminal-ui-completion-active-p ui)
-        (selector-items selector)
-        (let ((matches (terminal-ui--matching-completions ui)))
-          (selector-set-items selector matches)
-          matches))))
+  "Return UI's current matches, resetting the selection when the set changes.
+
+Matching reads the world and searches the workspace, so it runs when the draft,
+the cursor or the completion root changed, not for every frame."
+  (let* ((selector (terminal-ui-completion-selector ui))
+         (editor   (terminal-ui-editor ui))
+         (memo     (list (line-editor-text editor) (line-editor-cursor editor)
+                         (terminal-ui--completion-root ui))))
+    (unless (or (terminal-ui-completion-active-p ui)
+                (equal memo (terminal-ui-completion-memo ui)))
+      (selector-set-items selector (terminal-ui--matching-completions ui))
+      (setf (terminal-ui-completion-memo ui) memo))
+    (selector-items selector)))
 
 (-> terminal-completion-label (list) string)
 (defun terminal-completion-label (entry)
@@ -885,7 +898,7 @@ recalled drafts. An @ path token still offers file completion."
   "Return styled rows for UI's matching command completions."
   (block nil
     (unless (terminal-ui--completion-offered-p ui)
-      (selector-set-items (terminal-ui-completion-selector ui) nil)
+      (terminal-ui--clear-completions ui)
       (return nil))
     (terminal-ui--reconcile-completions ui)
     (terminal-ui--choice-rows (terminal-ui-completion-selector ui) row-width)))
@@ -973,7 +986,7 @@ its parenthesis open, and are dropped once the name closes it itself."
        (terminal-ui--restore-history-state editor history-state))
       (prefix
        (line-editor-set-text editor prefix))))
-  (selector-set-items (terminal-ui-completion-selector ui) nil)
+  (terminal-ui--clear-completions ui)
   (terminal-ui--end-completion ui)
   (setf (terminal-ui-completion-dismissed-p ui) t)
   nil)

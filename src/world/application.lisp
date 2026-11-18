@@ -232,27 +232,35 @@ well, since the steer persists first and the queued turn then skips."
 
 (-> world-mention-completion-entries (world string) list)
 (defun world-mention-completion-entries (world token)
-  "Return completion entries for the participants of WORLD whose names start with TOKEN."
-  (loop for participant in (sort (world--participants-where
-                                  world
-                                  (lambda (participant)
-                                    (let ((name (participant-name participant)))
-                                      (and (world-handle-p name)
-                                           (uiop:string-prefix-p (string-downcase token)
-                                                                 (string-downcase name))))))
-                                 #'string-lessp
-                                 :key #'participant-name)
-        for name = (participant-name participant)
-        collect (let* ((residence (participant-residence participant))
-                       (channel   (and residence (world-channel-find world residence))))
-                    (list :name        (format nil "@~A" name)
-                          :description (if residence
-                                           (format nil "~(~A~) in ~A~@[ ~A~]"
-                                                   (participant-kind participant)
-                                                   (conversation-identifier-display residence)
-                                                   (and channel (channel-title channel)))
-                                           (format nil "~(~A~), parked"
-                                                   (participant-kind participant)))))))
+  "Return completion entries for the participants of WORLD that TOKEN matches, best first.
+
+TOKEN matches a name or the title of the participant's channel loosely: its
+letters in order. Without a TOKEN every participant is offered, by name."
+  (flet ((channel (participant)
+           (let ((residence (participant-residence participant)))
+             (and residence (world-channel-find world residence)))))
+    (loop for participant in (sito:rank
+                              token
+                              (sort (world--participants-where
+                                     world
+                                     (lambda (participant)
+                                       (world-handle-p (participant-name participant))))
+                                    #'string-lessp
+                                    :key #'participant-name)
+                              :key (lambda (participant)
+                                     (let ((channel (channel participant)))
+                                       (list (participant-name participant)
+                                             (and channel (channel-title channel))))))
+          for residence = (participant-residence participant)
+          for channel = (channel participant)
+          collect (list :name        (format nil "@~A" (participant-name participant))
+                        :description (if residence
+                                         (format nil "~(~A~) in ~A~@[ ~A~]"
+                                                 (participant-kind participant)
+                                                 (conversation-identifier-display residence)
+                                                 (and channel (channel-title channel)))
+                                         (format nil "~(~A~), parked"
+                                                 (participant-kind participant)))))))
 
 (-> application-world-mention-function (configuration) function)
 (defun application-world-mention-function (configuration)
