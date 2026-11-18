@@ -367,7 +367,7 @@
             (test-assert (and agent
                               (equal (participant-parent agent) (participant-identifier human))
                               (world-handle-p (participant-name agent))
-                              (equal (participant-name agent) (world-session--handle-base "b-second"))
+                              (equal (participant-name agent) (prezdivka:name-for "b-second"))
                               (eq (participant-name-source agent) ':initial)
                               (equal (getf (participant-settings agent) :model)
                                      (conversation-model second)))
@@ -1038,8 +1038,8 @@
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
       (let ((names (list (participant-name first-agent) (participant-name second-agent))))
-        (test-assert (and (member (world-session--handle-base "bfirst1") names :test #'string=)
-                          (member (world-session--handle-base "bsecnd2") names :test #'string=))
+        (test-assert (and (member (prezdivka:name-for "bfirst1") names :test #'string=)
+                          (member (prezdivka:name-for "bsecnd2") names :test #'string=))
                      "agents in one workspace have their own readable handles")
         (world-participant-create configuration
                                   :kind      ':agent
@@ -1096,8 +1096,8 @@
                         (not (search "first1" (participant-name first-agent) :test #'char-equal))
                         (string/= (participant-name first-agent) (participant-name second-agent)))
                    "agents start with readable handles of their own, not their channel identifiers")
-      (test-assert (and (string= (world-session--handle-base "bfirst1") (world-session--handle-base "bfirst1"))
-                        (= 2 (length (uiop:split-string (world-session--handle-base "bfirst1")
+      (test-assert (and (string= (prezdivka:name-for "bfirst1") (prezdivka:name-for "bfirst1"))
+                        (= 2 (length (uiop:split-string (prezdivka:name-for "bfirst1")
                                                         :separator "-"))))
                    "a channel always derives the same two-word handle")
       (let ((renamed (world-participant-rename configuration (participant-identifier first-agent)
@@ -2519,7 +2519,7 @@ A parent that writes @parent to its own child reaches nobody but the child."
                                      (participant-identifier root-agent)))
                        "a child channel nests under its root and belongs to the root's agent")
           (test-assert (and task-agent
-                            (string= (participant-name task-agent) (world-session--handle-base "exec-one"))
+                            (string= (participant-name task-agent) (prezdivka:name-for "exec-one"))
                             (eq (participant-name-source task-agent) ':initial)
                             (equal (participant-parent task-agent)
                                    (participant-identifier root-agent)))

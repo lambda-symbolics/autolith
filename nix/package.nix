@@ -51,7 +51,7 @@ let
     "cl-skills" "cl-termdown" "cl-worktree" "clasted" "clermaid" "clifff" "clinedi"
     "clinker-transcript" "colordiff" "colorlisp" "daphne" "defingerprinter" "fetch-gist"
     "idsmall" "image-daemon" "lambda-debugger" "lisp-em" "llh2" "ls-compat" "ls-flock" "mcparen"
-    "org-templater" "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config"
+    "org-templater" "parenchek" "prezdivka" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config"
     "sexp-store" "sito" "sophisticated-clipboard" "structlisp" "surgeon" "yolokuva"
   ];
   qlotSourcesWithoutBuildMetadata =
@@ -478,6 +478,12 @@ let
     lispLibs = with lispPackages; [ bordeaux-threads ];
   };
 
+  prezdivka = pkgs.sbcl.buildASDFSystem {
+    pname = "prezdivka";
+    version = qlotVersion "prezdivka";
+    src = qlotSource "prezdivka";
+  };
+
   sito = pkgs.sbcl.buildASDFSystem {
     pname = "sito";
     version = qlotVersion "sito";
@@ -661,6 +667,7 @@ let
       lsCompat
       lsFlock
       mcparen
+      prezdivka
       sbclGenerations
       sbclWorkers
       setinka

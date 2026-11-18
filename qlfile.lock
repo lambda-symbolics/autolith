@@ -222,6 +222,10 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/argo.git" :ref "ff1d0643973278e3b282825fbdc604c1256070a2")
   :version "git-ff1d0643973278e3b282825fbdc604c1256070a2"))
+("prezdivka" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/lambda-symbolics/prezdivka.git" :ref "5f21475558a4bf4595e7ca2d9b1e08fea9064cc0")
+  :version "git-5f21475558a4bf4595e7ca2d9b1e08fea9064cc0"))
 ("sito" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sito.git" :ref "2147f6fcaaa470c6631ca9037728d77d16284226")

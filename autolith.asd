@@ -68,6 +68,7 @@
                             #:mcparen/managed
                             #:org-templater
                             #:parenchek
+                            #:prezdivka
                             #:quri
                             #:serapeum
                             #:setinka

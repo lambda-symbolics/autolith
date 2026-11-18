@@ -1478,7 +1478,7 @@ and transfer failures are 1. Both command groups provide =--help=.
 ** Session titles and resume
 
 A session gets an immediate local title from its first prompt or image. Its agent
-starts with a readable two-word name, such as =quiet-otter=, and keeps it: only
+starts with a readable two-word name, such as =hygienic-macro=, and keeps it: only
 =(rename "NAME")= changes an agent's name, so a mention never goes stale while a
 conversation is underway. After the third actual user turn, Autolith may ask the
 active model for a concise title, which is saved durably. =(channel-id)= shows

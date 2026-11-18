@@ -144,6 +144,7 @@ a partially live identity set, or resumes cleanup for a published deletion.
 | image-daemon/runtime | Service registry, relays, attachment queues and shutdown | Conversation leases, steering, handoff and input-reader coordination |
 | clinedi | Modal sessions, editor/history state and terminal transports | Completion, submission, paste and interruption policy |
 | sito | Fuzzy scores, match positions and ranking of short strings | The sidebar's channel filter and @mention completion |
+| prezdivka | Readable two-word names, random or fixed by a key, and a free one among taken names | The handle a new agent starts with |
 | cl-termdown | Column layout, Markdown fence lifecycle and semantic span presentation | Transcript composition, source-copy widgets and stream finalization |
 | clermaid | Bounded Mermaid parsing and terminal-cell diagram layout | Mermaid fenced blocks through cl-termdown |
 | cl-exec-sandbox | Bounded raw capture files, process cleanup, capture metadata and byte head/tail sampling | Private execution-owned log artifacts, preview budgets, retention, durable references and authorized resource reads |

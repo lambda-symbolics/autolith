@@ -1084,7 +1084,7 @@ channel's history is there for it to read."
     (let ((agent (world-participant-create
                   configuration
                   :kind        ':agent
-                  :name        (world-unique-handle world (world-session--handle-base channel))
+                  :name        (world-session--initial-handle world channel)
                   :name-source ':initial
                   :residence   channel
                   :parent      (and person (participant-identifier person))

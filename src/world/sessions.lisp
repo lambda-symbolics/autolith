@@ -25,20 +25,6 @@ It is fixed, so every migration gives the person the same identifier.")
 (defparameter *world-agent-name* "autolith"
   "The name an agent without a world participant goes by.")
 
-(defparameter *world-handle-adjectives*
-  '("amber" "bold" "brave" "bright" "calm" "clever" "cosmic" "crisp"
-    "eager" "fair" "gentle" "glad" "golden" "keen" "kind" "lively"
-    "lucky" "mellow" "merry" "nimble" "noble" "patient" "proud" "quick"
-    "quiet" "rapid" "sharp" "silent" "steady" "swift" "vivid" "witty")
-  "The first words of the handles new agents start with.")
-
-(defparameter *world-handle-animals*
-  '("badger" "beaver" "bison" "condor" "crane" "falcon" "ferret" "finch"
-    "gecko" "heron" "ibex" "jackal" "kestrel" "lemur" "lynx" "marten"
-    "osprey" "otter" "owl" "panda" "puffin" "raven" "robin" "seal"
-    "sparrow" "stoat" "tapir" "tern" "vole" "wolf" "wombat" "wren")
-  "The second words of the handles new agents start with.")
-
 (defparameter *world-task-name* "agent"
   "The handle base of a child agent whose conversation records no name of its own.")
 
@@ -678,12 +664,11 @@ parent is never left behind its retired children."
                          (make-instance 'participant
                                         :identifier  agent-id
                                         :kind        ':agent
-                                        :name        (world-unique-handle
-                                                      preview
-                                                      (let ((name (and parent-id (getf (rest header) :agent-name))))
-                                                        (if (non-empty-string-p name)
-                                                            (world-handle-base name :fallback *world-task-name*)
-                                                            (world-session--handle-base identifier))))
+                                        :name        (let ((name (and parent-id (getf (rest header) :agent-name))))
+                                                       (if (non-empty-string-p name)
+                                                           (world-unique-handle
+                                                            preview (world-handle-base name :fallback *world-task-name*))
+                                                           (world-session--initial-handle preview identifier)))
                                         :name-source (if (and parent-id (non-empty-string-p (getf (rest header) :agent-name)))
                                                          ':explicit ':initial)
                                         :parent      keeper
@@ -734,19 +719,20 @@ parent is never left behind its retired children."
                                                :parent     identifier
                                                :updated-at (max now (channel-updated-at channel))))))))))
 
-(-> world-session--handle-base (string) string)
-(defun world-session--handle-base (identifier)
-  "Return the readable handle the agent of channel IDENTIFIER starts with, the same on every call.
+(-> world-session--initial-handle (world string &key (:seen list)) string)
+(defun world-session--initial-handle (world identifier &key seen)
+  "Return the readable handle the agent of channel IDENTIFIER starts with, one no participant of WORLD has.
 
-An agent keeps the handle until someone renames it, so a mention never goes
-stale while a conversation is underway."
-  (let ((hash (reduce (lambda (hash character)
-                        (mod (+ (* hash 31) (char-code character)) 1000003))
-                      identifier :initial-value 7)))
-    (multiple-value-bind (rest adjective) (floor hash (length *world-handle-adjectives*))
-      (format nil "~A-~A"
-              (nth adjective *world-handle-adjectives*)
-              (nth (mod rest (length *world-handle-animals*)) *world-handle-animals*)))))
+The channel fixes the handle, so it is the same on every call while it is
+free. An agent keeps it until someone renames it, so a mention never goes
+stale while a conversation is underway. SEEN lists handles a batch already
+gave out."
+  (prezdivka:unique-name
+   identifier
+   (lambda (name)
+     (or (member name seen :test #'string-equal)
+         (world-participant-named-p world name)
+         (world-handle-reserved-p name)))))
 
 (-> world-session--handle-records (world timestamp) list)
 (defun world-session--handle-records (world now)
@@ -763,13 +749,10 @@ initial handle, so every participant can be mentioned by name."
                 (and (eq (participant-kind participant) ':agent)
                      (or (not (world-handle-p name))
                          (world-handle-reserved-p name))))
-            (let* ((base   (world-session--handle-base
-                            (or (participant-residence participant) (participant-identifier participant))))
-                   (handle (loop for index from 1
-                                 for candidate = (world-handle-suffixed base index)
-                                 unless (or (member candidate seen :test #'string-equal)
-                                            (world-participant-named-p world candidate))
-                                   return candidate)))
+            (let ((handle (world-session--initial-handle
+                           world
+                           (or (participant-residence participant) (participant-identifier participant))
+                           :seen seen)))
               (push handle seen)
               (push (world--participant-record
                      (world--copy-participant participant
