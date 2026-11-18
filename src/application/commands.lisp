@@ -3128,6 +3128,24 @@ show."
     (application-present application (application-notice-line (format nil "@~A is now @~A" before name))))
   ':continue)
 
+(define-application-command application--builtin-channel-id-command
+    (:name              "/channel-id"
+     :help-topic        :channels
+     :help-order        8
+     :argument          nil
+     :description       "show this channel's ID"
+     :tip               "shows the ID of the channel this terminal is in; as a Lisp call it returns the ID."
+     :busy-behavior     :execute
+     :terminal-behavior :shared
+     :callable          t)
+    (application)
+  (let ((identifier (conversation-identifier (application-conversation application))))
+    (application-present
+     application
+     (application-notice-line
+      (format nil "channel ~A" (conversation-identifier-display identifier))))
+    (values ':continue identifier)))
+
 (-> application--placing-server (application keyword) (values world-server &optional))
 (defun application--placing-server (application operation)
   "Return the world server that places APPLICATION's agents, or refuse OPERATION in a session of its own.

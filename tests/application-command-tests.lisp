@@ -745,6 +745,30 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-channel-id-command () null)
+(defun test-channel-id-command ()
+  "Test (channel-id) shows the current channel's ID and yields it to a Lisp caller."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (let ((identifier (conversation-identifier (application-conversation application)))
+               (presented  nil))
+           (test-call-with-function-replacements
+            (list (list 'application-present
+                        (lambda (candidate entry &key identifier)
+                          (declare (ignore candidate identifier))
+                          (push entry presented))))
+            (lambda ()
+              (test-assert (equal (application-operation-call application "channel-id") identifier)
+                           "a Lisp call of the command returns the channel's identifier")
+              (test-assert (search (conversation-identifier-display identifier)
+                                   (test-terminal-row-text (first presented)))
+                           "the transcript shows the identifier in its display form"))))
+      (tool-registry-close-runtime-state (application-tool-registry application))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-call-with-typed-control-application (function) null)
 (defun test-call-with-typed-control-application (function)
   "Call FUNCTION with an isolated public-operation application and observed service actions."

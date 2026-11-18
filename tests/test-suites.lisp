@@ -980,6 +980,7 @@
   test-built-in-application-command-calls
   test-open-command-direct
   test-rename-command
+  test-channel-id-command
   test-application-codex-fast-mode-command
   test-application-compact-setting-transitions
   test-application-settings-command

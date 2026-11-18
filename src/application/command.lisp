@@ -1059,7 +1059,7 @@ without changing the registry."
 
 (defgeneric application-command-execute (command application invocation)
   (:documentation
-   "Execute COMMAND for APPLICATION and INVOCATION, returning a loop action."))
+   "Execute COMMAND for APPLICATION and INVOCATION; return a loop action and the command's value."))
 
 (defmethod application-command-execute
     ((command application-command)
@@ -1087,20 +1087,20 @@ without changing the registry."
                 (application-command--validate-invocation-arity
                  command
                  (application-command-invocation-arguments invocation)))
-             (let ((result
-                     (if (application-command-callable-p command)
-                         (invoke-callable-handler
-                          (application-command-invocation-arguments invocation))
-                         (funcall (application-command-handler command)
-                                  application invocation))))
-               (unless (member result '(:continue :quit) :test #'eq)
+             (multiple-value-bind (action value)
+                 (if (application-command-callable-p command)
+                     (invoke-callable-handler
+                      (application-command-invocation-arguments invocation))
+                     (funcall (application-command-handler command)
+                              application invocation))
+               (unless (member action '(:continue :quit) :test #'eq)
                  (error 'configuration-error
                         :message
                         (format nil
                                 "Application command ~A returned invalid action ~S."
                                 (application-command--display-name command)
-                                result)))
-               result)))
+                                action)))
+               (values action value))))
     (if (eq *application-command-presentation-invocation* invocation)
         (invoke)
         (application-command--call-with-presentation invocation #'invoke))))
@@ -1269,7 +1269,7 @@ slash input uses token splitting. Parser and handler functions are captured at
 registration. :HELP-TOPIC selects a supported section, defaulting to Other commands;
 :HELP-ORDER is an optional integer rank, with effective registration order breaking
 ties. Replacements supply their own help metadata. Every handler returns :CONTINUE
-or :QUIT."
+or :QUIT, and may return a second value, which a Lisp call of the command yields."
   (application-command--validate-defining-form
    definition-name metadata lambda-list)
   (let* ((callable-p       (eq (getf metadata :callable) t))

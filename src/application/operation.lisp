@@ -875,19 +875,19 @@ wait for the serialized application boundary."
 
 (defmethod application-operation-invoke
     ((operation application-command-operation) application arguments &key context)
-  "Invoke a command through its existing handler without duplicating Lisp source."
+  "Invoke a command through its existing handler and return the value it yields."
   (declare (ignore context))
   (let* ((command                                       (application-operation-backend operation))
          (invocation
            (application-operation--command-invocation command arguments))
          (*application-command-presentation-invocation* invocation)
-         (*application-command-presentation-pending-p*  nil)
-         (action                                        (application-command-execute command application invocation)))
-    (case action
-      (:continue
-       nil)
-      (:quit
-       (error 'application-operation-loop-action :action ':quit)))))
+         (*application-command-presentation-pending-p*  nil))
+    (multiple-value-bind (action value) (application-command-execute command application invocation)
+      (case action
+        (:continue
+         value)
+        (:quit
+         (error 'application-operation-loop-action :action ':quit))))))
 
 (defgeneric application-lisp--native-tool-value (result)
   (:documentation
