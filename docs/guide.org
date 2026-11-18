@@ -573,8 +573,8 @@ assistant messages while skipping reasoning and tool activity. Use =Ctrl-Home= a
 =Ctrl-End= for the oldest and newest transcript positions, and the mouse wheel
 for incremental scrolling. The right side of the modeline shows =LIVE= while
 the view follows the newest output, or the visible rows out of all of them. In a
-terminal attached to a hosted channel, =Ctrl-S= moves to the channel sidebar;
-see Local sessions. A message
+terminal attached to a hosted channel, =Ctrl-S= hides and shows the channel
+sidebar and =Ctrl-Space= moves the keyboard to it; see Local sessions. A message
 jump places the end of the message on the row above the composer. If the
 message is taller than the window, its header appears at the top instead. The
 =--fullscreen= and =--plain= options choose the mode for one launch without
@@ -1704,12 +1704,13 @@ runtime state unknown until a successful refresh. Failed or closing hosts are
 unavailable for attachment while their owners finish cleanup and release their
 conversation leases.
 
-The sidebar takes about a fifth of a wide terminal's width. The keyboard is
-either in the channel or in the sidebar. Press =Ctrl-S=, or =Ctrl-Tab= where the
-terminal reports it, or click the sidebar, to move there: its heading and the
-rule beside it light up, and the selected channel is highlighted. =Ctrl-Tab=,
-=Esc= or a click in the channel moves back. =Ctrl-S= in a focused sidebar hides
-it; that preference is kept across channel switches and reconnects.
+The sidebar takes about a fifth of a wide terminal's width. =Ctrl-S= hides
+or shows it; that preference is kept across channel switches and reconnects.
+The keyboard is either in the channel or in the sidebar. Press =Ctrl-Space=, or
+=Ctrl-Tab= where the terminal reports it, or click the sidebar, to move there:
+its heading and the rule beside it light up, and the selected channel is
+highlighted. The same key, =Esc= or a click in the channel moves back, and it
+shows a hidden sidebar first.
 
 In a focused sidebar, =↑= and =↓= select, =Enter= opens a channel, =←= and =→=
 close and open a tree node, and =PageUp=, =PageDown=, =Home=, =End= and the mouse

@@ -12,10 +12,10 @@
   "The largest frame height or width a client accepts from a session.")
 
 (defparameter *localgroup-screen-toggle-event* '(:control #\s)
-  "The key event that moves to the side panel, and hides a panel that has the focus.")
+  "The key event showing or hiding the side panel.")
 
 (defparameter *localgroup-screen-focus-event* ':focus-next
-  "The key event that moves the focus between the side panel and the session.")
+  "The key event, Ctrl-Space or Ctrl-Tab, that moves the focus between the side panel and the session.")
 
 (define-condition channel-loading-progress (condition)
   ((step :initarg :step :reader channel-loading-progress-step :type (integer 1 6)
@@ -286,8 +286,9 @@ panel shows it without a resize."
 (defun localgroup-screen-filter-event (screen event)
   "Return EVENT as the session should see it, :IGNORE when SCREEN consumed it, or a panel's request.
 
-The toggle and focus keys move the keyboard to the side panel and back. A
-click lands in the panel, which takes the focus and acts on it, or in the
+The toggle key shows or hides the side panel, and the focus key moves the
+keyboard to it and back. A click lands in the panel, which takes the focus and
+acts on it, or in the
 session's pane, whose columns start after the panel and which takes the focus
 back. A drag and its release go to the pane; over the panel they stay on the
 pane's edge, so selecting never takes the panel's text. A focused panel gets
@@ -308,14 +309,16 @@ and its channel command goes to the session."
       ((null (localgroup-screen-panel screen))
        event)
       ((equal event *localgroup-screen-toggle-event*)
-       (if (and (eq layout ':beside) (not (localgroup-screen-panel-focus-p screen)))
-           (localgroup-screen-focus-panel screen t)
-           (localgroup-screen-toggle-panel screen))
+       (localgroup-screen-toggle-panel screen)
        ':ignore)
       ((equal event *localgroup-screen-focus-event*)
-       (if (eq layout ':beside)
-           (localgroup-screen-focus-panel screen (not (localgroup-screen-panel-focus-p screen)))
+       ;; A hidden panel is shown first; a narrow terminal's drawer has the
+       ;; focus by being open. The wanted layout decides, not the painted one.
+       (let ((beside-p (eq (localgroup-screen-layout screen) ':beside)))
+         (unless beside-p
            (localgroup-screen-toggle-panel screen))
+         (localgroup-screen-focus-panel
+          screen (not (and beside-p (localgroup-screen-panel-focus-p screen)))))
        ':ignore)
       ((member event '(:interrupt :end-of-input :stream-end))
        event)
@@ -369,9 +372,9 @@ and its channel command goes to the session."
 (defun localgroup-screen-toggle-panel (screen)
   "Show or hide SCREEN's side panel and report any pane-size change to the session.
 
-A panel shown beside the session takes the focus; a narrow terminal's drawer
-has it while open. Store the choice on the screen and, if supported, on the
-panel for reuse across attachments."
+The keyboard stays with the session beside a shown panel; a narrow terminal's
+drawer has it while open. Store the choice on the screen and, if supported, on
+the panel for reuse across attachments."
   (let ((panel (localgroup-screen-panel screen)))
     (when (and panel (localgroup-screen-active-p screen))
       (with-lock-held ((localgroup-screen-lock screen))
@@ -383,7 +386,7 @@ panel for reuse across attachments."
                     (not (localgroup-screen-drawer-open-p screen)))
               (setf (screen-panel-shown-p panel) wanted-p
                     (localgroup-screen-own-panel-shown-p screen) wanted-p
-                    (localgroup-screen-panel-focus-p screen) wanted-p))
+                    (localgroup-screen-panel-focus-p screen) nil))
           (unless (eq layout (localgroup-screen-layout screen))
             (when (localgroup-screen-panel-focused-p screen)
               (screen-panel-focus panel))

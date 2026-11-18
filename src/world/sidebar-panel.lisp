@@ -335,8 +335,10 @@ when the last gather could not reach the server."
             (terminal-span ':legend-dim " delete  ")
             (terminal-span ':legend-accent "Esc")
             (terminal-span ':legend-dim " back"))
-      (list (terminal-span ':legend-accent " Ctrl-S")
-            (terminal-span ':legend-dim " channels"))))
+      (list (terminal-span ':legend-accent " Ctrl-Space")
+            (terminal-span ':legend-dim " focus  ")
+            (terminal-span ':legend-accent "Ctrl-S")
+            (terminal-span ':legend-dim " hide"))))
 
 (defmethod screen-panel-rows ((panel world-sidebar) terminal &key height width focused-p)
   "Render the heading, the scrolling tree, the command buttons and the key hints."
