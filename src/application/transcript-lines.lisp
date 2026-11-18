@@ -41,6 +41,18 @@ dropped, and later lines are indented beneath the marker."
   "Return TEXT as a notice line, marked with a dot."
   (application--marked-line ':notice "·" text))
 
+(-> application-selection-line (string &key (:model (option string))) list)
+(defun application-selection-line (effort &key model)
+  "Return the notice line saying MODEL, when given, and reasoning EFFORT are now in use.
+
+The model and the effort each take the color the modeline gives them."
+  (append (if model
+              (list (terminal-span ':notice "· the model is now ")
+                    (terminal-span ':model model)
+                    (terminal-span ':notice " with reasoning effort "))
+              (list (terminal-span ':notice "· reasoning effort is now ")))
+          (list (terminal-span ':effort effort))))
+
 (-> application-hint-line (string) list)
 (defun application-hint-line (text)
   "Return TEXT as a quiet line for an empty state or a next step, marked with a dot."

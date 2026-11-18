@@ -3342,9 +3342,10 @@ pristine or recovery session runs apart from it."
             (when effort (application-set-reasoning-effort application effort))
             (application-present
              application
-             (format nil "The model is now ~A with reasoning effort ~A."
-                     (configuration-model-selection-id (application-configuration application))
-                     (config :reasoning-effort (application-configuration application)))))))))
+             (application-selection-line
+              (config :reasoning-effort (application-configuration application))
+              :model (configuration-model-selection-id
+                      (application-configuration application)))))))))
   ':continue)
 
 (define-application-command application--builtin-models-command
@@ -3381,9 +3382,8 @@ pristine or recovery session runs apart from it."
       (application-set-reasoning-effort application effort)
       (application-present
        application
-       (format nil "Reasoning effort is now ~A."
-               (config :reasoning-effort
-                (application-configuration application))))))
+       (application-selection-line
+        (config :reasoning-effort (application-configuration application))))))
   ':continue)
 
 (define-application-command application--builtin-fast-command

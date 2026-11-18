@@ -19,7 +19,7 @@
       :command-spinner :command-id :command-tool
       :status-plain :status-dim :status-accent
       :legend-plain :legend-dim :legend-accent :sidebar-action :sidebar-workspace
-      :status-model :status-effort :status-branch
+      :status-model :status-effort :status-branch :model :effort
       :compaction-label :progress-track :progress-fill
       :syntax-comment :syntax-keyword :syntax-string :syntax-escape
       :syntax-number :syntax-type :syntax-function :syntax-property
@@ -121,6 +121,8 @@ neutral bright black because basic terminals cannot tint a row."
       (:lisp-prompt (:foreground :red :bold t))
       (:plan-active (:foreground :cyan :bold t))
       (:timestamp-time (:foreground :cyan))
+      (:model (:foreground :bright-cyan :bold t))
+      (:effort (:foreground :bright-red :bold t))
       (:agent-spinner (:foreground :bright-green :bold t))
       (:agent-name (:foreground :bright-cyan :bold t))
       (:agent-role (:foreground :bright-magenta))
@@ -241,6 +243,8 @@ quiet text uses soft blue."
         (:lisp-prompt (:foreground ,accent :bold t))
         (:plan-active (:foreground ,secondary :bold t))
         (:timestamp-time (:foreground ,soft))
+        (:model (:foreground ,secondary :bold t))
+        (:effort (:foreground ,danger :bold t))
         (:agent-spinner (:foreground ,accent :bold t))
         (:agent-name (:foreground ,secondary :bold t))
         (:agent-role (:foreground ,soft))
