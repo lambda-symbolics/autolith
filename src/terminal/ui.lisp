@@ -236,12 +236,13 @@ jumps between as messages. MENTION-FUNCTION completes @ participant names."
        (with-recursive-lock-held ((terminal-ui-lock ,locked-ui))
          ,@body))))
 
-(-> terminal-ui-load-history
-    (terminal-ui list &key (:offset (integer 0))
-                      (:older-function (option function))
-                      (:newer-function (option function)))
-    terminal-ui)
-(defun terminal-ui-load-history (ui entries &key (offset 0) older-function newer-function)
+(defgeneric terminal-ui-load-history (ui entries &key offset older-function newer-function)
+  (:documentation
+   "Replace UI's input history with ENTRIES beginning at absolute OFFSET.
+
+OLDER-FUNCTION and NEWER-FUNCTION page in the adjacent entries."))
+
+(defmethod terminal-ui-load-history ((ui terminal-ui) entries &key (offset 0) older-function newer-function)
   "Replace editor history with sanitized ENTRIES beginning at absolute OFFSET.
 
 Paging functions receive absolute oldest-based resident boundaries and return
@@ -2421,10 +2422,11 @@ Every row ends on a fresh line and regions index the plain output."
             (get-output-stream-string display-stream)
             regions)))
 
-(-> terminal-ui-stream-update
-    (terminal-ui &key (:rows list) (:tail (or null string list)))
-    terminal-ui)
-(defun terminal-ui-stream-update (ui &key rows tail)
+(defgeneric terminal-ui-stream-update (ui &key rows tail)
+  (:documentation
+   "Append streamed single-line ROWS to UI's transcript and show TAIL as unfinished."))
+
+(defmethod terminal-ui-stream-update ((ui terminal-ui) &key rows tail)
   "Append streamed single-line ROWS to the transcript and show TAIL as unfinished.
 
 Each row is a styled span list appended once without a separating blank row, so
@@ -2649,10 +2651,11 @@ indicator with a completion marker."
             (terminal-flush terminal))))))
   nil)
 
-(-> terminal-ui-report-program-status
-    (terminal-ui keyword &key (:kind (option keyword)))
-    null)
-(defun terminal-ui-report-program-status (ui state &key kind)
+(defgeneric terminal-ui-report-program-status (ui state &key kind)
+  (:documentation
+   "Report the root program STATE, and the KIND of a blocked one, to UI's terminal."))
+
+(defmethod terminal-ui-report-program-status ((ui terminal-ui) state &key kind)
   "Publish root status with the title UI's installed title function returns."
   (with-terminal-ui-locked (ui)
     (setf (terminal-ui-program-status ui) (list state kind))
@@ -2676,16 +2679,13 @@ indicator with a completion marker."
            (funcall function))
       (terminal-ui-report-program-status ui (first previous) :kind (second previous)))))
 
-(-> terminal-ui-select
-    (terminal-ui &key (:title string) (:items list) (:hint (or string list))
-     (:visible-count (integer 1)) (:initial-name (option string))
-     (:initial-value (or null string keyword)) (:search-p boolean)
-     (:search-key function) (:resize-callback (option function))
-     (:on-event (option function)) (:poll-interval (option real))
-     (:status-kind keyword) (:external-event-function (option function)))
-    (or null string keyword))
-(defun terminal-ui-select
-    (ui &key (title "select") items hint
+(defgeneric terminal-ui-select (ui &key title items hint visible-count initial-name initial-value search-p search-key
+                                resize-callback on-event poll-interval status-kind external-event-function)
+  (:documentation
+   "Let the user choose one of ITEMS in UI's modal picker and return its value, or NIL."))
+
+(defmethod terminal-ui-select
+    ((ui terminal-ui) &key (title "select") items hint
           (visible-count *terminal-ui-visible-completions*)
           initial-name initial-value search-p
           (search-key #'terminal-ui--picker-default-search-text)
@@ -2801,8 +2801,11 @@ lifecycle cleanup belong to Clinedi. HINT accepts text or styled spans."
 
 ;;; Semantic prompt blocks
 
-(-> terminal-ui-open-prompt-block (terminal-ui) boolean)
-(defun terminal-ui-open-prompt-block (ui)
+(defgeneric terminal-ui-open-prompt-block (ui)
+  (:documentation
+   "Open a semantic prompt block in UI's terminal."))
+
+(defmethod terminal-ui-open-prompt-block ((ui terminal-ui))
   "Emit semantic prompt boundaries and restore independent active job reports."
   (with-terminal-ui-locked (ui)
     (let ((terminal (terminal-ui-terminal ui)))
@@ -2826,8 +2829,11 @@ lifecycle cleanup belong to Clinedi. HINT accepts text or styled spans."
         (setf (terminal-ui-prompt-marker-state ui) ':input)
         t))))
 
-(-> terminal-ui-start-prompt-execution (terminal-ui) boolean)
-(defun terminal-ui-start-prompt-execution (ui)
+(defgeneric terminal-ui-start-prompt-execution (ui)
+  (:documentation
+   "Mark the start of execution for UI's current prompt block."))
+
+(defmethod terminal-ui-start-prompt-execution ((ui terminal-ui))
   "Emit one execution-start boundary for UI's current input block."
   (with-terminal-ui-locked (ui)
     (let ((terminal (terminal-ui-terminal ui)))
@@ -2842,10 +2848,11 @@ lifecycle cleanup belong to Clinedi. HINT accepts text or styled spans."
         (setf (terminal-ui-prompt-marker-state ui) ':executing)
         t))))
 
-(-> terminal-ui-finish-prompt-block
-    (terminal-ui &optional (integer 0))
-    boolean)
-(defun terminal-ui-finish-prompt-block (ui &optional (status 0))
+(defgeneric terminal-ui-finish-prompt-block (ui &optional status)
+  (:documentation
+   "Close UI's executing prompt block with STATUS."))
+
+(defmethod terminal-ui-finish-prompt-block ((ui terminal-ui) &optional (status 0))
   "Emit one completion boundary with STATUS for UI's executing prompt block."
   (with-terminal-ui-locked (ui)
     (let ((terminal (terminal-ui-terminal ui)))
@@ -2904,8 +2911,11 @@ lifecycle cleanup belong to Clinedi. HINT accepts text or styled spans."
       (setf (terminal-ui-default-color-theme ui) nil)))
   nil)
 
-(-> terminal-ui-set-theme (terminal-ui keyword) null)
-(defun terminal-ui-set-theme (ui name)
+(defgeneric terminal-ui-set-theme (ui name)
+  (:documentation
+   "Install the color theme NAME in UI."))
+
+(defmethod terminal-ui-set-theme ((ui terminal-ui) name)
   "Install NAME and redraw UI's live content without rewriting committed scrollback.
 
 The caller persists the setting first. A failed terminal write leaves the new
@@ -2920,6 +2930,13 @@ logical theme installed and the physical frame invalid for the next repaint."
       (terminal-ui--enter-theme ui)
       (terminal-ui--paint-live ui)))
   nil)
+
+(defgeneric terminal-ui-set-window-title (ui title)
+  (:documentation "Name the window of UI's terminal TITLE and return true when a terminal took it."))
+
+(defmethod terminal-ui-set-window-title ((ui terminal-ui) title)
+  "Write TITLE to UI's own terminal."
+  (terminal-write-window-title (terminal-ui-terminal ui) title))
 
 (-> terminal-ui-start (terminal-ui) terminal-ui)
 (defun terminal-ui-start (ui)
@@ -3033,8 +3050,13 @@ logical theme installed and the physical frame invalid for the next repaint."
   (deque-clear (terminal-ui-finalized-order ui))
   nil)
 
-(-> terminal-ui-mark-finalized (terminal-ui t) boolean)
-(defun terminal-ui-mark-finalized (ui identifier)
+(defgeneric terminal-ui-mark-finalized (ui identifier)
+  (:documentation
+   "Count IDENTIFIER as shown by UI's newest transcript output.
+
+Return true only the first time."))
+
+(defmethod terminal-ui-mark-finalized ((ui terminal-ui) identifier)
   "Remember finalized IDENTIFIER and return true only on its first occurrence."
   (with-terminal-ui-locked (ui)
     (block nil
@@ -3103,9 +3125,13 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
       (terminal-ui--append-output ui text display)))
   nil)
 
-(-> terminal-ui-append-finalized
-    (terminal-ui t (or string list) &key (:group t)) boolean)
-(defun terminal-ui-append-finalized (ui identifier entry &key group)
+(defgeneric terminal-ui-append-finalized (ui identifier entry &key group)
+  (:documentation
+   "Append ENTRY to UI's transcript once for IDENTIFIER, using its producer's spacing GROUP.
+
+Return true when the entry was appended and NIL when IDENTIFIER was already shown."))
+
+(defmethod terminal-ui-append-finalized ((ui terminal-ui) identifier entry &key group)
   "Append ENTRY once for IDENTIFIER, using its producer's spacing GROUP."
   (with-terminal-ui-locked (ui)
     (block nil
@@ -3198,8 +3224,11 @@ Return the number of records emitted or used."))
          when entry
            collect presentation)))
 
-(-> terminal-ui-set-preview-rows (terminal-ui list) terminal-ui)
-(defun terminal-ui-set-preview-rows (ui rows)
+(defgeneric terminal-ui-set-preview-rows (ui rows)
+  (:documentation
+   "Replace UI's transient styled ROWS shown above the composer."))
+
+(defmethod terminal-ui-set-preview-rows ((ui terminal-ui) rows)
   "Replace UI's transient styled ROWS and repaint only the live region."
   (unless (every #'terminal-styled-text-p rows)
     (error 'terminal-error
@@ -3212,10 +3241,11 @@ Return the number of records emitted or used."))
       (terminal-ui--paint-live ui)))
   ui)
 
-(-> terminal-ui-set-notice
-    (terminal-ui (option string) &key (:duration-seconds (option real)))
-    (values terminal-ui boolean))
-(defun terminal-ui-set-notice (ui notice &key duration-seconds)
+(defgeneric terminal-ui-set-notice (ui notice &key duration-seconds)
+  (:documentation
+   "Show NOTICE transiently on UI for DURATION-SECONDS, or clear it with NIL."))
+
+(defmethod terminal-ui-set-notice ((ui terminal-ui) notice &key duration-seconds)
   "Show NOTICE transiently for DURATION-SECONDS when UI is immediately available.
 
 A contended presentation lock drops the notice rather than delaying emergency
@@ -3250,12 +3280,11 @@ seen can offer the notice again."
                  (terminal-ui--paint-live ui)))))))
     (values ui applied-p)))
 
-(-> terminal-ui-set-context-usage
-    (terminal-ui
-     &key (:used (integer 0)) (:window (integer 1))
-     (:compaction-limit (integer 1)) (:estimated-p boolean))
-    terminal-ui)
-(defun terminal-ui-set-context-usage (ui &key used window compaction-limit
+(defgeneric terminal-ui-set-context-usage (ui &key used window compaction-limit estimated-p)
+  (:documentation
+   "Set UI's context usage, window, compaction limit, and its measurement provenance."))
+
+(defmethod terminal-ui-set-context-usage ((ui terminal-ui) &key used window compaction-limit
                                            (estimated-p nil))
   "Set context usage, window, compaction limit, and its measurement provenance."
   (unless (<= compaction-limit window)
@@ -3277,8 +3306,11 @@ seen can offer the notice again."
         (terminal-ui--paint-live ui))))
   ui)
 
-(-> terminal-ui-set-compacting (terminal-ui boolean) terminal-ui)
-(defun terminal-ui-set-compacting (ui compacting-p)
+(defgeneric terminal-ui-set-compacting (ui compacting-p)
+  (:documentation
+   "Begin or clear UI's animated indeterminate compaction indicator."))
+
+(defmethod terminal-ui-set-compacting ((ui terminal-ui) compacting-p)
   "Begin or clear UI's animated indeterminate compaction indicator."
   (with-terminal-ui-locked (ui)
     (unless (eq compacting-p (terminal-ui-compacting-p ui))
@@ -3294,10 +3326,11 @@ seen can offer the notice again."
          (terminal-ui--paint-live ui)))))
   ui)
 
-(-> terminal-ui-set-idle-status-details
-    (terminal-ui terminal-styled-text)
-    terminal-ui)
-(defun terminal-ui-set-idle-status-details (ui details)
+(defgeneric terminal-ui-set-idle-status-details (ui details)
+  (:documentation
+   "Set UI's static session details shown on the idle modeline."))
+
+(defmethod terminal-ui-set-idle-status-details ((ui terminal-ui) details)
   "Set UI's static session details shown on the idle modeline."
   (unless (terminal-styled-text-p details)
     (error 'terminal-error
@@ -3310,8 +3343,11 @@ seen can offer the notice again."
       (terminal-ui--paint-live ui)))
   ui)
 
-(-> terminal-ui-set-prompt-padding (terminal-ui (integer 0 2)) terminal-ui)
-(defun terminal-ui-set-prompt-padding (ui padding)
+(defgeneric terminal-ui-set-prompt-padding (ui padding)
+  (:documentation
+   "Set UI's normal prompt padding to PADDING blank rows."))
+
+(defmethod terminal-ui-set-prompt-padding ((ui terminal-ui) padding)
   "Set UI's normal prompt padding to PADDING blank rows and repaint it."
   (check-type padding (integer 0 2))
   (with-terminal-ui-locked (ui)
@@ -3319,13 +3355,11 @@ seen can offer the notice again."
     (terminal-ui--paint-live ui))
   ui)
 
-(-> terminal-ui-set-status
-    (terminal-ui (option string)
-     &key (:details terminal-styled-text)
-     (:worked-seconds (option (integer 0)))
-     (:label-p boolean))
-    terminal-ui)
-(defun terminal-ui-set-status (ui status &key details worked-seconds (label-p t))
+(defgeneric terminal-ui-set-status (ui status &key details worked-seconds label-p)
+  (:documentation
+   "Begin or clear UI's timed STATUS activity and animated modeline."))
+
+(defmethod terminal-ui-set-status ((ui terminal-ui) status &key details worked-seconds (label-p t))
   "Begin or clear UI's timed STATUS activity and animated modeline.
 
 WORKED-SECONDS carries the conversation's accumulated working time at the
@@ -3360,6 +3394,14 @@ for a phase the transcript already shows, such as a streaming response."
          (terminal-ui--paint-live ui)))))
   ui)
 
+(defgeneric terminal-ui--note-judgments (ui)
+  (:documentation "Act on a change of UI's permission evaluations in flight, under its lock."))
+
+(defmethod terminal-ui--note-judgments ((ui terminal-ui))
+  "Repaint the live rows that show the evaluations."
+  (terminal-ui--paint-live ui)
+  nil)
+
 (-> terminal-ui-call-with-judgment ((option terminal-ui) string function) (values &rest t))
 (defun terminal-ui-call-with-judgment (ui label function)
   "Show permission judging of LABEL while calling FUNCTION, returning all its values.
@@ -3373,17 +3415,18 @@ concurrent judgments retain their independent ownership and clocks."
            (when ui
              (with-terminal-ui-locked (ui)
                (push judgment (terminal-ui-judgments ui))
-               (terminal-ui--paint-live ui)))
+               (terminal-ui--note-judgments ui)))
            (funcall function))
       (when ui
         (with-terminal-ui-locked (ui)
           (setf (terminal-ui-judgments ui) (remove judgment (terminal-ui-judgments ui) :test #'eq))
-          (terminal-ui--paint-live ui))))))
+          (terminal-ui--note-judgments ui))))))
 
-(-> terminal-ui-set-local-activity
-    (terminal-ui (option string))
-    terminal-ui)
-(defun terminal-ui-set-local-activity (ui activity)
+(defgeneric terminal-ui-set-local-activity (ui activity)
+  (:documentation
+   "Show or clear explicit local Lisp ACTIVITY below UI's animated status row."))
+
+(defmethod terminal-ui-set-local-activity ((ui terminal-ui) activity)
   "Show or clear explicit local Lisp ACTIVITY below UI's animated status row."
   (with-terminal-ui-locked (ui)
     (let ((safe-activity
@@ -3401,8 +3444,11 @@ concurrent judgments retain their independent ownership and clocks."
          (terminal-ui--paint-live ui)))))
   ui)
 
-(-> terminal-ui-note-status-progress (terminal-ui) terminal-ui)
-(defun terminal-ui-note-status-progress (ui)
+(defgeneric terminal-ui-note-status-progress (ui)
+  (:documentation
+   "Record current progress without restarting UI's elapsed activity clock."))
+
+(defmethod terminal-ui-note-status-progress ((ui terminal-ui))
   "Record current progress without restarting UI's elapsed activity clock."
   (with-terminal-ui-locked (ui)
     (when (terminal-ui-status ui)
@@ -3436,8 +3482,11 @@ concurrent judgments retain their independent ownership and clocks."
           (sanitize-text (getf activity :assignment) :single-line-p t)
           :detached      (not (null (getf activity :detached))))))
 
-(-> terminal-ui-set-agent-activities (terminal-ui list) terminal-ui)
-(defun terminal-ui-set-agent-activities (ui activities)
+(defgeneric terminal-ui-set-agent-activities (ui activities)
+  (:documentation
+   "Replace UI's queued and running child-agent presentation state."))
+
+(defmethod terminal-ui-set-agent-activities ((ui terminal-ui) activities)
   "Replace UI's queued and running child-agent presentation state.
 
 The responsive input reader coalesces worker notifications with animation
@@ -3493,8 +3542,11 @@ frames, so this function never paints directly from a child thread."
             (min (length ordered)
                  *terminal-ui-command-pending-completion-limit*))))
 
-(-> terminal-ui-set-command-activities (terminal-ui list) terminal-ui)
-(defun terminal-ui-set-command-activities (ui activities)
+(defgeneric terminal-ui-set-command-activities (ui activities)
+  (:documentation
+   "Replace UI's queued and running primary command presentation state."))
+
+(defmethod terminal-ui-set-command-activities ((ui terminal-ui) activities)
   "Replace UI's queued and running primary command presentation state.
 
 Commands that finish before their first reader-owned paint are retained
@@ -3564,8 +3616,11 @@ thread."
                    (append pending removed-unpainted))))))))
   ui)
 
-(-> terminal-ui-clear-command-activities (terminal-ui) terminal-ui)
-(defun terminal-ui-clear-command-activities (ui)
+(defgeneric terminal-ui-clear-command-activities (ui)
+  (:documentation
+   "Unconditionally discard every current and pending primary command row of UI."))
+
+(defmethod terminal-ui-clear-command-activities ((ui terminal-ui))
   "Unconditionally discard every current and pending primary command row."
   (with-terminal-ui-locked (ui)
     (setf (terminal-ui-command-activities ui) nil
@@ -3599,8 +3654,11 @@ thread."
                  t)))))
     (and acquired-p (not (null repainted-p)))))
 
-(-> terminal-ui-set-pending-inputs (terminal-ui list list) terminal-ui)
-(defun terminal-ui-set-pending-inputs (ui steering-inputs queued-inputs)
+(defgeneric terminal-ui-set-pending-inputs (ui steering-inputs queued-inputs)
+  (:documentation
+   "Set UI's previews of the steering and queued inputs that wait for the agent."))
+
+(defmethod terminal-ui-set-pending-inputs ((ui terminal-ui) steering-inputs queued-inputs)
   "Set UI's pending input previews and repaint them at most once."
   (let ((safe-steering (mapcar #'sanitize-text steering-inputs))
         (safe-queued   (mapcar #'sanitize-text queued-inputs)))
@@ -3614,12 +3672,12 @@ thread."
         (terminal-ui--paint-live ui))))
   ui)
 
-(-> terminal-ui-recall-follow-up
-    (terminal-ui (or string user-message-input)
-     &key (:steering-inputs list) (:queued-inputs list))
-    terminal-ui)
-(defun terminal-ui-recall-follow-up
-    (ui input &key steering-inputs queued-inputs)
+(defgeneric terminal-ui-recall-follow-up (ui input &key steering-inputs queued-inputs)
+  (:documentation
+   "Recall INPUT into UI's composer while refreshing its pending input previews."))
+
+(defmethod terminal-ui-recall-follow-up
+    ((ui terminal-ui) input &key steering-inputs queued-inputs)
   "Recall INPUT into UI while atomically refreshing pending input previews."
   (let ((safe-steering (mapcar #'sanitize-text steering-inputs))
         (safe-queued   (mapcar #'sanitize-text queued-inputs)))
@@ -3630,9 +3688,11 @@ thread."
       (terminal-ui--paint-live ui)))
   ui)
 
-(-> terminal-ui-set-input
-    (terminal-ui (or string user-message-input)) terminal-ui)
-(defun terminal-ui-set-input (ui input)
+(defgeneric terminal-ui-set-input (ui input)
+  (:documentation
+   "Replace UI's editable input with INPUT."))
+
+(defmethod terminal-ui-set-input ((ui terminal-ui) input)
   "Replace UI's editable input with INPUT and repaint it."
   (with-terminal-ui-locked (ui)
     (terminal-ui--set-draft-input ui input)
@@ -3640,16 +3700,22 @@ thread."
     (terminal-ui--paint-live ui))
   ui)
 
-(-> terminal-ui-edit-input (terminal-ui t) terminal-ui)
-(defun terminal-ui-edit-input (ui event)
+(defgeneric terminal-ui-edit-input (ui event)
+  (:documentation
+   "Apply editor EVENT, such as :LEFT, to UI's editable input."))
+
+(defmethod terminal-ui-edit-input ((ui terminal-ui) event)
   "Apply editor EVENT, such as :LEFT, to UI's editable input and repaint."
   (with-terminal-ui-locked (ui)
     (line-editor-handle-event (terminal-ui-editor ui) event)
     (terminal-ui--paint-live ui))
   ui)
 
-(-> terminal-ui-insert-input (terminal-ui string) terminal-ui)
-(defun terminal-ui-insert-input (ui text)
+(defgeneric terminal-ui-insert-input (ui text)
+  (:documentation
+   "Insert TEXT into UI's editable input at its cursor, as a paste would."))
+
+(defmethod terminal-ui-insert-input ((ui terminal-ui) text)
   "Insert TEXT into UI's editable input at its cursor, as a paste would, and repaint."
   (with-terminal-ui-locked (ui)
     (line-editor-handle-event (terminal-ui-editor ui) (list ':paste (sanitize-text text)))
@@ -3657,8 +3723,11 @@ thread."
     (terminal-ui--paint-live ui))
   ui)
 
-(-> terminal-ui-set-lisp-input (terminal-ui boolean) terminal-ui)
-(defun terminal-ui-set-lisp-input (ui lisp-input-p)
+(defgeneric terminal-ui-set-lisp-input (ui lisp-input-p)
+  (:documentation
+   "Set whether UI is explicitly reading Common Lisp input."))
+
+(defmethod terminal-ui-set-lisp-input ((ui terminal-ui) lisp-input-p)
   "Set whether UI is explicitly reading Common Lisp input and repaint it."
   (with-terminal-ui-locked (ui)
     (setf (terminal-ui-lisp-input-p ui) lisp-input-p)
@@ -3713,10 +3782,11 @@ transcript widgets and URLs do nothing."
           t)
         nil)))
 
-(-> terminal-ui-call-with-exclusive-input
-    (terminal-ui function &key (:status-kind keyword))
-    t)
-(defun terminal-ui-call-with-exclusive-input (ui function &key (status-kind ':question))
+(defgeneric terminal-ui-call-with-exclusive-input (ui function &key status-kind)
+  (:documentation
+   "Call FUNCTION while it alone reads UI's terminal input, returning its values."))
+
+(defmethod terminal-ui-call-with-exclusive-input ((ui terminal-ui) function &key (status-kind ':question))
   "Call FUNCTION while it alone reads UI's terminal input, returning its values.
 
 Modal pickers and other direct event readers take ownership here when they
