@@ -1020,6 +1020,7 @@
                 #:dict
                 #:partial
                 #:plist-keys
+                #:string-prefix-p
                 #:take)
   (:import-from #:usocket
                 #:ns-error

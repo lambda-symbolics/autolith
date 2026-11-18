@@ -640,72 +640,22 @@ structural discriminator as a readable heading instead."
 
 ;;; Tool call specializations
 
-(-> application--format-lisp-input (string (integer 1)) string)
-(defun application--format-lisp-input (source columns)
-  "Lay out compact SOURCE at COLUMNS without reading or changing its tokens.
-
-Retain existing multiline formatting. Only whitespace outside literals and
-comments may become pretty-printer breaks; malformed delimiters stay verbatim."
-  (when (find-if (lambda (character) (find character '(#\Newline #\Return))) source)
-    (return-from application--format-lisp-input source))
-  (multiple-value-bind (roles whitespace)
-      (syntax--lisp-parenthesis-roles source :whitespace-p t)
-    (let ((closings (make-array (length source) :initial-element nil))
-          (stack    nil))
-      (loop for index below (length source)
-            when (aref roles index)
-              do (if (char= (char source index) #\()
-                     (push index stack)
-                     (if stack
-                         (setf (aref closings (pop stack)) index)
-                         (return-from application--format-lisp-input source))))
-      (when stack
-        (return-from application--format-lisp-input source))
-      (let ((*print-pretty*       t)
-            (*print-right-margin* columns)
-            (*print-miser-width*  nil)
-            (*print-lines*        nil))
-        (with-output-to-string (stream)
-          (labels ((emit-source (output start end)
-                     (loop with index = start
-                           while (< index end)
-                           do (cond
-                                ((aref whitespace index)
-                                 (write-char #\Space output)
-                                 (pprint-newline ':fill output)
-                                 (loop while (and (< index end) (aref whitespace index))
-                                       do (incf index)))
-                                ((aref closings index)
-                                 (let ((closing (aref closings index)))
-                                   (pprint-logical-block (output nil :prefix "(" :suffix ")")
-                                     (pprint-indent ':block 1 output)
-                                     (emit-source output (1+ index) closing))
-                                   (setf index (1+ closing))))
-                                (t
-                                 (let ((next (loop for position from (1+ index) below end
-                                                   when (or (aref whitespace position)
-                                                            (aref closings position))
-                                                     return position
-                                                   finally (return end))))
-                                   (write-string source output :start index :end next)
-                                   (setf index next)))))))
-            (pprint-logical-block (stream nil)
-              (emit-source stream 0 (length source)))))))))
-
 (-> application--lisp-call-entry (application json-object string) list)
 (defun application--lisp-call-entry (application call argument-name)
-  "Return syntax-highlighted Lisp input, with fullscreen eval inputs expandable."
+  "Return syntax-highlighted Lisp input that a click expands in the fullscreen transcript."
   (let* ((arguments (application--function-call-arguments call))
          (value     (and arguments (json-get arguments argument-name)))
          (source
            (flet ((display-source (text)
                     (if (and *application-tool-input-expanded-p*
                              (not (find-if (lambda (character) (find character '(#\Newline #\Return))) text)))
-                        (application--transcript-source-value
-                         (list ':formatted-lisp text (application--transcript-columns application))
-                         (lambda ()
-                           (application--format-lisp-input
-                            text (max 1 (- (application--transcript-columns application) 4)))))
+                        (let ((columns (min *application-lisp-input-columns*
+                                            (max 1 (- (application--transcript-columns application)
+                                                      4)))))
+                          (application--transcript-source-value
+                           (list ':formatted-lisp text columns)
+                           (lambda ()
+                             (lisp-source-layout text columns))))
                         text)))
              (if (and (vectorp value)
                       (not (stringp value))

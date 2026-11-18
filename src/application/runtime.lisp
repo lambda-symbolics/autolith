@@ -14,6 +14,9 @@ Clicking the rendered call's header inserts it into the composer.")
 (defparameter *application-transcript-source-cache* nil
   "Width-independent decoded sources and semantic previews for one publication.")
 
+(defparameter *application-lisp-input-columns* 100
+  "The widest line an expanded Lisp input is laid out to when the transcript is wider.")
+
 (defparameter *application-tool-input-expanded-p* nil
   "Whether a resident tool input is being laid out in its expanded view.")
 

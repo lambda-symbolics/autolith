@@ -305,6 +305,7 @@
                                           (:file "terminal/input")
                                           (:file "terminal/style")
                                           (:file "terminal/syntax-highlighting")
+                                          (:file "terminal/lisp-layout")
                                           (:file "terminal/layout")
                                           (:file "terminal/stream")
                                           (:file "localgroup/terminal")
