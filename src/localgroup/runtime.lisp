@@ -353,14 +353,16 @@ for an endpoint already published as ready."
 (defun localgroup-session-serving-p (session)
   "Return whether SESSION's owner and input controller can serve it.
 
-Call with the runtime lock held; do not acquire the world server's lock."
+Call with the runtime lock held; do not acquire the controller or world server
+lock. Controller callbacks take the runtime lock while holding their own lock.
+Sample its monotonic stopping flag alongside its failure state instead."
   (let* ((application (localgroup-session-application session))
          (controller  (application-input-controller application))
          (owner       (localgroup-session-owner-thread session)))
     (and owner (thread-alive-p owner)
          (null (image-daemon:daemon-runtime-failure session))
          controller (null (application-input-controller-failure controller))
-         (not (application-input-controller-exit-requested-p controller)) t)))
+         (not (application-input-controller-stopping-p controller)) t)))
 
 (-> localgroup-session-admits-attachment-p (localgroup-session) boolean)
 (defun localgroup-session-admits-attachment-p (session)

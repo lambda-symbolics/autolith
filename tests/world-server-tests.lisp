@@ -1581,9 +1581,36 @@ run once the wake has."
     (localgroup-error ()
       nil)))
 
+(-> world-server-tests--session-lock-order () null)
+(defun world-server-tests--session-lock-order ()
+  "Exercise admission from a controller callback without acquiring its mutex again."
+  (let* ((application (make-instance 'application))
+         (controller  (make-instance 'application-input-controller :application application))
+         (session     (make-instance 'localgroup-session :application application))
+         (failure     (make-condition 'simple-error :format-control "Session test failure.")))
+    (setf (application-input-controller application) controller)
+    (with-lock-held ((application-input-controller-lock controller))
+      (with-lock-held ((image-daemon:daemon-runtime-lock session))
+        (dolist (state '(:healthy :stopping :closing :failed-runtime :failed-controller
+                         :stopped-controller))
+          (setf (image-daemon:daemon-runtime-stopping-p session) (eq state ':stopping)
+                (localgroup-session-closing-p session) (eq state ':closing)
+                (image-daemon:daemon-runtime-failure session)
+                (when (eq state ':failed-runtime) failure)
+                (application-input-controller-failure controller)
+                (when (eq state ':failed-controller) failure)
+                (application-input-controller-stopping-p controller)
+                (eq state ':stopped-controller))
+          (test-assert (eq (localgroup-session-admits-attachment-p session)
+                           (eq state ':healthy))
+                       (format nil "admission observes ~S without reversing controller/runtime lock order"
+                               state))))))
+  nil)
+
 (-> test-world-server-checkpoint-quiescence () null)
 (defun test-world-server-checkpoint-quiescence ()
   "Test a checkpoint waits for the work under way, pauses every channel until only the server's thread lives, then serves them again."
+  (world-server-tests--session-lock-order)
   (let ((baseline (sb-thread:list-all-threads)))
     (world-server-tests--call
      (lambda (server configuration root)
