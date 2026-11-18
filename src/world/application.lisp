@@ -290,7 +290,10 @@ the name is autolith."
   (let ((channel (application-world--served-channel application)))
     (or (and channel
              (handler-case
-                 (let ((agent (find ':agent (world-channel-residents (application-world application) channel)
+                 ;; Residents are durable, so the stored world answers without
+                 ;; asking the server for the live catalogue on every header.
+                 (let ((agent (find ':agent (world-channel-residents
+                                             (world-load (application-configuration application)) channel)
                                     :key #'participant-kind)))
                    (and agent (participant-name agent)))
                (autolith-error ()
