@@ -832,7 +832,7 @@ until the user admits it."
         (t
          (knowledge-admit-rule configuration identifier
                                :scope scope :version version
-                               :by (string-downcase (symbol-name decision)))
+                               :by decision)
          (format nil "Admitted rule ~A version ~D." identifier version))))))
 
 (-> memory-knowledge--use-recipe (tool-context hash-table) string)
@@ -1003,7 +1003,7 @@ until the user admits it."
           (t
            (knowledge-admit-contract configuration identifier :scope scope
                                      :contract contract :version version
-                                     :by                             (string-downcase (symbol-name decision)))
+                                     :by                             decision)
            (format nil "Admitted contract ~A version ~D." identifier version)))))))
 
 (-> memory-knowledge--apply (tool-context t) string)

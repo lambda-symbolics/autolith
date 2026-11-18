@@ -682,7 +682,7 @@ Return the rule ID, its version, and whether it differs from the latest one."
 
 (-> knowledge--rule-transition
     (configuration string keyword &key (:scope memory-scope) (:version (option integer))
-                                       (:by (option string)))
+                                       (:by (option knowledge-admitter)))
     integer)
 (defun knowledge--rule-transition (configuration id kind &key (scope ':workspace) version by)
   "Record admission or retirement KIND of rule ID and return the affected version."
@@ -717,7 +717,7 @@ Return the rule ID, its version, and whether it differs from the latest one."
 
 (-> knowledge-admit-rule
     (configuration string &key (:scope memory-scope) (:version (option integer))
-                               (:by (option string)))
+                               (:by (option knowledge-admitter)))
     integer)
 (defun knowledge-admit-rule (configuration id &key (scope ':workspace) version by)
   "Activate VERSION of rule ID, by default its latest, and return that version.

@@ -221,7 +221,7 @@ Return its ID, whether content changed, and its version."
                                   :contract-version    version
                                   :admission           (if admit
                                                            (list :contract contract :contract-version version
-                                                                 :by "trusted-lisp" :time time)
+                                                                 :by ':trusted-lisp :time time)
                                                            (getf existing :admission))
                                   :time                time
                                   :source-conversation source-conversation))
@@ -230,7 +230,7 @@ Return its ID, whether content changed, and its version."
 
 (-> knowledge-admit-contract
     (configuration string &key (:scope memory-scope) (:contract list)
-                               (:version integer) (:by string))
+                               (:version integer) (:by knowledge-admitter))
     integer)
 (defun knowledge-admit-contract (configuration id &key (scope ':workspace) contract version by)
   "Admit exactly CONTRACT and VERSION of ID after authorization, returning VERSION.
@@ -242,7 +242,7 @@ Refuse if a concurrent edit replaced the proposed definition."
      (lambda (base)
        (let ((entry (gethash (list scope workspace id) (knowledge-base-contracts-table base))))
          (unless (and entry contract (knowledge--contract-data-equal-p contract (getf entry :contract))
-                      (eql version (getf entry :contract-version)) (non-empty-string-p by))
+                      (eql version (getf entry :contract-version)))
            (knowledge--fail ':invalid-contract id
                             "Contract ~A changed before admission; review its current version." id))
          (if (knowledge-contract-admitted-p entry)

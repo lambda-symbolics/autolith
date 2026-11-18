@@ -761,7 +761,7 @@
       (test-assert (null (nth-value 2 (apply #'knowledge-propose-rule configuration
                                              (knowledge-tests--departure-rule))))
                    "proposing the same rule again adds no version")
-      (test-assert (= 1 (knowledge-admit-rule configuration "departure" :by "test"))
+      (test-assert (= 1 (knowledge-admit-rule configuration "departure" :by ':user))
                    "admitting activates the latest version")
       (apply #'knowledge-propose-rule configuration
              :description "Leave earlier." (knowledge-tests--departure-rule))

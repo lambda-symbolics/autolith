@@ -178,7 +178,7 @@
            (contract (getf entry :contract))
            (version  (getf entry :contract-version)))
       (knowledge-admit-contract configuration "report-read" :contract contract :version version
-                                :by "test-user")
+                                :by ':user)
       (let* ((records  (data-transfer--knowledge-records configuration))
              (base     (make-instance 'knowledge-base))
              (pathname (configuration-knowledge-path configuration)))
@@ -188,6 +188,13 @@
                      "a fresh fold restores the exact authorized contract")
         (test-assert (= 3 (length records))
                      "proposal and admission are separate append-only records after the schema")
+        (let ((named (copy-tree (first (last records))))
+              (stray (copy-tree (first (last records)))))
+          (setf (getf (getf (rest named) :admission) :by) "user"
+                (getf (getf (rest stray) :admission) :by) ':someone)
+          (test-assert (and (knowledge--record-valid-p named)
+                            (not (knowledge--record-valid-p stray)))
+                       "an admitter an older store named by a string stays readable; an unknown one is refused"))
         (let ((legacy      (copy-tree (first (last records))))
               (legacy-base (make-instance 'knowledge-base)))
           (remf (rest legacy) :admission)
@@ -218,7 +225,7 @@
                        (knowledge-tests--error-code
                         (lambda ()
                           (knowledge-admit-contract configuration "report-read"
-                                                    :contract contract :version version :by "test-user"))))
+                                                    :contract contract :version version :by ':user))))
                    "approval cannot activate an edited definition")
       (test-assert (not (knowledge-contract-admitted-p (contract-tests--entry configuration)))
                    "stale approval leaves the current proposal inactive")
@@ -251,7 +258,7 @@
            (duplicate-contract    (copy-tree record))
            (duplicate-observation (copy-tree record)))
       (setf (getf (rest duplicate-receipt) :admission)
-            (append (list :by "first-author") (getf (rest record) :admission))
+            (append (list :by ':trusted-lisp) (getf (rest record) :admission))
             (getf (rest duplicate-contract) :contract)
             (append (list :contract :tool "resource.read")
                     (rest (getf (rest record) :contract))))
@@ -408,7 +415,7 @@
                    (snapshot    (read-from-string
                                  (write-to-string (getf entry :contract) :readably t :circle t))))
               (knowledge-admit-contract configuration "report-read" :contract snapshot
-                                        :version 2 :by "test-review")))
+                                        :version 2 :by ':user)))
           (test-assert (knowledge-contract-admitted-p (reload-entry))
                        "an independently decoded reviewed definition can be admitted and replayed"))
         (dolist (targets (list (vector "report" 1) (vector "Report" 1.0)))

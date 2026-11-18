@@ -409,7 +409,7 @@ matches of an ambiguous prefix."
         (handler-case
             (let ((version (if (eq kind ':admit)
                                (knowledge-admit-rule configuration identifier
-                                                     :scope (getf entry :scope) :by "user")
+                                                     :scope (getf entry :scope) :by ':user)
                                (knowledge-retire-rule configuration identifier
                                                       :scope (getf entry :scope)))))
               (list (terminal-span ':success (if (eq kind ':admit) "✓ admitted  " "✓ retired  "))

@@ -32,6 +32,10 @@
 (defparameter *knowledge-retracted-support-limit* 1024
   "The most retracted supports a folded base keeps resident before archiving the oldest.")
 
+(deftype knowledge-admitter ()
+  "Who admitted a rule or a contract: the person, trusted Lisp, or the permission its tool call was granted."
+  '(member :user :trusted-lisp :sandboxed :full-access))
+
 (deftype knowledge-basis ()
   "Why a support is believed."
   '(member :observation :user-assertion :assumption :model-proposal))
@@ -322,7 +326,9 @@ Without a configuration, as in standalone tool registries, knowledge is active."
                             (typep (getf admission :contract-version) '(integer 1))
                             (<= (getf admission :contract-version)
                                 (getf properties :contract-version))
-                            (non-empty-string-p (getf admission :by))
+                            ;; Stores written before 0.67.58 name the admitter with a
+                            ;; string; those records are accepted until 0.69.0.
+                            (typep (getf admission :by) '(or knowledge-admitter non-empty-string))
                             (typep (getf admission :time) 'timestamp))))
                  (typep (getf properties :time) 'timestamp))))
          ((:procedure-defined :procedure-admitted :procedure-retired :procedure-run)
