@@ -211,6 +211,7 @@ submit."
                           (list :name        insert
                                 :argument    nil
                                 :description (if directory-p "directory" "file")
+                                :directory-p directory-p
                                 :kind        ':path
                                 :submit-p    nil
                                 :token-start token-start
@@ -218,10 +219,8 @@ submit."
       (subseq
        (sort matches
              (lambda (left right)
-               (let ((left-directory-p
-                       (string= (getf left :description) "directory"))
-                     (right-directory-p
-                       (string= (getf right :description) "directory")))
+               (let ((left-directory-p  (getf left :directory-p))
+                     (right-directory-p (getf right :directory-p)))
                  (cond
                    ((and left-directory-p (not right-directory-p))
                     t)
