@@ -2197,7 +2197,6 @@ form keeps every speculative Markdown wrap live until the logical line commits."
       (setf rows
             (append rows
                     (list
-                     nil
                      (terminal--clip-spans
                       (list (terminal-span ':hint (terminal-ui-notice ui)))
                       row-width)))))
