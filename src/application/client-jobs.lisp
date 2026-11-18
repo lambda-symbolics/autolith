@@ -189,9 +189,9 @@ returning NIL stops projection but not counting. Return total, start and next."
                          (let ((item (json-decode (getf fields :wire-json))))
                            (cond ((equal (json-get item "type") "message")
                                   (line "Assistant: " (response-item-assistant-text item)))
-                                 ((equal (json-get item "type") "reasoning")
+                                 ((reasoning-item-p item)
                                   (line "Thought: " (response-item-reasoning-summary item)))
-                                 ((equal (json-get item "type") "function_call")
+                                 ((function-call-item-p item)
                                   (line "Tool: " (function-call-canonical-name item))
                                   (line "Arguments: " (json-get item "arguments"))))))
                         (:tool-result

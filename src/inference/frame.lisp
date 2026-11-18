@@ -77,7 +77,7 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
     (dolist (item (conversation-input-items conversation))
       (let ((text
               (cond
-                ((equal (json-get item "type") "function_call_output")
+                ((function-call-output-item-p item)
                  (json-get item "output"))
                 ((equal (json-get item "role") "assistant")
                  (let ((content (json-get item "content")))

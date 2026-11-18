@@ -102,8 +102,7 @@ METADATA-ONLY-P suppresses formatted outcome bodies during history selection."
             (item      (if item-supplied-p
                            item
                            (and (stringp wire-json) (application--transcript-json wire-json))))
-            (call-key  (when (and (json-object-p item)
-                                  (equal (json-get item "type") "function_call"))
+            (call-key  (when (function-call-item-p item)
                          (application--tool-outcome-key
                           application ':call (json-get item "call_id")))))
        (when call-key

@@ -71,7 +71,7 @@ context and without starting another model turn."
       (cond
         ((function-call-item-p item)
          (setf (gethash (json-get item "call_id") pending) t))
-        ((equal (json-get item "type") "function_call_output")
+        ((function-call-output-item-p item)
          (remhash (json-get item "call_id") pending))))
     (zerop (hash-table-count pending))))
 

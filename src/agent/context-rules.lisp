@@ -88,7 +88,7 @@
                                 (stringp (json-get block "text")))
                         do (append-text (json-get block "text"))
                            (append-text (string #\Newline)))))))
-          ((equal (json-get item "type") "function_call")
+          ((function-call-item-p item)
            (append-text (json-get item "name"))
            (append-text (string #\Newline))
            (append-text (json-get item "arguments"))))))))

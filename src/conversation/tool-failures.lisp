@@ -56,8 +56,7 @@ identical failures, so blanking them groups the failures by their cause."
     (when (and (stringp wire-json) (search "\"function_call\"" wire-json))
       (handler-case
           (let ((item (json-decode wire-json)))
-            (when (and (json-object-p item)
-                       (equal (json-get item "type") "function_call"))
+            (when (function-call-item-p item)
               (list (json-get item "call_id")
                     (let ((namespace (json-get item "namespace"))
                           (name      (json-get item "name")))

@@ -776,6 +776,7 @@
                 #:family-private-item-p
                 #:function-call-item-p
                 #:function-call-output-item
+                #:function-call-output-item-p
                 #:item-assistant-text
                 #:native-compaction-item-canonicalize
                 #:native-compaction-item-p

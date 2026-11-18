@@ -576,7 +576,7 @@ procedure runs; both keep only their newest *ACTION-TRACE-LIMIT* entries."
 (-> action-trace--call (json-object) (option list))
 (defun action-trace--call (item)
   "Return the call plist of provider function-call ITEM, or NIL for another item."
-  (when (equal (json-get item "type") "function_call")
+  (when (function-call-item-p item)
     (list :tool              (cl-llm-provider-api:provider-call-canonical-name item)
           :arguments         (or (handler-case (json-decode (or (json-get item "arguments") "{}"))
                                    (json-error ()
