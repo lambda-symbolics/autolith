@@ -313,7 +313,7 @@ when the depth or task budget ran out first. Each step is a plist of :TEXT,
                                                       (make-instance 'plan-step :text   (second item)
                                                                                 :status ':pending)
                                                       environment)
-                                             :status "pending"
+                                             :status ':pending
                                              :id     (format nil "~{~A~^/~}"
                                                              (append path
                                                                      (list (getf (rest method) :id)
