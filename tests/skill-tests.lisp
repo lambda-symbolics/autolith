@@ -461,7 +461,7 @@
              (test-assert
               (search "skill-catalog" status)
               "/context makes the skill catalog contribution observable"))
-           (let ((status (skill-status configuration)))
+           (let ((status (terminal--spans-text (skill-status-entry configuration))))
              (test-assert
               (and (search "alpha" status)
                    (search "beta" status)

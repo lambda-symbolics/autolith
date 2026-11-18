@@ -3294,7 +3294,7 @@ work do not contribute to a new notice.
 Automatic continuations for an active goal or mission wait while a job that
 will wake the conversation is queued, running or awaiting result delivery.
 The goal stays active. When the wakeup arrives, the transcript shows
-=∙ continuing with job results=. The goal's continuations resume after that
+=· continuing with job results=. The goal's continuations resume after that
 turn.
 
 Delivery receipts survive restart and conversation compaction. Notifications are

@@ -878,7 +878,7 @@ comments may become pretty-printer breaks; malformed delimiters stay verbatim."
      :header "▸ plan.update"
      :rows   (append
               (list (list (terminal-span ':dim "• ")
-                          (terminal-span ':strong "Updated Plan")))
+                          (terminal-span ':strong "updated plan")))
               rows))))
 
 (-> application--task-run-arguments
@@ -2269,7 +2269,7 @@ Mark reports that repeat an active papercut as already reported."
                     (list (list
                             (terminal-span
                              ':hint
-                             (format nil "Read full: ~A"
+                             (format nil "read full: ~A"
                                      (papercut-call-source papercut))))))
                    (application--preview-rows
                     output

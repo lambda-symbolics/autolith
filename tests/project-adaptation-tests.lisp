@@ -295,7 +295,7 @@
                         configuration resumed (list :submit))))
                  (test-assert
                   (and (probe-file notes)
-                       (search "Created" create-output))
+                       (search "created" create-output))
                   "the default offer choice creates AUTOLITH.org"))
                (delete-file notes)
                (delete-file

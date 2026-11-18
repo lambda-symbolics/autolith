@@ -320,6 +320,7 @@
                                           (:file "terminal/onboarding")
                                           (:file "application/prompt-cache")
                                           (:file "application/clients")
+                                          (:file "application/transcript-lines")
                                           (:file "application/runtime")
                                           (:file "application/conversation-maintenance")
                                           (:file "world/application")

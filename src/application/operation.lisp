@@ -558,11 +558,10 @@ never returned. Refresh an unchanged query after two seconds without blocking in
             (push name (application-lisp-hinted-command-names application))
             (application-present
              application
-             (list (terminal-span ':hint "Prefer ")
+             (list (terminal-span ':hint "· prefer ")
                    (terminal-span
                     ':code
-                    (application-operation-command-hint-form invocation))
-                   (terminal-span ':hint "."))))))))
+                    (application-operation-command-hint-form invocation)))))))))
   nil)
 
 

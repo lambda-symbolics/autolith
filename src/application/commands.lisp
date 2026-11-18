@@ -52,7 +52,7 @@ renderer, including in fullscreen."
     (otherwise
      ':hint)))
 
-(-> application-agenda-entry (application) (or string list))
+(-> application-agenda-entry (application) list)
 (defun application-agenda-entry (application)
   "Return the current workspace agenda as a readable transcript entry."
   (with-recursive-lock-held (*agenda-lock*)
@@ -60,9 +60,9 @@ renderer, including in fullscreen."
            (record        (agenda-current configuration (agenda-load configuration)))
            (items         (and record (workspace-agenda-items record))))
       (if (null items)
-          "The current workspace agenda is empty."
+          (application-hint-line "the current workspace agenda is empty")
           (append
-           (list (terminal-span ':brand "agenda")
+           (list (terminal-span ':brand "# agenda")
                  (terminal-span
                   ':dim
                   (format nil "  ~A~%"
@@ -100,25 +100,35 @@ renderer, including in fullscreen."
             (papercut-timestamp-string (papercut-reported-at papercut))
             (papercut-call-source papercut)))))
 
-(-> application-papercuts-entry (application) (or string list))
+(-> application--papercut-ambiguous-entry (string list) list)
+(defun application--papercut-ambiguous-entry (identifier matches)
+  "Return the failure saying IDENTIFIER names each of the MATCHES."
+  (append
+   (application-failure-line
+    (format nil "papercut ID ~A is ambiguous; enter more characters"
+            (sanitize-text identifier :single-line-p t)))
+   (list (terminal-span ':dim (format nil "~%  matching reports:~%")))
+   (loop for match in matches
+         append (application--papercut-list-row match))))
+
+(-> application-papercuts-entry (application) list)
 (defun application-papercuts-entry (application)
   "Return the current workspace's papercuts as a compact transcript entry."
   (let* ((configuration (application-configuration application))
          (papercuts     (papercut-list configuration)))
     (if (null papercuts)
-        (list (terminal-span ':hint
-                             "No papercuts recorded for this workspace."))
+        (application-hint-line "no papercuts recorded for this workspace")
         (append
          (list (terminal-span
                 ':failure
-                (format nil "PAPERCUTS  ~D~%" (length papercuts)))
+                (format nil "# papercuts  ~D~%" (length papercuts)))
                (terminal-span
                 ':dim
                 (format nil "  newest first · use (papercut \"ID\") for the full report~%")))
          (loop for papercut in papercuts
                append (application--papercut-list-row papercut))))))
 
-(-> application-papercut-entry (application string) (or string list))
+(-> application-papercut-entry (application string) list)
 (defun application-papercut-entry (application identifier)
   "Return one complete PAPERCUT report or a readable resolution notice."
   (let ((configuration (application-configuration application)))
@@ -127,7 +137,7 @@ renderer, including in fullscreen."
       (case status
         (:found
          (list
-          (terminal-span ':failure (format nil "PAPERCUT~%"))
+          (terminal-span ':failure (format nil "# papercut~%"))
           (terminal-span
            ':dim
            (format nil "  id ~A~%  reported ~A~%"
@@ -140,21 +150,12 @@ renderer, including in fullscreen."
                                   :single-line-p t)))
           (terminal-span ':plain (sanitize-text (papercut-content papercut)))))
         (:ambiguous
-         (append
-          (list (terminal-span
-                 ':failure
-                 (format nil
-                         "Papercut ID ~A is ambiguous. Enter more characters.~%"
-                         (sanitize-text identifier :single-line-p t)))
-                (terminal-span ':dim "Matching reports:~%"))
-          (loop for match in matches
-                append (application--papercut-list-row match))))
+         (application--papercut-ambiguous-entry identifier matches))
         (otherwise
-         (format nil
-                 "No papercut matches ~S. Run (papercuts) to list current reports."
-                 identifier))))))
+         (application-failure-line
+          (format nil "no papercut matches ~S; (papercuts) lists current reports" identifier)))))))
 
-(-> application-papercut-close-entry (application string) (or string list))
+(-> application-papercut-close-entry (application string) list)
 (defun application-papercut-close-entry (application identifier)
   "Close one active papercut selected by IDENTIFIER and return feedback."
   (let ((configuration (application-configuration application)))
@@ -168,25 +169,14 @@ renderer, including in fullscreen."
           :resolution
           (format nil "Closed through (papercut-close ~S)."
                   (papercut-identifier papercut)))
-         (list
-          (terminal-span ':success "PAPERCUT CLOSED  ")
-          (terminal-span
-           ':strong
-           (sanitize-text (papercut-title papercut) :single-line-p t))))
+         (application-success-line
+          (format nil "closed papercut ~A"
+                  (sanitize-text (papercut-title papercut) :single-line-p t))))
         (:ambiguous
-         (append
-          (list (terminal-span
-                 ':failure
-                 (format nil
-                         "Papercut ID ~A is ambiguous. Enter more characters.~%"
-                         (sanitize-text identifier :single-line-p t)))
-                (terminal-span ':dim "Matching reports:~%"))
-          (loop for match in matches
-                append (application--papercut-list-row match))))
+         (application--papercut-ambiguous-entry identifier matches))
         (otherwise
-         (format nil
-                 "No active papercut matches ~S. Run (papercuts) to list reports."
-                 identifier))))))
+         (application-failure-line
+          (format nil "no active papercut matches ~S; (papercuts) lists reports" identifier)))))))
 
 
 ;;;; -- Usage Status --
@@ -422,12 +412,12 @@ notice preference is on, so enabling it mid-session takes effect immediately."
   "Return APPLICATION's read-only model and runtime settings display."
   (let ((configuration (application-configuration application)))
     (append
-     (list (terminal-span ':brand (format nil "settings~%")))
+     (list (terminal-span ':brand (format nil "# settings~%")))
      (application--field-rows
       (list
        (list "model" (config :model configuration))
        (list "effort" (config :reasoning-effort configuration))
-       (list "Codex fast"
+       (list "codex fast"
              (cond
                ((configuration-codex-fast-mode-active-p configuration)
                 "on")
@@ -535,13 +525,13 @@ notice preference is on, so enabling it mid-session takes effect immediately."
             (append (mapcar #'first fields)
                     (remove nil (list primary-label secondary-label))))))
     (append
-     (list (terminal-span :brand "autolith")
+     (list (terminal-span :brand "# autolith")
            (terminal-span :dim (format nil " v~A~%" *autolith-version*)))
      (application--field-rows fields :width width)
      (cond
        ((null snapshot)
         (list (terminal-span :dim
-                             "  No rate limit data yet; send a message first.")))
+                             "  no rate limit data yet; send a message first")))
        (t
         (append
          (when primary
@@ -715,31 +705,29 @@ combination."
         (cond
           ((application--codex-fast-mode-environment-p)
            (format nil
-                   "Codex Fast mode is ~A for this process. ~
+                   "Fast mode is ~A for this process. ~
                     AUTOLITH_CODEX_FAST_MODE controls it.~:[ The current ~
                     model uses the standard path.~;~]"
                    (if enabled-p "on" "off")
                    available-p))
           (available-p
            (format nil
-                   "Codex Fast mode is ~A. This setting persists across restarts."
+                   "Fast mode is ~A. This setting persists across restarts."
                    (if enabled-p "on" "off")))
           (t
            (format nil
-                   "Codex Fast mode preference is ~A. The current model uses the standard path."
+                   "Fast mode preference is ~A. The current model uses the standard path."
                    (if enabled-p "on" "off"))))))
       ((eq mode ':on)
        (application-set-codex-fast-mode application t)
        (application-present
         application
         (if available-p
-            "Codex Fast mode is enabled and saved. Fast responses count more heavily against plan usage."
-            (format nil
-                    "Codex Fast mode preference is enabled and saved. ~
-                     The current model uses the standard path."))))
+            "Fast mode is enabled and saved. Fast responses count more heavily against plan usage."
+            "Fast mode preference is enabled and saved. The current model uses the standard path.")))
       ((eq mode ':off)
        (application-set-codex-fast-mode application nil)
-       (application-present application "Codex Fast mode is disabled and saved."))
+       (application-present application "Fast mode is disabled and saved."))
       (t
        (error 'configuration-error
               :message "Usage: (fast), (fast t), or (fast nil)."))))
@@ -888,15 +876,15 @@ combination."
   "Return offered provider/model selections and discovery FAILURES."
   (let ((items (application--model-items application :provider provider)))
     (append
-     (list (terminal-span ':brand (format nil "Available models~%")))
+     (list (terminal-span ':brand (format nil "# models~%")))
      (if items
          (loop for item in items
                append (list (terminal-span ':code (format nil "  ~A" (getf item :name)))
                             (terminal-span (if (getf item :current-p) ':success ':dim)
                                            (format nil " ~A~%" (getf item :description)))))
-         (list (terminal-span ':hint (format nil "No registered provider models are available.~%"))))
+         (list (terminal-span ':hint (format nil "  no registered provider models are available~%"))))
      (when failures
-       (cons (terminal-span ':notice (format nil "Model discovery warnings~%"))
+       (cons (terminal-span ':notice (format nil "! model discovery warnings~%"))
              (loop for failure in failures
                    collect (terminal-span ':notice
                                           (format nil "  ~A~%" (autolith-error-message failure)))))))))
@@ -991,9 +979,7 @@ skipped definition grouped by reason."
     (append
      (list (terminal-span
             ':failure
-            (format nil "✗ PRIVATE REPLAY SKIPPED ~D DEFINITION~:[S~;~]~%"
-                    (length skips)
-                    (= (length skips) 1)))
+            (format nil "! private replay skipped ~D definition~:P~%" (length skips)))
            (terminal-span
             ':dim
             (format nil "  commit ~A · published against ~A · this image runs ~A~%"
@@ -1140,9 +1126,7 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
       ((null skips)
        (application-present
         application
-        (list (terminal-span
-               ':hint
-               "No private definitions were skipped at startup."))))
+        (application-hint-line "no private definitions were skipped at startup")))
       (t
        (let ((controller (application-input-controller application)))
          (unless controller
@@ -1167,11 +1151,8 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
                   :message "The repair turn was not accepted: the session is stopping."))
          (application-present
           application
-          (list (terminal-span
-                 ':hint
-                 (format nil "Queued ~D skipped definition~:[s~;~] for repair or removal."
-                         (length skips)
-                         (= (length skips) 1)))))))))
+          (application-notice-line
+           (format nil "queued ~D skipped definition~:P for repair or removal" (length skips))))))))
   nil)
 
 (-> application--skipped-definitions-slash-arguments (string) list)
@@ -1190,7 +1171,7 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
         (conversation (application-conversation application)))
     (cond
       ((null (conversation-input-items conversation))
-       (application-present application "Nothing to compact yet."))
+       (application-present application (application-hint-line "nothing to compact yet")))
       ((null agent)
        (error 'configuration-error
               :message "No connected agent can compact the conversation."))
@@ -1256,20 +1237,23 @@ Return true only when the objective was rewritten."
       ((null goal)
        (application-present
         application
-        "No session goal to update. Use (goal \"OBJECTIVE\") to set one.")
+        (application-failure-line "no session goal to update; (goal \"OBJECTIVE\") sets one"))
        nil)
       ((mission-goal-p goal)
-       (application-present application "Use (mission :start SPECIFICATION) with an updated objective and acceptance policy.")
+       (application-present
+        application
+        (application-failure-line
+         "a mission takes (mission :start SPECIFICATION) with an updated objective and acceptance policy"))
        nil)
       ((zerop (length objective))
-       (application-present application "Usage: (goal :update \"NEW-OBJECTIVE\")")
+       (application-present application (application-failure-line "usage: (goal :update \"NEW-OBJECTIVE\")"))
        nil)
       ((and (not literal-p) (uiop:string-prefix-p "/" objective))
        (application-present
         application
-        (format nil "~S looks like a command, not an objective. ~
-                     Usage: (goal :update \"NEW-OBJECTIVE\")"
-                objective))
+        (application-failure-line
+         (format nil "~S looks like a command, not an objective; usage: (goal :update \"NEW-OBJECTIVE\")"
+                 objective)))
        nil)
       (t
        (when (eq (getf goal :status) ':complete)
@@ -1379,7 +1363,7 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
              (setf (getf (application-goal application) :status) ':paused)
              (application--record-goal application)
              (application-present application "The session goal is paused."))
-           (application-present application "No active goal to pause.")))
+           (application-present application (application-failure-line "no active goal to pause"))))
       ((eq request ':resume)
        (if (and goal (eq (getf goal :status) ':paused))
            (progn
@@ -1392,7 +1376,7 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
              (application-present application
                                   "The session goal is active again.")
              (application--start-goal-work application))
-           (application-present application "No paused goal to resume.")))
+           (application-present application (application-failure-line "no paused goal to resume"))))
       ((eq request ':update)
        (when (and (application--goal-update application (first arguments) :literal-p t)
                   (application-goal application)
@@ -1459,7 +1443,7 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
 
 (-> application--pick-identifier
     (application &key (:title string) (:items list) (:usage string)
-                 (:empty-notice (or string list)) (:hint (or string list))
+                 (:empty-notice (option string)) (:hint (or string list))
                  (:visible-count (integer 1))
                  (:initial-name (option string))
                  (:initial-value (option string))
@@ -1467,8 +1451,7 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
                  (:on-event (option function)))
     (option string))
 (defun application--pick-identifier
-    (application &key (title "select") items (usage "") (empty-notice "")
-                      hint
+    (application &key (title "select") items (usage "") empty-notice hint
                       (visible-count *terminal-ui-visible-completions*)
                       initial-name initial-value search-p
                       (search-key #'terminal-ui--picker-default-search-text)
@@ -1483,7 +1466,8 @@ INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT to TERMINAL-UI-SELECT."
       (unless (terminal-interactive-p (terminal-ui-terminal ui))
         (error 'configuration-error :message usage))
       (unless items
-        (application-present application empty-notice)
+        (when empty-notice
+          (application-present application (application-hint-line empty-notice)))
         (return nil))
       (terminal-ui-select
        ui
@@ -1698,7 +1682,7 @@ searches every task directory."
                  :on-event      #'on-event
                  :usage         "Usage: (open \"ID\")"
                  :search-p      t
-                 :empty-notice  (application-notice-line "no other channels exist"))))
+                 :empty-notice  "no other channels exist")))
           (unless (eq mode ':remove)
             (return selected))
           (let* ((ui                (application-ui application))
@@ -1749,7 +1733,7 @@ searches every task directory."
                                 :hint         "type to search, enter selects, esc cancels"
                                 :search-p     t
                                 :usage        usage
-                                :empty-notice (application-notice-line "no agents exist")))
+                                :empty-notice "no agents exist"))
 
 (-> application--pick-destination (application) (option string))
 (defun application--pick-destination (application)
@@ -1770,7 +1754,7 @@ searches every task directory."
                                   :initial-value (conversation-identifier (application-conversation application))
                                   :search-p      t
                                   :usage         "Usage: (move \"AGENT\" \"CHANNEL\")"
-                                  :empty-notice  (application-notice-line "no channels without an agent exist"))))
+                                  :empty-notice  "no channels without an agent exist")))
 
 (-> application--prefill-call (application string string) null)
 (defun application--prefill-call (application operator argument)
@@ -1846,10 +1830,9 @@ searches every task directory."
             (let ((choice
                     (application--pick-identifier
                      application
-                     :title        "create AUTOLITH.org?"
-                     :items        (application--project-adaptation-offer-items)
-                     :usage        "Choose create, not-now, or never."
-                     :empty-notice "")))
+                     :title "create AUTOLITH.org?"
+                     :items (application--project-adaptation-offer-items)
+                     :usage "Choose create, not-now, or never.")))
               (cond
                 ((and choice (string= choice "create"))
                  (handler-case
@@ -2249,7 +2232,7 @@ searches every task directory."
               (setf message
                     (provider-authenticate-with-method
                      provider method :stream output :open-browser-p t))))))))
-    (application-present application message)
+    (application-present application (application-success-line message))
     (let ((model (provider-authenticated-model
                   (application-configuration application) provider)))
       (when model
@@ -2262,16 +2245,6 @@ searches every task directory."
                  (configuration-model-provider-name
                   (application-configuration application)) model)))))
   nil)
-
-(-> application-notice-line (string) list)
-(defun application-notice-line (text)
-  "Return TEXT as a notice line, dimmed and marked with a dot."
-  (list (terminal-span ':notice (format nil "· ~A" text))))
-
-(-> application-failure-line (string) list)
-(defun application-failure-line (text)
-  "Return TEXT as a failure line, in the failure color and marked with an exclamation point."
-  (list (terminal-span ':failure (format nil "! ~A" text))))
 
 (-> application-checkpoint (application &key (:allow-dirty-p boolean)) null)
 (defun application-checkpoint (application &key allow-dirty-p)
@@ -2359,28 +2332,13 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
                              "current; run commands with full user privileges"
                              "run commands with full user privileges"))))))
 
-(-> application--saved-permissions-text (application) string)
-(defun application--saved-permissions-text (application)
-  "Return a readable list of APPLICATION's saved exact command approvals."
-  (let ((rules (permission-state-rules
-                (application-permission-state application))))
-    (if rules
-        (format nil "Saved exact command approvals:~%~{~A~^~%~}"
-                (loop for rule in rules
-                      collect
-                      (format nil "  ~A~%    in ~A"
-                              (command-permission-command rule)
-                              (application--abbreviated-directory
-                               (command-permission-directory rule)))))
-        "No exact command approvals are saved.")))
-
 (-> application-saved-permissions-entry (application) list)
 (defun application-saved-permissions-entry (application)
   "Return saved approvals with request, domain, and pathname presentation roles."
   (let ((rules (permission-state-rules (application-permission-state application))))
     (if rules
         (append
-         (list (terminal-span ':brand (format nil "Saved exact approvals~%")))
+         (list (terminal-span ':brand (format nil "# saved exact approvals~%")))
          (loop for rule in rules
                for kind = (command-permission-kind rule)
                append (application--entry-fields
@@ -2390,7 +2348,7 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
                              (list "in" ':code
                                    (application--abbreviated-directory
                                     (command-permission-directory rule)))))))
-        (list (terminal-span ':hint "No exact approvals are saved.")))))
+        (application-hint-line "no exact approvals are saved"))))
 
 (-> application--set-durable-permission-mode (application keyword) null)
 (defun application--set-durable-permission-mode (application mode)
@@ -2455,7 +2413,7 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
        (permissions-clear
         (application-configuration application)
         (application-permission-state application))
-       (application-present application (list (terminal-span ':success "Saved command approvals were cleared."))))
+       (application-present application (application-success-line "saved command approvals cleared")))
       (t
        (error 'configuration-error
               :message "Usage: (permissions), or (permissions :MODE) with :ask, :auto, :sandbox, :full, :list, or :clear.")))
@@ -2480,8 +2438,8 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
       (terminal-ui-set-notice
        ui
        (if enabled-p
-           "Time is of the essence. Acting directly with at most two child agents."
-           "Hurry-up mode is off.")
+           "time is of the essence; acting directly with at most two child agents"
+           "hurry-up mode is off")
        :duration-seconds (if enabled-p 8 3))))
   nil)
 
@@ -2655,22 +2613,28 @@ The current value and its source sit in aligned columns of their own."
                         :argument    nil
                         :description (if (equal option current) "current" "")))))
 
-(-> application-settings-listing (application) string)
-(defun application-settings-listing (application)
-  "Return every visible setting with its value, source, and meaning as text."
+(-> application-settings-entry (application) list)
+(defun application-settings-entry (application)
+  "Return every visible setting by group with its value, source, and meaning."
   (let ((configuration (application-configuration application))
         (group         nil))
-    (with-output-to-string (out)
-      (dolist (setting (application--grouped-settings configuration))
-        (unless (eq group (setting-group setting))
-          (setf group (setting-group setting))
-          (format out "~:[~;~%~]~(~A~)~%" (plusp (file-position out)) group))
-        (format out "  ~(~A~) = ~A (~A)~%    ~A~%"
-                (setting-name setting)
-                (setting-render-value
-                 setting (configuration-setting-value configuration setting))
-                (application--setting-source-text configuration setting)
-                (setting-documentation setting))))))
+    (cons
+     (terminal-span ':brand "# settings")
+     (loop for setting in (application--grouped-settings configuration)
+           unless (eq group (setting-group setting))
+             append (progn
+                      (setf group (setting-group setting))
+                      (list (terminal-span ':notice (format nil "~2%  ~(~A~)" group))))
+           append (list
+                   (terminal-span ':code (format nil "~%    ~(~A~)" (setting-name setting)))
+                   (terminal-span ':dim " = ")
+                   (terminal-span ':plain
+                                  (setting-render-value
+                                   setting (configuration-setting-value configuration setting)))
+                   (terminal-span ':dim
+                                  (format nil " (~A)~%      ~A"
+                                          (application--setting-source-text configuration setting)
+                                          (setting-documentation setting))))))))
 
 (-> application--setting-value-entry (application keyword) list)
 (defun application--setting-value-entry (application name)
@@ -2774,7 +2738,7 @@ The current value and its source sit in aligned columns of their own."
     ((and (null name) *application-command-interactive-p*)
      (application--settings-page application))
     ((null name)
-     (application-present application (application-settings-listing application)))
+     (application-present application (application-settings-entry application)))
     ((not value-supplied-p)
      (let* ((configuration (application-configuration application))
             (key           (application--setting-name name))
@@ -2896,7 +2860,8 @@ The current value and its source sit in aligned columns of their own."
                             *autolith-version*)))))
            (application-present
             application
-            "Autolith could not check the release service. The installed release is unchanged.")))))
+            (application-failure-line
+             "could not check the release service; the installed release is unchanged"))))))
   nil)
 
 
@@ -3027,7 +2992,7 @@ show."
          :hint         "enter selects, esc cancels"
          :search-p     t
          :usage        usage
-         :empty-notice (application-notice-line "none of them can be opened"))
+         :empty-notice "none of them can be opened")
         (progn
           (application-present
            application
@@ -3263,7 +3228,7 @@ pristine or recovery session runs apart from it."
                                                     :hint         "type to search, enter selects, esc cancels"
                                                     :search-p     t
                                                     :usage        "Usage: (tell \"CHANNEL\" \"MESSAGE\")"
-                                                    :empty-notice (application-notice-line "no channels exist")))))
+                                                    :empty-notice "no channels exist"))))
       (when target
         (application--prefill-call application "tell" (princ-to-string target)))
       (return-from application--builtin-tell-command ':continue)))
@@ -3625,7 +3590,7 @@ pristine or recovery session runs apart from it."
        (application-papercut-entry application identifier))
       (application-present
        application
-       "Usage: (papercut \"ID\"). Run (papercuts) to list reports."))
+       (application-failure-line "usage: (papercut \"ID\"). Run (papercuts) to list reports.")))
   ':continue)
 
 (define-application-command application--builtin-papercut-close-command
@@ -3645,7 +3610,7 @@ pristine or recovery session runs apart from it."
        (application-papercut-close-entry application identifier))
       (application-present
        application
-       "Usage: (papercut-close \"ID\"). Run (papercuts) to list reports."))
+       (application-failure-line "usage: (papercut-close \"ID\"). Run (papercuts) to list reports.")))
   ':continue)
 
 (define-application-command application--builtin-skills-command
@@ -3661,7 +3626,7 @@ pristine or recovery session runs apart from it."
     (application)
   (application-present
    application
-   (skill-status (application-configuration application)))
+   (skill-status-entry (application-configuration application)))
   ':continue)
 
 (-> application--tool-capability-change-entry (list list) (option list))
@@ -3669,7 +3634,7 @@ pristine or recovery session runs apart from it."
   "Return a concise transcript entry for a changed runtime tool-name set."
   (when (or added-tools removed-tools)
     (list
-     (terminal-span ':hint "∙ tools added: ")
+     (terminal-span ':hint "· tools added: ")
      (terminal-span (if added-tools ':success ':dim)
                     (if added-tools
                         (format nil "~{~A~^, ~}" added-tools)
@@ -3684,13 +3649,13 @@ pristine or recovery session runs apart from it."
 (defun application-mcp-status-entry (records)
   "Return detached MCP status RECORDS as aligned semantic server fields."
   (if (null records)
-      (list (terminal-span ':hint "No MCP servers are configured."))
+      (application-hint-line "no MCP servers are configured")
       (loop for record in records
             for state = (getf record :state)
             for failure = (getf record :failure)
             append
             (append
-             (list (terminal-span ':strong (format nil "~A~%" (getf record :name))))
+             (list (terminal-span ':brand (format nil "# ~A~%" (getf record :name))))
              (application--entry-fields
               (list (list "state"
                           (cond
@@ -3720,14 +3685,15 @@ pristine or recovery session runs apart from it."
   "Return retained generation compatibility and reconstruction metadata for the UI."
   (let ((generations (generation-list configuration)))
     (if (null generations)
-        (list (terminal-span ':hint "No retained generations exist."))
+        (application-hint-line "no retained generations exist")
         (loop for generation in generations
               for compatible-p = (generation-compatible-p generation)
               for history = (generation-mutation-history-commit generation)
               for replay = (generation-reconstruction-pathname generation)
               append
               (append
-               (list (terminal-span ':code (generation-identifier generation))
+               (list (terminal-span ':brand "# ")
+                     (terminal-span ':code (generation-identifier generation))
                      (terminal-span (if compatible-p ':success ':failure)
                                     (format nil "  ~A~%"
                                             (if compatible-p "compatible" "incompatible"))))
@@ -3777,9 +3743,7 @@ pristine or recovery session runs apart from it."
              (application-tool-registry application))))
       (application-present
        application
-       (if manager
-            (application-mcp-status-entry (mcp-manager-status-records manager))
-            (list (terminal-span ':hint "No MCP servers are configured."))))))
+       (application-mcp-status-entry (and manager (mcp-manager-status-records manager))))))
   ':continue)
 
 (define-application-command application--builtin-checkpoint-command
@@ -3979,9 +3943,7 @@ pristine or recovery session runs apart from it."
       (when (getf (rest result) :scheduled-p)
         (application-present
          application
-         (list (terminal-span
-                ':notice
-                "Detach scheduled; the terminal releases once current work reaches a safe stop."))))))
+         "Detach scheduled; the terminal releases once current work reaches a safe stop."))))
   ':continue)
 
 (define-application-command application--builtin-stop-server-command
@@ -4033,8 +3995,9 @@ pristine or recovery session runs apart from it."
            (progn
              (application-present
               application
-              (format nil "Unknown command ~A. Use (help)."
-                      (application-command-invocation-name invocation)))
+              (application-failure-line
+               (format nil "unknown command ~A; (help) lists commands"
+                       (application-command-invocation-name invocation))))
              ':continue))))))
 
 (-> application-handle-input

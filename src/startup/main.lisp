@@ -162,6 +162,15 @@
      (:plain " to wear its colors.")))
   "Startup advice supplementing registered command tips, as styled span specifications.")
 
+(-> application--tip-spans (list) terminal-styled-text)
+(defun application--tip-spans (spans)
+  "Return SPANS as one marked startup tip, with its ordinary words dimmed."
+  (cons (terminal-span ':dim "· tip: ")
+        (loop for span in spans
+              collect (if (eq (terminal-span-style span) ':plain)
+                          (terminal-span ':dim (terminal-span-text span))
+                          span))))
+
 (-> application--command-tip-spans
     (application-command)
     terminal-styled-text)
@@ -172,13 +181,12 @@ Use the Markdown renderer's inline parser without choosing a width here;
 the terminal wraps the semantic spans for both inline and fullscreen tips."
   (multiple-value-bind (text styles)
       (termdown::markdown--parse-inline (application-command-tip entry))
-    (append
-     (list (terminal-span ':dim "Tip: ")
-           (terminal-span
-            :code
-            (format nil "(~A)" (application-operation--command-name entry)))
-           (terminal-span ':plain " "))
-     (termdown::markdown--style-runs text styles))))
+    (application--tip-spans
+     (list* (terminal-span
+             :code
+             (format nil "(~A)" (application-operation--command-name entry)))
+            (terminal-span ':plain " ")
+            (termdown::markdown--style-runs text styles)))))
 
 (-> application--startup-tip-spans () terminal-styled-text)
 (defun application--startup-tip-spans ()
@@ -188,9 +196,9 @@ the terminal wraps the semantic spans for both inline and fullscreen tips."
                            (make-random-state t))))
     (if (< index (length commands))
         (application--command-tip-spans (nth index commands))
-        (cons (terminal-span ':dim "Tip: ")
-              (loop for (style text) in (nth (- index (length commands)) *application-startup-tips*)
-                    collect (terminal-span style text))))))
+        (application--tip-spans
+         (loop for (style text) in (nth (- index (length commands)) *application-startup-tips*)
+               collect (terminal-span style text))))))
 
 (-> application-banner (application) list)
 (defun application-banner (application)
@@ -218,8 +226,8 @@ the terminal wraps the semantic spans for both inline and fullscreen tips."
      (list
       (terminal-span
        :notice
-       (format nil "~%Autolith executes model-generated code with your user ~
-                    privileges.~%Sandboxing is no substitute for human oversight")))
+       (format nil "~%! autolith executes model-generated code with your user ~
+                    privileges~%  sandboxing is no substitute for human oversight")))
      (list (terminal-span ':plain (format nil "~2%")))
      (application--startup-tip-spans))))
 
@@ -241,8 +249,8 @@ the terminal wraps the semantic spans for both inline and fullscreen tips."
          (terminal-span
           ':dim
           (if (eq (update-availability-method availability) ':nix)
-              "Installed through Nix. Update the flake or profile that provides Autolith."
-              "Choose whether to install it before continuing.")))))))
+              "  installed through Nix; update the flake or profile that provides Autolith"
+              "  choose whether to install it before continuing")))))))
 
 (-> application-present-generation-health-warning (application) boolean)
 (defun application-present-generation-health-warning (application)
@@ -301,18 +309,13 @@ presents the warning in the first channel it opens only."
   nil)
 
 (-> application--expected-error-entry
-    (application (or autolith-error cl-llm-provider-api:provider-api-error))
+    ((or autolith-error cl-llm-provider-api:provider-api-error))
     list)
-(defun application--expected-error-entry (application condition)
-  "Return the transcript entry describing expected CONDITION."
-  (application--transcript-entry
-   application
-   :style  ':failure
-   :header "✗ error"
-   :body   (if (typep condition 'credentials-unavailable)
-               (format nil "~A~%Use (auth) to authenticate Autolith directly."
-                       condition)
-               (format nil "~A" condition))))
+(defun application--expected-error-entry (condition)
+  "Return the failure line describing expected CONDITION."
+  (application-failure-line
+   (format nil "~A~:[~;~%(auth) authenticates Autolith directly~]"
+           condition (typep condition 'credentials-unavailable))))
 
 (-> application-handle-expected-error
     (application (or autolith-error cl-llm-provider-api:provider-api-error))
@@ -322,7 +325,7 @@ presents the warning in the first channel it opens only."
   (application-set-activity application nil)
   (application-render-records application)
   (application-present application
-                       (application--expected-error-entry application condition))
+                       (application--expected-error-entry condition))
   nil)
 
 (-> application-read-terminal-event (terminal-ui) t)
@@ -535,7 +538,7 @@ controller's exit reason."
                          (application--transcript-entry
                           application
                           :style  ':failure
-                          :header "✗ mutation replay skipped"
+                          :header "! mutation replay skipped"
                           :body   (format nil "~A~%~A"
                                           (namestring (first failure))
                                           (rest failure)))))

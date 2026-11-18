@@ -991,7 +991,7 @@
                (eq (application--builtin-fast-command application) ':continue)
                "/fast status completes through the canonical command")
               (test-assert
-               (search "Codex Fast mode is off." (first presented))
+               (search "Fast mode is off." (first presented))
                "/fast reports the disabled state")
               (test-assert
                (eq (application--builtin-fast-command application ':status)
@@ -1133,7 +1133,7 @@
   (when (application-authentication-test-provider-read-input-p provider)
     (setf (application-authentication-test-provider-input provider)
           (api-key-read-hidden "Example" :stream stream)))
-  "Provider authentication was saved.")
+  "provider authentication was saved")
 
 (defclass application-authentication-test-localgroup-terminal (localgroup-terminal)
   ((events
@@ -1381,9 +1381,9 @@
                -1))
        "auth uses the direct styled terminal and restores terminal ownership")
       (test-assert
-       (and (search "Authenticating provider grok." terminal-text)
+       (and (search "authenticating provider grok" terminal-text)
             (search "Open the provider login page now." terminal-text)
-            (search "Provider authentication was saved." terminal-text))
+            (search "provider authentication was saved" terminal-text))
        "auth immediately presents provider identity, instructions, and completion")
       (test-assert (not (search "Open the provider login page now." captured-text))
        "callable auth does not buffer login instructions in local Lisp output")))
@@ -1475,9 +1475,9 @@
              (string= paste-input "secret") (string= line-input "line-secret"))
             "localgroup auth accepts pasted, edited, and completed hidden lines")
            (test-assert
-            (and (search "Authenticating provider grok." history)
+            (and (search "authenticating provider grok" history)
                  (search "Open the provider login page now." history)
-                 (search "Provider authentication was saved." history)
+                 (search "provider authentication was saved" history)
                  (search "Deferred stream row." history)
                  (search "Deferred finalized row." history))
             "localgroup auth shows direct and deferred output in order of ownership")))
@@ -1634,7 +1634,7 @@
                 (apply #'concatenate
                        'string
                        (mapcar #'terminal-span-text change-entry))
-                "∙ tools added: alpha.add, zeta.add; removed: beta.remove")
+                "· tools added: alpha.add, zeta.add; removed: beta.remove")
                (equal (mapcar #'terminal-span-style change-entry)
                       '(:hint :success :hint :failure))
                (terminal-styled-text-p (second entries)))
@@ -1798,9 +1798,10 @@
              (eq (application--builtin-settings-command application) ':continue)
              "(settings) completes through the canonical command")
             (test-assert
-             (and (search "cache-miss-notices-p = off (default)" (first presented))
-                  (search "transcript" (first presented))
-                  (not (search "provider-endpoint" (first presented))))
+             (let ((listing (test-entry-text (first presented))))
+               (and (search "cache-miss-notices-p = off (default)" listing)
+                    (search "transcript" listing)
+                    (not (search "provider-endpoint" listing))))
              "the listing shows visible settings with values and sources")
             (application--builtin-settings-command application "cache-miss-notices-p" t)
             (test-assert
@@ -1816,7 +1817,7 @@
              "an interactive change records the session source")
             (application--builtin-settings-command application "cache-miss-notices-p")
             (test-assert
-             (search "Cache miss notices is on (this session)" (first presented))
+             (search "cache miss notices is on (this session)" (test-entry-text (first presented)))
              "a named setting without a value is described")
             (test-assert
              (handler-case
@@ -1849,7 +1850,7 @@
               (test-application--setting-value-entry
                configuration (second presented) ':turn-timestamps-p)
               (test-assert
-               (search "read-only" (first presented))
+               (search "read-only" (test-entry-text (first presented)))
                "the page explains why a read-only setting cannot change")
               (test-assert
                (null picks)
@@ -1894,7 +1895,7 @@
                 :authenticator (lambda (provider &key stream open-browser-p)
                                  (declare (ignore provider stream open-browser-p))
                                  (incf logins)
-                                 "Provider authentication was saved."))
+                                 "provider authentication was saved"))
                (let ((*standard-output* output))
                  (main-authenticate configuration "authentication-other"))
                (test-assert (= logins 1) "startup authenticates the selected account")

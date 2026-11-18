@@ -3210,7 +3210,7 @@ terminal input or displaying a lifetime longer than the force-exit window. The
 second value reports whether UI applied this update, so a caller that must be
 seen can offer the notice again."
   (let ((safe-notice (and notice
-                          (sanitize-text notice :single-line-p t)))
+                          (format nil "· ~A" (sanitize-text notice :single-line-p t))))
         (applied-p   nil))
     (when (and safe-notice
                (or (null duration-seconds)

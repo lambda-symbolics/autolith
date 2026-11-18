@@ -660,17 +660,17 @@
                             ':continue)
                         "slash compatibility still executes the command backend")
            (test-assert
-            (search "Prefer (help)." (recording-terminal-output terminal))
+            (search "prefer (help)" (recording-terminal-output terminal))
             "the first slash spelling shows its canonical Lisp form")
            (recording-terminal-reset terminal)
            (application--run-command-input application "/help")
            (test-assert
-            (not (search "Prefer (help)." (recording-terminal-output terminal)))
+            (not (search "prefer (help)" (recording-terminal-output terminal)))
             "a command's preferred Lisp spelling appears only once per session")
            (recording-terminal-reset terminal)
            (test-assert
             (and (eq (application--run-command-input application "/exit") ':quit)
-                 (search "Prefer (close)." (recording-terminal-output terminal)))
+                 (search "prefer (close)" (recording-terminal-output terminal)))
             "slash aliases hint the canonical command operation name")
            (let ((evaluation
                    (application-lisp-evaluate "(close)" :application application)))

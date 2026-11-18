@@ -455,13 +455,13 @@
      "nested forms, quote syntax, and parentheses in strings form whole code spans")
     (test-assert
      (some (lambda (span)
-             (and (eq (terminal-span-style span) ':plain)
+             (and (eq (terminal-span-style span) ':dim)
                   (search "(or later)" (terminal-span-text span))))
            spans)
-     "parenthesized prose keeps its plain style")
+     "parenthesized prose keeps its quiet style")
     (test-assert
      (string= (terminal--spans-text spans)
-              "Tip: (test-tip) Try (let ((label \"(x)\")) (list 'resume label)) (or later), then '(a (b c)).")
+              "· tip: (test-tip) Try (let ((label \"(x)\")) (list 'resume label)) (or later), then '(a (b c)).")
      "inline delimiters disappear without changing example or prose content")
     (dolist (width '(18 42))
       (let ((rows (terminal-ui--word-wrap-spans
@@ -531,14 +531,14 @@
                     (format nil "~{~A~}"
                             (mapcar #'terminal-span-text
                                     (application-banner application))))
-                  (notice-start (search "Autolith executes" text))
-                  (tip-start    (search "Tip: " text)))
+                  (notice-start (search "autolith executes" text))
+                  (tip-start    (search "· tip: " text)))
              (test-assert
               (and notice-start
                    tip-start
                    (< notice-start tip-start)
                    (= (terminal-tests--substring-count
-                       "Autolith executes" text)
+                       "autolith executes" text)
                       1))
               "one security notice appears before the startup command tip")))
       (if saved-recovered
@@ -610,7 +610,7 @@
                                          (mapcar #'terminal-span-text notice))))
                (test-assert
                 (and (search "update available: Autolith" text)
-                     (search "Choose whether to install" text))
+                     (search "choose whether to install" text))
                 "a packaged release receives the cached banner warning")
                (with-terminal-ui (active-ui ui)
                  (application--offer-startup-update application))
@@ -658,7 +658,7 @@
                     (text   (format nil "~{~A~}"
                                     (mapcar #'terminal-span-text notice))))
                (test-assert
-                (and (search "Installed through Nix" text)
+                (and (search "installed through Nix" text)
                      (search "flake or profile" text))
                 "Nix receives package-manager advice without an update action"))
 
@@ -691,7 +691,7 @@
                  (lambda (observed text)
                    (test-assert (eq observed application)
                                 "explicit update output belongs to its application")
-                   (push text presented)
+                   (push (test-entry-text text) presented)
                    nil)))
           (lambda ()
             (let ((*update-check-fetch-function*
@@ -1112,7 +1112,7 @@
           (test-assert (and (= 3 (fullscreen-test--chunk-count active))
                             (search "auto-permission full access" first)
                             (search "auto-permission full access" second)
-                            (equal "cache miss notice" (string-trim '(#\Newline) notice)))
+                            (equal "· cache miss notice" (string-trim '(#\Newline) notice)))
                        "Identical commands retain their own verdicts, separate from the cache notice."))
         (terminal-ui-present-records
          active (list (application--record-presentation
@@ -1426,11 +1426,11 @@
            (eq event ':interrupt))
        "only active Ctrl-C schedules the transient force-exit notice")
       (test-assert
-       (string= (terminal-ui-notice ui) "Interrupting request.")
+       (string= (terminal-ui-notice ui) "· interrupting request")
        "an accepted stop immediately announces request interruption")
       (application-input-controller--refresh-interrupt-hint controller)
       (test-assert
-       (string= (terminal-ui-notice ui) "Interrupting request.")
+       (string= (terminal-ui-notice ui) "· interrupting request")
        "a cancellation inside the hint delay keeps its interruption notice")
       (setf now 21/2)
       (application-input-controller--refresh-interrupt-hint controller)
@@ -1438,8 +1438,8 @@
        (string=
         (terminal-ui-notice ui)
         (if (eq event ':interrupt)
-            "Press Ctrl-C again within 2.5 seconds to force exit."
-            "Interrupting request."))
+            "· press Ctrl-C again within 2.5 seconds to force exit"
+            "· interrupting request"))
        "a persistent Ctrl-C replaces the interruption notice with its force hint")
       (test-assert
        (or (eq event ':escape)
@@ -1840,11 +1840,11 @@
                           "the active reader preserves draft text while cancelling")
              (test-assert
               (not
-               (search "To open this channel again, run:" output-before-exit))
+               (search "to open this channel again, run:" output-before-exit))
               "active-turn cancellation never prints a resume command")
              (test-assert
               (not
-               (search "Press Ctrl-C again within 2.5 seconds"
+               (search "press Ctrl-C again within 2.5 seconds"
                        output-before-exit))
               "a promptly cancelled turn never flashes the force-exit hint")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
@@ -2199,7 +2199,7 @@
      "the first Ctrl-C arms the force-exit deadline")
     (terminal-ui-set-notice
      ui
-     "Press Ctrl-C again within 2.5 seconds to force exit."
+     "press Ctrl-C again within 2.5 seconds to force exit"
      :duration-seconds 5)
     (setf now 3)
     (test-assert
@@ -2253,7 +2253,7 @@
                    do (condition-wait gate-condition gate :timeout 2)))
            (application-input-controller--refresh-interrupt-hint controller)
            (test-assert
-            (string= (terminal-ui-notice ui) "Interrupting request.")
+            (string= (terminal-ui-notice ui) "· interrupting request")
             "contended presentation retains the earlier interruption notice")
            (test-assert
             (application-input-controller-interrupt-hint-time controller)
@@ -2300,7 +2300,7 @@
                condition)))
      "a generic function call that fails on the hint path signals nothing")
     (test-assert
-     (string= (terminal-ui-notice ui) "Interrupting request.")
+     (string= (terminal-ui-notice ui) "· interrupting request")
      "a failed hint pass retains the earlier interruption notice")
     (test-assert
      (application-input-controller-interrupt-hint-time controller)
@@ -2309,7 +2309,7 @@
     (application-input-controller--refresh-interrupt-hint controller)
     (test-assert
      (string= (terminal-ui-notice ui)
-              "Press Ctrl-C again within 2.5 seconds to force exit.")
+              "· press Ctrl-C again within 2.5 seconds to force exit")
      "the hint appears on the first pass that works")
     (test-assert
      (null (application-input-controller-interrupt-hint-time controller))
@@ -3303,7 +3303,7 @@
                       (application-tests--ui-application :columns columns)
                       (list :summary :seq 10 :time 0 :through-seq 9 :summary "older work"))
           do (test-assert (and (= (terminal--spans-width rule) width)
-                               (find (terminal-span ':failure " CONTEXT COMPACTED ") rule :test #'equal)
+                               (find (terminal-span ':failure " context compacted ") rule :test #'equal)
                                (eq (terminal-span-style (first rule)) ':success)
                                (not (search "9" (test-terminal-row-text rule))))
                           (format nil "at ~D columns compaction is a ~D-cell cut line without sequence numbers"
@@ -4228,7 +4228,7 @@
                        (search "active-full-one" output)
                        (search "active-full-two" output)
                        (= (terminal-tests--substring-count
-                           "CONTEXT COMPACTED"
+                           "context compacted"
                            output)
                           1))
                   "a full active chunk is the only segment scanned at startup"))
@@ -4243,7 +4243,7 @@
                            "after-runtime-rotation" output)
                           1)
                        (= (terminal-tests--substring-count
-                           "CONTEXT COMPACTED" output)
+                           "context compacted" output)
                           1)
                        (= (application-render-generation application)
                           (conversation-log-generation loaded))
@@ -4292,7 +4292,7 @@
                          (not (search "oldest-third-chunk" output))
                          (search "middle-chunk-message" output)
                          (= (terminal-tests--substring-count
-                             "CONTEXT COMPACTED" output)
+                             "context compacted" output)
                             2)
                          (not (search "use (history) to load an earlier page" output)))
                     "a short active chunk scans exactly one preceding segment"))
@@ -4325,7 +4325,7 @@
                       (and (equal (nreverse recovery-pathnames) (list active))
                            (not (search "middle-chunk-message" output))
                            (= (terminal-tests--substring-count
-                               "CONTEXT COMPACTED" output)
+                               "context compacted" output)
                               1))
                       "zero-cursor recovery scans only the active chunk")))
                  (recording-terminal-reset terminal)
@@ -4550,7 +4550,7 @@
            (recording-terminal-reset terminal)
            (application-command application "/history")
            (test-assert
-            (search "No earlier transcript history remains."
+            (search "no earlier transcript history remains"
                     (recording-terminal-output terminal))
             "history reports exhaustion after the final page"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
@@ -4719,7 +4719,7 @@
                              (search "moved on" (terminal-span-text span)))
                            entry)))
       (test-assert
-       (and (search "SKIPPED 3 DEFINITIONS" text)
+       (and (search "skipped 3 definitions" text)
             (search "commit c3ec5281 · published against 07f0e1b8 · this image runs unknown"
                     text)
             (search "defun      alpha-wrapper" text)
@@ -5513,7 +5513,7 @@
                  (let* ((output         (recording-terminal-output terminal))
                         (command-position
                           (search "/timestamps sometimes" output))
-                        (error-position (search "✗ error" output)))
+                        (error-position (search "! expected" output)))
                    (test-assert
                     (and command-position
                          error-position
@@ -5600,7 +5600,7 @@
              (application-input-controller--handle-submission
               controller "/bogus-command")
              (test-assert
-              (search "Unknown command"
+              (search "unknown command"
                       (recording-terminal-output terminal))
               "an unknown busy command reports its error immediately")
              (test-assert
@@ -9752,7 +9752,7 @@
                    (truename workspace))
             "/cwd passes the complete path to workspace switching")
            (test-assert
-            (search (format nil "Working directory is now ~A"
+            (search (format nil "working directory is now ~A"
                             (namestring (truename workspace)))
                     (recording-terminal-output terminal))
             "/cwd presents the selected workspace")
@@ -9763,7 +9763,7 @@
             (null (application-operation-call application "cwd"))
             "(cwd) without a path reports status")
            (test-assert
-            (search (format nil "Working directory: ~A"
+            (search (format nil "working directory: ~A"
                             (namestring (truename workspace)))
                     (recording-terminal-output terminal))
             "omitted /cwd paths preserve the status operation")
@@ -9996,7 +9996,7 @@
                             "medium"))
               "model commands persist both choices as global defaults"))
            (test-assert
-            (search "chatgpt/gpt-5.6-luna with reasoning effort medium."
+            (search "chatgpt/gpt-5.6-luna with reasoning effort medium"
                     (recording-terminal-output terminal))
             "model commands report the complete selection")
            (test-assert (handler-case
@@ -10386,7 +10386,7 @@
                                 (list :message :seq 99 :time 0 :role ':user
                                       :content
                                       *application-goal-continuation-prompt*))
-                               (list (terminal-span :hint "∙ goal continues")))
+                               (list (terminal-span :hint "· goal continues")))
                         "continuation prompts render as dim notices")
            (application-goal-command application "clear")
            (test-assert (null (application-goal application))
@@ -10621,7 +10621,7 @@
            (application-command application "/hurry-up")
            (test-assert
             (and (not (application-hurry-up-p application))
-                 (search "Hurry-up mode is disabled"
+                 (search "hurry-up mode is disabled"
                          (recording-terminal-output terminal)))
             "/hurry-up without a mode reports status without changing policy")
            (application-command application "/hurry-up on")
@@ -11090,11 +11090,11 @@
                            (search (terminal-clipboard-sequence text) chunk))
                          (recording-terminal-chunks terminal))
                    "copying also sends the OSC 52 request to the terminal")
-      (test-assert (equal "Copied 2 lines to the clipboard." (terminal-ui-notice active))
+      (test-assert (equal "· copied 2 lines to the clipboard" (terminal-ui-notice active))
                    "a successful copy is announced")
       (let ((*clipboard-backend* (make-instance 'application-tests--clipboard :fail-p t)))
         (application-transcript-action application (list ':copy "solo")))
-      (test-assert (uiop:string-prefix-p "Sent 1 line to the terminal's clipboard"
+      (test-assert (uiop:string-prefix-p "· sent 1 line to the terminal's clipboard"
                                          (terminal-ui-notice active))
                    "a host clipboard failure still reports the terminal request")
       (let ((opened nil))
@@ -11110,7 +11110,7 @@
            (application-transcript-action application '(:open-url "javascript:alert(1)"))))
         (test-assert (equal '("https://example.com/x") opened)
                      "only web URLs reach the browser launcher")
-        (test-assert (search "Only http and https" (terminal-ui-notice active))
+        (test-assert (search "only http and https" (terminal-ui-notice active))
                      "refused links explain themselves"))
       (let* ((renderer (termdown:markdown-renderer-create :width 60))
              (rows     (progn

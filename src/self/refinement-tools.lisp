@@ -122,7 +122,8 @@
     (refinement--reject ':invalid "Use (refine :assess ID :revision N :verdict :passed-or-failed :evidence TEXT)."))
   (application-present
    application
-   (prin1-to-string
+   (application-lisp-value-entry
+    "refinements"
     (if (null action)
         (refinement-list (application-configuration application))
         (refinement-assess

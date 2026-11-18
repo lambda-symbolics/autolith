@@ -123,12 +123,15 @@ but unconfirmed final candidate."
   "Present the exact instruction, literal trigger and observed validation result."
   (application-present
    application
-   (format nil "Correction: ~A~%~A~%Trigger: ~S~%~A"
-           (getf rule :id) (getf rule :instruction)
-           (first (getf (getf rule :when) :output-contains))
-           (if matched-p
-               "Matched a recent assistant output."
-               "No recent assistant output matched. Saving requires unconfirmed approval.")))
+   (append
+    (list (terminal-span ':brand (format nil "# correction ~A~%" (getf rule :id))))
+    (application--entry-fields
+     (list (list "instruction" ':plain (getf rule :instruction))
+           (list "trigger" ':code (prin1-to-string (first (getf (getf rule :when) :output-contains))))
+           (list "check" (if matched-p ':success ':notice)
+                 (if matched-p
+                     "matched a recent assistant output"
+                     "no recent assistant output matched; saving requires unconfirmed approval"))))))
   nil)
 
 (-> application-complaint--save (application list keyword) boolean)
@@ -137,8 +140,9 @@ but unconfirmed final candidate."
   (let ((configuration (application-configuration application)))
     (flet ((save-rule (replace-p)
              (let ((path (context-rule-save configuration rule :scope scope :replace-p replace-p)))
-               (application-present application (format nil "Saved correction ~A in ~A."
-                                                        (getf rule :id) path))
+               (application-present application
+                                    (application-success-line
+                                     (format nil "saved correction ~A in ~A" (getf rule :id) path)))
                t)))
       (handler-case
           (save-rule nil)

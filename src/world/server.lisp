@@ -428,7 +428,7 @@ Known timer failures are escalated without invoking their callbacks again."
     (when failure
       (format *error-output* "~&World endpoint failed: ~A~%" failure)
       (world-server-stop
-       server :reason "The world's control endpoint failed; stopping the world so it can be opened again.")))
+       server :reason "the world's control endpoint failed; stopping the world so it can be opened again")))
   nil)
 
 (-> world-server-run
@@ -616,7 +616,7 @@ REASON, when given, is what each attached terminal is told before it lets go."
      :status  0
      :message (if ui
                   (terminal--render-spans (terminal-ui-terminal ui) (application-notice-line reason))
-                  (format nil "· ~A" reason))))
+                  (terminal--spans-text (application-notice-line reason)))))
   nil)
 
 (-> world-server--shutdown (world-server) null)
@@ -1334,7 +1334,7 @@ no turn or job is running. A request for the current mode needs no change."
         (setf (application-permission-mode application)
               (world-server--permission-mode server mode))
         (application-present application
-                             (format nil "· permission mode changed to ~(~A~) by a terminal opening this channel"
+                             (format nil "permission mode changed to ~(~A~) by a terminal opening this channel"
                                      (application-permission-mode application))))))
   nil)
 

@@ -9,7 +9,7 @@
     (multiple-value-bind (identifier delivery)
         (context--diagnostic-delivery (application-conversation application))
       (append
-       (list (terminal-span ':brand (format nil "context contributors~%")))
+       (list (terminal-span ':brand (format nil "# context contributors~%")))
        (if registrations
            (apply #'append
                   (application-context--table-rows
@@ -23,7 +23,7 @@
                                  (getf registration :function)))))
                     registrations)))
            (list (terminal-span ':dim (format nil "  none~%"))))
-       (list (terminal-span ':brand (format nil "~%request-local context"))
+       (list (terminal-span ':brand (format nil "~%# request-local context"))
              (terminal-span ':dim
                             (format nil "~@[ · conversation ~A~]~%"
                                     (and identifier (conversation-identifier-display identifier)))))

@@ -440,8 +440,9 @@ stops the turn."
                                                    :text text :source channel)))
         (autolith-error (condition)
           (application-present application
-                               (format nil "The message was not shared: ~A"
-                                       (bounded-string (princ-to-string condition) :limit 300)))
+                               (application-failure-line
+                                (format nil "the message was not shared: ~A"
+                                        (bounded-string (princ-to-string condition) :limit 300))))
           nil)))))
 
 (-> application-world-share-pending (application) list)
@@ -483,8 +484,9 @@ shares nothing. A delivery that fails is reported and never stops the turn."
                                                  :sender agent :channel channel :text text)))
       (autolith-error (condition)
         (application-present application
-                             (format nil "The reply was not shared: ~A"
-                                     (bounded-string (princ-to-string condition) :limit 300)))
+                             (application-failure-line
+                              (format nil "the reply was not shared: ~A"
+                                      (bounded-string (princ-to-string condition) :limit 300))))
         nil))))
 
 
@@ -1022,8 +1024,9 @@ with STRICT-P, else told in the channel; a turn must not start without it."
               (progn
                 (application-present
                  application
-                 (format nil "The context a moved agent brings could not be adopted yet: ~A It is tried again before the agent's next turn."
-                         condition))
+                 (application-failure-line
+                  (format nil "the context a moved agent brings could not be adopted yet: ~A It is tried again before the agent's next turn."
+                          condition)))
                 nil)))))))
 
 (-> application-world-before-turn (application keyword) null)

@@ -975,12 +975,12 @@
     (with-terminal-ui (active-ui ui)
       (terminal-ui-set-notice
        active-ui
-       "Press Ctrl-C again within 2.5 seconds to force exit."
+       "press Ctrl-C again within 2.5 seconds to force exit"
        :duration-seconds 5/2)
       (multiple-value-bind (text display cursor)
           (terminal-ui--live-content active-ui)
         (declare (ignore display cursor))
-        (test-assert (search "Press Ctrl-C again" text)
+        (test-assert (search "· press Ctrl-C again" text)
                      "the transient notice appears in the live region"))
       (setf clock 5/2)
       (with-terminal-ui-locked (active-ui)
@@ -990,12 +990,12 @@
       (multiple-value-bind (text display cursor)
           (terminal-ui--live-content active-ui)
         (declare (ignore display cursor))
-        (test-assert (not (search "Press Ctrl-C again" text))
+        (test-assert (not (search "· press Ctrl-C again" text))
                      "the expired notice vanishes from the live region"))
       (setf clock 10)
       (terminal-ui-set-notice
        active-ui
-       "Press Ctrl-C again within 2.5 seconds to force exit."
+       "press Ctrl-C again within 2.5 seconds to force exit"
        :duration-seconds 5/2)
       (setf clock 25/2)
       (test-assert (terminal-ui-refresh-status active-ui)

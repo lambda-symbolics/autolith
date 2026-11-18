@@ -9,11 +9,10 @@
     (application-present
      application
      (append
-      (list (terminal-span
-             ':notice
-             (if path
-                 (format nil "Compaction bug report saved to ~A" path)
-                 (format nil "Could not save the compaction bug report: ~A" (getf details :save-error)))))
+      (if path
+          (application-notice-line (format nil "compaction bug report saved to ~A" path))
+          (application-failure-line
+           (format nil "could not save the compaction bug report: ~A" (getf details :save-error))))
       (when (and path (application-ui application))
         (handler-case
             (list (terminal-span ':plain (format nil "~%  "))

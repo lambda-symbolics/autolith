@@ -18,6 +18,11 @@
         (error "Test failed: ~A" description)))
   nil)
 
+(-> test-entry-text ((or string list)) string)
+(defun test-entry-text (entry)
+  "Return the plain text of a presented transcript ENTRY."
+  (if (stringp entry) entry (terminal--spans-text entry)))
+
 (-> test-terminal-row-text (list) string)
 (defun test-terminal-row-text (row)
   "Return ROW's concatenated terminal span and widget label text."

@@ -223,7 +223,7 @@ snapshot cannot change the meaning of an already finalized transcript entry."
                              (* 2 limit)))))
           (t
            (values "the result is not eligible for automatic continuation" review)))
-      (format nil "No automatic continuation: ~A. ~A" reason action))))
+      (format nil "no automatic continuation: ~A. ~A" reason action))))
 
 (-> application-job-completions--present-terminal (application list) null)
 (defun application-job-completions--present-terminal (application notices)
@@ -241,10 +241,10 @@ snapshot cannot change the meaning of an already finalized transcript entry."
            (append
             (if (application-ui application)
                 (application--job-completion-entry application (rest record))
-                (list (terminal-span ':notice
-                                     (format nil "Job ~A: ~A.~%" (getf notice :job-id) (getf notice :outcome)))))
+                (application-notice-line
+                 (format nil "job ~A: ~(~A~)" (getf notice :job-id) (getf notice :outcome))))
             (list (terminal-span ':plain (string #\Newline))
-                  (terminal-span ':notice reason)))
+                  (terminal-span ':notice (format nil "  ~A" reason))))
            :identifier (application--record-presentation-identifier application record))))))
   nil)
 

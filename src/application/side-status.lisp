@@ -42,7 +42,7 @@
               do (let ((text (context--message-text item)))
                    (when (non-empty-string-p text)
                      (return text))))
-      "No current focus"))
+      "no current focus"))
 
 (-> application-side-status--task-states (application) list)
 (defun application-side-status--task-states (application)
@@ -80,7 +80,7 @@ active tasks are running jobs. ETA is deliberately unknown."
         (list :focus focus :elapsed 0
               :worked (conversation-working-seconds conversation)
               :live-tasks live :active-tasks active :queue 0
-              :step "Idle" :eta ':unknown)
+              :step "idle" :eta ':unknown)
         (with-terminal-ui-locked (ui)
           (let* ((now     (funcall (terminal-ui-clock-function ui)))
                  (elapsed (terminal-ui--status-times-at ui now))
@@ -94,7 +94,7 @@ active tasks are running jobs. ETA is deliberately unknown."
                   :live-tasks live :active-tasks active
                   :queue  (+ (length (terminal-ui-steering-input-previews ui))
                              (length (terminal-ui-queued-input-previews ui)))
-                  :step   (if step (application-side-status--text step) "Idle")
+                  :step   (if step (application-side-status--text step) "idle")
                   :eta    ':unknown))))))
 
 (-> application-side-status-entry (list (option keyword)) list)
@@ -116,7 +116,7 @@ active tasks are running jobs. ETA is deliberately unknown."
                               (getf snapshot :active-tasks)))
                 (list ':queue "queue" ':code (getf snapshot :queue))
                 (list ':step "step" ':plain (getf snapshot :step))
-                (list ':eta "ETA" ':hint "Unknown"))
+                (list ':eta "eta" ':hint "unknown"))
           when (or (null selector) (eq key selector))
             collect (list label style value)))))
 

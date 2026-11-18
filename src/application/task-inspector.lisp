@@ -117,7 +117,7 @@
          (actions    "(tasks :get \"ID\") | (tasks :transcript \"ID\" :offset OFFSET :limit LIMIT) | (tasks :cancel \"ID\") | (tasks :revive \"ID\" :authorize t) | (tasks :abandon \"ID\" :authorize t)"))
     (if application
         (application--tool-entry
-         application :style ':notice :header heading
+         application :style ':notice :header (format nil "# ~A" heading)
          :rows (append
                 (loop for row in page
                     append (append (application--native-snapshot-rows application row)
@@ -228,7 +228,7 @@ clamped at EOF. Live children use their deterministic conversation identity."
      (let ((window (task-inspector-transcript context orchestrator id :offset offset :limit limit)))
        (if application
            (application--tool-entry
-            application :style ':notice :header "task transcript"
+            application :style ':notice :header "# task transcript"
             :rows (append
                    (application--tool-field-rows
                     application

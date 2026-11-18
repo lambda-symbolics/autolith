@@ -119,13 +119,12 @@ Return values, status, condition report, restart names, and selected restart nam
                (when (eq event ':recovery-failed)
                  (application-present
                   application
-                  (list (terminal-span ':failure "Autolith recovery failed: ")
-                        (terminal-span
-                         ':plain
-                         (text-cell-prefix
-                          (sanitize-text (getf payload :recovery-condition-report)
-                                         :single-line-p t)
-                          512)))))))
+                  (application-failure-line
+                   (format nil "recovery failed: ~A"
+                           (text-cell-prefix
+                            (sanitize-text (getf payload :recovery-condition-report)
+                                           :single-line-p t)
+                            512)))))))
            :source             (or source "")
            :operation-kind     operation-kind
            :retry-p            retry-p
@@ -244,7 +243,7 @@ journaling or provider conversation projection."
   "Return captured OUTPUT as a marked local evaluation section."
   (when (non-empty-string-p output)
     (append
-     (list (terminal-span ':notice "output")
+     (list (terminal-span ':notice "· output")
            (terminal-span ':plain (string #\Newline))
            (terminal-span ':plain output))
      (unless (char= (char output (1- (length output))) #\Newline)
@@ -280,18 +279,18 @@ journaling or provider conversation projection."
                   (terminal-span ':dim "no values")))))
      (:aborted
       (append
-       (list (terminal-span ':failure "aborted"))
+       (list (terminal-span ':failure "! aborted"))
        (when (application-lisp-evaluation-condition evaluation)
          (list
           (terminal-span
-           ':plain
+           ':failure
            (format nil ": ~A"
                    (application-lisp-evaluation-condition evaluation)))))))
      (:error
       (list
-       (terminal-span ':failure "error: ")
+       (terminal-span ':failure "! error: ")
        (terminal-span
-        ':plain
+        ':failure
         (or (application-lisp-evaluation-condition evaluation)
             "unknown local evaluation failure")))))))
 
@@ -329,10 +328,7 @@ journaling or provider conversation projection."
              (terminal-ui-set-input ui "")
              (application-present
               application
-              (list
-               (terminal-span
-                ':hint
-                "Enter one Lisp form. Its multiple values become restart arguments.")))
+              (application-hint-line "enter one Lisp form; its multiple values become restart arguments"))
              (terminal-ui-call-with-exclusive-input
               ui
               (lambda ()
@@ -345,10 +341,8 @@ journaling or provider conversation projection."
                            (progn
                              (application-present
                               application
-                              (list
-                               (terminal-span
-                                ':failure
-                                "Restart argument input cannot include image attachments.")))
+                              (application-failure-line
+                               "restart argument input cannot include image attachments"))
                              (terminal-ui-set-input ui payload))
                            (return (user-message-input-text payload))))
                       ((:interrupt :end-of-input :escape)
@@ -367,17 +361,18 @@ journaling or provider conversation projection."
              "Bound and sanitize one debugger field for terminal presentation."
              (text-cell-prefix (sanitize-text text :single-line-p t) 512)))
       (append
-       (list (terminal-span ':failure "restart debugger")
+       (list (terminal-span ':failure "! restart debugger")
              (terminal-span ':dim "  ")
              (terminal-span ':code
                             (display-text
                              (or (getf snapshot :condition-type)
                                  (string-downcase (string (type-of condition))))))
              (terminal-span ':plain (string #\Newline))
-             (terminal-span ':plain
-                            (display-text
-                             (or (getf snapshot :condition-report)
-                                 (princ-to-string condition)))))
+             (terminal-span ':notice
+                            (format nil "  ~A"
+                                    (display-text
+                                     (or (getf snapshot :condition-report)
+                                         (princ-to-string condition))))))
        (loop for field in (getf metadata :fields)
              append
              (list (terminal-span ':plain (string #\Newline))
@@ -766,6 +761,12 @@ caller."
                                        :rainbow-parentheses-p t)
             (error () nil))
           (list (terminal-span ':code value)))))
+
+(-> application-lisp-value-entry (string t) list)
+(defun application-lisp-value-entry (title value)
+  "Return VALUE as highlighted Lisp beneath a marked TITLE."
+  (cons (terminal-span ':brand (format nil "# ~A~%" title))
+        (application-lisp--value-spans (application-lisp-render-value value :columns 16000))))
 
 (-> application-lisp--render-values
     (list (option application)) (values list list))

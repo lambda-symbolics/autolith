@@ -348,7 +348,7 @@
                     ':completed)))
       (lambda ()
         (application-startup-presentation application controller :onboarding-p nil)
-        (test-assert (search "Recovered saved selection." (recording-terminal-output terminal))
+        (test-assert (search "recovered saved selection" (recording-terminal-output terminal))
                      "the notice reaches the terminal presentation path")
         (test-assert (not (non-empty-string-p
                            (config :saved-model-selection-notice configuration)))

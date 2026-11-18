@@ -328,7 +328,7 @@
 (-> channel-open-instruction (string) list)
 (defun channel-open-instruction (identifier)
   "Return styled advice for opening the channel named by IDENTIFIER."
-  (list (terminal-span ':dim "To open this channel again, run:")
+  (list (terminal-span ':dim "· to open this channel again, run:")
         (terminal-span ':plain (string #\Newline))
         (terminal-span ':code (format nil "  ~A" (channel-open-command identifier)))))
 
@@ -410,7 +410,7 @@ presentation lock reports no display so a later reader pass can try again."
                 (terminal-ui-set-notice
                  ui
                  (format nil
-                         "Press Ctrl-C again within ~A seconds to force exit."
+                         "press Ctrl-C again within ~A seconds to force exit"
                          (application-input-controller--interrupt-window-text))
                  :duration-seconds remaining-seconds))))))
 
@@ -550,9 +550,7 @@ second reports whether shutdown was prepared."
           ((user-message-input-image-pathnames input)
            (application-present
             application
-            (list
-             (terminal-span ':failure
-                            "Local Lisp input cannot include image attachments.")))
+            (application-failure-line "local Lisp input cannot include image attachments"))
            (terminal-ui-set-input ui input)
            t)
           ((application-lisp-input-incomplete-p source)
@@ -1252,7 +1250,8 @@ input history, or kept in the recovery vault."
       (progn
         (application-present
          (application-input-controller-application controller)
-         "· recovered input storage is unavailable. Use (vault) to inspect it or (vault-discard) to discard the preserved input before submitting more work")
+         (application-failure-line
+          "recovered input storage is unavailable; (vault) inspects it and (vault-discard) discards the preserved input"))
         nil)))
 
 (-> application-input-controller--admit-primary-prompt-locked
@@ -1311,16 +1310,14 @@ not steer the active primary message."
   (flet ((failure (text)
            (terminal-span ':failure text)))
     (if (application-world-inbox-p application)
-        (append (list (failure "· no agent responds to your inbox. try "))
+        (append (list (failure "! no agent responds to your inbox; try "))
                 (application-lisp-code-spans "(tell \"OTHER-CHANNEL\" \"TEXT\")")
                 (list (failure " or "))
-                (application-lisp-code-spans "(open \"ID\")")
-                (list (failure ".")))
-        (append (list (failure "· this channel has no agent. try "))
+                (application-lisp-code-spans "(open \"ID\")"))
+        (append (list (failure "! this channel has no agent; try "))
                 (application-lisp-code-spans "(move \"ID\")")
                 (list (failure " or "))
-                (application-lisp-code-spans "(domestic)")
-                (list (failure "."))))))
+                (application-lisp-code-spans "(domestic)")))))
 
 (-> application-input-controller-submit-primary-prompt
     (application-input-controller (or string user-message-input)
@@ -1571,7 +1568,7 @@ the active work finishes."
           (handler-case
               (terminal-ui-set-notice
                (application-ui application)
-               "Interrupting request."
+               "interrupting request"
                :duration-seconds
                *application-interrupted-queue-notice-seconds*)
             (error ()
@@ -1634,11 +1631,11 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
         (list
          (terminal-span
           ':hint
-          "∙ command scheduled until the current response finishes")
+          "· command scheduled until the current response finishes")
          (terminal-span ':plain (string #\Newline))
          (terminal-span
           ':dim
-          "  It runs at the first opportunity. Empty Tab edits it; Shift-Tab cycles."))))))
+          "  it runs at the first opportunity; Empty Tab edits it, Shift-Tab cycles"))))))
   nil)
 
 (-> application-input-controller--schedule-command
@@ -1659,7 +1656,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
    (application-input-controller-application controller)
    (list
     (terminal-span ':hint
-                   "∙ local evaluation scheduled until the current response finishes")
+                   "· local evaluation scheduled until the current response finishes")
     (terminal-span ':plain (string #\Newline))
     (terminal-span ':dim
                    (format nil "  ~A"
@@ -1737,7 +1734,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
         (sb-thread:condition-broadcast (application-input-controller-condition-variable controller))))
     (when delivery
       (application-input-controller--publish-counts controller)
-      (application-present application "∙ command scheduled in steering order")
+      (application-present application (application-hint-line "command scheduled in steering order"))
       t)))
 
 (-> application-input-controller--require-pending-persistence
@@ -1833,7 +1830,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
    (application-input-controller-application controller)
    (list
     (terminal-span ':hint
-                   "∙ command applies at the next safe point in the active response")
+                   "· command applies at the next safe point in the active response")
     (terminal-span ':plain (string #\Newline))
     (terminal-span ':dim
                    (format nil "  ~A"
@@ -2054,8 +2051,7 @@ reaches the very next provider request."
                 (lambda (observed-application observed-condition)
                   (application-present
                    observed-application
-                   (application--expected-error-entry
-                    observed-application observed-condition))))
+                   (application--expected-error-entry observed-condition))))
              (application-user-operation-record-command-outcome
               application invocation :action result :condition condition)
              result)))))))
@@ -3147,7 +3143,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                         (terminal-span ':plain (string #\Newline))))))
      (when (zerop (hash-table-count arguments))
        (list (terminal-span ':dim (format nil "  no arguments~%"))))
-     (list (terminal-span ':dim "  External execution is not confined by the local command sandbox.")))))
+     (list (terminal-span ':dim "  external execution is not confined by the local command sandbox")))))
 
 (-> application--ask-tool-permission
     (application tool json-object)
@@ -3567,7 +3563,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                (application-input-controller-work-items controller))))
         (setf pause-notice
               (format nil
-                      "Interrupted. ~D queued item~:P held; submit input to resume."
+                      "interrupted; ~D queued item~:P held; submit input to resume"
                       (deque-count
                        (application-input-controller-work-items controller)))))
       (sb-thread:condition-broadcast

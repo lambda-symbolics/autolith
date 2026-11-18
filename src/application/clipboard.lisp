@@ -33,11 +33,11 @@ relay. A notice names the route that worked, or the host failure."
        application
        (cond
          (host-p
-          (format nil "Copied ~D line~:P to the clipboard." lines))
+          (format nil "copied ~D line~:P to the clipboard" lines))
          (terminal-p
-          (format nil "Sent ~D line~:P to the terminal's clipboard; ~A" lines host-condition))
+          (format nil "sent ~D line~:P to the terminal's clipboard; ~A" lines host-condition))
          (t
-          (format nil "Nothing copied: ~A" host-condition))))
+          (format nil "nothing copied: ~A" host-condition))))
       (or host-p terminal-p))))
 
 (-> application-open-url (application string) boolean)
@@ -46,17 +46,17 @@ relay. A notice names the route that worked, or the host failure."
   (cond
     ((not (web-url-p url))
      (application--transcript-action-notice
-      application "Only http and https links open from the transcript.")
+      application "only http and https links open from the transcript")
      nil)
     ((platform-open-url *platform* url)
      (application--transcript-action-notice
       application
-      (format nil "Opening ~A"
+      (format nil "opening ~A"
               (text-cell-prefix url *application-opened-url-notice-cells*)))
      t)
     (t
      (application--transcript-action-notice
-      application "No browser launcher is available on this host.")
+      application "no browser launcher is available on this host")
      nil)))
 
 (-> application-transcript-action (application list) null)

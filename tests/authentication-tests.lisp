@@ -494,7 +494,7 @@
               (setf observed-descriptor *api-key-input-file-descriptor*
                     observed-styled-p *api-key-output-styled-p*
                     observed-method method)
-              "Provider authentication was saved.")))
+              "provider authentication was saved")))
     (unwind-protect
          (progn
            (test-call-with-function-replacements

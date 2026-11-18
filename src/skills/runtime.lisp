@@ -557,53 +557,41 @@ request that left them out would not match the prefix ordinary requests cached."
           (namestring (skill-diagnostic-pathname diagnostic))
           (skill-diagnostic-message diagnostic)))
 
-(-> skill-status (configuration) string)
-(defun skill-status (configuration)
-  "Return discovered skills and diagnostics for CONFIGURATION."
-  (let* ((catalog        (skill-catalog-for-configuration configuration))
-         (skills         (skill-catalog-skills catalog))
-         (diagnostics
-           (remove ':missing-root
-                   (skill-catalog-diagnostics catalog)
-                   :key #'skill-diagnostic-kind))
-         (shown-skills
-           (subseq skills
-                   0
-                   (min (length skills)
-                        *skill-status-entry-limit*)))
-         (shown-diagnostics
-           (subseq diagnostics
-                   0
-                   (min (length diagnostics)
-                        *skill-status-entry-limit*)))
-         (omitted-skills (- (length skills) (length shown-skills)))
-         (omitted-diagnostics
-           (- (length diagnostics) (length shown-diagnostics))))
-    (with-output-to-string (stream)
-      (format stream "Skills:~%")
-      (if shown-skills
-          (loop for metadata in shown-skills
-                for first-p = t then nil
-                do
-                   (unless first-p
-                     (terpri stream))
-                   (format stream
-                           "~A  ~A~%  ~A"
-                           (skill-metadata-name metadata)
-                           (namestring (skill-metadata-pathname metadata))
-                           (skill-metadata-description metadata)))
-          (format stream
-                  "none discovered~%~%Create a directory named for the skill with SKILL.md or SKILL.sexp beneath one of:~%~{  ~A~^~%~}"
-                  (mapcar #'namestring (skill-roots configuration))))
-      (when (plusp omitted-skills)
-        (format stream
-                "~%... ~D more skill~:P omitted."
-                omitted-skills))
-      (when shown-diagnostics
-        (format stream
-                "~2%Diagnostics:~%~{~A~^~%~}"
-                (mapcar #'skill--diagnostic-line shown-diagnostics)))
-      (when (plusp omitted-diagnostics)
-        (format stream
-                "~%... ~D more diagnostic~:P omitted."
-                omitted-diagnostics)))))
+(-> skill-status-entry (configuration) list)
+(defun skill-status-entry (configuration)
+  "Return discovered skills and diagnostics for CONFIGURATION as a transcript entry."
+  (let* ((catalog     (skill-catalog-for-configuration configuration))
+         (skills      (skill-catalog-skills catalog))
+         (diagnostics (remove ':missing-root
+                              (skill-catalog-diagnostics catalog)
+                              :key #'skill-diagnostic-kind)))
+    (flet ((shown (items)
+             (subseq items 0 (min (length items) *skill-status-entry-limit*)))
+
+           (omitted (items noun)
+             (when (> (length items) *skill-status-entry-limit*)
+               (list (terminal-span ':dim
+                                    (format nil "~%  ~D more ~A~:P omitted"
+                                            (- (length items) *skill-status-entry-limit*)
+                                            noun))))))
+      (append
+       (list (terminal-span ':brand "# skills"))
+       (if skills
+           (loop for metadata in (shown skills)
+                 append (list (terminal-span ':code
+                                             (format nil "~%  ~A" (skill-metadata-name metadata)))
+                              (terminal-span ':dim
+                                             (format nil "  ~A~%    ~A"
+                                                     (namestring (skill-metadata-pathname metadata))
+                                                     (skill-metadata-description metadata)))))
+           (list (terminal-span
+                  ':hint
+                  (format nil "~%  none discovered; create a directory named for the skill with SKILL.md or SKILL.sexp beneath one of:~{~%    ~A~}"
+                          (mapcar #'namestring (skill-roots configuration))))))
+       (omitted skills "skill")
+       (when diagnostics
+         (cons (terminal-span ':notice (format nil "~2%! diagnostics"))
+               (loop for diagnostic in (shown diagnostics)
+                     collect (terminal-span ':dim
+                                            (format nil "~%  ~A" (skill--diagnostic-line diagnostic))))))
+       (omitted diagnostics "diagnostic")))))

@@ -2467,7 +2467,7 @@ line above."
     list)
 (defun application--transcript-entry
     (application &key (style ':plain) (header "") detail body
-                 (body-style ':plain) timestamp)
+                 (body-style ':dim) timestamp)
   "Return one styled transcript entry with HEADER, optional DETAIL, and BODY rows."
   (let ((spans  (list (terminal-span style header)))
         (detail (or detail
@@ -2909,7 +2909,7 @@ A channel message shows its sender and channel instead of an operation."
     (otherwise
      nil)))
 
-(defparameter *application-compaction-label* " CONTEXT COMPACTED "
+(defparameter *application-compaction-label* " context compacted "
   "The label centered in the transcript rule marking a context compaction.")
 
 (-> application--compaction-rule (application &key (:recovery list)) terminal-styled-text)
@@ -2925,11 +2925,11 @@ A channel message shows its sender and channel instead of an operation."
            (terminal-span ':failure label)
            (terminal-span ':success (make-string right :initial-element #\━)))
      (when recovery
-       (list (terminal-span ':notice
-                            (format nil "~%~A" (compaction-recovery-notice recovery))))))))
+       (cons (terminal-span ':plain (string #\Newline))
+             (application-notice-line (compaction-recovery-notice recovery)))))))
 
 (-> application--command-presentation-entry
-    (application-command-invocation (or string list))
+    (application-command-invocation list)
     terminal-styled-text)
 (defun application--command-presentation-entry (invocation entry)
   "Return ENTRY beneath a visible heading for its originating INVOCATION."
@@ -2942,17 +2942,17 @@ A channel message shows its sender and channel instead of an operation."
            (application-command-invocation-input invocation)))
          (terminal-span ':plain (string #\Newline))
          (terminal-span ':notice "└ "))
-   (if (stringp entry)
-       (list (terminal-span ':plain entry))
-       entry)))
+   entry))
 
 (-> application-present
     (application (or string list) &key (:identifier t) (:group t) (:metadata list)) boolean)
 (defun application-present (application entry &key identifier group metadata)
   "Append non-conversation ENTRY once, optionally under a stable IDENTIFIER.
 
-The channel's structured clients receive its text as a :PRESENT event."
-  (let* ((ui (application-ui application))
+A string is said as a notice line. The channel's structured clients receive
+the entry's text as a :PRESENT event."
+  (let* ((ui    (application-ui application))
+         (entry (if (stringp entry) (application-notice-line entry) entry))
          (invocation
            (and *application-command-presentation-pending-p*
                 (typep *application-command-presentation-invocation*
@@ -2965,12 +2965,7 @@ The channel's structured clients receive its text as a :PRESENT event."
     (flet ((entry-text ()
              (if ui
                  (nth-value 0 (terminal-ui--finalized-content ui entry :group group))
-                 (concatenate
-                  'string
-                  (if (stringp entry)
-                      entry
-                      (terminal--spans-text entry))
-                  (string #\Newline)))))
+                 (format nil "~A~%" (terminal--spans-text entry)))))
       (when (and *application-command-presentation-capture-p*
                  (not (null entry)))
         (push (entry-text) *application-command-presentation-text*))
@@ -3246,7 +3241,7 @@ The channel's structured clients receive its text as a :PRESENT event."
       (setf entry
             (list (terminal-span
                    ':tool
-                   (format nil "∙ ~A: ~A"
+                   (format nil "· ~A: ~A"
                            (or (third (getf metadata :call-key))
                                (third (getf metadata :job-key)))
                            (getf metadata :state))))))
@@ -3535,7 +3530,7 @@ may fill the remainder."
                         (terminal-span
                          :hint
                          (format nil
-                                 "∙ showing ~D newest ~A; use (history) to load an earlier page"
+                                 "· showing ~D newest ~A; use (history) to load an earlier page"
                                  (length records)
                                  (if (plusp after-sequence)
                                      "entries added after recovery"
@@ -3783,7 +3778,7 @@ A fullscreen transcript evicts its oldest output; those records page in again."
                    (terminal-span
                     :hint
                     (format nil
-                            "∙ loaded ~D earlier transcript entr~:@P"
+                            "· loaded ~D earlier transcript entr~:@P"
                             presented-count)))))
                (when (> candidate-count limit)
                  (application-present
@@ -3791,14 +3786,14 @@ A fullscreen transcript evicts its oldest output; those records page in again."
                   (list
                    (terminal-span
                     :hint
-                    "∙ more earlier history remains; run (history) again"))))
+                    "· more earlier history remains; run (history) again"))))
                (when (and (zerop presented-count)
                           (<= candidate-count limit))
                  (application-present
                   application
-                  "No earlier transcript history remains.")))
+                  (application-hint-line "no earlier transcript history remains"))))
             (application-present application
-                                 "No earlier transcript history remains.")))))
+                                 (application-hint-line "no earlier transcript history remains"))))))
   (application-publish-recovery-session application)
   nil)
 
@@ -3944,11 +3939,11 @@ continuation turns, so the notice names what woke the model."
     ':hint
     (cond
       ((application--goal-continuation-message-p content)
-       "∙ goal continues")
+       "· goal continues")
       ((string= content *application-job-completion-continuation-prompt*)
-       "∙ continuing with job results")
+       "· continuing with job results")
       (t
-       (format nil "∙ mission wakeup: ~A" content))))))
+       (format nil "· mission wakeup: ~A" content))))))
 
 
 ;;;; -- Agent Presentation --
@@ -4548,7 +4543,7 @@ clients as :TEXT, :REASONING and :STATUS events."
                application
                (list (terminal-span
                       ':failure
-                      (format nil "∙ provider retries exhausted after ~D attempts (~A)"
+                      (format nil "· provider retries exhausted after ~D attempts (~A)"
                               (getf details :attempts)
                               (or (getf details :code) "transient provider error"))))))
              (:provider-retrying
@@ -4564,7 +4559,7 @@ clients as :TEXT, :REASONING and :STATUS events."
                     (terminal-span
                      ':hint
                      (format nil
-                             "∙ provider stream interrupted; retrying ~D/~D"
+                             "· provider stream interrupted; retrying ~D/~D"
                              (getf details :attempt)
                              (getf details :maximum-attempts))))))
                 (application-set-activity
@@ -4841,13 +4836,12 @@ model's calls in a turn."
         (setf (application-input-controller-queued-work-paused-p controller) t))))
   (application-side-status-present
    application "context admission"
-   (list (terminal-span
-          ':hint
-          (format nil
-                  "Context admission refused: approximately ~D input tokens plus ~D output tokens exceed the ~D-token model window. Reduce context before retrying."
-                  (provider-context-budget-error-estimated-input-tokens condition)
-                  (provider-context-budget-error-output-reserve condition)
-                  (provider-context-budget-error-context-window condition)))))
+   (application-failure-line
+    (format nil
+            "context admission refused: approximately ~D input tokens plus ~D output tokens exceed the ~D-token model window; reduce context before retrying"
+            (provider-context-budget-error-estimated-input-tokens condition)
+            (provider-context-budget-error-output-reserve condition)
+            (provider-context-budget-error-context-window condition))))
   nil)
 
 (-> application--run-turn

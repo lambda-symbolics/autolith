@@ -412,7 +412,7 @@
                         "/papercuts remains inside the interactive application")
            (let ((list-output (recording-terminal-output terminal)))
              (test-assert
-              (and (search "PAPERCUTS" list-output)
+              (and (search "# papercuts" list-output)
                    (search "(papercut \"" list-output)
                    (search "Provider retry is opaque" list-output)
                    (not (search "~%" list-output)))
@@ -428,7 +428,7 @@
               "the displayed papercut call evaluates successfully")
              (let ((detail-output (recording-terminal-output terminal)))
                (test-assert
-                (and (search "PAPERCUT" detail-output)
+                (and (search "# papercut" detail-output)
                      (search (papercut-title report) detail-output)
                      (search (papercut-content report) detail-output)
                      (not (search "~%" detail-output)))
@@ -444,7 +444,7 @@
               (eq (application-lisp-evaluation-status evaluation) ':ok)
               "the canonical papercut-close call evaluates successfully")
              (test-assert
-              (and (search "PAPERCUT CLOSED"
+              (and (search "closed papercut"
                            (recording-terminal-output terminal))
                    (null (papercut-find
                           configuration (papercut-identifier report))))
