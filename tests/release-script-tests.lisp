@@ -2909,22 +2909,22 @@ esac
        (string= (release-archive--platform-id os architecture) expected)
        (format nil "~A/~A maps to ~A" os architecture expected))))
   (test-assert
-   (string= (release-archive--platform-id "Linux" "x86_64" "musl")
+   (string= (release-archive--platform-id "Linux" "x86_64" ':musl)
             "x86_64-linux-musl")
    "Linux/x86_64 with musl maps to x86_64-linux-musl")
   (test-assert
-   (string= (release-archive--platform-id "Linux" "aarch64" "musl")
+   (string= (release-archive--platform-id "Linux" "aarch64" ':musl)
             "aarch64-linux-musl")
    "Linux/aarch64 with musl maps to aarch64-linux-musl")
   (test-assert
-   (string= (release-archive--linux-libc-output->identity
-             "/lib/ld-musl-x86_64.so.1")
-            "musl")
+   (eq (release-archive--linux-libc-output->identity
+        "/lib/ld-musl-x86_64.so.1")
+       ':musl)
    "musl ldd output establishes musl identity")
   (test-assert
-   (string= (release-archive--linux-libc-output->identity
-             "libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6")
-            "glibc")
+   (eq (release-archive--linux-libc-output->identity
+        "libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6")
+       ':glibc)
    "glibc ldd output establishes glibc identity")
   (test-assert
    (handler-case
@@ -2967,7 +2967,7 @@ esac
   (when (string-equal (software-type) "Linux")
     (let* ((old-libc (uiop:getenv "AUTOLITH_LIBC"))
            (detected (release-archive--linux-libc))
-           (mismatch (if (string= detected "musl") "glibc" "musl")))
+           (mismatch (if (eq detected ':musl) "glibc" "musl")))
       (unwind-protect
            (progn
              (platform-setenv "AUTOLITH_LIBC" mismatch)

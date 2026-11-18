@@ -356,22 +356,22 @@ rather than failing, so existence needs the following stat first."
              :test #'string=)
        t))
 
-(-> release-archive--linux-libc-output->identity (string) string)
+(-> release-archive--linux-libc-output->identity (string) (member :musl :glibc))
 (defun release-archive--linux-libc-output->identity (output)
   "Return the Linux C library identity established by ldd OUTPUT."
   (cond
     ((search "musl" output :test #'char-equal)
-     "musl")
+     ':musl)
     ((or (search "libc.so.6" output :test #'char-equal)
          (search "ld-linux" output :test #'char-equal))
-     "glibc")
+     ':glibc)
     (t
      (error 'release-archive-error
             :stage ':prerequisites
             :cause (format nil "Could not identify the Linux C library from: ~A"
                            output)))))
 
-(-> release-archive--linux-libc () string)
+(-> release-archive--linux-libc () (member :musl :glibc))
 (defun release-archive--linux-libc ()
   "Return the detected native Linux C library identity."
   (unless (release-archive--command-pathname "ldd")
@@ -387,20 +387,20 @@ rather than failing, so existence needs the following stat first."
          (configured (uiop:getenv "AUTOLITH_LIBC")))
     (when (and configured
                (plusp (length configured))
-               (not (string-equal configured detected)))
+               (not (string-equal configured (symbol-name detected))))
       (error 'release-archive-error
              :stage ':prerequisites
-             :cause (format nil "AUTOLITH_LIBC names ~A, but this host uses ~A."
+             :cause (format nil "AUTOLITH_LIBC names ~A, but this host uses ~(~A~)."
                             configured detected)))
     detected))
 
 (-> release-archive--platform-id
-    (string string &optional (option string))
+    (string string &optional (option (member :musl :glibc)))
     string)
 (defun release-archive--platform-id (os architecture &optional libc)
   "Return the canonical release identifier for OS, ARCHITECTURE, and LIBC."
   (let ((architecture (string-downcase architecture))
-        (musl-p       (and libc (string-equal libc "musl"))))
+        (musl-p       (eq libc ':musl)))
     (cond
       ((and (string-equal os "Linux")
             (release-archive--x86-64-architecture-p architecture))
