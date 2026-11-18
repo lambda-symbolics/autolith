@@ -23,7 +23,7 @@
                   :shared-binding-mismatch :shared-binding-match :ambiguous-requirement
                   :search-exhaustion :combined-ambiguity :planned-opposite :planned-key-conflict))
     (with-test-configuration (base root)
-      (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode "active"))
+      (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode ':active))
              (registry      (make-default-tool-registry :configuration configuration))
              (context       (make-instance 'tool-context :configuration configuration :worker nil
                                                          :registry     registry
@@ -163,7 +163,7 @@
   "Check computed bindings and guards, conditional future values, and read-only preflight."
   (dolist (case '(:computed-success :computed-mismatch :guard-false :future-count :future-guard-false))
     (with-test-configuration (base root)
-      (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode "active"))
+      (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode ':active))
              (registry      (make-default-tool-registry :configuration configuration))
              (context       (make-instance 'tool-context :configuration configuration :worker nil
                                                          :registry     registry
@@ -245,7 +245,7 @@
   (dolist (case '(:derived-opposition :computed-opposition :partial-key-conflict
                   :unknown-owner :unknown-key :unknown-guard :false-guard))
     (with-test-configuration (base root)
-      (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode "active"))
+      (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode ':active))
              (registry      (make-default-tool-registry :configuration configuration))
              (context       (make-instance 'tool-context :configuration configuration :worker nil
                                                         :registry     registry
@@ -336,7 +336,7 @@
   "Keep shared future identities through selected bindings and nested rule aliases."
   (dolist (case '(:selected-binding :nested-alias :joint-future-constraints :selected-guard))
     (with-test-configuration (base root)
-      (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode "active"))
+      (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode ':active))
              (registry      (make-default-tool-registry :configuration configuration))
              (context       (make-instance 'tool-context :configuration configuration :worker nil
                                                         :registry     registry
@@ -425,7 +425,7 @@
   (dolist (case '(:derived-premise :current-derived-premise :clean-alternative
                   :selected-false-guard :selected-computation-mismatch))
     (with-test-configuration (base root)
-      (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode "active"))
+      (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode ':active))
              (registry      (make-default-tool-registry :configuration configuration))
              (context       (make-instance 'tool-context :configuration configuration :worker nil
                                                         :registry     registry

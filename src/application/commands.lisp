@@ -425,7 +425,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
                 "on (saved; inactive)")
                (t
                 "off")))
-       (list "web search" (config :web-search-mode configuration))
+       (list "web search" (string-downcase (config :web-search-mode configuration)))
        (list "trace"
              (application--toggle-state
               (application-reasoning-traces-p application)))
@@ -488,7 +488,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
                    (if (configuration-codex-fast-mode-active-p configuration)
                        "fast (2x Codex plan usage)"
                        "standard"))
-             (list "web search" (config :web-search-mode configuration))
+             (list "web search" (string-downcase (config :web-search-mode configuration)))
              (list "goal"
                    (let ((goal (application-goal application)))
                      (if goal

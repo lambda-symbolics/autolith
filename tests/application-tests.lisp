@@ -9858,7 +9858,7 @@
 (defun test-effort-switch ()
   "Test in-place model and reasoning-effort configuration switching."
   (let* ((base          (test-configuration))
-         (configuration (configuration-copy base :web-search-mode "live"))
+         (configuration (configuration-copy base :web-search-mode ':live))
          (root          (test-configuration-root configuration)))
     (unwind-protect
          (let* ((conversation (conversation-create configuration
@@ -9908,7 +9908,7 @@
              (test-assert (string= (config :provider-endpoint updated)
                                    (config :provider-endpoint configuration))
                           "effort switching preserves the provider endpoint")
-             (test-assert (string= (config :web-search-mode updated) "live")
+             (test-assert (eq (config :web-search-mode updated) ':live)
                           "effort switching preserves hosted web search mode"))
            (test-assert
             (string= (provider-session-id (application-provider application))

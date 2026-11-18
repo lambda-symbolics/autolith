@@ -239,7 +239,7 @@ choice for the primary agent rather than a silent property of every task."
      :web-search-mode
      (if web-enabled-p
          (config :web-search-mode parent-configuration)
-         "disabled"))))
+         ':disabled))))
 
 (-> task-child-reference-history-p (agent configuration) boolean)
 (defun task-child-reference-history-p (parent child-configuration)

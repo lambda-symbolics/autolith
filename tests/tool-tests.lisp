@@ -535,7 +535,7 @@
                       (make-instance 'tool-context
                                      :configuration
                                      (configuration-copy configuration
-                                                           :web-search-mode "live")
+                                                           :web-search-mode ':live)
                                      :worker       nil
                                      :conversation conversation)
                       (provider-create configuration)
@@ -549,7 +549,7 @@
                       (make-instance 'tool-context
                                      :configuration
                                      (configuration-copy configuration
-                                                           :web-search-mode "indexed")
+                                                           :web-search-mode ':indexed)
                                      :worker       nil
                                      :conversation conversation)
                       (provider-create configuration)

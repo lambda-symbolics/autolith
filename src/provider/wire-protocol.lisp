@@ -386,7 +386,7 @@ provider search and stay advertised."
 Independent web namespace tools, such as web_extra.gist page retrieval,
 stay available because they do not depend on provider web search."
   (if (or hosted-web-search-p
-          (string= (config :web-search-mode configuration) "disabled"))
+          (eq (config :web-search-mode configuration) ':disabled))
       (coerce
        (loop for entry across tool-namespaces
              for filtered = (provider-request--without-web-run entry)

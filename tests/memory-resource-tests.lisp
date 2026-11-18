@@ -1580,7 +1580,7 @@
 (defun memory-resource-tests--check-url-receipts (&key long-p (spill-p t))
   "Test completed retrievals, retained quotations, authenticity, and original observation times."
   (with-test-configuration (base root)
-    (let* ((configuration     (configuration-copy base :working-directory root :knowledge-mode "active"))
+    (let* ((configuration     (configuration-copy base :working-directory root :knowledge-mode ':active))
            (registry          (make-default-tool-registry :configuration configuration))
            (conversation      (conversation-create configuration))
            (context           (make-instance 'tool-context :configuration configuration :worker nil

@@ -313,7 +313,7 @@
 (defun test-continuation-claim-references ()
   "Offer the facts a conversation read and resolve one that stops holding, derived facts included."
   (with-test-configuration (configuration)
-    (setf (config :knowledge-mode configuration) "active")
+    (setf (config :knowledge-mode configuration) ':active)
     (knowledge-tests--define-appointments configuration)
     (knowledge-propose-rule configuration
                             :id         "departure"
@@ -377,7 +377,7 @@
                                        :arguments (list "uri" (format nil "memory:claim/~A" travel)))
           (test-assert (member travel (funcall given) :test #'equal)
                        "a later read keeps what the conversation was given before")
-          (setf (config :knowledge-mode configuration) "off")
+          (setf (config :knowledge-mode configuration) ':off)
           (test-assert (and (equal (getf derived :observed) (state derived))
                             (null (claim "travel to review")))
                        "with knowledge off no fact is offered and a cited one is taken to stand")))))

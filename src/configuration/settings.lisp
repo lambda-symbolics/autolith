@@ -266,10 +266,6 @@
   '("none" "low" "medium" "high" "xhigh" "max" "ultra")
   "Reasoning effort names accepted by Autolith configuration.")
 
-(defparameter *supported-web-search-modes*
-  '("cached" "indexed" "live" "disabled")
-  "Standalone web search modes accepted by Autolith configuration.")
-
 ;; DEFVAR, deliberately: the provider registry rewrites this table at
 ;; runtime with every registered model, so a self-reload through
 ;; ql:quickload must not reset it to the built-in list and invalidate

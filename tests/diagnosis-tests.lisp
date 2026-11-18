@@ -532,7 +532,7 @@ With WIRE-NAMES-P, probe tools have separate canonical and display names."
 (defun test-diagnosis-setting ()
   "Test that diagnosis.run is offered only with active knowledge and probes enabled."
   (with-test-configuration (base root)
-    (loop for (mode diagnosis-p expected) in '(("active" t t) ("active" nil nil) ("passive" t nil))
+    (loop for (mode diagnosis-p expected) in '((:active t t) (:active nil nil) (:passive t nil))
           do (let ((registry (make-default-tool-registry
                               :configuration (configuration-copy base :working-directory root
                                                                       :knowledge-mode    mode

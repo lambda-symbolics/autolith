@@ -344,12 +344,12 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
 (-> web--external-web-access (configuration) (or (eql t) (satisfies json-false-p) string))
 (defun web--external-web-access (configuration)
   "Return Codex's standalone endpoint access value for CONFIGURATION."
-  (cond
-    ((string= (config :web-search-mode configuration) "cached")
+  (case (config :web-search-mode configuration)
+    (:cached
      (json-false))
-    ((string= (config :web-search-mode configuration) "indexed")
+    (:indexed
      "indexed")
-    ((string= (config :web-search-mode configuration) "live")
+    (:live
      t)
     (t
      (json-false))))
@@ -396,7 +396,7 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
   (let* ((configuration (tool-context-configuration context))
          (provider      (provider-create configuration))
          (conversation  (tool-context-conversation context)))
-    (when (string= (config :web-search-mode configuration) "disabled")
+    (when (eq (config :web-search-mode configuration) ':disabled)
       (error 'tool-error
              :message   "Provider web search is disabled by configuration."
              :tool-name "web.run"))

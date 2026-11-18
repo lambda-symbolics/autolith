@@ -15,9 +15,9 @@
 (-> test-system-prompt-structured-knowledge () null)
 (defun test-system-prompt-structured-knowledge ()
   "Test the prompt explains structured knowledge and diagnosis only while they are offered."
-  (dolist (case '(("active" nil t nil "active knowledge explains facts, rules, and contracts")
-                  ("active" t t t "enabled diagnosis adds its guidance")
-                  ("off" t nil nil "knowledge off leaves both sections out")))
+  (dolist (case '((:active nil t nil "active knowledge explains facts, rules, and contracts")
+                  (:active t t t "enabled diagnosis adds its guidance")
+                  (:off t nil nil "knowledge off leaves both sections out")))
     (destructuring-bind (mode diagnosis-p knowledge-p diagnosis-shown-p description) case
       (with-test-configuration (configuration)
         (setf (config :knowledge-mode configuration) mode
@@ -107,7 +107,7 @@
                            configuration :hurry-up-p t)))
              (prompt-tests--contains context "HURRY-UP MODE IS ACTIVE"
                                      "hurry-up guidance rides in mutable context"))
-           (setf (config :web-search-mode configuration) "disabled")
+           (setf (config :web-search-mode configuration) ':disabled)
            (let ((prompt (system-prompt configuration)))
              (prompt-tests--absent prompt "WEB SEARCH IS AVAILABLE"
                                    "disabled web search omits both search vehicles"))

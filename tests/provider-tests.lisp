@@ -508,7 +508,7 @@ a Responses function-call output has."
   (let* ((base-configuration (test-configuration))
          (root               (test-configuration-root base-configuration))
          (disabled-configuration
-           (configuration-copy base-configuration :web-search-mode "disabled"))
+           (configuration-copy base-configuration :web-search-mode ':disabled))
          (schemas            (provider-tests--search-filter-schemas)))
     (unwind-protect
          (progn
@@ -596,7 +596,7 @@ a Responses function-call output has."
                     (configuration-copy
                      (configuration-copy
                       disabled-configuration :model "claude-haiku-4-5-20251001")
-                     :web-search-mode "disabled"))
+                     :web-search-mode ':disabled))
                   (conversation
                     (conversation-create configuration
                                          :identifier "anthropic-search-filter"))

@@ -4,7 +4,7 @@
 (defun test-contract-requirement-bindings ()
   "Exercise admitted bindings, ambiguity, and mapping diagnostics through dispatch and reload."
   (with-test-configuration (base root)
-    (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode "active"))
+    (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode ':active))
            (registry      (make-default-tool-registry :configuration configuration))
            (conversation  (conversation-create configuration))
            (context       (make-instance 'tool-context :configuration configuration :worker nil
@@ -102,7 +102,7 @@
 (defun test-contract-recording-result-protocol ()
   "Retain valid bounded diagnostics, ordered images, and durable result subtype metadata."
   (with-test-configuration (base root)
-    (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode "active"))
+    (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode ':active))
            (registry      (make-default-tool-registry :configuration configuration))
            (conversation  (conversation-create configuration))
            (context       (make-instance 'tool-context :configuration configuration :worker nil

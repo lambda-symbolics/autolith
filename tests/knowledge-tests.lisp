@@ -1428,8 +1428,8 @@
   (with-test-configuration (base root)
     (multiple-value-bind (configuration workspace)
         (memory-source-tests--workspace base root)
-      (let ((off     (configuration-copy configuration :knowledge-mode "off"))
-            (passive (configuration-copy configuration :knowledge-mode "passive")))
+      (let ((off     (configuration-copy configuration :knowledge-mode ':off))
+            (passive (configuration-copy configuration :knowledge-mode ':passive)))
         (knowledge-tests--define-appointments configuration)
         (knowledge-tests--admit-departure configuration)
         (knowledge-tests--schedule-review configuration workspace "13:00")
@@ -1450,7 +1450,7 @@
           (let ((conversation (conversation-create mode)))
             (conversation-append-user-message conversation "When should I leave for the review?")
             (test-assert (null (knowledge-tests--recall mode conversation))
-                         (format nil "~A mode recalls no facts" (config :knowledge-mode mode)))))
+                         (format nil "~(~A~) mode recalls no facts" (config :knowledge-mode mode)))))
         (test-assert (and (knowledge-capture-p passive)
                           (not (knowledge-capture-p off))
                           (not (knowledge-active-p passive)))
@@ -1470,7 +1470,7 @@
 (-> test-knowledge-mission-observations () null)
 (defun test-knowledge-mission-observations ()
   "Test that mission status and gate results become facts, each report replacing the last."
-  (dolist (mode '("active" "off"))
+  (dolist (mode '(:active :off))
     (with-test-configuration (base root)
       (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode mode))
              (application   (mission-test--application configuration))
@@ -1489,7 +1489,7 @@
               (mission (format nil "mission/~A/~D"
                                (conversation-identifier (application-conversation application))
                                (getf (application-goal application) :created-at))))
-          (if (string= mode "off")
+          (if (eq mode ':off)
               (test-assert (null facts) "off mode records no mission facts")
               (test-assert (equal facts
                                   (sort (list (format nil "gate first of mission ~A passed" mission)
@@ -2351,7 +2351,7 @@
 (-> test-knowledge-action-contracts () null)
 (defun test-knowledge-action-contracts ()
   "Test contracts refusing calls on unmet requirements and recording predictions and observations."
-  (dolist (mode '("active" "passive"))
+  (dolist (mode '(:active :passive))
     (with-test-configuration (base root)
       (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode mode))
              (registry      (make-default-tool-registry :configuration configuration))
@@ -2392,7 +2392,7 @@
                (holding (pattern)
                  (knowledge-view-holds (knowledge-view-current configuration) pattern)))
           (let ((first-call (send)))
-            (if (string= mode "active")
+            (if (eq mode ':active)
                 (test-assert (and (not (tool-result-success-p first-call))
                                   (search "Contract send-report requires report.ready(q3), which does not hold. The call was not made."
                                           (tool-result-content first-call))
@@ -2402,7 +2402,7 @@
                                   (= 1 (knowledge-tests--mail-tool-calls mail)))
                              "passive mode never refuses a call")))
           (knowledge-assert configuration '("report.ready" "q3") :basis ':model-proposal)
-          (when (string= mode "active")
+          (when (eq mode ':active)
             (let ((refused (send)))
               (test-assert (and (not (tool-result-success-p refused))
                                 (search "holds only on disputed facts or on bases it does not accept (it accepts observation, user-assertion)"
@@ -2418,12 +2418,12 @@
           (knowledge-admit-rule configuration "draft-ready")
           (knowledge-tests--said configuration "report.drafted" '("q3") :quote "q3 is drafted")
           (knowledge-tests--said configuration "report.drafted" '("q3") :quote "q3 is not drafted" :negated t)
-          (when (string= mode "active")
+          (when (eq mode ':active)
             (test-assert (and (not (tool-result-success-p (send)))
                               (zerop (knowledge-tests--mail-tool-calls mail)))
                          "a conflicted premise cannot satisfy the contract through a derivation"))
           (knowledge-tests--said configuration "report.ready" '("q3") :quote "the q3 report is ready")
-          (when (string= mode "active")
+          (when (eq mode ':active)
             (test-assert (tool-result-success-p (send))
                          "the call runs once its requirement holds on the user's statement"))
           (let ((sent    (first (holding '("report.sent" "q3"))))
@@ -2444,7 +2444,7 @@
                             (null (holding '("report.sent" "q4")))
                             (null (holding '("mail.message" "q4" "?m"))))
                        "a call handed off to a background job records neither effects nor observations"))
-        (when (string= mode "active")
+        (when (eq mode ':active)
           (let ((listing (memory-resource-tests--call registry context
                                                       :namespace "resource"
                                                       :name      "read"

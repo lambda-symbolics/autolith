@@ -69,7 +69,7 @@ The Grok proxy executes search server-side. Grok Build reference commit
 5163763e splices these bare entries into the request tools array whenever
 backend search is enabled."
   (declare (ignore provider))
-  (unless (string= (config :web-search-mode configuration) "disabled")
+  (unless (eq (config :web-search-mode configuration) ':disabled)
     (list (json-object "type" "web_search")
           (json-object "type" "x_search"))))
 
@@ -108,8 +108,7 @@ key, both matching Grok Build reference commit 5163763e."
         (cache-key     (conversation-prompt-cache-key conversation)))
     (append
      (list "include"
-           (if (string= (config :web-search-mode configuration)
-                        "disabled")
+           (if (eq (config :web-search-mode configuration) ':disabled)
                (json-array "reasoning.encrypted_content")
                (json-array "reasoning.encrypted_content"
                            "no_inline_citations")))

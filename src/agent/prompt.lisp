@@ -146,7 +146,7 @@ prompt instead of the full Autolith persona.")
 (defun system-prompt--web-run-p (configuration)
   "Return true when this request should advertise web.run."
   (and (not *system-prompt-hosted-web-search-p*)
-       (not (string= (config :web-search-mode configuration) "disabled"))
+       (not (eq (config :web-search-mode configuration) ':disabled))
        t))
 
 (-> system-prompt--template-path () pathname)

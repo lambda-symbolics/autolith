@@ -569,7 +569,7 @@
       (learning-tests--report-turn conversation "q4")
       (test-assert (null (procedure-learn configuration))
                    "another agreeing turn does not add a version")
-      (test-assert (null (procedure-learn (configuration-copy configuration :knowledge-mode "off")))
+      (test-assert (null (procedure-learn (configuration-copy configuration :knowledge-mode ':off)))
                    "nothing is learned when knowledge is off")
       (procedure-retire configuration "make-sales-report")
       (learning-tests--report-turn conversation "q5")
@@ -862,7 +862,7 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
     (with-test-configuration (base root)
       (let ((registry (make-default-tool-registry
                        :configuration (configuration-copy base :working-directory root
-                                                               :knowledge-mode    "passive"))))
+                                                               :knowledge-mode    ':passive))))
         (test-assert (null (find "procedure.run" (tool-registry-tools registry)
                                  :key #'tool-canonical-name :test #'string=))
                      "procedure.run is offered only while knowledge is active"))))
@@ -1346,7 +1346,7 @@ Only exact offers are returned, or with RELATED-P only offers of procedures that
         (learned  nil))
     (with-test-configuration (base root)
       (let ((session (learning-tests--session-create
-                      (configuration-copy base :working-directory root :knowledge-mode "off"))))
+                      (configuration-copy base :working-directory root :knowledge-mode ':off))))
         (setf baseline (mapcar (lambda (quarter) (learning-tests--session-turn session quarter))
                                quarters))))
     (with-test-configuration (base root)

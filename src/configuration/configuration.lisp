@@ -18,11 +18,6 @@
   (:default-initargs :type 'keyword :options '(:unix :tcp))
   (:documentation "The management endpoint transport, limited by host socket support."))
 
-(defclass web-search-mode-setting (choice-setting)
-  ()
-  (:default-initargs :type 'non-empty-string)
-  (:documentation "The standalone web search mode, read case-insensitively."))
-
 (defclass directory-setting (pathname-setting)
   ()
   (:documentation "A directory pathname, always stored in directory form."))
@@ -83,11 +78,6 @@
            (setting-reject setting value
                            "~A must be a positive integer, NONE, OFF, or UNSET, not ~S."
                            (setting-label setting) value)))))))
-
-(defmethod setting-coerce ((setting web-search-mode-setting) (value string) configuration)
-  "Read the mode name in lower case."
-  (declare (ignore setting configuration))
-  (string-downcase value))
 
 (defmethod setting-coerce ((setting directory-setting) value configuration)
   "Store directory designators in directory form."
@@ -364,16 +354,16 @@ Ordinary native defaults remain lazy and follow the current environment."
   :environment                                 "AUTOLITH_PREFER_CODEX_CONTEXT_WINDOW"
   :default                                     t)
 
-(define-setting :web-search-mode (web-search-mode-setting)
+(define-setting :web-search-mode (choice-setting)
   :label                         "Web search"
   :group                         :model
   :documentation                 "The provider web search mode."
-  :type                          'non-empty-string
+  :type                          'keyword
   :environment                   "AUTOLITH_WEB_SEARCH"
   :options                       (lambda (configuration)
                                    (declare (ignore configuration))
-                                   (copy-list *supported-web-search-modes*))
-  :default                       "cached")
+                                   (list ':cached ':indexed ':live ':disabled))
+  :default                       ':cached)
 
 (define-setting :context-window (derived-setting)
   :label                        "Context window"
@@ -489,13 +479,13 @@ Ordinary native defaults remain lazy and follow the current environment."
   :label                        "Structured knowledge"
   :group                        :behavior
   :documentation                "Use facts and rules (active), record observations without using them (passive), or disable knowledge (off). No knowledge is added to model requests in passive or off mode."
-  :type                         'non-empty-string
+  :type                         'keyword
   :scope                        :durable
   :environment                  "AUTOLITH_KNOWLEDGE"
   :options                      (lambda (configuration)
                                   (declare (ignore configuration))
-                                  (list "active" "passive" "off"))
-  :default                      "active")
+                                  (list ':active ':passive ':off))
+  :default                      ':active)
 
 (define-setting :diagnosis-p (boolean-setting)
   :label                     "Diagnostic probes"

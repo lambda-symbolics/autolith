@@ -94,7 +94,7 @@
              "enabled Grok search requests citation metadata")
             (let* ((disabled
                      (configuration-copy configuration
-                                           :web-search-mode "disabled"))
+                                           :web-search-mode ':disabled))
                    (request
                      (provider-request-object
                       (grok-provider-create disabled) conversation (json-array))))

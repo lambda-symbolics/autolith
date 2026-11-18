@@ -144,29 +144,17 @@ stopped, and INCOMPLETE-P whether an incomplete final record follows it.")
 
 ;;;; -- Activation --
 
-(-> knowledge-mode (configuration) keyword)
-(defun knowledge-mode (configuration)
-  "Return CONFIGURATION's structured knowledge mode: :ACTIVE, :PASSIVE, or :OFF."
-  (let ((mode (config :knowledge-mode configuration)))
-    (cond
-      ((equal mode "passive")
-       ':passive)
-      ((equal mode "off")
-       ':off)
-      (t
-       ':active))))
-
 (-> knowledge-active-p ((option configuration)) boolean)
 (defun knowledge-active-p (configuration)
   "Return true when facts and rules are offered to the model under CONFIGURATION.
 
 Without a configuration, as in standalone tool registries, knowledge is active."
-  (or (null configuration) (eq (knowledge-mode configuration) ':active)))
+  (or (null configuration) (eq (config :knowledge-mode configuration) ':active)))
 
 (-> knowledge-capture-p (configuration) boolean)
 (defun knowledge-capture-p (configuration)
   "Return true when observations are recorded as facts under CONFIGURATION."
-  (and (member (knowledge-mode configuration) '(:active :passive)) t))
+  (and (member (config :knowledge-mode configuration) '(:active :passive)) t))
 
 
 ;;;; -- Record Validation --
