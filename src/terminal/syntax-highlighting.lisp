@@ -15,13 +15,11 @@
   "Return one Autolith terminal span for Colordiff ROLE and TEXT."
   (terminal-span
    (case role
-     (:context-gutter
-      ':dim)
      (:removed-gutter
       ':failure)
-     ((:added-gutter :source-gutter)
+     (:added-gutter
       ':success)
-     ((:context :elision :prompt)
+     ((:context-gutter :source-gutter :context :elision :prompt)
       ':dim)
      (otherwise
       role))

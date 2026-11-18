@@ -31,7 +31,7 @@
 (defun application--source-preview-rows
     (text &key path language prompt (limit *application-tool-call-lines*)
                rainbow-parentheses-p)
-  "Return bounded syntax-highlighted source TEXT under one green ruler.
+  "Return bounded syntax-highlighted source TEXT under one rail.
 
 PROMPT, when supplied, leads the first line and indents the following ones.
 RAINBOW-PARENTHESES-P enables nesting colors for dedicated Lisp displays."

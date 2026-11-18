@@ -1494,17 +1494,6 @@ OPERATION's own declared target line so they stay numbered."
   (declare (ignore tool))
   (application--generic-tool-call-entry application call))
 
-(-> application--shell-command-rows (string) list)
-(defun application--shell-command-rows (command)
-  "Return bounded shell source with a subdued first-line rail."
-  (let ((rows (application--source-preview-rows command
-                                              :language *application-shell-language*
-                                              :prompt   "$ ")))
-    (when rows
-      (setf (first (first rows))
-            (terminal-span ':dim (terminal-span-text (first (first rows))))))
-    rows))
-
 (defmethod application-tool-call-entry
     ((tool shell-run-tool) (application application) (call hash-table))
   "Present shell.run arguments immediately above the shell source rail."
@@ -1518,7 +1507,9 @@ OPERATION's own declared target line so they stay numbered."
      :rows   (append
               (application--generic-argument-rows
                application arguments :excluded-keys '("command"))
-              (application--shell-command-rows command)))))
+              (application--source-preview-rows command
+                                                :language *application-shell-language*
+                                                :prompt   "$ ")))))
 
 (defmethod application-tool-call-entry
     ((tool lisp-source-input) (application application) (call hash-table))
@@ -2542,7 +2533,7 @@ that follow are the model's next observation, not something the user reads."
              (loop for part in parts
                    for index below visible-count
                    collect (append
-                            (list (terminal-span ':success "│ ")
+                            (list (terminal-span ':dim "│ ")
                                   (terminal-span ':dim (first part)))
                             (if (and highlighted (< index (length highlighted)))
                                 (aref highlighted index)
