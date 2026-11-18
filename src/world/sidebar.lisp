@@ -24,6 +24,9 @@
 (defparameter *world-sidebar-filter-character-limit* 64
   "The most characters the sidebar's filter keeps.")
 
+(defparameter *world-sidebar-repository-seconds* 30
+  "How long the sidebar trusts what Git said about a workspace before asking again.")
+
 (defparameter *world-sidebar-refresh-seconds* 1
   "How often the sidebar asks the world and the server what changed.")
 
@@ -63,6 +66,11 @@
     :reader        world-sidebar-pathnames
     :type          hash-table
     :documentation "Active storage identities cached by the shared conversation locator.")
+   (repository-memo
+    :initform      nil
+    :accessor      world-sidebar-repository-memo
+    :type          list
+    :documentation "When Git was last asked about the workspaces and what it said, as (TIME . MEMO), or NIL.")
    (filter
     :initform      ""
     :accessor      world-sidebar-filter
@@ -605,16 +613,17 @@ workspace, in open and closed groups alike."
 (-> world-sidebar--gather (world-sidebar) list)
 (defun world-sidebar--gather (sidebar)
   "Gather the read-only catalogue, then guard positive repository observations in the durable store."
-  (let ((configuration (world-sidebar-configuration sidebar)))
+  (let ((configuration (world-sidebar-configuration sidebar))
+        (memo          (world-sidebar--repository-memo sidebar)))
     (multiple-value-bind (statuses known-p) (world-sidebar--statuses sidebar)
       (let* ((world      (world-channel-catalogue configuration :statuses statuses))
              (channels   (world-sidebar--channels sidebar world))
-             (groups     (world-repository-groups channels (world-sidebar-current sidebar)))
+             (groups     (world-repository-groups channels (world-sidebar-current sidebar) :memo memo))
              (remembered (handler-case (world-repository-remember configuration channels groups)
                            (autolith-error () channels))))
         (unless (eq remembered channels)
           (setf channels remembered
-                groups (world-repository-groups channels (world-sidebar-current sidebar))))
+                groups (world-repository-groups channels (world-sidebar-current sidebar) :memo memo)))
         (list :inbox             (world-inbox-channel world)
               :channels          channels
               :groups            groups
@@ -622,6 +631,21 @@ workspace, in open and closed groups alike."
               :statuses          statuses
               :runtime-unknown-p (not known-p)
               :pending           (world-sidebar--pending configuration))))))
+
+(-> world-sidebar--repository-memo (world-sidebar) list)
+(defun world-sidebar--repository-memo (sidebar)
+  "Return SIDEBAR's memo of Git metadata, a fresh one once the old one has aged out.
+
+Gathering every second would otherwise start several Git processes a workspace
+each time; a new workspace is still asked about when it first appears."
+  (let ((now  (funcall (world-sidebar-clock-function sidebar)))
+        (kept (world-sidebar-repository-memo sidebar)))
+    (if (and kept
+             (< (- now (first kept))
+                (* *world-sidebar-repository-seconds* internal-time-units-per-second)))
+        (rest kept)
+        (rest (setf (world-sidebar-repository-memo sidebar)
+                    (cons now (world-repository-make-memo)))))))
 
 (-> world-sidebar--names (world) list)
 (defun world-sidebar--names (world)

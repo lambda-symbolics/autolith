@@ -109,19 +109,25 @@ process-global environment change participates in presentation discovery."
                                                        :directory directory
                                                        :channels  members)))
 
-(-> world-repository-groups (list (option string)) list)
-(defun world-repository-groups (channels current)
+(-> world-repository-make-memo () list)
+(defun world-repository-make-memo ()
+  "Return an empty memo of Git metadata by workspace and of origins by repository."
+  (list (make-hash-table :test #'equal) (make-hash-table :test #'equal)))
+
+(-> world-repository-groups (list (option string) &key (:memo list)) list)
+(defun world-repository-groups (channels current &key (memo (world-repository-make-memo)))
   "Gather local repository presentation groups without changing channel workspaces.
 
-Resolve each workspace and common identity once in this call. Prefer fresh
-verified Git metadata, then the channel's durable originating repository.
-Unattributed channels keep their exact workspace group. This function never
-writes the world store or changes the supplied channel objects."
-  (let ((descriptions (make-hash-table :test #'equal))
-        (origins      (make-hash-table :test #'equal))
+Resolve each workspace and common identity once per MEMO, which a caller that
+gathers again and again keeps for a while instead of asking Git each time.
+Prefer fresh verified Git metadata, then the channel's durable originating
+repository. Unattributed channels keep their exact workspace group. This
+function never writes the world store or changes the supplied channel objects."
+  (let ((descriptions (first memo))
+        (origins      (second memo))
         (groups       nil))
     (labels ((description (directory)
-               "Memoize DIRECTORY's metadata only within this gather."
+               "Memoize DIRECTORY's metadata for as long as MEMO lives."
                (multiple-value-bind (value present-p) (gethash directory descriptions)
                  (if present-p
                      value
