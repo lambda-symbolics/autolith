@@ -81,13 +81,13 @@
                                          'run-job-test-provider :configuration configuration :block-on-empty-p timeout-p
                                          :results (list (agent-test-result
                                                          "usage-response"
-                                                         (loop repeat (if invalid-calls-p 2 1)
-                                                               collect (agent-test-call
-                                                                        :call-id "yield-usage" :namespace "yield"
-                                                                        :name      (if timeout-p "note" "submit")
-                                                                        :arguments (if timeout-p
-                                                                                       "{\"note\":\"Continue working.\"}"
-                                                                                       "{\"status\":\"success\",\"data\":{\"answer\":\"yes\"}}")))
+                                                         (list (agent-test-call
+                                                                :call-id   (unless invalid-calls-p "yield-usage")
+                                                                :namespace "yield"
+                                                                :name      (if timeout-p "note" "submit")
+                                                                :arguments (if timeout-p
+                                                                               "{\"note\":\"Continue working.\"}"
+                                                                               "{\"status\":\"success\",\"data\":{\"answer\":\"yes\"}}")))
                                                          :usage (json-object "input_tokens" 13 "output_tokens" 7)))))
              (stream                    (make-string-output-stream))
              (*run-job-event-emitter*   (run-job-event-emitter-create "run-usage" stream))

@@ -949,26 +949,24 @@
 
 (-> test-telemetry-run-protocol-failure () null)
 (defun test-telemetry-run-protocol-failure ()
-  "Classify a real duplicate-call invariant failure at the root boundary."
+  "Classify a real missing-call-identifier failure at the root boundary."
   (test-telemetry--call
    (lambda (configuration)
-     (let* ((provider (make-instance
-                       'scripted-provider :results
-                       (loop for index from 1 to 2
-                             collect (agent-test-result
-                                      (format nil "response-~D" index)
-                                      (list (agent-test-call :call-id   "repeated"
-                                                             :arguments "{\"value\":\"private-value\"}"))))))
-            (agent    (agent-create :configuration configuration :provider provider
-                                    :conversation (conversation-create configuration)
-                                    :tool-registry (agent-test-registry) :worker ':unused))
-            (caught   nil)
-            (bodies   (test-telemetry-hooks--capture
-                       configuration
-                       (lambda ()
-                         (handler-case (agent-run-user-turn agent "Exercise call identity.")
-                           (agent-loop-error () (setf caught t))))))
-            (span     (first (test-telemetry-hooks--kind (first bodies) "run"))))
+    (let* ((provider (make-instance
+                      'scripted-provider :results
+                      (list (agent-test-result
+                             "invalid-call"
+                             (list (agent-test-call :arguments "{\"value\":\"private-value\"}"))))))
+           (agent    (agent-create :configuration configuration :provider provider
+                                   :conversation (conversation-create configuration)
+                                   :tool-registry (agent-test-registry) :worker ':unused))
+           (caught   nil)
+           (bodies   (test-telemetry-hooks--capture
+                      configuration
+                      (lambda ()
+                        (handler-case (agent-run-user-turn agent "Exercise call identity.")
+                          (agent-loop-error () (setf caught t))))))
+           (span     (first (test-telemetry-hooks--kind (first bodies) "run"))))
        (test-assert (and caught
                          (equal (test-telemetry--attribute span "autolith.run.outcome") "error")
                          (equal (test-telemetry--attribute span "error.type") "protocol"))
