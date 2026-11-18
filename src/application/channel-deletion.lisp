@@ -7,9 +7,16 @@
 
 (-> application--delete-channel (application string) null)
 (defun application--delete-channel (application identifier)
-  "Remove IDENTIFIER through the durable removal boundary and present its outcome."
-  (let ((removed (channel-remove (application-configuration application)
-                                 (list identifier) :tool-name "(delete)")))
+  "Remove IDENTIFIER through the durable removal boundary and present its outcome.
+
+A channel the world never recorded has nothing durable to remove: releasing
+its idle host ends it."
+  (let* ((configuration (application-configuration application))
+         (removed       (if (world-channel-find (world-load configuration) identifier)
+                            (channel-remove configuration (list identifier) :tool-name "(delete)")
+                            (progn
+                              (channel--quiesce configuration (list identifier) "(delete)")
+                              1))))
     (application-present
      application
      (application-notice-line
@@ -66,7 +73,14 @@ attachment have left. It never waits for or interrupts unrelated work."
                        (image-daemon:relay-controller terminal))))
     (unless (and server controller attachment)
       (error 'configuration-error :message "This channel has no controlling terminal to move."))
-    (world-server-open server (list :channel destination :switch-p t))
+    ;; A destination that starts for this move takes the terminal's presentation,
+    ;; as it would for a client's own switch.
+    (world-server-open server (list :channel      destination
+                                    :switch-p     t
+                                    :fullscreen-p (terminal-ui-fullscreen-p (application-ui application))
+                                    :rows         (terminal-rows terminal)
+                                    :columns      (terminal-columns terminal)
+                                    :styled-p     (terminal-styled-p terminal)))
     (let* ((host    (world-server--find-host server destination))
            (target  (and host (application-input-controller (world-host-application host))))
            (work    (with-lock-held ((application-input-controller-lock controller))
@@ -127,6 +141,12 @@ turn, external work on another thread, pending input, and live asynchronous jobs
       (error 'configuration-error :message "There is no inbox to move to; nothing was deleted."))
     (cond
       ((and (application-hosted-p application) (typep terminal 'localgroup-terminal))
+       ;; A confirmed deletion ends the turn the channel is in; the destination
+       ;; waits for it to wind down before removing anything.
+       (let ((controller (application-input-controller application)))
+         (when controller
+           (application-input-controller--request-active-turn-cancellation
+            controller :pause-queued-work-p t)))
        (application--handoff-channel-deletion application identifier destination))
       ((application-clients-attached-p application)
        (channel--busy identifier "(delete)" :state ':attached))
@@ -143,8 +163,8 @@ turn, external work on another thread, pending input, and live asynchronous jobs
     (:name              "/delete"
      :argument          "[ID]"
      :description       "delete a channel and its nested channels after confirmation"
-     :tip               "deletes this channel by default; a unique channel ID prefix selects another."
-     :busy-behavior     :inspect
+     :tip               "deletes this channel by default, stopping its turn once confirmed; a channel ID or an agent's name selects another."
+     :busy-behavior     :execute
      :terminal-behavior :exclusive
      :callable          t)
     (application &optional identifier)
