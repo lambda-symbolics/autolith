@@ -88,6 +88,19 @@
                        "a closed workspace hides its channels")
           (test-assert (and (search "(new)" (nth 14 lines)) (search "Ctrl-Space focus" (nth 15 lines)))
                        "the command buttons and the way into the sidebar close the panel"))
+        (let* ((terminal (make-instance 'recording-terminal :columns 120 :rows 24))
+               (rows     (screen-panel-rows sidebar terminal :height 16 :width 30)))
+          (refresh 7 2)
+          (test-assert (eq rows (screen-panel-rows sidebar terminal :height 16 :width 30))
+                       "a frame beside an unchanged sidebar reuses its rendered rows")
+          (test-assert (not (eq rows (screen-panel-rows sidebar terminal :height 16 :width 30
+                                                                        :focused-p t)))
+                       "taking the focus renders the rows again")
+          (refresh 9 2)
+          (test-assert (search "@2 5" (clinedi:ansi-strip
+                                       (eighth (screen-panel-rows sidebar terminal
+                                                                  :height 16 :width 30))))
+                       "a changed channel renders the rows again"))
         (world-sidebar--toggle sidebar (world-sidebar-tests--entry sidebar "b6uouHJ"))
         (test-assert (search "1 nested" (fifth (world-sidebar-tests--lines sidebar)))
                      "a closed channel says how many channels nest below it")

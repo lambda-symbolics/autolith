@@ -56,6 +56,11 @@
     :accessor      world-sidebar-inputs
     :type          list
     :documentation "The world as last gathered, the keyword arguments of `world-sidebar--entries', so a click rebuilds the entries at once.")
+   (rendered
+    :initform      nil
+    :accessor      world-sidebar-rendered
+    :type          list
+    :documentation "The rows last rendered after the state they show, or NIL; a frame beside an unchanged sidebar reuses them.")
    (toggled
     :initform      (make-hash-table :test #'equal)
     :reader        world-sidebar-toggled
@@ -399,15 +404,18 @@ A failed gather publishes a stale observation; the next one tries again."
                               #'world-sidebar--matches
                               #'world-sidebar--entries)
                           sidebar inputs)))
-    (setf (world-sidebar-inputs sidebar) inputs
-          (world-sidebar-entries sidebar) entries
-          (world-sidebar-selected sidebar)
-          (or (and selected
-                   (position (sidebar-entry-key selected) entries
-                             :test #'equal :key #'sidebar-entry-key))
-              0))
-    (not (and (= (length entries) (length previous))
-              (every #'sidebar-entry-equal-p entries previous)))))
+    (setf (world-sidebar-inputs sidebar) inputs)
+    ;; Entries that show the same keep their objects, so rows rendered from
+    ;; them stay valid.
+    (unless (and (= (length entries) (length previous))
+                 (every #'sidebar-entry-equal-p entries previous))
+      (setf (world-sidebar-entries sidebar) entries
+            (world-sidebar-selected sidebar)
+            (or (and selected
+                     (position (sidebar-entry-key selected) entries
+                               :test #'equal :key #'sidebar-entry-key))
+                0))
+      t)))
 
 (-> world-sidebar--toggle (world-sidebar sidebar-fold) null)
 (defun world-sidebar--toggle (sidebar node)

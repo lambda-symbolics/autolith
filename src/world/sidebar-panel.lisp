@@ -372,8 +372,46 @@ when the last gather could not reach the server."
             (terminal-span ':legend-accent "Ctrl-S")
             (terminal-span ':legend-dim " hide"))))
 
+(-> world-sidebar--render-state
+    (world-sidebar terminal &key (:height integer) (:width integer) (:focused-p boolean))
+    list)
+(defun world-sidebar--render-state (sidebar terminal &key height width focused-p)
+  "Return everything SIDEBAR's rendered rows depend on, to tell when earlier rows still hold."
+  (list height width focused-p
+        (terminal-styled-p terminal)
+        *terminal-theme*
+        (world-sidebar-entries sidebar)
+        (world-sidebar-selected sidebar)
+        (world-sidebar-scroll-offset sidebar)
+        (world-sidebar-filter sidebar)
+        (world-sidebar-current sidebar)
+        (getf (world-sidebar-inputs sidebar) :runtime-unknown-p)))
+
 (defmethod screen-panel-rows ((panel world-sidebar) terminal &key height width focused-p)
-  "Render the heading, the scrolling tree, the command buttons and the key hints."
+  "Render the heading, the scrolling tree, the command buttons and the key hints.
+
+The screen asks with every frame it paints, so rows are rendered only when
+something they show changed."
+  (let ((rendered (world-sidebar-rendered panel)))
+    (if (and rendered
+             (equal (first rendered)
+                    (world-sidebar--render-state panel terminal
+                                                 :height height :width width :focused-p focused-p)))
+        (rest rendered)
+        (let ((rows (world-sidebar--render panel terminal
+                                           :height height :width width :focused-p focused-p)))
+          ;; Rendering settles the selection and the scroll offset, so the state is read after it.
+          (setf (world-sidebar-rendered panel)
+                (cons (world-sidebar--render-state panel terminal
+                                                   :height height :width width :focused-p focused-p)
+                      rows))
+          rows))))
+
+(-> world-sidebar--render
+    (world-sidebar terminal &key (:height integer) (:width integer) (:focused-p boolean))
+    list)
+(defun world-sidebar--render (panel terminal &key height width focused-p)
+  "Return PANEL's rows for TERMINAL and record which entry or button each row acts on."
   (let* ((footer-count  (min 1 height))
          (legend-count  (if (> height 1) 1 0))
          (heading-count (min 2 (max 0 (- height footer-count legend-count))))
