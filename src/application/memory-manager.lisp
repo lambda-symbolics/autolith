@@ -565,15 +565,15 @@ Use / to search, Tab to change kind, or n to create a note.")))
   "Manage visible notes and facts in a temporary fullscreen workspace.
 
 The transcript, scroll anchor, composer, attachments, and pending input are not
-used as manager state. Restore the ordinary fullscreen frame on every exit."
+used as manager state. The workspace takes the session's frame, so a client
+keeps its side panel beside it. Restore the ordinary frame on every exit."
   (let* ((ui       (application-ui application))
          (terminal (terminal-ui-terminal ui))
          (manager  (make-instance
                     'memory-manager :application application
                     :session                     (clinedi:make-selection-session
                                                   :identity-key #'memory-manager-item-key :identity-test #'string=
-                                                  :search-key #'memory-manager-item-search-text :search-p t :visible-count 8)))
-         (painter  (clinedi:make-frame-painter)))
+                                                  :search-key #'memory-manager-item-search-text :search-p t :visible-count 8))))
     (memory-manager--reload manager)
     (when (non-empty-string-p query)
       (clinedi:selection-session-handle-event (memory-manager-session manager) (list ':insert query)))
@@ -614,13 +614,12 @@ used as manager state. Restore the ordinary fullscreen frame on every exit."
                   (setf (terminal-ui-live-output-suspended-p ui) t))
                 (loop
                   (terminal-ui-refresh-size ui nil)
+                  ;; The UI's own painter sends a hosted session's clients frames,
+                  ;; which they show beside their side panels like any other.
                   (with-terminal-ui-locked (ui)
                     (multiple-value-bind (rows row column visible-p) (memory-manager--frame manager)
-                      (clinedi:frame-painter-paint
-                       painter rows
-                       (lambda (text) (terminal--write terminal text) (terminal-flush terminal))
-                       :height (terminal-rows terminal) :width (terminal-columns terminal)
-                       :cursor-row row :cursor-column column :cursor-visible-p visible-p)))
+                      (setf (fullscreen-terminal-ui-cursor-visible-p ui) visible-p)
+                      (terminal-ui-fullscreen-paint ui :rows rows :cursor-row row :cursor-column column)))
                   (let ((event (if (terminal-input-ready-p terminal)
                                    (terminal-read-event terminal)
                                    (progn (sleep *terminal-ui-picker-poll-interval*) ':poll))))
@@ -628,7 +627,7 @@ used as manager state. Restore the ordinary fullscreen frame on every exit."
                       ((and (consp event) (eq (first event) ':resize))
                        (terminal-ui-resize ui (second event) :rows (third event)))
                       ((eq event ':clear-screen)
-                       (clinedi:frame-painter-invalidate painter))
+                       (terminal-ui-fullscreen-invalidate ui))
                       ((not (memory-manager--event manager event))
                        (return))))))
            (with-terminal-ui-locked (ui)
