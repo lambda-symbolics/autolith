@@ -761,17 +761,26 @@ record is written even when an item is refused and the turn then fails."
                   (getf plan :persistence)
                   ':durable)
               :request-number request-number)))
-      (conversation-append-provider-metadata
-       conversation
-       (append (list :request-number   request-number
-                     :response-id      (provider-result-response-id result)
-                     :usage            (agent--portable-value
-                                        (provider-usage-normalize
-                                         (provider-result-usage result)))
-                     :request-identity (conversation-request-identity conversation))
-                 ;; The service's effective retention mode, when it reports one.
-               (let ((context (agent--result-reasoning-context result)))
-                 (and context (list :reasoning-context context)))))))
+      (agent--record-provider-result-usage agent result :request-number request-number)))
+  nil)
+
+(-> agent--record-provider-result-usage
+    (agent provider-result &key (:request-number integer))
+    null)
+(defun agent--record-provider-result-usage (agent result &key request-number)
+  "Record RESULT's billed usage independently of its item validation."
+  (let ((conversation (agent-conversation agent)))
+    (conversation-append-provider-metadata
+     conversation
+     (append (list :request-number   request-number
+                   :response-id      (provider-result-response-id result)
+                   :usage            (agent--portable-value
+                                      (provider-usage-normalize
+                                       (provider-result-usage result)))
+                   :request-identity (conversation-request-identity conversation))
+             ;; The service's effective retention mode, when it reports one.
+             (let ((context (agent--result-reasoning-context result)))
+               (and context (list :reasoning-context context))))))
   nil)
 
 (-> agent--append-provider-item
@@ -2174,35 +2183,41 @@ loop, so compaction ahead of the user message shares the turn's budget."
                       :tool-call-count   (length calls)
                       :turn-completion   (provider-result-turn-completion result))))
           (conversation-note-provider-response conversation)
-          (let ((call-plans nil))
+          (let ((call-plans            nil)
+                (persistence-started-p nil))
             (handler-case
-                (progn
-                  (when (and calls (not tools-p))
-                    (error 'agent-loop-error
-                           :message         "A tool-free model turn returned function calls."
-                           :conversation-id (conversation-identifier conversation)
-                           :request-number  request-number))
-                  (when (and calls tool-restriction-p (not tool-calls-p))
-                    (error 'agent-loop-error
-                           :message
-                           (format nil "A restricted turn exceeded its ~D tool-round limit."
-                                   *agent-restricted-maximum-tool-rounds*)
-                           :conversation-id (conversation-identifier conversation)
-                           :request-number  request-number))
-                  (when (and calls tool-restriction-p)
-                    (agent--validate-tool-call-allowlist
-                     agent calls tool-allowlist :request-number request-number))
-                  (conversation-clear-ephemeral-input-items conversation)
-                  (agent--validate-tool-call-identifiers
-                   agent calls
-                               :request-number        request-number)
-                  (setf call-plans
-                        (agent--tool-call-plans agent calls :storm-state storm-state))
-                  (agent--persist-provider-result
-                   agent
-                   result
-                   :request-number request-number
-                   :call-plans     call-plans))
+                (unwind-protect
+                     (progn
+                      (when (and calls (not tools-p))
+                        (error 'agent-loop-error
+                               :message         "A tool-free model turn returned function calls."
+                               :conversation-id (conversation-identifier conversation)
+                               :request-number  request-number))
+                      (when (and calls tool-restriction-p (not tool-calls-p))
+                        (error 'agent-loop-error
+                               :message
+                               (format nil "A restricted turn exceeded its ~D tool-round limit."
+                                       *agent-restricted-maximum-tool-rounds*)
+                               :conversation-id (conversation-identifier conversation)
+                               :request-number  request-number))
+                      (when (and calls tool-restriction-p)
+                        (agent--validate-tool-call-allowlist
+                         agent calls tool-allowlist :request-number request-number))
+                      (conversation-clear-ephemeral-input-items conversation)
+                      (agent--validate-tool-call-identifiers
+                       agent calls
+                                   :request-number        request-number)
+                      (setf call-plans
+                            (agent--tool-call-plans agent calls :storm-state storm-state))
+                      (setf persistence-started-p t)
+                      (agent--persist-provider-result
+                       agent
+                       result
+                       :request-number request-number
+                        :call-plans    call-plans))
+                  (unless persistence-started-p
+                    (agent--record-provider-result-usage
+                     agent result :request-number request-number)))
               (agent-loop-error (condition)
                 ;; Rejected calls still carry billable provider usage.
                 (agent-observer-status observer :provider-request-completed completion-details)

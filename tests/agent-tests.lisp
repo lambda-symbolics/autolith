@@ -1342,35 +1342,52 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
 
 (-> test-agent-refused-item-keeps-usage () null)
 (defun test-agent-refused-item-keeps-usage ()
-  "Record the response's billed usage even when one of its items is refused."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration)))
-    (unwind-protect
-         (let* ((conversation
-                  (conversation-create configuration
-                                       :identifier "refused-item-keeps-usage"))
-                (agent
-                  (agent-create
-                   :configuration configuration
-                   :provider      (make-instance 'scripted-provider :results nil)
-                   :conversation  conversation
-                   :tool-registry (agent-test-registry)
-                   :worker        ':unused))
-                (call     (agent-test-call :call-id "twice" :arguments "{}"))
-                (conflict (agent-test-call :call-id   "twice"
-                                           :arguments "{\"value\":1}"))
-                (result   (agent-test-result "refused" (list call conflict))))
-           (test-assert
-            (handler-case
-                (progn
-                  (agent--persist-provider-result agent result :request-number 1)
-                  nil)
-              (agent-loop-error () t))
-            "a refused item ends the turn as an agent-loop-error")
-           (test-assert
-            (equal '(1 1) (subseq (conversation-usage conversation) 0 2))
-            "the refused response still records the usage the provider billed"))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  "Record billed usage once across item refusal, early validation and acceptance."
+  (with-test-configuration (configuration)
+    (dolist (scenario '(:duplicate :arguments :missing-identifier :accepted))
+      (let* ((conversation (conversation-create
+                            configuration :identifier (string-downcase (symbol-name scenario))))
+             (items        (case scenario
+                             (:duplicate
+                              (list (agent-test-call :call-id "twice" :arguments "{}")
+                                    (agent-test-call :call-id "twice" :arguments "{\"value\":1}")))
+                             (:arguments
+                              (list (agent-test-call :call-id "string" :arguments "\"{}\"")))
+                             (:missing-identifier
+                              (list (agent-test-call :arguments "{}")))
+                             (:accepted
+                              (list (agent-test-message "accepted")))))
+             (result       (agent-test-result "accounted" items))
+             (agent        (agent-create
+                            :configuration configuration
+                            :provider      (make-instance 'scripted-provider :results (list result))
+                            :conversation  conversation
+                            :tool-registry (agent-test-registry)
+                            :worker        ':unused))
+             (before       (conversation-next-sequence conversation))
+             (failed-p     (handler-case
+                               (progn
+                                 (if (eq scenario ':missing-identifier)
+                                     (agent-run-user-turn agent "reject missing identity")
+                                     (agent--persist-provider-result agent result :request-number 1))
+                                 nil)
+                             (agent-loop-error () t))))
+        (test-assert (eq failed-p (not (eq scenario ':accepted)))
+                     "refused responses report the agent boundary failure")
+        (test-assert (equal '(1 1 2) (subseq (conversation-usage conversation) 0 3))
+                     "each response accounts for exactly its billed tokens")
+        (let* ((records (conversation--read-records (conversation-pathname conversation)))
+               (usage-records
+                 (remove-if-not
+                  (lambda (record)
+                    (and (eq (first record) ':provider)
+                         (getf (getf (rest record) :metadata) :usage)))
+                  records)))
+          (test-assert (= (length usage-records) 1)
+                       "refusal and acceptance each append one usage record"))
+        (when (eq scenario ':accepted)
+          (test-assert (= (- (conversation-next-sequence conversation) before) 2)
+                       "accepted responses append one item and one usage record")))))
   nil)
 
 (-> test-agent-malformed-tool-arguments () null)

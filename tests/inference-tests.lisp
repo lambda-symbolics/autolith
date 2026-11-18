@@ -377,6 +377,41 @@
                         "the reconciled frame still settles the usage its provider billed"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
 
+(-> test-rlm-refused-response-keeps-usage () null)
+(defun test-rlm-refused-response-keeps-usage ()
+  "Charge a refused frame response and retain its billed usage in the trace."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration :identifier "refused-frame"))
+           (budget       (rlm-budget-create :calls 2 :tokens 1000 :depth 1))
+           (result       (agent-test-result
+                          "refused" (list (agent-test-call :call-id "string" :arguments "\"{}\""))))
+           (provider     (make-instance 'scripted-provider :results (list result))))
+      (test-assert
+       (handler-case
+           (progn
+             (rlm--run-direct-inference "refuse an invalid item"
+                                        :request      "answer"
+                                        :budget       budget
+                                        :provider     provider
+                                        :conversation conversation)
+             nil)
+         (conversation-invariant-error () t))
+       "a refused frame response reports its conversation failure")
+      (test-assert (= (rlm-budget-remaining-tokens budget) 998)
+                   "the failed request settles exactly its two billed tokens")
+      (let* ((records (conversation--read-records (conversation-pathname conversation)))
+             (usage-records
+               (remove-if-not
+                (lambda (record)
+                  (and (eq (first record) ':provider)
+                       (getf (getf (rest record) :metadata) :usage)))
+                records)))
+        (test-assert (= (length usage-records) 1)
+                     "the refused response retains one trace usage record")
+        (test-assert (equal '(1 1 2) (subseq (conversation-usage conversation) 0 3))
+                     "the trace retains the same usage as the budget charged"))))
+  nil)
+
 (defclass rlm-inference-test-provider (model-provider)
   ((results
     :initarg       :results
@@ -3138,4 +3173,3 @@ A frame sends its shared views and its task as consecutive user messages."
             "continuation reuses the actual state rather than recomputing it"))
       (rlm-environment-pool-flush)))
   nil)
-                                                          

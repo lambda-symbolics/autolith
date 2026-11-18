@@ -290,16 +290,17 @@ VIEWS there is nothing to share, and one message holds everything."
 
 (-> rlm--record-response (conversation provider-result) null)
 (defun rlm--record-response (conversation result)
-  "Append RESULT's items and usage to the frame trace CONVERSATION."
-  (let ((items (provider-result-output-items result)))
-    (conversation-reconcile-call-identifiers conversation items)
-    (dolist (item items)
-      (conversation-append-provider-item conversation item)))
-  (conversation-append-provider-metadata
-   conversation
-   (list :usage (agent--portable-value
-                 (provider-usage-normalize
-                  (provider-result-usage result)))))
+  "Append RESULT's items and billed usage, including when an item is refused."
+  (unwind-protect
+       (let ((items (provider-result-output-items result)))
+         (conversation-reconcile-call-identifiers conversation items)
+         (dolist (item items)
+           (conversation-append-provider-item conversation item)))
+    (conversation-append-provider-metadata
+     conversation
+     (list :usage (agent--portable-value
+                   (provider-usage-normalize
+                    (provider-result-usage result))))))
   nil)
 
 (-> rlm--context-designators (t) list)
