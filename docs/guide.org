@@ -1661,10 +1661,10 @@ running one.
 *** Channel sidebar
 
 In fullscreen mode, an attached terminal can show the world's channels in a
-sidebar on the left. Your inbox appears as =home=, with the number of
-messages waiting there unread; that count is kept on disk, so every terminal
-shows the same one. The other channels are grouped by repository or workspace,
-with the current group first. Within a group, the channel whose conversation
+sidebar on the left. Your inbox appears as =home=, the root of the tree, with
+the number of messages waiting there unread; that count is kept on disk, so
+every terminal shows the same one. The other channels nest below it, grouped by
+repository or workspace, with the current group first. Within a group, the channel whose conversation
 changed last comes first, and child channels are nested under their parents.
 A channel shows its agent's name on one row and its title on the next. Channel
 IDs stay out of the list: the heading shows the current channel's, and a filter
@@ -1678,21 +1678,22 @@ use the saved checkout group. Older removed task worktrees can be attributed
 from exact persisted checkout/source records. Without verified or saved
 ownership, each workspace forms its own group.
 
-The groups and channels form a tree. The current group starts open, and so does
-each channel the current one nests in; the rest start closed. A group's row ends
-with the number of its channels. A closed channel says how many channels nest
-below it, and a closed node adds their unread counts to its own. Click a node's
-=▸= or =▾= marker, or a group's row, to open or close it; the sidebar keeps that
-choice. Click a channel or home to switch to it.
+Home, the groups and the channels form a tree. Home and the current group start
+open, and so does each channel the current one nests in; the rest start closed.
+A group's row ends with the number of its channels. A closed channel or a closed
+home says how many channels nest below it, and a closed node adds their unread
+counts to its own. Click a node's =▸= or =▾= marker, or a group's row, to open
+or close it; the sidebar keeps that choice. Click a channel or home to switch
+to it.
 
-| Marker    | Meaning                         |
-|-----------+---------------------------------|
-| =›=       | This terminal's current channel |
-| =▸= / =▾= | A closed or open node           |
-| Green =●= | The agent is working            |
-| =○=       | Hosted but not working          |
-| =·=       | No running session              |
-| =?=       | Runtime state is unknown        |
+| Marker    | Meaning                                           |
+|-----------+---------------------------------------------------|
+| =▌=       | At the left edge: this terminal's current channel |
+| =▸= / =▾= | A closed or open node                             |
+| Green =●= | The agent is working                              |
+| =○=       | Hosted but not working                            |
+| =·=       | No running session                                |
+| =?=       | Runtime state is unknown                          |
 
 A yellow number counts messages received since this terminal last viewed the
 channel; =@= counts mentions of you. Each terminal tracks its own unread counts.

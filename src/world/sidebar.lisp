@@ -164,7 +164,7 @@
 
 (defclass sidebar-entry ()
   ()
-  (:documentation "One row group of the sidebar's tree: the home channel, a workspace or a channel."))
+  (:documentation "One row group of the sidebar's tree: the home channel at its root, a workspace or a channel."))
 
 (defclass sidebar-fold ()
   ((children-p
@@ -194,7 +194,7 @@
     :documentation "How many entries nest below this one, shown or not."))
   (:documentation "The folding state of a tree node."))
 
-(defclass sidebar-home (sidebar-entry)
+(defclass sidebar-home (sidebar-entry sidebar-fold)
   ((identifier
     :initarg       :identifier
     :reader        sidebar-entry-identifier
@@ -210,7 +210,7 @@
     :reader        sidebar-entry-unread
     :type          (integer 0)
     :documentation "The messages waiting unread for the person."))
-  (:documentation "The person's home channel, first in the sidebar."))
+  (:documentation "The person's home channel, the root every workspace and channel nests below."))
 
 (defclass sidebar-workspace (sidebar-entry sidebar-fold)
   ((key
@@ -489,14 +489,14 @@ it goes unseen."
     list)
 (defun world-sidebar--entries
     (sidebar &key inbox channels groups names statuses pending include-closed-p runtime-unknown-p)
-  "Return the home INBOX entry, then the workspace and channel entries of the tree.
+  "Return the home INBOX entry, then the workspace and channel entries that nest below it.
 
 The inbox's unread count is what waits in it for the person, so it stays true
 across clients and restarts. CHANNELS arrive latest touched first. The group of
 the current channel comes first, then the others in that order. Within a group,
-channels nest under their parents. The first group is open, and a channel when
-the current one nests below it, unless the person opened or closed them.
-INCLUDE-CLOSED-P retains every descendant for structured clients."
+channels nest under their parents. Home and the first group are open, and a
+channel when the current one nests below it, unless the person opened or closed
+them. INCLUDE-CLOSED-P retains every descendant for structured clients."
   (let ((current (world-sidebar-current sidebar))
         (entry   (world-sidebar--channel-entry-function
                   sidebar :names names :statuses statuses :pending pending
@@ -534,29 +534,46 @@ INCLUDE-CLOSED-P retains every descendant for structured clients."
                                                                  :test #'equal)
                                                            t)))))
                          (values (cons node (and (or include-closed-p open-p) shown))
-                                 (cons node all))))))))
-      (append
-       (when inbox
-         (list (make-instance 'sidebar-home
-                              :identifier (channel-identifier inbox)
-                              :current-p  (equal (channel-identifier inbox) current)
-                              :unread     (or (rest (assoc (channel-identifier inbox) pending
-                                                           :test #'string=))
-                                              0))))
-       (loop for group in (world-repository-current-groups
-                           (or groups (world-repository-workspace-groups channels current)) current)
-             for directory = (world-repository-group-directory group)
-             for first-p = t then nil
-             nconc (multiple-value-bind (shown all)
-                       (forest-entries (world-channel-forest (world-repository-group-channels group)) 0)
-                     (let* ((workspace (make-instance 'sidebar-workspace
-                                                      :key  (world-repository-group-key group)
-                                                      :name (world-workspace-leaf directory)
-                                                      :path (world-sidebar--short-path directory)))
-                            (open-p    (world-sidebar--fold
-                                        workspace all
-                                        :open-p (open-p (sidebar-workspace-key workspace) first-p))))
-                       (cons workspace (and (or include-closed-p open-p) shown)))))))))
+                                 (cons node all)))))))
+
+             (group-entries (group first-p)
+               "Return the shown entries of GROUP's workspace and all of its entries."
+               (multiple-value-bind (shown all)
+                   (forest-entries (world-channel-forest (world-repository-group-channels group)) 0)
+                 (let* ((directory (world-repository-group-directory group))
+                        (workspace (make-instance 'sidebar-workspace
+                                                  :key  (world-repository-group-key group)
+                                                  :name (world-workspace-leaf directory)
+                                                  :path (world-sidebar--short-path directory)))
+                        (open-p    (world-sidebar--fold
+                                    workspace all
+                                    :open-p (open-p (sidebar-workspace-key workspace) first-p))))
+                   (values (cons workspace (and (or include-closed-p open-p) shown))
+                           (cons workspace all))))))
+      (multiple-value-bind (shown all)
+          (loop for group in (world-repository-current-groups
+                              (or groups (world-repository-workspace-groups channels current))
+                              current)
+                for first-p = t then nil
+                for (group-shown group-all) = (multiple-value-list (group-entries group first-p))
+                nconc group-shown into shown
+                nconc group-all into all
+                finally (return (values shown all)))
+        (if inbox
+            (let ((home (make-instance 'sidebar-home
+                                       :identifier (channel-identifier inbox)
+                                       :current-p  (equal (channel-identifier inbox) current)
+                                       :unread     (or (rest (assoc (channel-identifier inbox)
+                                                                    pending
+                                                                    :test #'string=))
+                                                       0))))
+              (cons home
+                    (and all
+                         (or (world-sidebar--fold
+                              home all :open-p (open-p (channel-identifier inbox) t))
+                             include-closed-p)
+                         shown)))
+            shown)))))
 
 (-> world-sidebar--matches
     (world-sidebar &key (:inbox (option channel)) (:channels list) (:groups list)

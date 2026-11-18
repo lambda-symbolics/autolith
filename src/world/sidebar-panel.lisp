@@ -5,9 +5,6 @@
 ;;; The sidebar as a screen panel: its rows, its scrolling viewport, and what
 ;;; keys and clicks do while it has the focus.
 
-(defparameter *world-sidebar-marker-columns* 3
-  "The columns at the start of a channel row where a click opens or closes its tree node.")
-
 (defparameter *world-sidebar-scroll-lines* 3
   "The lines one wheel step moves the tree.")
 
@@ -53,10 +50,7 @@ a refresh is due."
 
 (defmethod screen-panel-focus ((panel world-sidebar))
   "Start at the channel this terminal shows."
-  (let ((current (position-if (lambda (entry)
-                                (and (not (typep entry 'sidebar-workspace))
-                                     (sidebar-entry-current-p entry)))
-                              (world-sidebar-entries panel))))
+  (let ((current (position-if #'sidebar-entry-current-p (world-sidebar-entries panel))))
     (when current
       (setf (world-sidebar-selected panel) current)))
   nil)
@@ -74,12 +68,47 @@ a refresh is due."
                 right))
       (terminal--clip-spans left width)))
 
+(defmethod sidebar-entry-current-p ((entry sidebar-workspace))
+  "A workspace is never the channel a terminal shows."
+  (declare (ignore entry))
+  nil)
+
+(defgeneric sidebar-entry-level (entry)
+  (:documentation "Return how deep ENTRY sits in the tree, the home channel at its root."))
+
+(defmethod sidebar-entry-level ((entry sidebar-home))
+  "The home channel is the root."
+  (declare (ignore entry))
+  0)
+
+(defmethod sidebar-entry-level ((entry sidebar-workspace))
+  "A workspace nests below the home channel."
+  (declare (ignore entry))
+  1)
+
+(defmethod sidebar-entry-level ((entry sidebar-channel))
+  "A channel nests below its workspace, deeper for each parent channel."
+  (+ 2 (sidebar-channel-depth entry)))
+
 (-> world-sidebar--current-span (sidebar-entry) cons)
 (defun world-sidebar--current-span (entry)
-  "Return the span marking ENTRY as the channel this terminal shows, or a blank one."
+  "Return the bar at the sidebar's edge that marks ENTRY as the channel this terminal shows, or a blank."
   (if (sidebar-entry-current-p entry)
-      (terminal-span ':legend-accent "›")
+      (terminal-span ':legend-accent "▌")
       (terminal-span ':plain " ")))
+
+(-> world-sidebar--lead (sidebar-entry (integer 0)) list)
+(defun world-sidebar--lead (entry level)
+  "Return the spans that start ENTRY's first row at tree LEVEL: the edge bar, the indent and the tree marker."
+  (list (world-sidebar--current-span entry)
+        (terminal-span ':plain (make-string (* 2 level) :initial-element #\Space))
+        (world-sidebar--marker-span entry)
+        (terminal-span ':plain " ")))
+
+(-> world-sidebar--marker-end ((integer 0)) (integer 1))
+(defun world-sidebar--marker-end (level)
+  "Return the last column where a click on a row at tree LEVEL opens or closes its node."
+  (+ 3 (* 2 level)))
 
 (-> world-sidebar--marker-span (sidebar-fold) cons)
 (defun world-sidebar--marker-span (node)
@@ -143,21 +172,25 @@ a refresh is due."
 FILTER-P shows what a filter matched: a channel's identifier and workspace."))
 
 (defmethod sidebar-entry-rows ((entry sidebar-home) width &key filter-p)
-  "The home row shows how many messages wait unread."
+  "The home row shows how many messages wait unread, its own and those a closed tree hides."
   (declare (ignore filter-p))
   (list (world-sidebar--justify
-         (list (world-sidebar--current-span entry)
-               (terminal-span ':user " home"))
+         (append (world-sidebar--lead entry (sidebar-entry-level entry))
+                 (list (terminal-span ':user "home")))
          (world-sidebar--badges
-          (world-sidebar--count-span ':notice "~D unread" (sidebar-entry-unread entry)))
+          (world-sidebar--count-span ':legend-accent "@~D" (sidebar-fold-hidden-mentions entry))
+          (world-sidebar--count-span ':notice "~D unread" (+ (sidebar-entry-unread entry)
+                                                             (sidebar-fold-hidden-unread entry)))
+          (when (and (sidebar-fold-children-p entry) (not (sidebar-fold-open-p entry)))
+            (terminal-span ':hint (format nil "~D nested" (sidebar-fold-nested entry)))))
          width)))
 
 (defmethod sidebar-entry-rows ((entry sidebar-workspace) width &key filter-p)
   "A workspace row names the directory and counts its channels and what a closed one hides."
   (declare (ignore filter-p))
   (list (world-sidebar--justify
-         (append (list (world-sidebar--marker-span entry)
-                       (terminal-span ':sidebar-workspace (format nil " ~A" (sidebar-entry-name entry))))
+         (append (world-sidebar--lead entry (sidebar-entry-level entry))
+                 (list (terminal-span ':sidebar-workspace (sidebar-entry-name entry)))
                  (when (sidebar-fold-open-p entry)
                    (list (terminal-span ':dim (format nil "  ~A" (sidebar-workspace-path entry))))))
          (world-sidebar--badges
@@ -171,30 +204,30 @@ FILTER-P shows what a filter matched: a channel's identifier and workspace."))
 
 A channel without an agent shows its title in the name's place. FILTER-P puts
 the title beside the name and the identifier and workspace on the second row."
-  (let* ((name   (sidebar-entry-name entry))
-         (title  (sidebar-channel-title entry))
-         (nest   (make-string (* 2 (sidebar-channel-depth entry)) :initial-element #\Space))
-         (indent (concatenate 'string "     " nest))
-         (label  (cond
-                   (name
-                    (terminal-span (cond
-                                     ((sidebar-entry-current-p entry)
-                                      ':legend-accent)
-                                     ((sidebar-channel-attached-p entry)
-                                      ':user)
-                                     (t
-                                      ':agent-name))
-                                   name))
-                   (title
-                    (terminal-span ':strong title))
-                   (t
-                    (terminal-span ':hint "untitled")))))
+  (let* ((name  (sidebar-entry-name entry))
+         (title (sidebar-channel-title entry))
+         (level (if filter-p 0 (sidebar-entry-level entry)))
+         (below (list (world-sidebar--current-span entry)
+                      (terminal-span ':plain (make-string (+ 4 (* 2 level))
+                                                          :initial-element #\Space))))
+         (label (cond
+                  (name
+                   (terminal-span (cond
+                                    ((sidebar-entry-current-p entry)
+                                     ':legend-accent)
+                                    ((sidebar-channel-attached-p entry)
+                                     ':user)
+                                    (t
+                                     ':agent-name))
+                                  name))
+                  (title
+                   (terminal-span ':strong title))
+                  (t
+                   (terminal-span ':hint "untitled")))))
     (cons
      (world-sidebar--justify
-      (append (list (world-sidebar--current-span entry)
-                    (world-sidebar--marker-span entry)
-                    (terminal-span ':plain (concatenate 'string nest " "))
-                    (world-sidebar--state-span (sidebar-channel-state entry)
+      (append (world-sidebar--lead entry level)
+              (list (world-sidebar--state-span (sidebar-channel-state entry)
                                                (sidebar-channel-waiting-for-jobs-p entry))
                     label)
               (when (and filter-p name title)
@@ -211,15 +244,14 @@ the title beside the name and the identifier and workspace on the second row."
      (cond
        (filter-p
         (list (terminal--clip-spans
-               (list (terminal-span ':plain indent)
-                     (terminal-span ':code (conversation-identifier-display
-                                            (sidebar-entry-identifier entry)))
-                     (terminal-span ':dim (format nil "  ~A" (sidebar-channel-path entry))))
+               (append below
+                       (list (terminal-span ':code (conversation-identifier-display
+                                                    (sidebar-entry-identifier entry)))
+                             (terminal-span ':dim (format nil "  ~A" (sidebar-channel-path entry)))))
                width)))
        ((and name title)
         (list (terminal--clip-spans
-               (list (terminal-span ':plain indent)
-                     (terminal-span ':dim title))
+               (append below (list (terminal-span ':dim title)))
                width)))))))
 
 
@@ -382,26 +414,26 @@ when the last gather could not reach the server."
       (list ':switch :session-id identifier)))
 
 (defgeneric sidebar-entry-activate (entry sidebar column)
-  (:documentation "Act on Enter or a click at COLUMN on ENTRY of SIDEBAR and return the panel's result."))
+  (:documentation "Act on ENTRY of SIDEBAR and return the panel's result.
 
-(defmethod sidebar-entry-activate ((entry sidebar-home) sidebar column)
-  "The home row opens the person's inbox."
-  (declare (ignore column))
-  (world-sidebar--open sidebar (sidebar-entry-identifier entry)))
+COLUMN is where a click landed, or NIL for Enter."))
+
+(defmethod sidebar-entry-activate ((entry sidebar-entry) sidebar column)
+  "A channel row, home included, opens its channel; its tree marker opens or closes what nests below."
+  (if (and column
+           (sidebar-fold-children-p entry)
+           (not (world-sidebar--filter-p sidebar))
+           (<= column (world-sidebar--marker-end (sidebar-entry-level entry))))
+      (progn
+        (world-sidebar--toggle sidebar entry)
+        ':redraw)
+      (world-sidebar--open sidebar (sidebar-entry-identifier entry))))
 
 (defmethod sidebar-entry-activate ((entry sidebar-workspace) sidebar column)
   "A workspace row opens or closes its group."
   (declare (ignore column))
   (world-sidebar--toggle sidebar entry)
   ':redraw)
-
-(defmethod sidebar-entry-activate ((entry sidebar-channel) sidebar column)
-  "A channel row opens the channel; its tree marker opens or closes what nests below."
-  (if (and (sidebar-fold-children-p entry) (<= column *world-sidebar-marker-columns*))
-      (progn
-        (world-sidebar--toggle sidebar entry)
-        ':redraw)
-      (world-sidebar--open sidebar (sidebar-entry-identifier entry))))
 
 (defmethod screen-panel-click ((panel world-sidebar) column row)
   "Press the command button under COLUMN, or select and activate the entry on ROW."
@@ -506,7 +538,7 @@ when the last gather could not reach the server."
               ':dismiss))
          (:submit
           (and selected
-               (sidebar-entry-activate selected panel (1+ *world-sidebar-marker-columns*))))
+               (sidebar-entry-activate selected panel nil)))
          (:delete
           (and (typep selected 'sidebar-channel)
                (list ':channel-command ':delete (sidebar-entry-identifier selected))))
