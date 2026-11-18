@@ -143,6 +143,7 @@ a partially live identity set, or resumes cleanup for a published deletion.
 | clinker-transcript | Ordered projection and reconciliation | Conversation meaning and durable repair decisions |
 | image-daemon/runtime | Service registry, relays, attachment queues and shutdown | Conversation leases, steering, handoff and input-reader coordination |
 | clinedi | Modal sessions, editor/history state and terminal transports | Completion, submission, paste and interruption policy |
+| sito | Fuzzy scores, match positions and ranking of short strings | The sidebar's channel filter and @mention completion |
 | cl-termdown | Column layout, Markdown fence lifecycle and semantic span presentation | Transcript composition, source-copy widgets and stream finalization |
 | clermaid | Bounded Mermaid parsing and terminal-cell diagram layout | Mermaid fenced blocks through cl-termdown |
 | cl-exec-sandbox | Bounded raw capture files, process cleanup, capture metadata and byte head/tail sampling | Private execution-owned log artifacts, preview budgets, retention, durable references and authorized resource reads |
@@ -530,7 +531,15 @@ merges outcome fields into invocation metadata before rendering.
 - The fullscreen viewport owns transcript wrapping, application scrolling,
   reflow anchors, and bottom-pinned composer geometry
 - =PageUp= and =PageDown= page through fullscreen history; =Ctrl-Home= and
-  =Ctrl-End= jump to its ends, and mouse-wheel events scroll incrementally
+  =Ctrl-End= jump to its ends, and mouse-wheel events scroll incrementally.
+  The modeline's right side shows the transcript position
+- A client's screen gives the keyboard to its side panel or to the session.
+  =src/world/sidebar.lisp= builds the sidebar's entries, one class per kind,
+  from what its thread gathered; =sidebar-panel.lisp= draws them and handles
+  the focused panel's keys, clicks and filter. Channel commands from the panel
+  reach the session as =(:channel-command NAME [ID])= events
+- Full-screen workspaces such as the memory manager paint through the UI's own
+  frame painter, so a hosted session sends them to clients as frames
 - cl-colorist is used for ANSI capability detection
 - Text is sanitized before styles are added
 - =:surface=, =:surface-code=, =:surface-diff-add=, and =:surface-diff-remove= carry
@@ -627,7 +636,7 @@ Here's a rough, probably outdated map of the repository
 | Configuration and transfer    | =src/configuration/=, =src/localgroup/=, =src/state/updates.lisp=, sexp-config                     |
 | Channels and world server     | =src/world/=, image-daemon                                                                     |
 | Channel clients               | =src/localgroup/clients.lisp=, =src/application/{clients,approvals}.lisp=, =src/acp/=            |
-| Client screen and sidebar     | =src/localgroup/screen.lisp=, =src/world/sidebar.lisp=, clinedi                                 |
+| Client screen and sidebar     | =src/localgroup/screen.lisp=, =src/world/sidebar.lisp=, =src/world/sidebar-panel.lisp=, clinedi |
 
 Read [[file:guide.org][the guide]] for operating Autolith, and =AGENTS.md= for
 repository rules and development policy, especially using clankers.
