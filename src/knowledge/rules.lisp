@@ -11,8 +11,23 @@
 (defparameter *knowledge-expression-depth-limit* 6
   "The deepest nesting of one rule expression.")
 
-(defparameter *knowledge-comparisons* '("<" "<=" ">" ">=" "=" "/=")
-  "The comparison operators a rule guard may use.")
+(defparameter *knowledge-comparisons*
+  (list (list "<" (lambda (order) (< order 0)))
+        (list "<=" (lambda (order) (<= order 0)))
+        (list ">" (lambda (order) (> order 0)))
+        (list ">=" (lambda (order) (>= order 0)))
+        (list "=" #'zerop :symmetric-p t)
+        (list "/=" (lambda (order) (/= order 0)) :symmetric-p t))
+  "The comparison operators a rule guard may use, as (NAME PREDICATE . OPTIONS).
+
+PREDICATE takes the order of the two compared terms: negative, zero or positive.
+A :SYMMETRIC-P comparison accepts its operands' types in either direction.")
+
+(-> knowledge-comparison (t) (option list))
+(defun knowledge-comparison (name)
+  "Return the comparison a guard names NAME as (NAME PREDICATE . OPTIONS), or NIL."
+  (and (stringp name)
+       (assoc name *knowledge-comparisons* :test #'string=)))
 
 
 ;;;; -- Computations --
@@ -305,22 +320,13 @@ for its values, such as a division by zero."
 (-> knowledge-guard-holds-p (list hash-table) boolean)
 (defun knowledge-guard-holds-p (guard environment)
   "Return true when comparison GUARD holds for the values in ENVIRONMENT."
-  (let ((order (knowledge-term-compare
-                (knowledge-evaluate-expression (second guard) environment)
-                (knowledge-evaluate-expression (third guard) environment))))
-    (and (cond
-           ((string= (first guard) "<")
-            (< order 0))
-           ((string= (first guard) "<=")
-            (<= order 0))
-           ((string= (first guard) ">")
-            (> order 0))
-           ((string= (first guard) ">=")
-            (>= order 0))
-           ((string= (first guard) "=")
-            (zerop order))
-           (t
-            (/= order 0)))
+  (let ((comparison (or (knowledge-comparison (first guard))
+                        (knowledge--fail ':evaluation guard
+                                         "~S is not a comparison." (first guard)))))
+    (and (funcall (second comparison)
+                  (knowledge-term-compare
+                   (knowledge-evaluate-expression (second guard) environment)
+                   (knowledge-evaluate-expression (third guard) environment)))
          t)))
 
 
@@ -487,10 +493,10 @@ restricted, not well typed, or exceeds its bounds."
                (lambda (guard)
                  (let ((items (coerce guard 'list)))
                    (unless (and (= (length items) 3)
-                                (member (first items) *knowledge-comparisons* :test #'equal))
+                                (knowledge-comparison (first items)))
                      (knowledge--fail ':invalid-rule guard
                                       "A guard is a comparison (~{~A~^ ~}) of two expressions."
-                                      *knowledge-comparisons*))
+                                      (mapcar #'first *knowledge-comparisons*)))
                    (let ((left  (knowledge-expression-from-input (second items)))
                          (right (knowledge-expression-from-input (third items))))
                      (list (first items) left right))))
@@ -514,7 +520,7 @@ restricted, not well typed, or exceeds its bounds."
           (let ((left  (knowledge--expression-type (second guard) types))
                 (right (knowledge--expression-type (third guard) types)))
             (unless (or (knowledge--type-compatible-p left right)
-                        (and (member (first guard) '("=" "/=") :test #'string=)
+                        (and (getf (rest (rest (knowledge-comparison (first guard)))) :symmetric-p)
                              (knowledge--type-compatible-p right left)))
               (knowledge--fail ':invalid-rule guard
                                "Cannot compare ~(~A~) with ~(~A~)." left right))))
