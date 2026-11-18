@@ -2772,23 +2772,7 @@ state before rethrowing its failure; a retry uses the same durable receipt."
                  conversation "An append returned without a durable automatic receipt."))))
           (values item durable-record))))))
 
-(-> conversation--validate-provider-item (conversation json-object) json-object)
-(-> conversation-used-call-identifiers (conversation) hash-table)
-(defun conversation-used-call-identifiers (conversation)
-  "Return the call identifiers CONVERSATION's durable provider calls name.
-
-A durable call identifier names exactly one call, so a call that reuses one
-of these identifiers must be planned under a fresh identifier."
-  (let ((identifiers (make-hash-table :test #'equal)))
-    (dolist (item (conversation-input-items-for-request
-                   conversation :include-ephemeral-p nil))
-      (when (function-call-item-p item)
-        (let ((call-id (json-get item "call_id")))
-          (when (non-empty-string-p call-id)
-            (setf (gethash call-id identifiers) t)))))
-    identifiers))
-
-^(-> provider-item-call-identifier (json-object) (option string))
+(-> provider-item-call-identifier (json-object) (option string))
 (defun provider-item-call-identifier (item)
   "Return the call identifier ITEM names or refers to."
   (when (json-object-p item)
@@ -2830,40 +2814,63 @@ of these identifiers must be planned under a fresh identifier."
 
 (-> conversation-reconcile-call-identifiers (conversation list) hash-table)
 (defun conversation-reconcile-call-identifiers (conversation items)
-  "Rewrite the call identifiers ITEMS repeat or CONVERSATION already names.
+  "Give each call occurrence in ITEMS an unused identifier before persistence.
 
-Returns an equal hash-table mapping each replaced identifier to its replacement.
-A call keeps its identifier when the conversation does not already name it, so a
-provider that names its calls uniquely is recorded verbatim.  An identifier the
-response itself introduces is never chosen as a replacement, so renaming one
-call cannot rename another."
-  (let ((provider-identifiers (make-hash-table :test #'equal))
-        (reserved-identifiers (make-hash-table :test #'equal))
-        (mapping              (make-hash-table :test #'equal)))
-    (dolist (item items)
-      (let ((call-id (provider-item-call-identifier item)))
-        (when (non-empty-string-p call-id)
-          (setf (gethash call-id provider-identifiers) t))))
-    (dolist (item items)
-      (let ((call-id (provider-item-call-identifier item)))
-        (when (non-empty-string-p call-id)
-          (let ((replacement (gethash call-id mapping)))
-            (cond
-              (replacement
-               (setf (gethash "call_id" item) replacement))
-              ((and (function-call-item-p item)
-                    (or (gethash call-id reserved-identifiers)
-                        (eq (conversation--call-status conversation item) ':conflict)))
-               (let ((fresh (conversation--unused-call-identifier
-                             conversation call-id
-                             :provider-identifiers provider-identifiers
-                             :reserved-identifiers reserved-identifiers)))
-                 (setf (gethash call-id mapping) fresh)
-                 (setf (gethash fresh reserved-identifiers) t)
-                 (setf (gethash "call_id" item) fresh)))
-              (t
-               (setf (gethash call-id reserved-identifiers) t)))))))
-    mapping))
+Reserve every original response identifier before choosing replacements. Return
+an equal hash-table containing the last replacement for each rewritten original
+identifier. A reference to an identifier repeated by multiple response calls is
+ambiguous and is refused before any item is mutated."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (let ((provider-identifiers (make-hash-table :test #'equal))
+          (reserved-identifiers (make-hash-table :test #'equal))
+          (call-counts          (make-hash-table :test #'equal))
+          (call-objects         (make-hash-table :test #'eq))
+          (mapping              (make-hash-table :test #'equal))
+          (rewrites             nil))
+      (labels ((refuse (message)
+                 (error 'conversation-invariant-error
+                        :message  message
+                        :pathname (conversation-pathname conversation)
+                        :sequence (conversation-next-sequence conversation))))
+        (dolist (item items)
+          (let ((call-id (provider-item-call-identifier item)))
+            (when (non-empty-string-p call-id)
+              (setf (gethash call-id provider-identifiers) t)
+              (when (function-call-item-p item)
+                (when (gethash item call-objects)
+                  (refuse "A provider response repeats one call object; distinct occurrences need distinct objects."))
+                (setf (gethash item call-objects) t)
+                (incf (gethash call-id call-counts 0))))))
+        (dolist (item items)
+          (let ((call-id (provider-item-call-identifier item)))
+            (when (and (non-empty-string-p call-id)
+                       (not (function-call-item-p item))
+                       (> (gethash call-id call-counts 0) 1))
+              (refuse
+               "A provider response references an identifier shared by multiple calls; its output association is ambiguous."))))
+        (dolist (item items)
+          (let ((call-id (provider-item-call-identifier item)))
+            (when (and (non-empty-string-p call-id) (function-call-item-p item))
+              (let ((replacement
+                      (when (or (gethash call-id reserved-identifiers)
+                                (eq (conversation--call-status conversation item) ':conflict))
+                        (conversation--unused-call-identifier
+                         conversation call-id :provider-identifiers provider-identifiers
+                         :reserved-identifiers                      reserved-identifiers))))
+                (setf (gethash (or replacement call-id) reserved-identifiers) t)
+                (when replacement
+                  (setf (gethash call-id mapping) replacement)
+                  (push (cons item replacement) rewrites))))))
+        (dolist (item items)
+          (let* ((call-id     (provider-item-call-identifier item))
+                 (replacement (and (non-empty-string-p call-id)
+                                   (not (function-call-item-p item))
+                                   (gethash call-id mapping))))
+            (when replacement
+              (push (cons item replacement) rewrites))))
+        (dolist (rewrite (nreverse rewrites))
+          (setf (gethash "call_id" (first rewrite)) (rest rewrite))))
+      mapping)))
 
 (-> conversation--call-status (conversation json-object) symbol)
 (defun conversation--call-status (conversation item)
@@ -2888,24 +2895,44 @@ longer named."
           (multiple-value-bind (durable ephemeral)
               (conversation--call-entry conversation call-id)
             (cond
+              (durable
+               ':conflict)
               ((and ephemeral (same-call-p ephemeral item))
                ':promote)
-              ((or durable ephemeral)
+              (ephemeral
                ':conflict)
               (t
                ':new)))))))
 
-(-> conversation--promote-ephemeral-call (conversation string) null)
-(defun conversation--promote-ephemeral-call (conversation call-id)
-  "Drop the request-local entry for CALL-ID now that a durable append owns it."
-  (setf (conversation-ephemeral-input-entries conversation)
-        (remove-if (lambda (entry)
-                     (let ((candidate (getf entry :item)))
-                       (and (function-call-item-p candidate)
-                            (equal call-id (json-get candidate "call_id")))))
-                   (conversation-ephemeral-input-entries conversation)))
+(-> conversation--promote-ephemeral-call (conversation json-object) null)
+(defun conversation--promote-ephemeral-call (conversation item)
+  "Replace ITEM's request-local call with its authoritative durable object."
+  (let* ((call-id (json-get item "call_id"))
+         (entries (conversation-ephemeral-input-entries conversation))
+         (previous
+           (loop for entry in entries
+                 for candidate = (getf entry :item)
+                 when (and (function-call-item-p candidate)
+                           (equal call-id (json-get candidate "call_id")))
+                   return candidate)))
+    (when previous
+      (let* ((model  (conversation-model conversation))
+             (family (if (non-empty-string-p model)
+                         (model-family model (conversation-model-provider conversation))
+                         (gethash previous (conversation-input-item-families conversation)))))
+        (setf (conversation-input-items conversation)
+              (substitute item previous (conversation-input-items conversation) :test #'eq))
+        (when family
+          (setf (gethash item (conversation-input-item-families conversation)) family))))
+    (setf (conversation-ephemeral-input-entries conversation)
+          (remove-if (lambda (entry)
+                       (let ((candidate (getf entry :item)))
+                         (and (function-call-item-p candidate)
+                              (equal call-id (json-get candidate "call_id")))))
+                     entries)))
   nil)
 
+(-> conversation--validate-provider-item (conversation json-object) json-object)
 (defun conversation--validate-provider-item (conversation item)
   "Return ITEM after rejecting provider calls that would poison durable replay."
   (when (function-call-item-p item)
@@ -2959,7 +2986,7 @@ output for one identifier, so it fails instead of poisoning replay."
               item)
              (:promote
               (record-item)
-              (conversation--promote-ephemeral-call conversation call-id)
+              (conversation--promote-ephemeral-call conversation item)
               item)
              (:conflict
               (error 'provider-call-conflict
