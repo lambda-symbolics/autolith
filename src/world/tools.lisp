@@ -84,22 +84,22 @@
 
 (defmethod tool-execute ((tool channel-tool) (context tool-context) arguments)
   "Send to, subscribe to or unsubscribe from a channel as the requesting participant."
-  (let* ((name          (tool-name tool))
-         (tool-name     (format nil "channel.~A" name))
+  (let* ((operation     (tool-operation tool))
+         (tool-name     (tool-canonical-name tool))
          (configuration (tool-context-configuration context))
          (sender        (channel-tool--sender context tool-name))
          (channel       (progn
                           (task--validate-tool-arguments
                            arguments
-                           (if (string= name "send") '("channel" "text" "mentions" "images") '("channel"))
+                           (if (eq operation ':send) '("channel" "text" "mentions" "images") '("channel"))
                            tool-name)
-                          (if (and (string= name "send")
+                          (if (and (eq operation ':send)
                                    (null (tool-argument arguments "channel")))
                               (conversation-identifier (tool-context-conversation context))
                               (channel-tool--channel context arguments))))
          (display       (conversation-identifier-display channel)))
-    (cond
-      ((string= name "send")
+    (case operation
+      (:send
        (let ((result (world-message-send configuration
                                          :sender   (participant-identifier sender)
                                          :channel  channel
@@ -114,15 +114,15 @@
                                          :mentions (let ((mentions (tool-argument arguments "mentions")))
                                                      (and mentions (coerce mentions 'list))))))
          (task-tool-result (channel-tool--send-text configuration result) result)))
-      ((string= name "subscribe")
+      (:subscribe
        (world-participant-subscribe configuration (participant-identifier sender) channel)
        (tool-success (format nil "Subscribed to channel ~A: its messages now reach you." display)))
-      ((string= name "unsubscribe")
+      (:unsubscribe
        (world-participant-unsubscribe configuration (participant-identifier sender) channel)
        (tool-success (format nil "Unsubscribed from channel ~A." display)))
       (t
        (error 'tool-error
-              :message   (format nil "Unknown channel operation ~A." name)
+              :message   (format nil "Unknown channel operation ~(~A~)." operation)
               :tool-name tool-name)))))
 
 (-> channel-register-tools (tool-registry) tool-registry)

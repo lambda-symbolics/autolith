@@ -25,10 +25,10 @@
 (defmethod tool-execute ((tool mission-schedule-tool) (context tool-context) arguments)
   "Apply a primary schedule operation through ordinary registry authorization."
   (let* ((application (mission-schedule--application context))
-         (name        (tool-name tool))
+         (name        (tool-operation tool))
          (result
-           (cond
-             ((string= name "add")
+           (case name
+             (:add
               (task--validate-tool-arguments arguments '("id" "content" "at" "interval" "event" "missed-policy") "mission-schedule.add")
               (application-mission-schedule-add
                application :id (tool-argument arguments "id" :required t)
@@ -44,17 +44,17 @@
                                         ':skip)
                                        (t
                                         (mission--reject ':schedule-policy "Expected latest, all or skip."))))))
-             ((string= name "cancel")
+             (:cancel
               (task--validate-tool-arguments arguments '("id") "mission-schedule.cancel")
               (application-mission-schedule-cancel application (tool-argument arguments "id" :required t)))
-             ((string= name "inspect")
+             (:inspect
               (task--validate-tool-arguments arguments nil "mission-schedule.inspect")
               (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler (application-mission-schedules application))))
-             ((string= name "event")
+             (:event
               (task--validate-tool-arguments arguments '("event" "id") "mission-schedule.event")
               (application-mission-schedule-event application (tool-argument arguments "event" :required t)
                                                  (tool-argument arguments "id" :required t)))
-             ((string= name "resolve")
+             (:resolve
               (task--validate-tool-arguments arguments '("occurrence" "token" "action") "mission-schedule.resolve")
               (application-mission-schedule-resolve
                application (mission--read-data (tool-argument arguments "occurrence" :required t))

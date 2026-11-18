@@ -44,13 +44,13 @@
       (let* ((mission     (mission-context-find (tool-context-conversation context)))
              (application (and mission (mission-context-application mission))))
         (unless mission (mission--reject ':missing "No mission is set."))
-        (unless (or (string= (tool-name tool) "status")
+        (unless (or (eq (tool-operation tool) ':status)
                     (eq (tool-context-conversation context) (application-conversation application)))
           (mission--reject ':authority "Only the primary agent may change mission state."))
-        (cond
-          ((string= (tool-name tool) "verify")
+        (case (tool-operation tool)
+          (:verify
            (application-mission-verify application))
-          ((string= (tool-name tool) "stop")
+          (:stop
            (application-mission-stop
             application
             (cond
@@ -61,7 +61,7 @@
               (t
                (mission--reject ':invalid "Stop status must be blocked or failed.")))
             (tool-argument arguments "evidence" :required t)))
-          ((string= (tool-name tool) "invalidate")
+          (:invalidate
            (application-mission-invalidate application
                                           (tool-argument arguments "id" :required t)
                                           (tool-argument arguments "evidence" :required t))))

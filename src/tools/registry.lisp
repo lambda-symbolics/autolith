@@ -167,6 +167,11 @@
   ()
   (:documentation "Select a retained generation and request immediate rollback."))
 
+(-> tool-operation (tool) keyword)
+(defun tool-operation (tool)
+  "Return TOOL's name as the keyword a tool serving several operations dispatches on."
+  (values (intern (string-upcase (tool-name tool)) '#:keyword)))
+
 (-> tool-canonical-name (tool) string)
 (defun tool-canonical-name (tool)
   "Return TOOL's dotted dispatch identity."

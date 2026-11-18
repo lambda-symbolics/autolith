@@ -1208,7 +1208,7 @@ poll a job whose completion will wake it."
   "Execute the job operation named by TOOL."
   (let* ((viewer       (tool-context-agent context))
          (orchestrator (task-job-tool-orchestrator tool))
-         (operation    (tool-name tool)))
+         (operation    (tool-operation tool)))
     (unless (typep viewer 'agent)
       (error 'task-error
              :message   "Job tools require an executing agent context."
@@ -1217,8 +1217,8 @@ poll a job whose completion will wake it."
                      arguments :orchestrator orchestrator
                                :viewer       viewer
                                :tool-name    (tool-canonical-name tool)))
-    (cond
-      ((string= operation "list")
+    (case operation
+      (:list
        (task--validate-tool-arguments arguments '("offset" "limit")
                                       "job.list")
        (let ((offset (or (tool-argument arguments "offset") 0))
@@ -1241,7 +1241,7 @@ poll a job whose completion will wake it."
            (multiple-value-bind (form content)
                (task--job-list-page snapshots offset limit)
              (task-tool-result content form)))))
-      ((string= operation "get")
+      (:get
        (task--validate-tool-arguments arguments '("id") "job.get")
        (let* ((identifier
                 (task--validate-job-identifier
@@ -1263,10 +1263,10 @@ poll a job whose completion will wake it."
                  :wrapper       (lambda (record)
                                   (list :job-get :durable-p (null job) :job record)))
               (task-tool-result content form)))))
-      ((member operation '("wait" "cancel") :test #'string=)
+      ((:wait :cancel)
        (task--validate-tool-arguments
         arguments
-        (if (string= operation "wait")
+        (if (eq operation ':wait)
             '("id" "timeout-seconds")
             '("id"))
         (tool-canonical-name tool))
@@ -1279,7 +1279,7 @@ poll a job whose completion will wake it."
                     identifier
                     :viewer    viewer
                     :tool-name (tool-canonical-name tool))))
-         (if (string= operation "cancel")
+         (if (eq operation ':cancel)
              (multiple-value-bind (accepted-p cancelled-descendants)
                  (session-job-cancel job :user)
                (let ((snapshot (session-job-snapshot job)))
@@ -1328,7 +1328,7 @@ poll a job whose completion will wake it."
                    (task-tool-result content form)))))))
       (t
        (error 'task-error :message
-              (format nil "Unknown job operation ~A." operation) :tool-name
+              (format nil "Unknown job operation ~(~A~)." operation) :tool-name
               (tool-canonical-name tool))))))
 
 (-> task-run-parameters-schema () hash-table)

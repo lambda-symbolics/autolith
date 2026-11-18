@@ -20,10 +20,10 @@
 (defmethod tool-execute ((tool mission-review-tool) (context tool-context) arguments)
   "Execute review operations without granting decision authority to reviewers."
   (let* ((application (mission-review--application context))
-         (operation   (tool-name tool))
+         (operation   (tool-operation tool))
          (result
-           (cond
-             ((string= operation "configure")
+           (case operation
+             (:configure
               (task--validate-tool-arguments arguments
                                             '("id" "phase" "inputs" "context" "models" "turn-limit" "token-limit" "run-limit")
                                             "mission-review.configure")
@@ -43,11 +43,11 @@
                      :turn-limit  (tool-argument arguments "turn-limit")
                      :token-limit (tool-argument arguments "token-limit")
                      :run-limit   (tool-argument arguments "run-limit"))))
-             ((string= operation "trigger")
+             (:trigger
               (task--validate-tool-arguments arguments '("id") "mission-review.trigger")
               (application-mission-review-trigger application (tool-argument arguments "id")
                                                   :tool-context context))
-             ((string= operation "decide")
+             (:decide
               (task--validate-tool-arguments arguments '("id" "finding" "decision" "reason") "mission-review.decide")
               (application-mission-review-decide
                application (tool-argument arguments "id") (tool-argument arguments "finding")
@@ -57,7 +57,7 @@
                                ((equal (tool-argument arguments "decision") "reject")
                                 ':reject))
                :reason   (tool-argument arguments "reason")))
-             ((string= operation "inspect")
+             (:inspect
               (task--validate-tool-arguments arguments nil "mission-review.inspect")
               (copy-tree (getf (application-goal application) :reviews)))
              (t

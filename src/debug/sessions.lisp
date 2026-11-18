@@ -61,7 +61,7 @@
       (debug--fail ':result-limit "Debug JSON exceeds the configured byte limit; request a smaller page."))
     text))
 
-(-> debug--authorize (tool-context string t) null)
+(-> debug--authorize (tool-context keyword t) null)
 (defun debug--authorize (context operation value)
   "Obtain execution authority for the exact adapter operation and complete arguments.
 
@@ -70,7 +70,7 @@ provide a duplex transport, so require full-access approval rather than launchin
 outside the sandbox under sandbox-only authority. Attach and evaluation use this
 same boundary, independently of adapter startup approval."
   (unless (eq (tool-context-authorize-command
-               context (format nil "debug.~A ~A" operation (debug--bounded-json value))
+               context (format nil "debug.~(~A~) ~A" operation (debug--bounded-json value))
                (config :working-directory (tool-context-configuration context))) ':full-access)
     (debug--fail ':authorization "Debug execution requires full-access approval for this exact operation."))
   nil)
