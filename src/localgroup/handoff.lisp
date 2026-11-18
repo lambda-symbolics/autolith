@@ -22,14 +22,14 @@
   "The session-detachment boundary used during replacement startup.")
 
 (defparameter *localgroup-fresh-launch-function*
-  (lambda (configuration &key session-id handoff-pathname permission-argument
+  (lambda (configuration &key session-id handoff-pathname permission-mode
                              immutable-p pristine-p)
     (localgroup-handoff--launch-for
      configuration session-id
-     :handoff-pathname    handoff-pathname
-     :permission-argument permission-argument
-     :immutable-p         immutable-p
-     :pristine-p          pristine-p))
+     :handoff-pathname handoff-pathname
+     :permission-mode  permission-mode
+     :immutable-p      immutable-p
+     :pristine-p       pristine-p))
   "The detached launch boundary used by client-first session starts.")
 
 (defparameter *localgroup-fresh-wait-function*
@@ -287,16 +287,16 @@ before any shell is involved."
                                     :ticket    handoff-pathname))
 
 (-> localgroup-handoff--arguments
-    (configuration pathname &key (:permission-argument string) (:immutable-p boolean)
+    (configuration pathname &key (:permission-mode keyword) (:immutable-p boolean)
                                  (:pristine-p boolean))
     list)
 (defun localgroup-handoff--arguments
-    (configuration handoff-pathname &key (permission-argument "ask") immutable-p pristine-p)
+    (configuration handoff-pathname &key (permission-mode ':ask) immutable-p pristine-p)
   "Return the platform launch command and handoff arguments for CONFIGURATION."
   (append
    (platform-session-launch-command
     *platform* (config :source-root configuration))
-   (list "--permissions" permission-argument)
+   (list "--permissions" (localgroup-handoff-permission-string permission-mode))
    (when (config :model-selection-override-p configuration)
      (append (list "--model" (config :model configuration))
              (when (non-empty-string-p (config :model-provider configuration))
@@ -316,18 +316,18 @@ before any shell is involved."
    (list "--localgroup-handoff" (namestring handoff-pathname))))
 
 (-> localgroup-handoff--launch-for
-    (configuration string &key (:handoff-pathname pathname) (:permission-argument string)
+    (configuration string &key (:handoff-pathname pathname) (:permission-mode keyword)
                                (:immutable-p boolean) (:pristine-p boolean))
     t)
 (defun localgroup-handoff--launch-for
-    (configuration session-id &key handoff-pathname permission-argument immutable-p pristine-p)
+    (configuration session-id &key handoff-pathname (permission-mode ':ask) immutable-p pristine-p)
   "Launch one detached session process from HANDOFF-PATHNAME."
   (let ((arguments
           (localgroup-handoff--arguments
            configuration handoff-pathname
-           :permission-argument permission-argument
-            :immutable-p        immutable-p
-            :pristine-p         pristine-p))
+           :permission-mode permission-mode
+           :immutable-p     immutable-p
+           :pristine-p      pristine-p))
         (log-pathname
           (localgroup-handoff-log-pathname configuration session-id)))
     (ensure-directories-exist log-pathname)
@@ -404,11 +404,11 @@ ownership. A nonlocal exit from it cancels the launch."
              (setf process
                     (funcall *localgroup-fresh-launch-function*
                              configuration
-                             :session-id          launch-id
-                             :handoff-pathname    pathname
-                             :permission-argument (localgroup-handoff-permission-string permission-mode)
-                             :immutable-p         immutable-p
-                             :pristine-p          pristine-p))
+                             :session-id       launch-id
+                             :handoff-pathname pathname
+                             :permission-mode  permission-mode
+                             :immutable-p      immutable-p
+                             :pristine-p       pristine-p))
              (setf session-id
                    (funcall (if world-p
                                 *localgroup-world-wait-function*

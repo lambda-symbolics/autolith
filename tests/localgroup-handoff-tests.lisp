@@ -62,9 +62,9 @@
                (let ((arguments
                        (localgroup-handoff--arguments
                         configuration handoff-pathname
-                        :permission-argument "auto"
-                        :immutable-p         enabled-p
-                        :pristine-p          enabled-p)))
+                        :permission-mode ':auto
+                        :immutable-p     enabled-p
+                        :pristine-p      enabled-p)))
                  (test-assert
                   (equal arguments
                          (append
@@ -286,9 +286,9 @@
            (configuration-ensure-directories configuration)
            (let* ((*localgroup-fresh-launch-function*
                     (lambda (launch-configuration &key session-id handoff-pathname
-                                                       permission-argument immutable-p pristine-p)
+                                                       permission-mode immutable-p pristine-p)
                       (declare (ignore launch-configuration pristine-p))
-                      (push (list session-id handoff-pathname permission-argument
+                      (push (list session-id handoff-pathname permission-mode
                                   immutable-p)
                             launches)))
                   (*localgroup-fresh-wait-function*
@@ -306,7 +306,7 @@
                (test-assert (and (= (length launches) 1)
                                  (string= session-id "active-conversation")
                                  (not (string= launched-id session-id))
-                                 (string= permission "sandbox")
+                                 (eq permission ':sandboxed)
                                  immutable-p)
                             "a fresh spawn launches one replacement with its options")
                (let ((record (localgroup-handoff--read configuration pathname)))
