@@ -34,7 +34,7 @@
                   10)
                  "an evaluator finishes a request on a thread of its own")
     (test-assert (and (typep answers '(cons list null))
-                      (typep (first answers) 'client-evaluation-reply)
+                      (client-evaluation-reply-p (first answers))
                       (search "42" (getf (rest (first answers)) :text)))
                  "the finished answer is the packet the channel accepts")
     (test-assert (null (client-evaluator-take evaluator))
@@ -153,9 +153,13 @@
                                        (localgroup--accept-client-packet application packet))
                                      '((:evaluated :evaluation 3)
                                        (:evaluated :evaluation "none" :succeeded-p t :text "stray")
+                                       (:evaluated :evaluation "none" :text)
                                        (:evaluated . 3)
                                        (:other)))
-                             "malformed and stray answers are taken by nobody"))
+                             "malformed and stray answers are taken by nobody")
+                (test-assert (client-evaluation-reply-p
+                              '(:evaluated :evaluation "e" :text "ok" :succeeded-p t :elapsed 3))
+                             "an answer with a field this version does not know is still an answer"))
            ;; Shutting the socket down wakes the answerer's blocked read; closing alone does not.
            ; mallet:suppress no-ignore-errors -- the endpoint may have closed the socket already
            (ignore-errors (sb-bsd-sockets:socket-shutdown socket :direction ':io))

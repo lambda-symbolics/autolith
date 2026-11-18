@@ -450,11 +450,10 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
 (-> localgroup--accept-client-packet (application list) boolean)
 (defun localgroup--accept-client-packet (application packet)
   "Take a terminal client's own PACKET, the answer to an evaluation, and return whether one waited for it."
-  (and (typep packet 'client-evaluation-reply)
-       (destructuring-bind (&key evaluation succeeded-p text) (rest packet)
-         (application-answer-evaluation application evaluation
-                                        :succeeded-p succeeded-p
-                                        :text        text))))
+  (and (client-evaluation-reply-p packet)
+       (application-answer-evaluation application (getf (rest packet) :evaluation)
+                                      :succeeded-p (getf (rest packet) :succeeded-p)
+                                      :text        (getf (rest packet) :text))))
 
 (-> localgroup--version-mismatch-notice (application t) (option terminal-styled-text))
 (defun localgroup--version-mismatch-notice (application client-version)

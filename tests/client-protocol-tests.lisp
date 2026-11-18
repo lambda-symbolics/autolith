@@ -126,6 +126,67 @@
                 (localgroup--find-record configuration channel)))))
   nil)
 
+(-> test-client-protocol-version-tolerance () null)
+(defun test-client-protocol-version-tolerance ()
+  "Test packets of another version neither end a structured connection nor go unanswered when they can be."
+  (client-protocol-tests--call
+   (lambda (application record)
+     (declare (ignore application))
+     (multiple-value-bind (socket stream)
+         (daemon-connect (localgroup--record-port (rest record)))
+       (unwind-protect
+            (flet ((send (payload)
+                     "Write PAYLOAD as one whole frame, readable or not."
+                     (format stream "~D~%~A" (length payload) payload)
+                     (finish-output stream))
+
+                   (reply (identifier)
+                     "Read packets until the reply to command IDENTIFIER and return it."
+                     (loop for packet = (test-localgroup--read-packet stream)
+                           when (and (eq (first packet) ':reply)
+                                     (eql (getf (rest packet) :id) identifier))
+                             return packet)))
+              (daemon-write-packet
+               stream (list :localgroup-request
+                            :version   *daemon-protocol-version*
+                            :token     (localgroup--record-token (rest record))
+                            :operation ':client
+                            :arguments (list :name "future" :approves-p nil :speaks "v9")))
+              (test-assert (eq (first (test-localgroup--read-packet stream)) ':attached)
+                           "an attach request with a field this version does not know is accepted")
+              (send "(:state :id 1 no-such-package:thing)")
+              (send "(\"not a message\")")
+              (send "(:state :id)")
+              (send "(:state :id 7 :future-field (1 2 3))")
+              (test-assert (eq (first (getf (rest (reply 7)) :state)) ':localgroup-status)
+                           "after packets it cannot read, the server answers a command with an unknown field")
+              (send "(:from-the-future :id 8 :value 1)")
+              (test-assert (stringp (getf (rest (reply 8)) :error))
+                           "a command this version does not know gets an error reply and the connection stays"))
+         ; mallet:suppress no-ignore-errors -- the endpoint may have closed the socket already
+         (ignore-errors (sb-bsd-sockets:socket-close socket))))))
+  (let ((events nil))
+    (with-input-from-string (input (concatenate
+                                    'string
+                                    (image-daemon:daemon-packet-string '(:text :delta "a" :sequence 1))
+                                    (format nil "~D~%~A" 30 "(:new no-such-package:value 1)")
+                                    (image-daemon:daemon-packet-string '("stray"))
+                                    (image-daemon:daemon-packet-string
+                                     '(:from-the-future :value 1 :sequence 2))))
+      (let ((connection (make-instance 'localgroup-client-connection
+                                       :entry    nil
+                                       :socket   (make-instance 'sb-bsd-sockets:inet-socket
+                                                                :type ':stream :protocol ':tcp)
+                                       :stream   input
+                                       :attached '(:attached))))
+        (localgroup-client--read connection (lambda (event) (push event events)))))
+    (test-assert (equal (reverse events)
+                        '((:text :delta "a" :sequence 1)
+                          (:from-the-future :value 1 :sequence 2)
+                          (:closed)))
+                 "a client steps over what it cannot read and hands on events of kinds it does not know"))
+  nil)
+
 (-> test-client-protocol-start-failure () null)
 (defun test-client-protocol-start-failure ()
   "Report a writer-start refusal before unregistering and shutting down its transport."

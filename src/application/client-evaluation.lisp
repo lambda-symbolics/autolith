@@ -34,14 +34,19 @@
     :documentation "The client's (SUCCEEDED-P TEXT) answer, or NIL while it has none."))
   (:documentation "One evaluation a channel waits for a client to finish."))
 
-(deftype client-evaluation-reply ()
-  "The packet a terminal client answers an evaluation with."
-  '(cons (eql :evaluated)
-    (cons (eql :evaluation)
-     (cons string
-      (cons (eql :succeeded-p)
-       (cons boolean
-        (cons (eql :text) (cons string null))))))))
+(-> client-evaluation-reply-p (t) boolean)
+(defun client-evaluation-reply-p (packet)
+  "Return true when PACKET is a terminal client's answer to an evaluation.
+
+The answer names its evaluation and carries the text; fields a client of
+another version adds are ignored."
+  (values (record-check packet
+                        :tag            ':evaluated
+                        :keyword-keys-p t
+                        :fields         (list (list :indicator ':evaluation :required t
+                                                    :validate  #'stringp)
+                                              (list :indicator ':text :required t
+                                                    :validate  #'stringp)))))
 
 
 ;;;; -- Policy --

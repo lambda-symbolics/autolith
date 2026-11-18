@@ -44,6 +44,21 @@
   (:documentation "A transmitted request lost its reply; its execution outcome is unknown."))
 
 
+;;;; -- Messages --
+
+(-> localgroup-message-p (t) boolean)
+(defun localgroup-message-p (packet)
+  "Return true when PACKET is a structured message: a keyword for its kind, then a property list of fields.
+
+Each side reads only the fields it knows, so a peer of another version may add some."
+  (and (consp packet)
+       (keywordp (first packet))
+       (values (record-check (rest packet)
+                             :properties-p         t
+                             :keyword-keys-p       t
+                             :allow-duplicate-keys t))))
+
+
 ;;;; -- Client Capabilities --
 
 (defgeneric attachment-evaluates-p (attachment)

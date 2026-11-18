@@ -33,6 +33,12 @@
 ;;; carries :BUSY-P, whether the channel has work after it: when it does not,
 ;;; the submission ran at once or its work already finished, and its
 ;;; :WORK-FINISHED event came before the reply.
+;;;
+;;; Client and server may be of different versions. Each side reads the
+;;; fields it knows and ignores the rest, a command the server does not know
+;;; gets an error reply, an event the client does not know is its to ignore,
+;;; and a packet that cannot be decoded at all is skipped. None of these ends
+;;; the connection.
 
 (defparameter *localgroup-client-permission-modes* '(:ask :auto :sandboxed :full-access)
   "The permission modes a structured client may select for its channel.")
@@ -70,18 +76,20 @@
               (daemon-write-packet stream (list :error  :message (autolith-error-message condition)
                                                :retry-p (localgroup-error-retry-p condition)))
               (return-from localgroup--serve-client nil)))
-           (loop for packet = (handler-case (daemon-read-packet stream)
-                                (error ()
-                                  nil))
-                 while (and packet (not (channel-client-closed-p client)))
-                 do (let* ((command packet)
-                           (reply   (lambda ()
-                                      (channel-client-enqueue client
-                                                              (localgroup--client-reply session command)))))
-                      ;; Operations may wait for an approval answered on this connection.
-                      (if (eq (first command) ':operation)
-                          (make-thread reply :name "Autolith client operation")
-                          (funcall reply)))))
+           ;; A client of another version may send what this one cannot read:
+           ;; an undecodable packet is skipped and a malformed command dropped.
+           (loop for command = (handler-case (daemon-read-decodable-packet stream)
+                                 (error ()
+                                   nil))
+                 while (and command (not (channel-client-closed-p client)))
+                 do (when (localgroup-message-p command)
+                      (let ((reply (lambda ()
+                                     (channel-client-enqueue
+                                      client (localgroup--client-reply session command)))))
+                        ;; Operations may wait for an approval answered on this connection.
+                        (if (eq (first command) ':operation)
+                            (make-thread reply :name "Autolith client operation")
+                            (funcall reply))))))
       (channel-client-close client)))
   nil)
 
@@ -383,13 +391,18 @@ writes are serialized separately so blocked I/O cannot prevent teardown."
 (defun localgroup-client--read (connection event-function &key evaluates-p)
   "Read events and pending replies, then close the socket and report (:closed).
 
-With EVALUATES-P, evaluation requests are run and answered here."
+With EVALUATES-P, evaluation requests are run and answered here. A server of
+another version may send what this client cannot read: an undecodable packet
+is skipped and a malformed one dropped."
   (unwind-protect
-       (loop for packet = (handler-case (daemon-read-packet (localgroup-client-connection-stream connection))
+       (loop for packet = (handler-case (daemon-read-decodable-packet
+                                         (localgroup-client-connection-stream connection))
                             (error ()
                               nil))
              while packet
              do (cond
+                  ((not (localgroup-message-p packet))
+                   nil)
                   ((eq (first packet) ':reply)
                    (with-lock-held ((localgroup-client-connection-lock connection))
                      (let ((identifier (getf (rest packet) :id))

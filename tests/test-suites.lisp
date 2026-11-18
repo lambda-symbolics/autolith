@@ -825,6 +825,7 @@
   test-client-work-movement-cancellation
   test-client-protocol-disconnect
   test-client-protocol-start-failure
+  test-client-protocol-version-tolerance
   test-client-protocol-packet-limit
   test-client-protocol-cursor-tail
   test-client-protocol-write-failure)

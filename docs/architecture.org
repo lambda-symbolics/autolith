@@ -173,6 +173,14 @@ record appends and work items publish to the hub. Operations a client asks
 for run on their own thread, since they may wait for the channel while it
 waits for the client.
 
+Client and server may be of different versions, and neither may fail because
+of the other. Each side reads the fields it knows in a packet and ignores the
+rest, drops a packet of a kind it does not know, and skips a packet it cannot
+decode at all; =image-daemon= keeps the stream in step by framing every packet.
+A server answers an unknown structured command with an error reply. New
+behavior is offered only to a client that asked for it when it attached, as
+=:evaluates-p= does.
+
 =src/application/client-evaluation.lisp= sends forms to a client that said on
 attachment that it evaluates Common Lisp, and waits for its answer. It serves
 =self.eval= with the =client= target for both client kinds: a terminal answers

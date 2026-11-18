@@ -800,6 +800,7 @@
                 #:daemon-error-session-id
                 #:daemon-random-nonce
                 #:daemon-random-token
+                #:daemon-read-decodable-packet
                 #:daemon-read-packet
                 #:daemon-read-response
                 #:daemon-socket-stream
