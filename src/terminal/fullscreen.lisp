@@ -414,8 +414,6 @@ The first rows of a transcript that evicted output also say how to load it."
                (available (max 0 (- height (length composer))))
                ;; Keep a transcript row even when activity fills the available space.
                (limit     (max 0 (1- available)))
-               (prefix    (prefix limit))
-               (space     (- available (length prefix)))
                (committed (clinedi:transcript-viewport-row-count viewport))
                (tail      (terminal-ui-stream-tail ui))
                (live      (coerce
@@ -425,30 +423,41 @@ The first rows of a transcript that evicted output also say how to load it."
                                          (terminal-ui--stream-tail-rows terminal tail width)))
                             width)
                            'vector))
-               (total     (+ committed (length live)))
-               (top       (clinedi:transcript-viewport-layout viewport space
-                                                              :extra-rows (length live)))
-               (position  (terminal-ui-fullscreen--position-text
-                           ui :top top :total total :space space))
-               (visible
-                 (if (and (zerop total) (terminal-ui-fullscreen-welcome-p ui))
-                     (terminal-ui--welcome-rows ui space)
-                     (loop for index from top below (min total (+ top space))
-                           collect (if (< index committed)
-                                       (clinedi:transcript-viewport-row-display viewport index)
-                                       (aref live (- index committed)))))))
-          ;; The modeline says where the transcript is, which is known only once
-          ;; the prefix has taken its rows, so a moved transcript composes it again.
-          (unless (string= position (fullscreen-terminal-ui-position ui))
-            (setf (fullscreen-terminal-ui-position ui) position
-                  prefix                               (prefix limit)))
-          (dolist (region (fullscreen-terminal-ui-pinned-actions ui))
-            (incf (first region) (1+ space)))
-          (setf (fullscreen-terminal-ui-transcript-space ui) space)
-          (values
-           (append visible (make-list (max 0 (- space (length visible))) :initial-element "")
-                   prefix composer)
-           (+ space (length prefix) cursor-row) cursor-column))))))
+               (total     (+ committed (length live))))
+          (flet ((note-position (top space)
+                   "Record for the modeline that the transcript shows SPACE rows from TOP."
+                   (setf (fullscreen-terminal-ui-position ui)
+                         (terminal-ui-fullscreen--position-text
+                          ui :top top :total total :space space))))
+            ;; The modeline says where the transcript is, and the transcript's rows
+            ;; are those the prefix leaves. The prefix seldom changes its height, so
+            ;; the last frame's space predicts the position before the prefix is
+            ;; composed, once; only a prefix of another height composes it again.
+            (let* ((guess     (min available (fullscreen-terminal-ui-transcript-space ui)))
+                   (guess-top (let ((maximum (max 0 (- total guess))))
+                                (min (or (clinedi:transcript-viewport-top viewport) maximum)
+                                     maximum)))
+                   (predicted (note-position guess-top guess))
+                   (prefix    (prefix limit))
+                   (space     (- available (length prefix)))
+                   (top       (clinedi:transcript-viewport-layout viewport space
+                                                                  :extra-rows (length live))))
+              (unless (string= predicted (note-position top space))
+                (setf prefix (prefix limit)))
+              (let ((visible
+                      (if (and (zerop total) (terminal-ui-fullscreen-welcome-p ui))
+                          (terminal-ui--welcome-rows ui space)
+                          (loop for index from top below (min total (+ top space))
+                                collect (if (< index committed)
+                                            (clinedi:transcript-viewport-row-display viewport index)
+                                            (aref live (- index committed)))))))
+                (dolist (region (fullscreen-terminal-ui-pinned-actions ui))
+                  (incf (first region) (1+ space)))
+                (setf (fullscreen-terminal-ui-transcript-space ui) space)
+                (values
+                 (append visible (make-list (max 0 (- space (length visible))) :initial-element "")
+                         prefix composer)
+                 (+ space (length prefix) cursor-row) cursor-column)))))))))
 
 
 ;;;; -- Physical Frames and Navigation --
