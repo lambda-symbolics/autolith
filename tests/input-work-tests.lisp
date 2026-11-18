@@ -81,7 +81,7 @@
          (let* ((command (input-work-tests--command))
                 (path    (merge-pathnames "workspace/" (uiop:temporary-directory)))
                 (source  (user-message-input-create
-                          :text "(cwd)" :submission '(:id "submission" :client "editor" :source "steering"))))
+                          :text "(cwd)" :submission '(:id "submission" :client "editor" :source :steering))))
            (register-application-command command :source ':runtime)
            (dolist (argument (list "~/workspace" path))
              (let* ((invocation
@@ -214,7 +214,7 @@
 (defun test-input-work-payload-codec ()
   "Round-trip input attachments, queue provenance, steering and native work."
   (let* ((image      (merge-pathnames "input.png" (uiop:temporary-directory)))
-         (submission '(:id "submission" :client "editor" :source "queue"))
+         (submission '(:id "submission" :client "editor" :source :queue))
          (input      (user-message-input-create :text "image" :image-pathnames (list image)
                                                 :submission submission))
          (state      (list :active-work
@@ -253,7 +253,12 @@
                    "invalid native queue metadata is rejected")))
   (dolist (form '((:lisp "(values)" :submission (:id "id"))
                   (:command "/help" :submission (:id "id" :client "client" :source "unknown"))
-                  (:message "hello" :unexpected (:id "id" :client "client" :source "prompt"))))
+                  (:message "hello" :unexpected (:id "id" :client "client" :source :prompt))))
     (test-assert (null (input-work-from-form form)) "invalid work provenance is rejected"))
+  (test-assert (equal (user-message-input-submission
+                       (user-message-input-create
+                        :text "hello" :submission '(:id "id" :client "client" :source "steering")))
+                      '(:id "id" :client "client" :source :steering))
+               "a source an older client or record spelled as a string is read as its keyword")
   (input-work-tests--command-codec)
   nil)

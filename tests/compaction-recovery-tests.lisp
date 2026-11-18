@@ -1225,8 +1225,8 @@
       (application-mission-schedule-add application :id "no-fit" :content "Perform scheduled work." :at 100 :interval 10)
       (setf ticket (mission-schedule-tests--ticket (first (application-mission-schedules-wake application)))))
     (when (eq entry :acp-queue)
-      (channel-subscription-submit session "Actual queued ACP input." :source "queue")
-      (channel-subscription-submit session "Remaining queued ACP input." :source "queue"))
+      (channel-subscription-submit session "Actual queued ACP input." :source ':queue)
+      (channel-subscription-submit session "Remaining queued ACP input." :source ':queue))
     (when (eq entry :acp-completion)
       (setf completion-id (compaction-owner-test--ready-completion application)))
     (test-call-with-function-replacements
@@ -1645,7 +1645,7 @@
                           controller
                           (user-message-input-create :text       (getf arguments :text)
                                                      :submission (getf arguments :submission)))
-                         (when (equal "prompt" (getf (getf arguments :submission) :source))
+                         (when (eq ':prompt (getf (getf arguments :submission) :source))
                            (compaction-owner-test--run-next controller))
                          (list :busy-p nil))
                         (:cancel
@@ -1686,8 +1686,8 @@
            (setf (config :prompt-cache-retention-seconds configuration) 300)
            (idle-compaction-tests--prime application))
          (when (eq entry :acp-queue)
-           (channel-subscription-submit session "Matrix claimed queued input." :source "queue")
-           (channel-subscription-submit session "Matrix unclaimed queued tail." :source "queue"))
+           (channel-subscription-submit session "Matrix claimed queued input." :source ':queue)
+           (channel-subscription-submit session "Matrix unclaimed queued tail." :source ':queue))
          (when (eq entry :acp-completion)
            (setf completion-id (compaction-owner-test--ready-completion application)))
          (unwind-protect

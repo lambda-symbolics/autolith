@@ -188,9 +188,11 @@
          command arguments))
 
 (-> channel-subscription-submit
-    (channel-subscription string &key (:source string) (:steer-p boolean) (:submission-id string)) list)
+    (channel-subscription string &key (:source user-message-submission-source) (:steer-p boolean)
+                          (:submission-id string))
+    list)
 (defun channel-subscription-submit
-    (subscription text &key (source "prompt") steer-p (submission-id (make-identifier)))
+    (subscription text &key (source ':prompt) steer-p (submission-id (make-identifier)))
   "Submit TEXT with the client's identity and SOURCE, returning the channel reply."
   (channel-subscription-call
    subscription ':submit :text text :steer-p steer-p
@@ -199,8 +201,8 @@
                      :source source)))
 
 (-> channel-subscription-await-submission
-    (channel-subscription string &key (:source string)) list)
-(defun channel-subscription-await-submission (subscription text &key (source "prompt"))
+    (channel-subscription string &key (:source user-message-submission-source)) list)
+(defun channel-subscription-await-submission (subscription text &key (source ':prompt))
   "Submit TEXT and await its own fully presented completion, independently of channel idleness."
   (let ((identifier (make-identifier)))
     (with-lock-held ((channel-subscription-lock subscription))

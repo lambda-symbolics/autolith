@@ -647,7 +647,7 @@
               (completed   (sb-thread:make-semaphore))
               (failure     nil)
               (events      nil)
-              (submission  '(:id "removed-prompt" :client "editor" :source "prompt"))
+              (submission  '(:id "removed-prompt" :client "editor" :source :prompt))
               (ran-p       nil)
               (waiter      nil))
          (conversation-append-user-message (application-conversation application) "source history")
@@ -693,7 +693,7 @@
                      (deque-push-back
                       (application-input-controller-work-items controller)
                       (list kind "queued non-prose" :submission
-                            (list :id (symbol-name kind) :client "editor" :source "prompt")))))
+                            (list :id (symbol-name kind) :client "editor" :source ':prompt)))))
                  (test-call-with-function-replacements
                   (list (list 'application-clients-publish
                               (lambda (candidate event)

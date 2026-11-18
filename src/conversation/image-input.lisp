@@ -44,6 +44,22 @@
   "Plain string INPUT carries no image attachments."
   (declare (ignore input)))
 
+(deftype user-message-submission-source ()
+  "How a client handed a message in: as its prompt, queued behind a turn, or steering one."
+  '(member :prompt :queue :steering))
+
+(-> user-message-submission-source (list) (option user-message-submission-source))
+(defun user-message-submission-source (submission)
+  "Return how SUBMISSION was handed in, or NIL when it does not say.
+
+Clients and records from before 0.67.58 spell the source as a string; that
+spelling is read until 0.69.0."
+  (let ((source (getf submission :source)))
+    (if (stringp source)
+        (find source '(:prompt :queue :steering)
+              :test (lambda (name keyword) (string= name (string-downcase keyword))))
+        (and (typep source 'user-message-submission-source) source))))
+
 (-> user-message-submission-p (t) boolean)
 (defun user-message-submission-p (submission)
   "Return true for complete portable user submission provenance."
@@ -54,8 +70,7 @@
                                        (:indicator :source :required t)))
        (non-empty-string-p (getf submission :id))
        (non-empty-string-p (getf submission :client))
-       (not (null (member (getf submission :source) '("prompt" "queue" "steering")
-                          :test #'equal)))))
+       (not (null (user-message-submission-source submission)))))
 
 (-> user-message-input-create
     (&key (:text string) (:image-pathnames list) (:submission list))
@@ -76,7 +91,10 @@
   (make-instance 'user-message-input
                  :text            text
                  :image-pathnames (copy-list image-pathnames)
-                 :submission      (copy-tree submission)))
+                 :submission      (and submission
+                                       (list :id     (getf submission :id)
+                                             :client (getf submission :client)
+                                             :source (user-message-submission-source submission)))))
 
 (defgeneric user-message-input-copy (input)
   (:documentation "Return a detached copy of user INPUT."))

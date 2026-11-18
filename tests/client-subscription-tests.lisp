@@ -64,11 +64,11 @@
             '(:accepted t)))
     (multiple-value-bind (thread done outcome)
         (client-subscription-tests--start
-         (lambda () (channel-subscription-await-submission client "request" :source "script")))
+         (lambda () (channel-subscription-await-submission client "request" :source ':queue)))
       (unwind-protect
            (progn
              (test-assert (sb-thread:wait-on-semaphore submitted :timeout 3) "the request is submitted")
-             (test-assert (and (equal "script" (getf submission :source))
+             (test-assert (and (eq ':queue (getf submission :source))
                                (equal (channel-subscription-client-identifier client)
                                       (getf submission :client)))
                           "submission metadata carries the frontend identity and source")

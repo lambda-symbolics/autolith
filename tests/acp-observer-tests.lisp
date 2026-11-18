@@ -101,8 +101,8 @@
          (test-assert (= 3 (length updates)) "legacy records without provenance are displayed")
          (dolist (steer-p '(nil t))
            (acp-input--submit session (agentcomms:json-object "text" "same") steer-p)
-           (test-assert (equal (if steer-p "steering" "queue")
-                               (getf (first submissions) :source))
+           (test-assert (eq (if steer-p ':steering ':queue)
+                            (getf (first submissions) :source))
                         "extension submissions carry their actual source")
            (acp-session--record session
                                 (list :message :role ':user :content "same"

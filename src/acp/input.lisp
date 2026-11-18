@@ -18,7 +18,7 @@
       (when (channel-subscription-closed-p session)
         (error 'acp-extension-unavailable :reason "The session is closing.")))
     (let ((reply (channel-subscription-submit session text :steer-p steer-p
-                                     :source                        (if steer-p "steering" "queue"))))
+                                     :source                        (if steer-p ':steering ':queue))))
       (agentcomms:json-object "accepted" t
                               "delivery" (if (and steer-p (getf reply :busy-p)) "steering" "queued")))))
 

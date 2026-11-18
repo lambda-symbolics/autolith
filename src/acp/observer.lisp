@@ -314,7 +314,7 @@ fragments that providers interleave with empty content deltas."
             (submission (getf fields :submission))
             (content    (getf fields :content)))
        (unless (and (equal (getf submission :client) (channel-subscription-client-identifier session))
-                    (equal (getf submission :source) "prompt"))
+                    (eq (user-message-submission-source submission) ':prompt))
          (when (stringp content)
            (with-lock-held ((channel-subscription-lock session))
              (acp-session--send session (agentcomms:acp-update-user-message
@@ -331,17 +331,19 @@ fragments that providers interleave with empty content deltas."
           (setf turn (cons (incf (acp-session-epoch session))
                            (case kind
                              (:message
-                              (or (getf (getf fields :submission) :source) "prompt"))
+                              (or (user-message-submission-source (getf fields :submission))
+                                  ':prompt))
                              (:job-completion
-                              "completion")
+                              ':completion)
                              (:client-work
-                              "invoke")
+                              ':invoke)
                              (t
-                              "prompt")))
+                              ':prompt)))
                 (acp-session-turn session) turn))
         (acp-extension-notify session "turn"
                               (agentcomms:json-object "state" "running" "epoch" (first turn)
-                                                      "source" (rest turn) "outcome" ':null))
+                                                      "source" (string-downcase (rest turn))
+                                                      "outcome" ':null))
         (acp-extension-notify session "state"))))
   nil)
 
@@ -367,7 +369,7 @@ fragments that providers interleave with empty content deltas."
       (acp-session-flush session)
       (acp-extension-notify session "turn"
                             (agentcomms:json-object "state" "idle" "epoch" (first turn)
-                                                    "source" (rest turn)
+                                                    "source" (string-downcase (rest turn))
                                                     "outcome" (string-downcase (symbol-name outcome))))
       (acp-extension-notify session "state")))
   nil)

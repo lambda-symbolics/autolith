@@ -566,7 +566,7 @@
                            (eq (getf (rest record) :role) ':user))
                   (push record records))))
              (setf records (nreverse records))
-             (test-assert (equal '("prompt" "steering" "queue")
+             (test-assert (equal '(:prompt :steering :queue)
                                  (mapcar (lambda (record)
                                            (getf (getf (rest record) :submission) :source))
                                          records))
