@@ -128,6 +128,59 @@
                      "history outcomes remain bounded to selected calls")
         (test-assert (= 20 count) "hidden lifecycle records do not change candidates")))))
 
+(-> test-application-tool-outcomes-history-segments () null)
+(defun test-application-tool-outcomes-history-segments ()
+  "Test that a history page is only read from the segments that the page comes from."
+  (with-test-configuration (configuration)
+    (let* ((application  (application-tool-outcome-tests--application configuration
+                                                                      :identifier "history-segments"))
+           (conversation (application-conversation application))
+           (reader       (symbol-function 'conversation--map-segment-records))
+           (starts       nil))
+      (labels ((append-call (call-id)
+                 "Append the call CALL-ID."
+                 (application-tool-outcome-history-tests--append
+                  conversation (application-tool-outcome-tests--call 0 call-id)))
+
+               (append-result (call-id)
+                 "Append the result of the call CALL-ID."
+                 (application-tool-outcome-history-tests--append
+                  conversation (application-tool-outcome-tests--result 0 call-id))))
+        ;; The segments start at the sequences 1, 6, 13 and 20. The result of
+        ;; every split call is the second record of the next segment.
+        (dotimes (segment 4)
+          (dolist (call-id (list (format nil "first-~D" segment) (format nil "second-~D" segment)))
+            (append-call call-id)
+            (append-result call-id))
+          (when (< segment 3)
+            (let ((call-id (format nil "split-~D" segment)))
+              (append-call call-id)
+              (conversation-append-summary conversation (make-continuation :intent "rotation checkpoint"))
+              (append-result call-id)))))
+      (test-call-with-function-replacements
+       (list (list 'conversation--map-segment-records
+                   (lambda (identity segment function &rest options)
+                     (push (conversation-chunk-start-sequence segment) starts)
+                     (apply reader identity segment function options))))
+       (lambda ()
+         (loop for (floor limit sequences segments)
+                 in `((,most-positive-fixnum 2 (22 24) (20))
+                      (,most-positive-fixnum 3 (20 22 24) (13 20))
+                      (20 2 (17 19) (13 20))
+                      (20 100 (1 3 5 6 8 10 12 13 15 17 19) (1 6 13 20)))
+               do (setf starts nil)
+                  (multiple-value-bind (records count outcomes)
+                      (application--history-page-records application floor limit)
+                    (declare (ignore count))
+                    (test-assert (equal sequences (mapcar #'application--record-sequence records))
+                                 "the page contains the newest candidates before the floor")
+                    (test-assert (loop for outcome being the hash-values of outcomes
+                                       always (getf outcome :outcome-record))
+                                 "every call of the page has an outcome")
+                    (test-assert (equal segments (sort (remove-duplicates starts) #'<))
+                                 "only the segments of the page and the next segment are read")))))))
+  nil)
+
 (-> test-application-tool-outcomes-startup-history () null)
 (defun test-application-tool-outcomes-startup-history ()
   "Fill startup pages with visible calls while applying hidden successful outcomes."

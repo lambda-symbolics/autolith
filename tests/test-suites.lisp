@@ -1903,6 +1903,7 @@
   test-application-tool-outcomes-spacing
   test-application-tool-outcomes-history-replay
   test-application-tool-outcomes-history-bounded
+  test-application-tool-outcomes-history-segments
   test-application-tool-outcomes-startup-history
   test-application-tool-outcomes-history-job-alias)
 
