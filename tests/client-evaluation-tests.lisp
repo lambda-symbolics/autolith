@@ -17,8 +17,7 @@
                     "(1+ *client-evaluation-probe*)")
                    t "42")
                   (("(error \"boom\")") nil "boom")
-                  (("(+ 1 2)" "(error \"second\")") nil "Form 2 of 2 failed")
-                  (3 nil "forms as strings")))
+                  (("(+ 1 2)" "(error \"second\")") nil "Form 2 of 2 failed")))
     (destructuring-bind (forms succeeded-p fragment) case
       (let ((answer (client-evaluate-request (list :evaluation :id "e1" :forms forms))))
         (test-assert (and (equal (getf answer :evaluation) "e1")
@@ -39,6 +38,32 @@
                  "the finished answer is the packet the channel accepts")
     (test-assert (null (client-evaluator-take evaluator))
                  "an answer is taken once"))
+  (let ((evaluator  (make-instance 'client-evaluator))
+        (connection (make-instance 'localgroup-client-connection))
+        (evaluated  0))
+    (test-call-with-function-replacements
+     (list (list 'self-evaluate-sources
+                 (lambda (&rest arguments) (declare (ignore arguments)) (incf evaluated) "unexpected")))
+     (lambda ()
+       (dolist (request '((:other :id "e" :forms ("(+ 1 2)"))
+                          (:evaluation :forms ("(+ 1 2)"))
+                          (:evaluation :id "" :forms ("(+ 1 2)"))
+                          (:evaluation :id 3 :forms ("(+ 1 2)"))
+                          (:evaluation :id "e" :id "other" :forms ("(+ 1 2)"))
+                          (:evaluation :id "e" :forms 3)
+                          (:evaluation :id "e" :forms ("(+ 1 2)" . "tail"))
+                          (:evaluation :id "e" :forms ("(+ 1 2)") :restart 3)
+                          (:evaluation :id "e" :forms ("(+ 1 2)") :restart-value nil)
+                          (:evaluation :id "e" :forms)
+                          (:evaluation . 3)))
+         (test-assert (and (not (client-evaluation-request-p request))
+                           (eq (client-evaluation-tests--failure
+                                (lambda () (client-evaluate-request request))) ':invalid-request))
+                      "Malformed or unidentified evaluation envelopes are refused before reading their forms.")
+         (client-evaluator-start evaluator request)
+         (localgroup-client--evaluate connection request))
+       (test-assert (and (zerop evaluated) (null (client-evaluator-take evaluator)))
+                    "Neither client route evaluates or answers malformed envelopes."))))
   nil)
 
 (-> test-client-evaluation-structured-client () null)
@@ -69,6 +94,34 @@
                 (multiple-value-bind (failure message) (code "(error \"boom\")")
                   (test-assert (and (eq failure ':failed) (search "boom" message))
                                "forms that fail in the client fail with the client's message"))
+                (let* ((hub     (application-client-hub application))
+                       (pending (make-instance 'client-evaluation
+                                               :attachment (application-evaluating-attachment application)))
+                       (forger  (localgroup-client-connect record :name "forger")))
+                  (unwind-protect
+                       (progn
+                         (with-lock-held ((client-hub-lock hub))
+                           (push pending (client-hub-evaluations hub)))
+                         (test-assert
+                          (not (getf (localgroup-client-call
+                                      forger :evaluated :evaluation (client-evaluation-identifier pending)
+                                      :succeeded-p t :text "forged") :accepted-p))
+                          "A different structured connection cannot answer another attachment's evaluation.")
+                         (dolist (fields '((:text "missing") (:succeeded-p :yes :text "truthy")))
+                           (test-assert
+                            (not (getf (apply #'localgroup-client-call connection :evaluated
+                                              :evaluation (client-evaluation-identifier pending) fields) :accepted-p))
+                            "Structured replies require an explicit boolean status."))
+                         (test-assert
+                          (and (null (client-evaluation-answer pending))
+                               (getf (localgroup-client-call
+                                      connection :evaluated :evaluation (client-evaluation-identifier pending)
+                                      :succeeded-p nil :text "reported failure") :accepted-p)
+                               (equal (client-evaluation-answer pending) '(nil "reported failure")))
+                          "Only the originating attachment can answer, including an explicit false status."))
+                    (with-lock-held ((client-hub-lock hub))
+                      (setf (client-hub-evaluations hub) (remove pending (client-hub-evaluations hub))))
+                    (localgroup-client-close forger)))
                 (test-call-with-function-replacements
                  (list (list 'client-evaluate-request
                              (lambda (request)
@@ -149,6 +202,37 @@
                                     (application-evaluate-on-client application '("(error \"boom\")"))))
                                  ':failed)
                              "forms that fail in the terminal client fail the evaluation")
+                (let* ((hub        (application-client-hub application))
+                       (attachment (application-evaluating-attachment application))
+                       (other      (localgroup-attachment-create nil (make-string-output-stream) ':read-only))
+                       (pending    (make-instance 'client-evaluation :attachment attachment))
+                       (packet     (list :evaluated :evaluation (client-evaluation-identifier pending)
+                                         :succeeded-p t :text "terminal result")))
+                  (unwind-protect
+                       (progn
+                         (with-lock-held ((client-hub-lock hub))
+                           (push pending (client-hub-evaluations hub)))
+                         (test-assert (and (not (localgroup--accept-client-packet application packet :attachment other))
+                                           (not (localgroup--accept-client-packet application packet)))
+                                      "An unrelated or unidentified terminal attachment cannot answer an evaluation.")
+                         (test-assert
+                          (not (application-answer-evaluation application (client-evaluation-identifier pending)
+                                                              :attachment attachment :text "missing status"))
+                          "The answer boundary also rejects an omitted boolean status.")
+                         (dolist (status '(:omitted :yes))
+                           (let ((malformed (list :evaluated :evaluation (client-evaluation-identifier pending)
+                                                  :text      "invalid")))
+                             (unless (eq status ':omitted)
+                               (setf malformed (append malformed (list :succeeded-p status))))
+                             (test-assert (not (localgroup--accept-client-packet application malformed
+                                                                               :attachment attachment))
+                                          "Terminal replies require an explicit boolean status.")))
+                         (test-assert (and (null (client-evaluation-answer pending))
+                                           (localgroup--accept-client-packet application packet :attachment attachment)
+                                           (not (localgroup--accept-client-packet application packet :attachment attachment)))
+                                      "The originating terminal attachment can answer exactly once."))
+                    (with-lock-held ((client-hub-lock hub))
+                      (setf (client-hub-evaluations hub) (remove pending (client-hub-evaluations hub))))))
                 (test-assert (notany (lambda (packet)
                                        (localgroup--accept-client-packet application packet))
                                      '((:evaluated :evaluation 3)

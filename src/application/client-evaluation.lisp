@@ -44,9 +44,25 @@ another version adds are ignored."
                         :tag            ':evaluated
                         :keyword-keys-p t
                         :fields         (list (list :indicator ':evaluation :required t
-                                                    :validate  #'stringp)
+                                                    :validate  #'non-empty-string-p)
+                                              (list :indicator ':succeeded-p :required t
+                                                    :validate (lambda (value) (typep value 'boolean)))
                                               (list :indicator ':text :required t
                                                     :validate  #'stringp)))))
+
+(-> client-evaluation-request-p (t) boolean)
+(defun client-evaluation-request-p (packet)
+  "Return true for an identified evaluation envelope with well-formed sources and restart fields."
+  (values (record-check packet
+                        :tag            ':evaluation
+                        :keyword-keys-p t
+                        :fields         (list (list :indicator ':id :required t :validate #'non-empty-string-p)
+                                              (list :indicator ':forms :required t
+                                                    :validate (lambda (sources)
+                                                                (and (consp sources) (proper-list-p sources)
+                                                                     (every #'stringp sources))))
+                                              (list :indicator ':restart :validate #'stringp)
+                                              (list :indicator ':restart-value :validate #'stringp)))))
 
 
 ;;;; -- Policy --
@@ -145,46 +161,47 @@ the forms fail there, and when the client leaves, the turn is cancelled, or
 
 ;;;; -- Answering --
 
-(-> application-answer-evaluation (application t &key (:succeeded-p t) (:text t)) boolean)
-(defun application-answer-evaluation (application identifier &key succeeded-p text)
-  "Give the pending evaluation IDENTIFIER its client's answer and return true when one took it.
+(-> application-answer-evaluation
+    (application t &key (:attachment (option image-daemon:attachment)) (:succeeded-p t) (:text t)) boolean)
+(defun application-answer-evaluation
+    (application identifier &key attachment (succeeded-p nil succeeded-p-p) text)
+  "Accept IDENTIFIER's answer only from its originating ATTACHMENT with an explicit boolean status.
 
-An unknown or already answered evaluation, and an answer without text, take nothing."
+Unknown or answered evaluations, malformed answers and other attachments take nothing."
   (let ((hub (application-client-hub application)))
     (with-lock-held ((client-hub-lock hub))
-      (let ((evaluation (and (stringp identifier)
+      (let ((evaluation (and (non-empty-string-p identifier)
+                             attachment succeeded-p-p (typep succeeded-p 'boolean)
                              (stringp text)
                              (find identifier (client-hub-evaluations hub)
-                                   :key  #'client-evaluation-identifier
-                                   :test #'string=))))
-        (when (and evaluation (null (client-evaluation-answer evaluation)))
+                                   :key #'client-evaluation-identifier :test #'string=))))
+        (when (and evaluation
+                   (eq attachment (client-evaluation-attachment evaluation))
+                   (null (client-evaluation-answer evaluation)))
           (setf (client-evaluation-answer evaluation)
-                (list (not (null succeeded-p))
-                      (bounded-string text :limit *self-evaluation-character-limit*)))
+                (list succeeded-p (bounded-string text :limit *self-evaluation-character-limit*)))
           (condition-notify (client-evaluation-condition-variable evaluation))
           t)))))
 
 
 ;;;; -- Evaluating in a Client --
 
-(-> client-evaluate-request (list) list)
+(-> client-evaluate-request (t) list)
 (defun client-evaluate-request (request)
   "Evaluate the forms of the (:evaluation ...) REQUEST in this image and return its answer's fields.
 
 The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
 :TEXT with the rendered output and values or the failure."
+  (unless (client-evaluation-request-p request)
+    (error 'client-evaluation-error :code ':invalid-request
+           :message                       "An evaluation requires an identifier, forms as strings, and valid optional restart fields."))
   (let ((arguments (rest request)))
     (multiple-value-bind (succeeded-p text)
         (handler-case
-            (let ((sources (getf arguments :forms)))
-              (unless (and (consp sources) (every #'stringp sources))
-                (error 'client-evaluation-error
-                       :code    ':failed
-                       :message "An evaluation carries its forms as strings."))
-              (values t (self-evaluate-sources
-                         sources
-                         :restart-name         (getf arguments :restart)
-                         :restart-value-source (getf arguments :restart-value))))
+            (values t (self-evaluate-sources
+                       (getf arguments :forms)
+                       :restart-name         (getf arguments :restart)
+                       :restart-value-source (getf arguments :restart-value)))
           (error (condition)
             (values nil (princ-to-string condition))))
       (list :evaluation (getf arguments :id) :succeeded-p succeeded-p :text text))))
@@ -201,14 +218,15 @@ The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
     :documentation "The answer packets finished and not yet taken, newest first."))
   (:documentation "The evaluations a terminal client runs for its channel, each on a thread of its own."))
 
-(-> client-evaluator-start (client-evaluator list) null)
+(-> client-evaluator-start (client-evaluator t) null)
 (defun client-evaluator-start (evaluator request)
-  "Evaluate REQUEST on a thread of its own and keep its answer for CLIENT-EVALUATOR-TAKE."
-  (make-thread (lambda ()
-                 (let ((answer (cons :evaluated (client-evaluate-request request))))
-                   (with-lock-held ((client-evaluator-lock evaluator))
-                     (push answer (client-evaluator-answers evaluator)))))
-               :name "Autolith client evaluation")
+  "Evaluate a valid REQUEST on a thread and retain its answer; ignore malformed envelopes."
+  (when (client-evaluation-request-p request)
+    (make-thread (lambda ()
+                   (let ((answer (cons :evaluated (client-evaluate-request request))))
+                     (with-lock-held ((client-evaluator-lock evaluator))
+                       (push answer (client-evaluator-answers evaluator)))))
+                 :name "Autolith client evaluation"))
   nil)
 
 (-> client-evaluator-take (client-evaluator) list)

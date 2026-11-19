@@ -365,10 +365,10 @@
                       (let ((image-daemon:*daemon-packet-character-limit* 8192))
                         (funcall frame packet))))
               (list 'localgroup--client-command
-                    (lambda (session operation arguments)
+                    (lambda (session operation arguments &key attachment)
                       (if (eq operation ':oversized)
                           (list :data (make-string 32768 :initial-element #\x))
-                          (funcall command session operation arguments)))))
+                          (funcall command session operation arguments :attachment attachment)))))
              (lambda ()
                (setf caller
                      (make-thread
@@ -427,14 +427,14 @@
             (test-call-with-function-replacements
              (list
               (list 'localgroup--client-command
-                    (lambda (session operation arguments)
+                    (lambda (session operation arguments &key attachment)
                       (if (and (eq operation ':operation)
                                (equal (getf arguments :method) "blocked"))
                           (progn
                             (sb-thread:signal-semaphore received)
                             (sb-thread:wait-on-semaphore release :timeout 10)
                             nil)
-                          (funcall command session operation arguments))))
+                          (funcall command session operation arguments :attachment attachment))))
               (list 'localgroup-client-connection-stream
                     (lambda (candidate)
                       (if (and (eq candidate connection) (eq (current-thread) writer))

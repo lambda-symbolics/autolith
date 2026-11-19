@@ -447,11 +447,12 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
                                 (cons (integer 1 10000)
                                  (cons (integer 1 10000) null))))))))
 
-(-> localgroup--accept-client-packet (application list) boolean)
-(defun localgroup--accept-client-packet (application packet)
-  "Take a terminal client's own PACKET, the answer to an evaluation, and return whether one waited for it."
+(-> localgroup--accept-client-packet (application list &key (:attachment (option image-daemon:attachment))) boolean)
+(defun localgroup--accept-client-packet (application packet &key attachment)
+  "Take an evaluation answer from its originating terminal ATTACHMENT."
   (and (client-evaluation-reply-p packet)
        (application-answer-evaluation application (getf (rest packet) :evaluation)
+                                      :attachment  attachment
                                       :succeeded-p (getf (rest packet) :succeeded-p)
                                       :text        (getf (rest packet) :text))))
 
@@ -589,7 +590,7 @@ operation. Drain through the sole attachment writer outside endpoint locks."
                 terminal attachment
                 :event-validator #'localgroup--terminal-event-p
                 :packet-function (lambda (packet)
-                                   (localgroup--accept-client-packet application packet)))))
+                                   (localgroup--accept-client-packet application packet :attachment attachment)))))
            (error (condition) (capture condition) (retain-failure)
                   (let* ((message (localgroup--attachment-failure-message failure))
                          (packet

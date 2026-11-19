@@ -85,7 +85,8 @@
                  do (when (localgroup-message-p command)
                       (let ((reply (lambda ()
                                      (channel-client-enqueue
-                                      client (localgroup--client-reply session command)))))
+                                      client (localgroup--client-reply
+                                              session command :attachment (channel-client-attachment client))))))
                         ;; Operations may wait for an approval answered on this connection.
                         (if (eq (first command) ':operation)
                             (make-thread reply :name "Autolith client operation")
@@ -93,20 +94,21 @@
       (channel-client-close client)))
   nil)
 
-(-> localgroup--client-reply (localgroup-session list) list)
-(defun localgroup--client-reply (session packet)
+(-> localgroup--client-reply (localgroup-session list &key (:attachment (option image-daemon:attachment))) list)
+(defun localgroup--client-reply (session packet &key attachment)
   "Run the client command PACKET in SESSION's channel and return its reply."
   (let ((identifier (getf (rest packet) :id)))
     (handler-case
         (client-portable
          (list* :reply :id identifier :ok t
-                (localgroup--client-command session (first packet) (rest packet))))
+                 (localgroup--client-command session (first packet) (rest packet) :attachment attachment)))
       (error (condition)
         (list :reply        :id identifier
                      :error (bounded-string (princ-to-string condition) :limit 1000))))))
 
-(-> localgroup--client-command (localgroup-session t list) list)
-(defun localgroup--client-command (session command arguments)
+(-> localgroup--client-command
+    (localgroup-session t list &key (:attachment (option image-daemon:attachment))) list)
+(defun localgroup--client-command (session command arguments &key attachment)
   "Run client COMMAND with ARGUMENTS in SESSION's channel and return the reply's extra fields."
   (let* ((application (localgroup-session-application session))
          (controller  (application-input-controller application)))
@@ -147,9 +149,11 @@
            (list :accepted-p (application-answer-approval application approval value))))
         (:evaluated
          (list :accepted-p
-               (application-answer-evaluation application (getf arguments :evaluation)
-                                              :succeeded-p (getf arguments :succeeded-p)
-                                              :text        (getf arguments :text))))
+               (and (client-evaluation-reply-p (cons :evaluated arguments))
+                    (application-answer-evaluation application (getf arguments :evaluation)
+                                                   :attachment  attachment
+                                                   :succeeded-p (getf arguments :succeeded-p)
+                                                   :text        (getf arguments :text)))))
         (:mode
          (let ((mode (getf arguments :value)))
            (unless (member mode (application-client-permission-modes))
@@ -372,17 +376,18 @@ writes are serialized separately so blocked I/O cannot prevent teardown."
       (join-thread thread)))
   nil)
 
-(-> localgroup-client--evaluate (localgroup-client-connection list) null)
+(-> localgroup-client--evaluate (localgroup-client-connection t) null)
 (defun localgroup-client--evaluate (connection request)
-  "Evaluate the channel's REQUEST on a thread of its own and send CONNECTION's answer."
-  (make-thread (lambda ()
-                 (handler-case
-                     (apply #'localgroup-client-call connection :evaluated
-                            (client-evaluate-request request))
-                   ;; The connection ended while the forms ran; nobody waits for the answer.
-                   (localgroup-error ()
-                     nil)))
-               :name "Autolith client evaluation")
+  "Evaluate a valid channel REQUEST on a thread and send CONNECTION's answer; ignore malformed envelopes."
+  (when (client-evaluation-request-p request)
+    (make-thread (lambda ()
+                   (handler-case
+                       (apply #'localgroup-client-call connection :evaluated
+                              (client-evaluate-request request))
+                     ;; The connection ended while the forms ran; nobody waits for the answer.
+                     (localgroup-error ()
+                       nil)))
+                 :name "Autolith client evaluation"))
   nil)
 
 (-> localgroup-client--read

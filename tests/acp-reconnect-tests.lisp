@@ -182,14 +182,14 @@
               (reconnect-id (make-identifier)))
          (test-call-with-function-replacements
           (list (list 'localgroup--client-reply
-                      (lambda (endpoint packet)
+                      (lambda (endpoint packet &key attachment)
                         (when (eq (first packet) ':state)
                           (with-lock-held (lock)
                             (incf calls)
                             (setf entered-p t)
                             (condition-notify condition)
                             (loop until released-p do (condition-wait condition lock))))
-                        (funcall original endpoint packet))))
+                        (funcall original endpoint packet :attachment attachment))))
           (lambda ()
             (unwind-protect
                  (progn
