@@ -6782,7 +6782,7 @@
                        (incf generation-count)
                        "generated session title")))
               (lambda ()
-                (application--maybe-refresh-conversation-title application)))
+                (application--maybe-name-session application)))
              (test-assert (zerop generation-count)
                           "disabled title generation never calls the provider")
              (test-assert
@@ -6798,11 +6798,11 @@
                        (declare (ignore ignored))
                        (pop outputs))))
               (lambda ()
-                (application--maybe-refresh-conversation-title application)
+                (application--maybe-name-session application)
                 (test-assert
                  (eq (conversation-title-source conversation) ':initial)
                  "malformed provider output leaves the local title intact")
-                (application--maybe-refresh-conversation-title application))))
+                (application--maybe-name-session application))))
            (test-assert
             (and (string= (conversation-title conversation)
                           "Generated session title")
@@ -6818,40 +6818,117 @@
 
 (-> test-application-conversation-agent-name () null)
 (defun test-application-conversation-agent-name ()
-  "Test title inference names the session in one tool-free request and leaves the agent's handle alone."
-  (with-test-configuration (configuration)
-    (let* ((conversation (conversation-create configuration))
-           (provider     (make-instance
-                          'rlm-inference-test-provider
-                          :results
-                          (mapcar (lambda (text) (rlm-inference-test-result "naming" text 10))
-                                  '("not JSON"
-                                    "{\"title\":\"Fix shell activity visibility\"}"))))
-           (application  (make-instance 'application :configuration configuration
-                                       :conversation conversation :provider provider)))
-      (dolist (message '("show shell activity" "keep notices with calls" "verify the repair"))
-        (conversation-append-user-message conversation message))
-      (let* ((initial (world-session-participant configuration conversation))
-             (handle  (participant-name initial)))
-        (application--maybe-refresh-conversation-title application)
-        (test-assert (eq (conversation-title-source conversation) ':initial)
-                     "an invalid response leaves the initial title eligible for retry")
-        (application--maybe-refresh-conversation-title application)
-        (let ((agent (world-participant-find (world-load configuration) (participant-identifier initial))))
+  "Test an agent is named for its work once, after enough turns or tool calls, in the title's tool-free request."
+  (flet ((scripted (&rest texts)
+           "Return a provider that answers the naming requests with TEXTS in turn."
+           (make-instance 'rlm-inference-test-provider
+                          :results (mapcar (lambda (text)
+                                             (rlm-inference-test-result "naming" text 10))
+                                           texts)))
+
+         (requests (provider)
+           "Return how many requests PROVIDER answered."
+           (length (rlm-inference-test-provider-input-snapshots provider)))
+
+         (agent (configuration conversation)
+           "Return CONVERSATION's agent as the world holds it now."
+           (world-session-participant configuration conversation)))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration))
+             (provider     (scripted "not JSON"
+                                     "{\"title\":\"Fix shell activity visibility\",\"agent_name\":\"bad name\"}"
+                                     "{\"title\":\"Another session title\",\"agent_name\":\"shell-visibility\"}"))
+             (application  (make-instance 'application :configuration configuration
+                                                       :conversation  conversation
+                                                       :provider      provider)))
+        (dolist (message '("show shell activity" "keep notices with calls" "verify the repair"))
+          (conversation-append-user-message conversation message))
+        (let ((handle (participant-name (agent configuration conversation))))
+          (application--maybe-name-session application)
+          (test-assert (and (eq (conversation-title-source conversation) ':initial)
+                            (eq (participant-name-source (agent configuration conversation)) ':initial))
+                       "an invalid response leaves the title and the name eligible for retry")
+          (application--maybe-name-session application)
           (test-assert (and (equal (conversation-title conversation) "Fix shell activity visibility")
-                            (eq (conversation-title-source conversation) ':generated))
-                       "one valid inference sets the title")
-          (test-assert (and (equal (participant-name agent) handle)
-                            (eq (participant-name-source agent) ':initial))
-                       "the agent keeps the handle it started with"))
-        (application--maybe-refresh-conversation-title application)
-        (test-assert (and (= (length (rlm-inference-test-provider-input-snapshots provider)) 2)
-                          (equal (rlm-inference-test-provider-tool-schema-counts provider) '(0 0))
-                          (= (conversation-user-turn-count conversation) 3))
-                     "each attempt uses one tool-free inference, without adding a user turn or repeating a successful refresh")))
-    (dolist (text '("not JSON" "[]" "{\"title\":\"Too short\"}" "{\"title\":42}"))
-      (test-assert (null (application--conversation-title-response text))
-                   "a malformed title cannot be published")))
+                            (eq (conversation-title-source conversation) ':generated)
+                            (equal (participant-name (agent configuration conversation)) handle))
+                       "a valid title is kept while an invalid name leaves the starting handle")
+          (application--maybe-name-session application)
+          (let ((named (agent configuration conversation)))
+            (test-assert (and (equal (participant-name named) "shell-visibility")
+                              (eq (participant-name-source named) ':generated)
+                              (equal (conversation-title conversation) "Fix shell activity visibility"))
+                         "the next valid response names the agent and leaves the generated title alone")
+            (test-assert (equal (participant-identifier
+                                 (world-participant-designated (world-load configuration)
+                                                               "shell-visibility"))
+                                (participant-identifier named))
+                         "the inferred handle is at once the one mentions use"))
+          (application--maybe-name-session application)
+          (test-assert (and (= (requests provider) 3)
+                            (equal (rlm-inference-test-provider-tool-schema-counts provider) '(0 0 0))
+                            (= (conversation-user-turn-count conversation) 3))
+                       "each attempt is one tool-free inference, and a named, titled session asks for none"))))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration))
+             (provider     (scripted "{\"title\":\"A title nobody asked for\",\"agent_name\":\"queue-repair\"}"))
+             (application  (make-instance 'application :configuration configuration
+                                                       :conversation  conversation
+                                                       :provider      provider)))
+        (conversation-append-user-message conversation "repair the queue")
+        (setf (application-action-count application) (1- *application-agent-name-action-count*))
+        (application--maybe-name-session application :title-p nil)
+        (test-assert (zerop (requests provider))
+                     "an agent that has done little keeps its starting handle")
+        (setf (application-action-count application) *application-agent-name-action-count*)
+        (application--maybe-name-session application :title-p nil)
+        (test-assert (and (equal (participant-name (agent configuration conversation)) "queue-repair")
+                          (eq (conversation-title-source conversation) ':initial))
+                     "enough tool calls name the agent after a turn nobody typed, which earns no title")))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration))
+             (provider     (scripted "{\"title\":\"Fix shell activity visibility\",\"agent_name\":\"inferred-name\"}"))
+             (application  (make-instance 'application :configuration configuration
+                                                       :conversation  conversation
+                                                       :provider      provider)))
+        (dolist (message '("show shell activity" "keep notices with calls" "verify the repair"))
+          (conversation-append-user-message conversation message))
+        (world-participant-rename
+         configuration (participant-identifier (agent configuration conversation)) "chosen-name")
+        (application--maybe-name-session application)
+        (application--maybe-name-session application)
+        (test-assert (and (equal (participant-name (agent configuration conversation)) "chosen-name")
+                          (eq (conversation-title-source conversation) ':generated)
+                          (= (requests provider) 1))
+                     "a name someone chose stays, and only the title is asked for")))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration))
+             (answers      (loop repeat (1+ *application-agent-name-attempt-limit*)
+                                 collect "{\"title\":\"Fix shell activity visibility\"}"))
+             (provider     (apply #'scripted answers))
+             (application  (make-instance 'application :configuration configuration
+                                                       :conversation  conversation
+                                                       :provider      provider)))
+        (dolist (message '("show shell activity" "keep notices with calls" "verify the repair"))
+          (conversation-append-user-message conversation message))
+        (loop repeat (length answers)
+              do (application--maybe-name-session application))
+        (test-assert (and (= (requests provider) *application-agent-name-attempt-limit*)
+                          (eq (participant-name-source (agent configuration conversation)) ':initial))
+                     "a process stops asking once enough answers brought no usable name"))))
+  (dolist (case '(("not JSON" nil nil)
+                  ("[]" nil nil)
+                  ("{\"title\":\"Too short\",\"agent_name\":\"valid-name\"}" nil "valid-name")
+                  ("{\"title\":\"A valid session title\",\"agent_name\":\"parent\"}"
+                   "A valid session title" nil)
+                  ("{\"title\":\"A valid session title\",\"agent_name\":42}"
+                   "A valid session title" nil)
+                  ("{\"title\":\"A valid session title\",\"agent_name\":\"Mixed-Case\"}"
+                   "A valid session title" "mixed-case")))
+    (destructuring-bind (text title name) case
+      (test-assert (equal (multiple-value-list (application--conversation-title-response text))
+                          (list title name))
+                   "a response yields the valid title and the valid handle, each on its own")))
   nil)
 
 (-> test-conversation-picker () null)

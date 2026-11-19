@@ -752,7 +752,7 @@
   test-world-agentless-channel
   test-world-staggered-retirement
   test-world-handles
-  test-world-initial-names
+  test-world-agent-names
   test-world-composer-mentions
   test-world-mention-highlighting
   test-world-mention-boundaries
