@@ -239,6 +239,25 @@
                                 (world-channel-find (world-load configuration) "delete-child")
                                 (null (world-server--find-host server inbox)))
                            "hosted cancellation neither opens an inbox nor changes the client's attachment")
+              (let ((cancelled-p nil))
+                (test-call-with-function-replacements
+                 (list (list 'world-server-open
+                             (lambda (candidate request)
+                               (declare (ignore candidate request))
+                               (error 'configuration-error :message "Destination unavailable.")))
+                       (list 'application-input-controller--request-active-turn-cancellation
+                             (lambda (controller &key pause-queued-work-p)
+                               (declare (ignore controller pause-queued-work-p))
+                               (setf cancelled-p t))))
+                 (lambda ()
+                   (channel-deletion-tests--choose
+                    ':remove
+                    (lambda ()
+                      (test-assert (handler-case (progn (application-operation-call application "delete") nil)
+                                     (configuration-error () t))
+                                   "an unavailable destination prevents deletion")))))
+                (test-assert (and (not cancelled-p) (eq (image-daemon:relay-controller terminal) attachment))
+                             "a failed handoff does not cancel source work or move its terminal"))
               (channel-deletion-tests--choose
                ':remove
                (lambda ()

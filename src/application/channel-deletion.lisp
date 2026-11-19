@@ -16,7 +16,10 @@ its idle host ends it."
                             (channel-remove configuration (list identifier) :tool-name "(delete)")
                             (progn
                               (channel--quiesce configuration (list identifier) "(delete)")
-                              1))))
+                            ;; Its final work may have persisted it before quiescence.
+                             (if (world-channel-find (world-load configuration) identifier)
+                                 (channel-remove configuration (list identifier) :tool-name "(delete)")
+                                 1)))))
     (application-present
      application
      (application-notice-line
@@ -91,7 +94,9 @@ attachment have left. It never waits for or interrupts unrelated work."
       (unless (localgroup-terminal-switch-controller terminal destination :controller attachment)
         (error 'configuration-error :message "The controlling terminal disconnected; nothing was deleted."))
       (unless (application-input-controller-enqueue-work target (list :channel-deletion request))
-        (error 'configuration-error :message "The destination channel stopped; nothing was deleted."))))
+        (error 'configuration-error :message "The destination channel stopped; nothing was deleted."))
+      ;; Do not interrupt the source turn unless the handoff was accepted.
+      (application-input-controller--request-active-turn-cancellation controller :pause-queued-work-p t)))
   nil)
 
 (-> application--standalone-deletion-ready-p (application) boolean)
@@ -141,12 +146,6 @@ turn, external work on another thread, pending input, and live asynchronous jobs
       (error 'configuration-error :message "There is no inbox to move to; nothing was deleted."))
     (cond
       ((and (application-hosted-p application) (typep terminal 'localgroup-terminal))
-       ;; A confirmed deletion ends the turn the channel is in; the destination
-       ;; waits for it to wind down before removing anything.
-       (let ((controller (application-input-controller application)))
-         (when controller
-           (application-input-controller--request-active-turn-cancellation
-            controller :pause-queued-work-p t)))
        (application--handoff-channel-deletion application identifier destination))
       ((application-clients-attached-p application)
        (channel--busy identifier "(delete)" :state ':attached))
