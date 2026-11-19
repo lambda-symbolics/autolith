@@ -319,10 +319,7 @@
                (limit (getf arguments :limit)))
            (unless (and (typep start '(integer 0)) (typep limit '(integer 1)))
              (refuse "An input history page names its start and its limit."))
-           (list :entries (conversation-input-history-page
-                           (application-conversation application)
-                           :start start
-                           :limit (min limit *terminal-history-page-size*)))))
+           (list :entries (application-input-history-page application :start start :limit limit))))
         (:operation
          (let ((method (getf arguments :method))
                (params (client-json (getf arguments :params))))

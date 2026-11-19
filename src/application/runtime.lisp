@@ -2052,17 +2052,52 @@ state and update the title afterward; later failures do not roll back the runtim
                            count t))))
       entries))
 
+(-> application--input-history-fit (list (integer 1)) list)
+(defun application--input-history-fit (entries character-limit)
+  "Return ENTRIES, cutting the long ones when together they hold more than CHARACTER-LIMIT characters.
+
+Each entry then keeps an equal share at most, so the count and the order
+stay. A cut entry ends with a note of its full length, so a recalled input
+never passes for whole. This bounds what one history packet carries, whatever
+was once submitted."
+  (if (<= (reduce #'+ entries :key #'length) character-limit)
+      entries
+      (let ((share (max 1 (floor character-limit (length entries)))))
+        (mapcar (lambda (entry)
+                  (if (<= (length entry) share)
+                      entry
+                      (let* ((note (format nil "… [cut from ~D characters]" (length entry)))
+                             (cut  (concatenate 'string
+                                                (subseq entry 0 (max 0 (- share (length note))))
+                                                note)))
+                        (subseq cut 0 (min share (length cut))))))
+                entries))))
+
+(-> application-input-history-page
+    (application &key (:start (integer 0)) (:limit (integer 1))) list)
+(defun application-input-history-page (application &key start limit)
+  "Return up to LIMIT of APPLICATION's durable inputs from absolute position START, bounded for one packet."
+  (application--input-history-fit
+   (conversation-input-history-page (application-conversation application)
+                                    :start start
+                                    :limit (min limit *terminal-history-page-size*))
+   *terminal-history-character-limit*))
+
 (-> application-input-history-window (terminal-ui conversation) (values list (integer 0) boolean))
 (defun application-input-history-window (ui conversation)
   "Return the newest inputs UI's editor keeps, the offset of the first, and whether the rest pages in.
 
 The window obeys both of the editor's budgets, so it is also what a client is sent."
-  (let ((editor (terminal-ui-editor ui)))
+  (let* ((editor (terminal-ui-editor ui))
+         (limit  (line-editor-history-character-limit editor)))
     (multiple-value-bind (entries total complete-p)
         (conversation-input-history-page conversation :limit (line-editor-history-limit editor))
-      (let ((resident (application--input-history-resident
-                       entries (line-editor-history-character-limit editor))))
-        (values resident (- total (length resident)) complete-p)))))
+      (let ((resident (application--input-history-resident entries limit)))
+        (values (if limit
+                    (application--input-history-fit resident limit)
+                    resident)
+                (- total (length resident))
+                complete-p)))))
 
 (-> application--load-conversation-input-history (terminal-ui conversation) terminal-ui)
 (defun application--load-conversation-input-history (ui conversation)

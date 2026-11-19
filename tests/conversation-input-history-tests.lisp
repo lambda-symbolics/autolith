@@ -436,6 +436,40 @@
                              "completed maintenance restores the complete seekable history"))))))))
   nil)
 
+(-> test-application-input-history-packets () null)
+(defun test-application-input-history-packets ()
+  "Test the input history a client is sent fits one packet's budget, whatever was once submitted."
+  (with-test-configuration (configuration)
+    (let* ((*terminal-history-character-limit* 200)
+           (conversation                       (conversation-create configuration))
+           (ui                                 (terminal-ui-create
+                                                :terminal (make-instance 'recording-terminal :columns 80)))
+           (application                        (make-instance 'application
+                                                              :configuration configuration
+                                                              :conversation  conversation
+                                                              :ui            ui))
+           (huge                               (make-string 400 :initial-element #\h)))
+      (dolist (input (list "one" "two" huge "four"))
+        (conversation-append-user-message conversation input))
+      (let ((page (application-input-history-page application :start 0 :limit 4)))
+        (test-assert (and (equal (list (first page) (second page) (fourth page)) '("one" "two" "four"))
+                          (<= (reduce #'+ page :key #'length) 200))
+                     "a page keeps every input in place and fits the budget")
+        (test-assert (and (uiop:string-prefix-p "hhh" (third page))
+                          (uiop:string-suffix-p (third page) "[cut from 400 characters]"))
+                     "an input too long for its share is cut and says so"))
+      (test-assert (equal (application-input-history-page application :start 0 :limit 2) '("one" "two"))
+                   "a page within the budget is left as it is")
+      (conversation-append-user-message conversation (make-string 500 :initial-element #\n))
+      (multiple-value-bind (entries offset paged-p) (application-input-history-window ui conversation)
+        (test-assert (and (= (length entries) 1)
+                          (= (length (first entries)) 200)
+                          (uiop:string-suffix-p (first entries) "[cut from 500 characters]")
+                          (= offset 4)
+                          paged-p)
+                     "the newest input is given even when it alone exceeds the budget, cut to it"))))
+  nil)
+
 (-> test-conversation-maintenance-concurrent-input () null)
 (defun test-conversation-maintenance-concurrent-input ()
   "Accept input while archival repair is paused and retry stale publication."

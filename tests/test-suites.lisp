@@ -1096,6 +1096,7 @@
   test-conversation-input-history-recovery
   test-conversation-input-history-interruption
   test-conversation-input-history-page-load
+  test-application-input-history-packets
   test-conversation-maintenance-concurrent-input
   test-application-conversation-maintenance-repair)
 
