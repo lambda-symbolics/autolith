@@ -216,6 +216,17 @@ to another channel."
     (and client
          (apply #'channel-client-tell client operation fields))))
 
+(-> application-clients-finish-presenting (application keyword &rest t) null)
+(defun application-clients-finish-presenting (application operation &rest fields)
+  "Tell every presenting client presentation OPERATION with FIELDS as the last thing it hears, then let it go.
+
+Each client is given the daemon's stop deadline to take what was queued for
+it, so the word reaches a client that reads before the endpoint closes."
+  (let ((event (client-portable (list* :ui :operation operation fields))))
+    (dolist (client (remove-if-not #'channel-client-presents-p (application-clients application)))
+      (channel-client-finish client event)))
+  nil)
+
 (-> application-client-attached-p (application channel-client) boolean)
 (defun application-client-attached-p (application client)
   "Return true while CLIENT follows APPLICATION's channel."

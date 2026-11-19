@@ -682,9 +682,10 @@ relay; a terminal that already disconnected costs nothing."
          (terminal     (and ui (terminal-ui-terminal ui)))
          (presentation (and application (application-presentation application))))
     (when presentation
-      ;; A hosted channel's terminal clients learn of its exit as they learn of everything else.
-      (application-clients-publish
-       application (list :ui :operation ':exit :status status :message message :details details))
+      ;; A hosted channel's terminal clients are let go once each has the word,
+      ;; since the endpoint closes next.
+      (application-clients-finish-presenting
+       application ':exit :status status :message message :details details)
       (return-from localgroup-finish-attachments t))
     (when (typep terminal 'localgroup-terminal)
       (handler-case
