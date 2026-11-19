@@ -75,6 +75,21 @@
   "Ordinary clients state nothing more."
   nil)
 
+(defgeneric channel-subscription-initialize-connection (subscription connection)
+  (:documentation "Initialize a first attachment on its caller before starting the transport reader."))
+
+(defmethod channel-subscription-initialize-connection ((subscription channel-subscription) connection)
+  "Ordinary subscriptions need no caller-owned transport initialization."
+  (declare (ignore subscription connection))
+  nil)
+
+(defgeneric channel-subscription-receive-event (subscription event)
+  (:documentation "Accept a transport EVENT without obstructing any replies its presentation may need."))
+
+(defmethod channel-subscription-receive-event ((subscription channel-subscription) event)
+  "Deliver ordinary subscriptions synchronously in transport order."
+  (channel-subscription-event subscription event))
+
 (defgeneric channel-subscription-present-event (subscription event)
   (:documentation "Synchronously present one admitted event before acknowledging its delivery."))
 
@@ -161,7 +176,9 @@ and tried once. No channel command has been sent by then."
               :approves-p     (channel-subscription-approves-p subscription)
               :evaluates-p    (channel-subscription-evaluates-p subscription)
               :arguments      (channel-subscription-arguments subscription)
-              :event-function (lambda (event) (channel-subscription-event subscription event)))))
+              :initialize-function
+              (lambda (connection) (channel-subscription-initialize-connection subscription connection))
+              :event-function (lambda (event) (channel-subscription-receive-event subscription event)))))
       (let ((entry (discover)))
         (handler-case (connect entry)
           (error (condition)
@@ -175,7 +192,14 @@ and tried once. No channel command has been sent by then."
   "Subscribe before preparing history, buffering callbacks until installation finishes."
   (channel-subscription-begin-attachment subscription)
   (let ((connection (channel-subscription--connect subscription)))
-    (setf (channel-subscription-connection subscription) connection)
+    (let ((installed-p nil))
+      (with-lock-held ((channel-subscription-lock subscription))
+        (unless (channel-subscription-closed-p subscription)
+          (setf (channel-subscription-connection subscription) connection
+                installed-p t)))
+      (unless installed-p
+        (localgroup-client-close connection)
+        (error 'channel-subscription-unavailable :message "The subscription closed during attachment.")))
     (channel-subscription-finish-attachment
      subscription (localgroup-client-connection-attached connection) :replay-p replay-p))
   nil)
@@ -394,7 +418,7 @@ Explicit rejection, including an expired replay cursor, is terminal."
                        :evaluates-p    (channel-subscription-evaluates-p subscription)
                        :arguments      (channel-subscription-arguments subscription)
                        :after-sequence sequence :cancelled-p #'cancelled-p
-                       :event-function (lambda (event) (channel-subscription-event subscription event))))
+                        :event-function (lambda (event) (channel-subscription-receive-event subscription event))))
             (localgroup-error (condition)
               (when (or (cancelled-p) (>= (get-internal-real-time) deadline)
                         (and (typep condition 'localgroup-client-rejected)

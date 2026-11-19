@@ -181,6 +181,13 @@ replays, laid out again when that client's pane has another width. Clients
 that do not present, such as ACP and GUI clients, receive records, streamed
 text and status instead.
 
+On attachment without a cursor, the server sets =:presentation-replay-p= in
+its greeting if a presentation replay follows. The terminal client reads the
+prefix from =:reset= through =:replayed= on its UI thread before it starts
+the live reader. A long replay therefore need not fit in the live event
+queue. After attachment, the reader queues UI events and settles command
+replies; only the UI thread applies the events, including during modal input.
+
 The terminal client is such a presenting client. A =channel-view=
 (=src/localgroup/view.lisp=) applies the events to a terminal UI of its own
 with =presentation-apply=; that UI chooses the colors, wraps, renders

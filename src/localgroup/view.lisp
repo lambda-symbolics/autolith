@@ -33,21 +33,26 @@
     :initform      nil
     :reader        pane-terminal-request-function
     :type          (option function)
-    :documentation "The function given a side panel's request that a modal reader came upon, or NIL."))
+    :documentation "The function given a side panel's request that a modal reader came upon, or NIL.")
+   (service-function
+    :initarg :service-function :initform nil :reader pane-terminal-service-function
+    :type (option function)
+    :documentation "Drain the view's pending presentation before polling modal or boot input."))
   (:documentation "The pane of a client's screen that one channel's UI paints.
 
 Its frames go to the screen, which composes them beside the side panel and
 paints the client's own terminal. Its input is that terminal's, less what the
 side panel takes."))
 
-(-> pane-terminal-create (localgroup-screen &key (:request-function (option function)))
-    pane-terminal)
-(defun pane-terminal-create (screen &key request-function)
+(-> pane-terminal-create (localgroup-screen &key (:request-function (option function))
+                                               (:service-function (option function))) pane-terminal)
+(defun pane-terminal-create (screen &key request-function service-function)
   "Return the terminal of SCREEN's channel pane at its current size."
   (multiple-value-bind (rows columns) (localgroup-screen-pane-size screen)
     (make-instance 'pane-terminal
                    :screen           screen
                    :request-function request-function
+                   :service-function service-function
                    :rows             rows
                    :columns          columns
                    :interactive-p    t
@@ -80,6 +85,8 @@ side panel takes."))
 
 (defmethod terminal-input-ready-p ((terminal pane-terminal))
   "Return whether the screen's terminal has input."
+  (let ((service (pane-terminal-service-function terminal)))
+    (when service (funcall service)))
   (terminal-input-ready-p (localgroup-screen-terminal (pane-terminal-screen terminal))))
 
 (defmethod terminal-read-event ((terminal pane-terminal))
@@ -88,6 +95,8 @@ side panel takes."))
 An event the screen consumed reads as :IGNORE. A panel's request to leave the
 channel goes to the request function and reads as :ESCAPE, which closes the
 modal reader so the view can act on it."
+  (let ((service (pane-terminal-service-function terminal)))
+    (when service (funcall service)))
   (let* ((screen (pane-terminal-screen terminal))
          (event  (localgroup-screen-filter-event
                   screen (terminal-read-event (localgroup-screen-terminal screen)))))
@@ -132,6 +141,18 @@ modal reader so the view can act on it."
 
 
 ;;;; -- Views --
+
+(defparameter *channel-view-event-count-limit* 256
+  "Maximum presentation events waiting for the view's UI loop.")
+
+(defparameter *channel-view-event-byte-limit* (* 4 1024 1024)
+  "Maximum conservative storage-byte weight of waiting presentation events.")
+
+(defvar *channel-view-delivering* nil
+  "The view this thread is currently draining, preventing nested modal polling from redelivering.")
+
+(defvar *channel-view-replaying* nil
+  "The view consuming its initial replay before its transport reader starts.")
 
 (defclass channel-view (channel-subscription)
   ((screen
@@ -193,6 +214,18 @@ modal reader so the view can act on it."
     :reader        channel-view-read-only-p
     :type          boolean
     :documentation "Whether the view only watches: it scrolls and leaves, and sends the channel no input.")
+   (events
+    :initform (make-deque) :reader channel-view-events
+    :documentation "Transport events waiting for the UI owner, in arrival order.")
+   (event-bytes
+    :initform 0 :accessor channel-view-event-bytes :type (integer 0)
+    :documentation "Conservative retained storage weight of waiting events.")
+   (queue-lock
+    :initform (make-lock "Autolith view events") :reader channel-view-queue-lock
+    :documentation "Guard only event admission and removal, never presentation or transport.")
+   (queue-closed-p
+    :initform nil :accessor channel-view-queue-closed-p :type boolean
+    :documentation "Whether ordered event delivery ended and late events must be discarded.")
    (pane-size
     :initform      nil
     :accessor      channel-view-pane-size
@@ -238,8 +271,9 @@ With READ-ONLY-P it watches the channel and sends it no input."
                                   :approves-p    (not read-only-p)
                                   :evaluates-p   (not read-only-p)))
          (terminal (pane-terminal-create
-                    screen :request-function (lambda (request)
-                                               (channel-view--finish view request))))
+                     screen :request-function (lambda (request)
+                                                (channel-view--finish view request))
+                            :service-function (lambda () (channel-view--drain-events view))))
          (ui       (terminal-ui-create
                     :terminal                terminal
                     :fullscreen-p            t
@@ -253,6 +287,118 @@ With READ-ONLY-P it watches the channel and sends it no input."
     (terminal-ui-connect-transcript-actions ui)
     (setf (channel-view-ui view) ui)
     view))
+
+(defmethod channel-subscription-initialize-connection ((view channel-view) connection)
+  "Stream an advertised initial presentation on the attaching UI owner before starting the reader.
+
+The prefix is unsequenced and ends at :REPLAYED. Consuming one packet at a
+time avoids retaining a second transcript in the bounded live event queue."
+  (when (eq (getf (rest (localgroup-client-connection-attached connection)) :presentation-replay-p) t)
+    (with-lock-held ((channel-subscription-lock view))
+      (when (channel-subscription-closed-p view)
+        (error 'channel-subscription-unavailable :message "The view closed during attachment."))
+      (setf (channel-subscription-connection view) connection))
+    (let ((*channel-view-replaying* view))
+      (loop for packet = (daemon-read-decodable-packet (localgroup-client-connection-stream connection))
+            do (unless (and (localgroup-message-p packet) (eq (first packet) ':ui)
+                            (null (getf (rest packet) :sequence)))
+                 (error 'channel-subscription-unavailable
+                        :message "The channel's initial presentation ended before its replay boundary."))
+               (when (channel-subscription-closed-p view)
+                 (error 'channel-subscription-unavailable :message "The view closed during replay."))
+               (channel-subscription-present-event view packet)
+            until (eq (getf (rest packet) :operation) ':replayed))))
+  nil)
+
+(defmethod channel-subscription-call :around ((view channel-view) command &rest arguments)
+  "Do not await a reply while this thread is still reading the initial presentation."
+  (declare (ignore command arguments))
+  (when (eq *channel-view-replaying* view)
+    (error 'channel-subscription-unavailable :message "Channel requests await the initial presentation."))
+  (call-next-method))
+
+(-> channel-view--event-bytes (list) (integer 0))
+(defun channel-view--event-bytes (event)
+  "Charge conservative storage bytes for plain packet data without serializing it.
+
+Stop at the queue budget. Shared or circular objects are charged once; unsupported
+reader objects exceed the budget rather than escaping its bound."
+  (let ((pending (list event))
+        (seen (make-hash-table :test #'eq))
+        (bytes 0))
+    (loop while pending
+          do (let ((object (pop pending)))
+               (unless (gethash object seen)
+                 (setf (gethash object seen) t)
+                 (incf bytes
+                       (typecase object
+                         (string (+ 32 (* 4 (length object))))
+                         (cons 32)
+                         (integer (+ 32 (ceiling (integer-length object) 8)))
+                         (vector (+ 32 (* 8 (length object))))
+                         ((or symbol character float ratio complex) 32)
+                         (t (1+ *channel-view-event-byte-limit*))))
+                 (when (> bytes *channel-view-event-byte-limit*)
+                   (return))
+                 (typecase object
+                   (cons
+                    (push (first object) pending)
+                    (push (rest object) pending))
+                   (string nil)
+                   (ratio
+                    (push (numerator object) pending)
+                    (push (denominator object) pending))
+                   (complex
+                    (push (realpart object) pending)
+                    (push (imagpart object) pending))
+                   (vector (map nil (lambda (value) (push value pending)) object))))))
+    bytes))
+
+(-> channel-view--close-events (channel-view) null)
+(defun channel-view--close-events (view)
+  "Close event admission and discard pending deltas once the view leaves or loses ordering."
+  (with-lock-held ((channel-view-queue-lock view))
+    (setf (channel-view-queue-closed-p view) t
+          (channel-view-event-bytes view) 0)
+    (deque-clear (channel-view-events view)))
+  nil)
+
+(defmethod channel-subscription-receive-event ((view channel-view) event)
+  "Queue ordered events for the UI loop, leaving the transport reader free to settle history replies."
+  (let ((bytes (channel-view--event-bytes event))
+        (overflow-p nil))
+    (with-lock-held ((channel-view-queue-lock view))
+      (unless (channel-view-queue-closed-p view)
+        (if (or (>= (deque-count (channel-view-events view)) *channel-view-event-count-limit*)
+                (> (+ bytes (channel-view-event-bytes view)) *channel-view-event-byte-limit*))
+            (setf overflow-p t
+                  (channel-view-queue-closed-p view) t)
+            (progn
+              (deque-push-back (channel-view-events view) (cons event bytes))
+              (incf (channel-view-event-bytes view) bytes)))))
+    (when overflow-p
+      (channel-view--close-events view)
+      (channel-view--finish view (list ':attachment-lost :kind ':queue-overflow
+                                      :message "The view fell behind its channel; reconnect to resynchronize."))
+      (channel-subscription--mark-closed view)
+      (let ((connection (channel-subscription-connection view)))
+        (when connection (localgroup-client--disconnect connection)))))
+  nil)
+
+(-> channel-view--drain-events (channel-view) null)
+(defun channel-view--drain-events (view)
+  "Apply a bounded batch on the UI owner, including during boot and modal polling."
+  (unless (eq *channel-view-delivering* view)
+    (let ((*channel-view-delivering* view))
+      (loop repeat *channel-view-event-count-limit*
+            for entry = (with-lock-held ((channel-view-queue-lock view))
+                          (unless (deque-empty-p (channel-view-events view))
+                            (let ((entry (deque-pop-front (channel-view-events view))))
+                              (decf (channel-view-event-bytes view) (rest entry))
+                              entry)))
+            while entry
+            do (channel-subscription-event view (first entry)))))
+  nil)
 
 (defmethod channel-subscription-forget ((view channel-view) &key wire-p)
   "End the view when its channel went away, unless it already ends for a reason of its own."
@@ -528,6 +674,7 @@ its user submits."
   (let* ((screen   (channel-view-screen view))
          (terminal (localgroup-screen-terminal screen))
          (ui       (channel-view-ui view)))
+    (channel-view--drain-events view)
     (localgroup-screen-tick screen)
     (channel-view--follow-size view)
     (terminal-ui-refresh-status ui)
@@ -619,15 +766,21 @@ leaves the channel running and gives the terminal back."
       (channel-view--paint-page view)))
   nil)
 
+(defparameter *channel-view-detach-seconds* 0.25
+  "Maximum time a departing view spends sending its best-effort goodbye.")
+
 (-> channel-view--leave (channel-view) null)
 (defun channel-view--leave (view)
-  "Tell the channel that this terminal leaves it on purpose, so a channel that serves one terminal keeps running."
+  "Send a bounded best-effort goodbye, then retire the departing view's transport."
   (let ((connection (channel-subscription-connection view)))
     (when (and connection (not (channel-view-read-only-p view)))
-      (handler-case (localgroup-client-send connection ':detach)
-        ;; A channel that is already gone needs no word.
-        (error ()
-          nil))))
+      (unwind-protect
+           (handler-case
+               (sb-sys:with-deadline (:seconds *channel-view-detach-seconds*)
+                 (localgroup-client-send connection ':detach))
+             (sb-sys:deadline-timeout () nil)
+             (error () nil))
+        (localgroup-client--disconnect connection))))
   nil)
 
 (-> channel-view-run
@@ -686,6 +839,7 @@ starts the session."
                (otherwise
                 exit))))
       (channel-view--finish view (list ':detached))
+      (channel-view--close-events view)
       (when resize-watch
         ; mallet:suppress no-ignore-errors -- best-effort release of the resize watch
         (ignore-errors (platform-unwatch-terminal-resize *platform* resize-watch)))

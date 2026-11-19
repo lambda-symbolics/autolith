@@ -349,3 +349,261 @@
                         (equal reported '("bfirst1" nil)))
                    "loss and a failed retry retain the terminal until explicit retry or departure")))
   nil)
+
+
+(-> test-client-input-queue-lifecycle () null)
+(defun test-client-input-queue-lifecycle ()
+  "Bound queued input by count and payload, discard it on close, and reap an idle worker."
+  (let* ((queue (make-instance 'client-input-queue))
+         (gate (sb-thread:make-semaphore))
+         (started (sb-thread:make-semaphore))
+         (*client-input-queue-count-limit* 2)
+         (*client-input-queue-character-limit* 6)
+         (late-calls 0))
+    (unwind-protect
+         (progn
+           (client-input-queue-push queue
+                                    (lambda ()
+                                      (sb-thread:signal-semaphore started)
+                                      (sb-thread:wait-on-semaphore gate :timeout 5)))
+           (test-assert (sb-thread:wait-on-semaphore started :timeout 5) "The first input owns the worker.")
+           (flet ((late () (incf late-calls)))
+             (test-assert (eq (client-input-queue-push queue #'late :characters 7) ':overflow)
+                          "One oversized input is refused before retention.")
+             (dotimes (index 2)
+               (declare (ignore index))
+               (test-assert (eq (client-input-queue-push queue #'late :characters 3) ':accepted)
+                            "Input within both budgets is admitted."))
+             (test-assert (eq (client-input-queue-push queue #'late) ':overflow)
+                          "The count bound also applies to small commands."))
+           (client-input-queue-close queue)
+           (test-assert (and (zerop (deque-count (client-input-queue-functions queue)))
+                             (zerop (client-input-queue-characters queue))
+                             (eq (client-input-queue-push queue (constantly nil)) ':closed))
+                        "Close drops all waiting payloads and closes admission without joining active work."))
+      (sb-thread:signal-semaphore gate)
+      (client-input-queue-close queue)
+      (when (client-input-queue-thread queue) (join-thread (client-input-queue-thread queue))))
+    (test-assert (zerop late-calls) "No queued input runs after its attachment closes."))
+  (let* ((queue (make-instance 'client-input-queue))
+         (started (sb-thread:make-semaphore))
+         (exit-gate (sb-thread:make-semaphore))
+         (closer nil)
+         (closed-p nil))
+    (test-call-with-function-replacements
+     (list (list 'client-input-queue--run
+                 (lambda (candidate)
+                   (sb-thread:signal-semaphore started)
+                   (with-lock-held ((client-input-queue-lock candidate))
+                     (loop until (client-input-queue-closed-p candidate)
+                           do (condition-wait (client-input-queue-condition-variable candidate)
+                                              (client-input-queue-lock candidate))))
+                   (sb-thread:wait-on-semaphore exit-gate :timeout 5)
+                   nil)))
+     (lambda ()
+       (unwind-protect
+            (progn
+              (client-input-queue-push queue (constantly nil))
+              (test-assert (sb-thread:wait-on-semaphore started :timeout 5) "An idle input worker exists.")
+              (setf closer (make-thread (lambda () (client-input-queue-close queue) (setf closed-p t))
+                                        :name "idle input closer"))
+              (test-assert (task-tests--wait-until (lambda () (client-input-queue-closed-p queue)) 5)
+                           "The closer notifies idle work before waiting.")
+              (test-assert (not closed-p) "Closure cannot finish while the idle worker has not exited.")
+              (sb-thread:signal-semaphore exit-gate)
+              (join-thread closer)
+              (test-assert (and closed-p (not (thread-alive-p (client-input-queue-thread queue))))
+                           "Idle input workers are gone when closure returns."))
+         (sb-thread:signal-semaphore exit-gate)
+         (when closer (join-thread closer))
+         (client-input-queue-close queue)))))
+  nil)
+
+(-> test-channel-view-history-delivery () null)
+(defun test-channel-view-history-delivery ()
+  "Read a history reply behind a presentation delta, and settle closure during a history request."
+  (with-test-configuration (configuration)
+    (dolist (answer-p '(t nil))
+      (let* ((screen (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 80)))
+             (view (channel-view-create configuration "history" screen))
+             (wire (concatenate 'string
+                                (image-daemon:daemon-packet-string '(:ui :operation :turn :active-p t))
+                                (if answer-p
+                                    (image-daemon:daemon-packet-string '(:reply :id 1 :entries ("older"))) "")))
+             (connection (make-instance 'localgroup-client-connection :socket nil
+                                        :stream (make-string-input-stream wire)))
+             (reader nil))
+        (setf (channel-subscription-connection view) connection)
+        (channel-view-apply view ':history :entries '("recent") :offset 1 :paged-p t)
+        (test-call-with-function-replacements
+         (list (list 'localgroup-client--write-frame
+                     (lambda (candidate frame)
+                       (declare (ignore frame))
+                       (setf reader (make-thread
+                                     (lambda ()
+                                       (localgroup-client--read
+                                       candidate (lambda (event) (channel-subscription-receive-event view event)))))
+                             (localgroup-client-connection-reader-thread candidate) reader)
+                       nil)))
+         (lambda ()
+           (unwind-protect
+                (sb-sys:with-deadline (:seconds 5)
+                  (terminal-ui-process-event (channel-view-ui view) ':history-previous)
+                  (terminal-ui-process-event (channel-view-ui view) ':history-previous)
+                  (join-thread reader)
+                  (test-assert (equal (line-editor-text (terminal-ui-editor (channel-view-ui view)))
+                                      (if answer-p "older" "recent"))
+                               "Paging finishes with its reply or the prior selection after close.")
+                  (test-assert (not (channel-view-turn-active-p view))
+                               "The transport reader never applies a delta under the UI's history lock.")
+                  (channel-view--drain-events view)
+                  (test-assert (and (channel-view-turn-active-p view)
+                                    (channel-subscription-closed-p view))
+                               "The UI owner applies the delta before its ordered closure event."))
+             (channel-view--close-events view)
+             (channel-subscription-close view)
+             (when reader (join-thread reader))
+             (localgroup-screen-close screen)))))))
+  nil)
+
+(-> test-channel-view-event-backpressure () null)
+(defun test-channel-view-event-backpressure ()
+  "Retire an overrun view rather than dropping an ordered delta, by count or storage-byte budget."
+  (dolist (large-p '(nil t))
+    (let* ((view (make-instance 'channel-view))
+           (connection (make-instance 'localgroup-client-connection :socket nil
+                                      :stream (make-string-output-stream)))
+           (*channel-view-event-count-limit* 2)
+           (*channel-view-event-byte-limit* 1024))
+      (setf (channel-subscription-connection view) connection)
+      (if large-p
+          (channel-subscription-receive-event view
+                                              (list :ui :operation :notice :text (make-string 1024)))
+          (dotimes (index 3)
+            (channel-subscription-receive-event view (list :ui :operation :turn :active-p (evenp index)))))
+      (test-assert (and (channel-subscription-closed-p view)
+                        (localgroup-client-connection-closed-p connection)
+                        (client-evaluator-closed-p (localgroup-client-connection-evaluator connection))
+                        (eq (getf (rest (channel-view-exit view)) :kind) ':queue-overflow)
+                        (zerop (deque-count (channel-view-events view)))
+                        (zerop (channel-view-event-bytes view)))
+                   "Overflow closes transport, evaluation and ordered delivery and releases queued payloads.")
+      (channel-subscription-receive-event view '(:ui :operation :turn :active-p t))
+      (test-assert (zerop (deque-count (channel-view-events view))) "Late deltas cannot reopen a closed view.")))
+  nil)
+
+(-> test-channel-view-bounded-detach () null)
+(defun test-channel-view-bounded-detach ()
+  "A goodbye waiting behind a stalled writer cannot prevent retiring the view's connection."
+  (let* ((view (make-instance 'channel-view))
+         (connection (make-instance 'localgroup-client-connection :socket nil
+                                    :stream (make-string-output-stream)))
+         (gate (sb-thread:make-semaphore))
+         (started (sb-thread:make-semaphore))
+         (writer nil))
+    (setf (channel-subscription-connection view) connection)
+    (unwind-protect
+         (progn
+           (setf writer (make-thread
+                         (lambda ()
+                           (with-lock-held ((localgroup-client-connection-write-lock connection))
+                             (sb-thread:signal-semaphore started)
+                             (sb-thread:wait-on-semaphore gate :timeout 5)))
+                         :name "stalled detach writer"))
+           (test-assert (sb-thread:wait-on-semaphore started :timeout 5) "Another writer owns the transport.")
+           (sb-sys:with-deadline (:seconds 2)
+             (let ((*channel-view-detach-seconds* 0.05)) (channel-view--leave view)))
+           (test-assert (and (localgroup-client-connection-closed-p connection)
+                             (client-evaluator-closed-p (localgroup-client-connection-evaluator connection)))
+                        "A bounded goodbye retires the connection and evaluator outside the writer lock."))
+      (sb-thread:signal-semaphore gate)
+      (when writer (join-thread writer))
+      (channel-subscription-close view)))
+  nil)
+
+
+(-> test-channel-view-initial-replay () null)
+(defun test-channel-view-initial-replay ()
+  "Stream a large initial replay on the UI owner, then admit live delivery; reject broken prefixes."
+  (with-test-configuration (configuration)
+    (dolist (mode '(:replay :old :eof :closed :timeout))
+      (let* ((screen (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 80)))
+             (view (channel-view-create configuration "replay" screen))
+             (wire (with-output-to-string (output)
+                     (write-string (image-daemon:daemon-packet-string '(:ui :operation :reset)) output)
+                     (dotimes (index 1000)
+                       (write-string (image-daemon:daemon-packet-string
+                                      (list :ui :operation :turn :active-p (evenp index))) output))
+                     (unless (eq mode ':eof)
+                       (write-string (image-daemon:daemon-packet-string '(:ui :operation :replayed)) output))
+                     (write-string (image-daemon:daemon-packet-string '(:ui :operation :turn :active-p t)) output)))
+             (connection (make-instance 'localgroup-client-connection :socket nil
+                                        :stream (make-string-input-stream wire)
+                                        :attached (list :attached :sequence 0 :record-sequence 0
+                                                        :presentation-replay-p (not (eq mode ':old)))))
+             (*channel-view-event-count-limit* 2))
+        (unwind-protect
+             (progn
+               (channel-subscription-begin-attachment view)
+               (case mode
+                 (:closed
+                  (channel-subscription--mark-closed view)
+                  (test-assert (handler-case (progn (channel-subscription-initialize-connection view connection) nil)
+                                 (channel-subscription-unavailable () t))
+                               "A closed view refuses replay initialization."))
+                (:timeout
+                 (let ((candidate nil)
+                       (image-daemon:*daemon-connect-timeout-seconds* 0.02))
+                   (test-call-with-function-replacements
+                    (list (list 'daemon-connect
+                                (lambda (port) (declare (ignore port))
+                                  (values nil (localgroup-client-connection-stream connection))))
+                          (list 'daemon-write-packet (lambda (&rest values) (declare (ignore values)) nil))
+                          (list 'localgroup-client--read-greeting
+                                (lambda (stream cancelled-p) (declare (ignore stream cancelled-p))
+                                  (localgroup-client-connection-attached connection)))
+                          (list 'daemon-read-decodable-packet
+                                (lambda (stream) (declare (ignore stream)) (sleep 5))))
+                    (lambda ()
+                      (test-assert
+                       (handler-case
+                           (localgroup-client-connect
+                            '("replay" :localgroup :port 1 :token "unused") :event-function (constantly nil)
+                            :initialize-function
+                            (lambda (created)
+                              (setf candidate created)
+                              (channel-subscription-initialize-connection view created)))
+                         (sb-sys:deadline-timeout () t))
+                       "A stalled initial prefix respects the handshake deadline.")))
+                   (test-assert (and candidate (localgroup-client-connection-closed-p candidate)
+                                     (client-evaluator-closed-p (localgroup-client-connection-evaluator candidate))
+                                     (null (localgroup-client-connection-reader-thread candidate)))
+                                "A failed prefix retires transport and evaluation without starting a reader.")))
+                 (:eof
+                  (test-assert (handler-case (progn (channel-subscription-initialize-connection view connection) nil)
+                                 (channel-subscription-unavailable () t))
+                               "EOF before REPLAYED refuses the incomplete attachment."))
+                 (otherwise
+                  (channel-subscription-initialize-connection view connection)
+                  (test-assert (and (zerop (deque-count (channel-view-events view)))
+                                    (not (channel-subscription-closed-p view)))
+                               "The initial transcript never accumulates in the bounded live queue.")
+                  (test-assert
+                   (eq (getf (rest (daemon-read-decodable-packet (localgroup-client-connection-stream connection))) :operation)
+                       (if (eq mode ':old) ':reset ':turn))
+                   "Only an advertised replay prefix is consumed, stopping before the first live event.")
+                  (let ((*channel-view-replaying* view))
+                    (test-assert (handler-case (progn (channel-subscription-call view ':input-history) nil)
+                                   (channel-subscription-unavailable () t))
+                                 "Prefix presentation cannot wait for its not-yet-started reader."))
+                  (when (eq mode ':replay)
+                    (setf (channel-subscription-connection view) connection)
+                    (channel-subscription-finish-attachment view (localgroup-client-connection-attached connection))
+                    (channel-subscription-receive-event view '(:ui :operation :turn :active-p t))
+                    (test-assert (not (channel-view-turn-active-p view)) "The last replayed state precedes live delivery.")
+                    (channel-view--drain-events view)
+                    (test-assert (channel-view-turn-active-p view) "Live delivery follows the replay boundary.")))))
+          (localgroup-client--disconnect connection)
+          (channel-subscription-close view)
+          (localgroup-screen-close screen)))))
+  nil)

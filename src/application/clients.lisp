@@ -342,8 +342,9 @@ cursor outside the retained tail is refused rather than skipping events."
                    (when (channel-client--queue-event
                           client (client-portable
                                   (append attached
-                                          (list :sequence        sequence
-                                                :record-sequence (application-clients--record-sequence application)))))
+                                          (list :sequence              sequence
+                                                :record-sequence       (application-clients--record-sequence application)
+                                                :presentation-replay-p (not (null replay))))))
                      (error 'localgroup-error :operation ':client :message "The client greeting queue is full.")))
                  (dolist (event events)
                    (when (and after-sequence (> (getf (rest event) :sequence) after-sequence)

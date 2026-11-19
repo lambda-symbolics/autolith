@@ -797,6 +797,13 @@
  test-application-conversation-maintenance
  test-conversation-maintenance-admission-probe)
 
+(define-test-suite client-route-lifecycle
+  test-client-input-queue-lifecycle
+  test-channel-view-history-delivery
+  test-channel-view-event-backpressure
+  test-channel-view-bounded-detach
+  test-channel-view-initial-replay)
+
 (define-test-suite portable-values
   test-portable-client-values
   test-portable-operation-values

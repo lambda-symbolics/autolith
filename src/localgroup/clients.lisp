@@ -144,6 +144,12 @@
 
 ;;;; -- Ordered Input --
 
+(defparameter *client-input-queue-count-limit* 32
+  "Maximum input commands waiting behind a client's active command.")
+
+(defparameter *client-input-queue-character-limit* 262144
+  "Maximum serialized characters retained by a client's waiting input commands.")
+
 (defclass client-input-queue ()
   ((lock
     :initform      (make-lock "Autolith client input")
@@ -157,6 +163,16 @@
     :initform      (make-deque)
     :reader        client-input-queue-functions
     :documentation "The input not yet run, oldest first.")
+   (characters
+    :initform      0
+    :accessor      client-input-queue-characters
+    :type          (integer 0)
+    :documentation "The serialized character weight of queued, not active, commands.")
+   (running-p
+    :initform      nil
+    :accessor      client-input-queue-running-p
+    :type          boolean
+    :documentation "Whether the worker has taken a command that may not cooperate with closure.")
    (thread
     :initform      nil
     :accessor      client-input-queue-thread
@@ -170,42 +186,61 @@
 
 (-> client-input-queue--run (client-input-queue) null)
 (defun client-input-queue--run (queue)
-  "Run QUEUE's input in order until its client leaves."
+  "Run QUEUE's input in order, marking active work separately from an idle worker."
   (loop
-    (let ((function (with-lock-held ((client-input-queue-lock queue))
-                      (loop
-                        (cond
-                          ((client-input-queue-closed-p queue)
-                           (return nil))
-                          ((not (deque-empty-p (client-input-queue-functions queue)))
-                           (return (deque-pop-front (client-input-queue-functions queue))))
-                          (t
-                           (condition-wait (client-input-queue-condition-variable queue)
-                                           (client-input-queue-lock queue))))))))
-      (unless function
+    (let ((entry (with-lock-held ((client-input-queue-lock queue))
+                   (loop
+                     (cond
+                       ((client-input-queue-closed-p queue)
+                        (return nil))
+                       ((not (deque-empty-p (client-input-queue-functions queue)))
+                        (let ((entry (deque-pop-front (client-input-queue-functions queue))))
+                          (decf (client-input-queue-characters queue) (rest entry))
+                          (setf (client-input-queue-running-p queue) t)
+                          (return entry)))
+                       (t
+                        (condition-wait (client-input-queue-condition-variable queue)
+                                        (client-input-queue-lock queue))))))))
+      (unless entry
         (return nil))
-      (funcall function))))
+      (unwind-protect (funcall (first entry))
+        (with-lock-held ((client-input-queue-lock queue))
+          (setf (client-input-queue-running-p queue) nil))))))
 
-(-> client-input-queue-push (client-input-queue function) null)
-(defun client-input-queue-push (queue function)
-  "Run FUNCTION after the input that arrived before it."
+(-> client-input-queue-push (client-input-queue function &key (:characters (integer 0))) keyword)
+(defun client-input-queue-push (queue function &key (characters 0))
+  "Admit FUNCTION with its serialized weight, or return :CLOSED or :OVERFLOW without retaining it."
   (with-lock-held ((client-input-queue-lock queue))
-    (unless (client-input-queue-closed-p queue)
-      (deque-push-back (client-input-queue-functions queue) function)
-      (unless (client-input-queue-thread queue)
-        (setf (client-input-queue-thread queue)
-              (make-thread (lambda () (client-input-queue--run queue))
-                           :name "Autolith client input")))
-      (condition-notify (client-input-queue-condition-variable queue))))
-  nil)
+    (cond
+      ((client-input-queue-closed-p queue)
+       ':closed)
+      ((or (>= (deque-count (client-input-queue-functions queue)) *client-input-queue-count-limit*)
+           (> (+ (client-input-queue-characters queue) characters)
+              *client-input-queue-character-limit*))
+       ':overflow)
+      (t
+       (deque-push-back (client-input-queue-functions queue) (cons function characters))
+       (incf (client-input-queue-characters queue) characters)
+       (unless (client-input-queue-thread queue)
+         (setf (client-input-queue-thread queue)
+               (make-thread (lambda () (client-input-queue--run queue))
+                            :name "Autolith client input")))
+       (condition-notify (client-input-queue-condition-variable queue))
+       ':accepted))))
 
 (-> client-input-queue-close (client-input-queue) null)
 (defun client-input-queue-close (queue)
-  "Drop QUEUE's waiting input and let its thread end after what it runs now."
-  (with-lock-held ((client-input-queue-lock queue))
-    (setf (client-input-queue-closed-p queue) t)
-    (deque-clear (client-input-queue-functions queue))
-    (condition-notify (client-input-queue-condition-variable queue)))
+  "Discard queued input and join an idle worker; active input is allowed to finish independently."
+  (let ((idle nil))
+    (with-lock-held ((client-input-queue-lock queue))
+      (setf (client-input-queue-closed-p queue) t
+            (client-input-queue-characters queue) 0
+            idle (and (not (client-input-queue-running-p queue))
+                      (client-input-queue-thread queue)))
+      (deque-clear (client-input-queue-functions queue))
+      (condition-notify (client-input-queue-condition-variable queue)))
+    (when (and idle (not (eq idle (current-thread))))
+      (join-thread idle)))
   nil)
 
 (defparameter *localgroup-watching-client-commands* '(:state :input-history)
@@ -229,7 +264,12 @@ is this call's own, however many the reader takes meanwhile."
       ((eq (first command) ':operation)
        (make-thread #'reply :name "Autolith client operation"))
       ((localgroup--queued-input-p command)
-       (client-input-queue-push inputs #'reply))
+       (unless (eq (client-input-queue-push
+                    inputs #'reply :characters (length (image-daemon:daemon-packet-string command)))
+                   ':accepted)
+         (channel-client-enqueue
+          client (list :reply :id (getf (rest command) :id)
+                       :error "The client input queue is full or closed."))))
       (t
        (reply))))
   nil)
@@ -470,10 +510,11 @@ whatever would change the channel."
 (-> localgroup-client-connect
     (cons &key (:name string) (:event-function function) (:approves-p boolean)
           (:evaluates-p boolean) (:after-sequence (option integer))
-          (:cancelled-p (option function)) (:arguments list))
+          (:cancelled-p (option function)) (:arguments list)
+          (:initialize-function (option function)))
     localgroup-client-connection)
 (defun localgroup-client-connect (entry &key (name "client") event-function (approves-p t)
-                                           evaluates-p after-sequence cancelled-p arguments)
+                                           evaluates-p after-sequence cancelled-p arguments initialize-function)
   "Connect to the channel of localgroup endpoint ENTRY as a structured client NAME.
 
 EVENT-FUNCTION is called on the reader thread with each event, and with
@@ -482,10 +523,13 @@ for them. APPROVES-P says whether this client answers approvals; one that
 does not leaves them to a terminal or another client. With EVALUATES-P the
 connection runs the forms the channel sends in this image and answers them
 itself; EVENT-FUNCTION never sees those requests. ARGUMENTS is a plist of
-what else the client states, such as :PRESENTS-P and its pane's size."
+what else the client states, such as :PRESENTS-P and its pane's size.
+INITIALIZE-FUNCTION, when supplied, receives the connection on the calling
+thread after its greeting and before the reader starts, within the handshake deadline."
   (let ((record (rest entry))
         (socket nil)
-        (stream nil))
+        (stream nil)
+        (connection nil))
     (multiple-value-setq (socket stream)
       (daemon-connect (localgroup--record-port record)))
     (handler-case
@@ -509,18 +553,23 @@ what else the client states, such as :PRESENTS-P and its pane's size."
                      :operation  ':client
                      :retry-p    (getf (rest greeting) :retry-p)
                      :session-id (localgroup--record-session-id record)))
-            (let ((connection (make-instance 'localgroup-client-connection
-                                             :entry    entry
-                                             :socket   socket
-                                             :stream   stream
-                                             :attached greeting)))
+            (progn
+              (setf connection (make-instance 'localgroup-client-connection
+                                              :entry    entry
+                                              :socket   socket
+                                              :stream   stream
+                                              :attached greeting))
+              (when initialize-function
+                (funcall initialize-function connection))
               (setf (localgroup-client-connection-reader-thread connection)
                     (make-thread (lambda ()
                                    (localgroup-client--read connection event-function
                                                             :evaluates-p evaluates-p))
                                  :name (format nil "Autolith ~A client reader" name)))
               connection)))
-      (error (condition)
+      ((or error sb-sys:deadline-timeout) (condition)
+        (when connection
+          (localgroup-client--disconnect connection))
         ; mallet:suppress no-ignore-errors -- closing a failed connection must not mask its cause
         (ignore-errors (sb-bsd-sockets:socket-close socket))
         (error condition)))))
