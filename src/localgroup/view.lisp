@@ -226,6 +226,13 @@ modal reader so the view can act on it."
    (queue-closed-p
     :initform nil :accessor channel-view-queue-closed-p :type boolean
     :documentation "Whether ordered event delivery ended and late events must be discarded.")
+   (transcript-history-conversation
+    :initform nil :accessor channel-view-transcript-history-conversation
+    :type          (option string)
+    :documentation "The durable conversation this view's transcript page belongs to.")
+   (transcript-history-floor
+    :initform 1 :accessor channel-view-transcript-history-floor :type (integer 1)
+    :documentation "The first durable sequence in this view's selected history page.")
    (pane-size
     :initform      nil
     :accessor      channel-view-pane-size

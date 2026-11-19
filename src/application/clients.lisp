@@ -362,20 +362,27 @@ cursor outside the retained tail is refused rather than skipping events."
                      (push client (client-hub-clients hub))))))))
       (flet ((attach ()
                (application-clients--follow-conversation application)
-               ;; A client that presents and holds no cursor starts from what the channel shows
-               ;; now. The replay reads the durable inputs, so it is made before the hub is held.
-               (subscribe (and presentation (null after-sequence)
-                               (channel-presentation-replay presentation)))))
+                ;; A fresh presenting client starts from durable history; a reconnect
+                ;; retains its own viewport and resumes only the exact event tail.
+               (subscribe
+                (and presentation (null after-sequence)
+                     (application-client-history-replay
+                      application presentation :character-limit
+                      (max 0 (- image-daemon:*attachment-queue-character-limit*
+                                (if attached
+                                    (or (application-client-history--frame-size attached) 0)
+                                    0))))))))
         (flet ((attach-appending ()
                  (if conversation
                      (with-recursive-lock-held ((conversation-append-lock conversation))
                        (attach))
                      (attach))))
-          ;; The presentation's lock comes first, as it does when the channel
-          ;; publishes a change, so the replay and the live events never overlap.
+          ;; Stream rendering, presentation, durable append, then hub admission.
+          ;; Hold this cut through registration, with no transport cleanup inside it.
           (if presentation
-              (with-terminal-ui-locked (presentation)
-                (attach-appending))
+              (with-recursive-lock-held ((application-render-lock application))
+                (with-terminal-ui-locked (presentation)
+                  (attach-appending)))
               (attach-appending)))))
     ;; The serving scope owns cleanup, after transmitting an attachment refusal.
     (image-daemon:attachment-start (channel-client-attachment client)))

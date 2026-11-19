@@ -243,7 +243,7 @@
       (join-thread idle)))
   nil)
 
-(defparameter *localgroup-watching-client-commands* '(:state :input-history)
+(defparameter *localgroup-watching-client-commands* '(:state :input-history :transcript-history)
   "The commands a client that only watches a channel may send: those that change nothing.")
 
 (-> localgroup--run-client-command
@@ -401,6 +401,15 @@ whatever would change the channel."
            (unless (and (typep start '(integer 0)) (typep limit '(integer 1)))
              (refuse "An input history page names its start and its limit."))
            (list :entries (application-input-history-page application :start start :limit limit))))
+        (:transcript-history
+         (unless (typep attachment 'channel-client-transport)
+           (refuse "Transcript history requires a presenting client attachment."))
+         (let ((client (channel-client-transport-client attachment)))
+           (unless (channel-client-presents-p client)
+             (refuse "Transcript history requires a presenting client."))
+           (application-client-history-load
+             application :conversation    (getf arguments :conversation)
+                         :before-sequence (getf arguments :before-sequence))))
         (:operation
          (let ((method (getf arguments :method))
                (params (client-json (getf arguments :params))))

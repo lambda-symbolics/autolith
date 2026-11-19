@@ -3699,10 +3699,10 @@ may fill the remainder."
   nil)
 
 (-> application--render-streamed-records
-    (application (option string) (option string))
+    (application (option string) (option string) &key (:assistant-publication t) (:reasoning-publication t))
     null)
 (defun application--render-streamed-records
-    (application streamed-assistant-text streamed-reasoning-text)
+    (application streamed-assistant-text streamed-reasoning-text &key assistant-publication reasoning-publication)
   "Reconcile and present APPLICATION's unread records after streamed output."
   (let ((conversation (application-conversation application)))
     (loop
@@ -3752,6 +3752,12 @@ may fill the remainder."
                             (string=
                              streamed-reasoning-text
                              (format nil "~{~A~^~2%~}" reasoning-texts)))))
+                  (let ((presentation (application-presentation application)))
+                    (when presentation
+                      (when (and assistant-stream-match-p assistant-publication)
+                        (channel-presentation--supersede-transient presentation ':markdown assistant-publication))
+                      (when (and reasoning-stream-match-p reasoning-publication)
+                        (channel-presentation--supersede-transient presentation ':append reasoning-publication))))
                 (dolist (record records)
                   (application--present-conversation-record
                    application
@@ -3767,10 +3773,11 @@ may fill the remainder."
 
 (-> application-render-records
     (application &key (:streamed-assistant-text (option string))
-                      (:streamed-reasoning-text (option string)))
+                      (:streamed-reasoning-text (option string))
+                      (:assistant-publication t) (:reasoning-publication t))
     null)
 (defun application-render-records
-    (application &key streamed-assistant-text streamed-reasoning-text)
+    (application &key streamed-assistant-text streamed-reasoning-text assistant-publication reasoning-publication)
   "Append APPLICATION's not-yet-rendered durable transcript records once.
 
 Assistant and reasoning records are suppressed only when their joined durable
@@ -3796,7 +3803,8 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
        nil)
       ((or streamed-assistant-text streamed-reasoning-text)
        (application--render-streamed-records
-        application streamed-assistant-text streamed-reasoning-text))
+         application streamed-assistant-text streamed-reasoning-text
+         :assistant-publication assistant-publication :reasoning-publication reasoning-publication))
       (t
        (application--render-unread-records application))))
   (application-publish-recovery-session application)
@@ -4340,6 +4348,7 @@ clients as :TEXT, :REASONING and :STATUS events."
         (request-empty-p          nil)
         (reasoning-text           (text-buffer-create))
         (presented-reasoning-text nil)
+        (reasoning-publication    nil)
         (stream-text              (text-buffer-create))
         (stream-source            (text-buffer-create))
         (stream-presentation      nil)
@@ -4369,16 +4378,22 @@ clients as :TEXT, :REASONING and :STATUS events."
                     (progn
                       (reasoning-flush)
                       (let ((assistant (and stream-open-p (text-buffer-string stream-text)))
-                            (reasoning presented-reasoning-text))
+                            (reasoning presented-reasoning-text)
+                            (publication
+                              (and stream-presentation (typep ui 'channel-presentation)
+                                   (channel-presentation--stream-wire-identifier ui stream-presentation))))
                         (stream-flush)
                         (when (slot-boundp application 'conversation)
                           (application-render-records application
                                                       :streamed-assistant-text assistant
-                                                      :streamed-reasoning-text reasoning))))
+                                                      :streamed-reasoning-text reasoning
+                                                      :assistant-publication   publication
+                                                      :reasoning-publication   reasoning-publication))))
                  (text-buffer-clear reasoning-text)
                  (text-buffer-clear stream-text)
                  (text-buffer-clear stream-source)
                  (setf presented-reasoning-text nil
+                        reasoning-publication nil
                        stream-pending ""
                        stream-open-p nil
                        stream-presentation nil
@@ -4409,9 +4424,10 @@ clients as :TEXT, :REASONING and :STATUS events."
                           (plusp (length reasoning-text))
                           (null presented-reasoning-text))
                  (let ((summary (text-buffer-string reasoning-text)))
-                   (application-present
-                    application
-                    (application--reasoning-summary-entry application summary))
+                   (setf reasoning-publication (list ':stream-reasoning (make-identifier)))
+                   (application-present application
+                                        (application--reasoning-summary-entry application summary)
+                                        :identifier reasoning-publication)
                    (setf presented-reasoning-text summary))))
 
              (stream-markdown-delta (delta)

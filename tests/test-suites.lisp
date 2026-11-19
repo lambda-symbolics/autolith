@@ -805,7 +805,10 @@
   test-channel-view-history-delivery
   test-channel-view-event-backpressure
   test-channel-view-bounded-detach
-  test-channel-view-initial-replay)
+  test-channel-view-initial-replay
+  test-channel-view-durable-history
+  test-channel-view-stream-history-cut
+  test-channel-view-history-admission)
 
 (define-test-suite portable-values
   test-portable-client-values

@@ -736,14 +736,14 @@ compose."
 (defun channel-presentation--log (ui event &key presentations retention-group)
   "Keep transcript EVENT for a client that attaches later and return its log cell.
 
-A cell is (EVENT CHARACTERS PRESENTATIONS RETENTION-GROUP). The source
-presentations permit later layout at another width. Physical transport cells
-of one logical publication share RETENTION-GROUP and leave the log together."
+A cell holds (EVENT CHARACTERS PRESENTATIONS RETENTION-GROUP SUPERSEDED-P).
+Source presentations permit layout at another width. Cells of one logical
+publication share RETENTION-GROUP and leave the log together."
   (let ((cell (list event
                     (if presentations
                         (channel-presentation--record-weight event presentations)
                         (presentation--weight event))
-                    presentations retention-group))
+                    presentations retention-group nil))
         (log  (channel-presentation-transcript-log ui)))
     (deque-push-back log cell)
     (incf (channel-presentation-log-characters ui) (second cell))
@@ -832,17 +832,20 @@ change exactly once."
     (channel-presentation--publish-state ui ':title))
   t)
 
-(-> channel-presentation-replay (channel-presentation) list)
-(defun channel-presentation-replay (ui)
+(-> channel-presentation-replay (channel-presentation &key (:transcript list)) list)
+(defun channel-presentation-replay (ui &key (transcript nil transcript-p))
   "Return the events that bring a client that just attached to what UI shows.
 
 The transcript is cleared and replayed from the log, then every state follows,
 and :REPLAYED ends them, so the client knows where its own notes go. Call
-this under UI's lock, before the client receives live events."
+this under UI's lock, before the client receives live events. A supplied
+TRANSCRIPT replaces the transient log's events without changing state replay."
   (append
    (list (list :ui :operation ':reset))
-   (loop for cell in (deque->list (channel-presentation-transcript-log ui))
-         collect (first cell))
+   (if transcript-p
+       transcript
+       (loop for cell in (deque->list (channel-presentation-transcript-log ui))
+             collect (first cell)))
    (loop for operation in *channel-presentation-state-operations*
          collect (list* :ui :operation operation
                         (nth-value 0 (channel-presentation-state ui operation))))
@@ -1209,6 +1212,25 @@ with a notice. Keep its source presentation for later layout and history."
   (let ((tail (and (null (fullscreen-terminal-ui-markdown-stream ui))
                    (channel-presentation--tail->wire (terminal-ui-stream-tail ui)))))
     (values (list :tail tail) tail)))
+
+(-> channel-presentation--stream-wire-identifier (channel-presentation t) t)
+(defun channel-presentation--stream-wire-identifier (ui identifier)
+  "Return the wire identity of UI's active stream, before it is finalized."
+  (with-terminal-ui-locked (ui)
+    (first (gethash identifier (channel-presentation-streams ui)))))
+
+(-> channel-presentation--supersede-transient (channel-presentation keyword t) null)
+(defun channel-presentation--supersede-transient (ui operation identifier)
+  "Mark a retained publication as superseded by durable records for future attachments.
+
+Clients that already saw the stream keep it, with the durable record marks."
+  (with-terminal-ui-locked (ui)
+    (dolist (cell (deque->list (channel-presentation-transcript-log ui)))
+      (let ((fields (rest (first cell))))
+        (when (and (eq (getf fields :operation) operation)
+                   (equal (getf fields :identifier) identifier))
+          (setf (fifth cell) t)))))
+  nil)
 
 (defmethod terminal-ui-stream-markdown
     ((ui channel-presentation) identifier &key source header marker finished-p)
