@@ -143,6 +143,23 @@
                       (= 1 (terminal-ui-present-records
                             ui (list (list '(:conversation "c" 1) "again" (list :group nil))))))
                  "the log is bounded: what left it may be shown again, and history knows how far it went"))
+  (multiple-value-bind (ui events) (presentation-tests--model)
+    (declare (ignore events))
+    (let ((*channel-presentation-log-character-limit* 300))
+      (dotimes (index 100)
+        (terminal-ui-mark-finalized ui (list ':marker index)))
+      (test-assert (< (deque-count (channel-presentation-transcript-log ui)) 100)
+                   "Textless finalized markers also consume replay capacity.")
+      (terminal-ui-reset-transcript ui)
+      (terminal-ui-append-finalized ui 1 "an older entry")
+      (terminal-ui-stream-markdown ui ':block :source "a")
+      (test-assert (= 2 (deque-count (channel-presentation-transcript-log ui)))
+                   "Both entries fit before the streamed block grows.")
+      (terminal-ui-stream-markdown ui ':block :source (make-string 350 :initial-element #\a) :finished-p t)
+      (test-assert (equal '(:markdown)
+                          (presentation-tests--operations
+                           (mapcar #'first (deque->list (channel-presentation-transcript-log ui)))))
+                   "Growing a streamed block evicts older replay entries without waiting for a new entry.")))
   nil)
 
 (-> presentation-tests--shown (terminal-ui string) (integer 0))

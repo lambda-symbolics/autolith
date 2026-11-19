@@ -69,14 +69,14 @@ A style this version does not know shows as plain text."
 
 (-> presentation--weight (t) (integer 0))
 (defun presentation--weight (value)
-  "Return the characters VALUE holds, counting every string in its lists."
+  "Estimate retained size in character units, charging four for each wire cons as well as its strings."
   (cond
     ((stringp value)
      (length value))
     ((consp value)
      (loop for tail = value then (rest tail)
            while (consp tail)
-           sum (presentation--weight (first tail))))
+           sum (+ 4 (presentation--weight (first tail)))))
     (t
      0)))
 
@@ -553,6 +553,16 @@ compose."
                            (t
                             0))))))
 
+(-> channel-presentation--trim-log (channel-presentation) null)
+(defun channel-presentation--trim-log (ui)
+  "Evict the oldest replay cells until the budget fits, always retaining the newest cell."
+  (let ((log (channel-presentation-transcript-log ui)))
+    (loop while (and (> (channel-presentation-log-characters ui) *channel-presentation-log-character-limit*)
+                     (> (deque-count log) 1))
+          do (let ((evicted (deque-pop-front log)))
+               (decf (channel-presentation-log-characters ui) (second evicted))
+               (channel-presentation--forget-cell ui evicted))))
+  nil)
 (-> channel-presentation--log (channel-presentation list &key (:presentations list)) cons)
 (defun channel-presentation--log (ui event &key presentations)
   "Keep transcript EVENT for a client that attaches later and return its log cell.
@@ -568,12 +578,7 @@ width. The oldest cells leave once the log holds more than its character limit."
         (log  (channel-presentation-transcript-log ui)))
     (deque-push-back log cell)
     (incf (channel-presentation-log-characters ui) (second cell))
-    (loop while (and (> (channel-presentation-log-characters ui)
-                        *channel-presentation-log-character-limit*)
-                     (> (deque-count log) 1))
-          do (let ((evicted (deque-pop-front log)))
-               (decf (channel-presentation-log-characters ui) (second evicted))
-               (channel-presentation--forget-cell ui evicted)))
+    (channel-presentation--trim-log ui)
     cell))
 
 (-> channel-presentation--publish
@@ -865,13 +870,12 @@ With LAY-OUT-P each record is laid out again for that width."
   "Lay the logged records out again at UI's width, for the client that attaches next."
   (dolist (cell (deque->list (channel-presentation-transcript-log ui)))
     (when (third cell)
-      (let ((event (list* :ui :operation ':records
-                          (channel-presentation--records-fields ui (third cell) :lay-out-p t))))
-        (incf (channel-presentation-log-characters ui)
-              (- (channel-presentation--record-weight event (third cell)) (second cell)))
-        (setf (first cell)  event
-              (second cell) (channel-presentation--record-weight event (third cell))))))
-  nil)
+      (let* ((event  (list* :ui :operation ':records
+                            (channel-presentation--records-fields ui (third cell) :lay-out-p t)))
+             (weight (channel-presentation--record-weight event (third cell))))
+        (incf (channel-presentation-log-characters ui) (- weight (second cell)))
+        (setf (first cell) event (second cell) weight))))
+  (channel-presentation--trim-log ui))
 
 (defmethod terminal-ui-stream-update ((ui channel-presentation) &key rows tail)
   "Send streamed ROWS and the unfinished TAIL to the clients."
@@ -923,11 +927,10 @@ otherwise is sent whole."
            (whole    (list* :ui :operation ':markdown :source source shared))
            (cell     (third stream)))
       (if cell
-          (progn
-            (incf (channel-presentation-log-characters ui)
-                  (- (presentation--weight whole) (second cell)))
-            (setf (first cell)  whole
-                  (second cell) (presentation--weight whole)))
+          (let ((weight (presentation--weight whole)))
+            (incf (channel-presentation-log-characters ui) (- weight (second cell)))
+            (setf (first cell) whole (second cell) weight)
+            (channel-presentation--trim-log ui))
           (setf (third stream) (channel-presentation--log ui whole)))
       (channel-presentation--send
        ui (if delta-p
