@@ -124,6 +124,59 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-channel-permission-state () null)
+(defun test-channel-permission-state ()
+  "Test local mode isolation, exact approvals, and fail-closed mode storage."
+  (with-test-configuration (configuration root)
+    (let* ((conversation (conversation-create configuration :identifier "permission-test"))
+           (identity     (conversation-pathname conversation))
+           (created-at   (conversation-created-at conversation))
+           (application  (make-instance 'application
+                                        :configuration    configuration
+                                        :conversation     conversation
+                                        :ui               nil
+                                        :permission-state (permissions-load configuration))))
+      (application-set-channel-permission-mode application ':full-access)
+      (test-assert (null (permissions-channel-mode configuration identity (1+ created-at)))
+                   "a replacement conversation cannot inherit the old channel mode")
+      (application-set-channel-permission-mode application ':ask)
+      (dolist (choice '(:once :always))
+        (test-assert (eq (application--apply-command-authorization-choice application "git status" root
+                                                                          :choice choice)
+                         ':full-access)
+                     "an exact approval grants this command")
+        (test-assert (eq (application--saved-permission-mode configuration conversation) ':ask)
+                     "an exact approval does not change the saved channel mode"))
+      (application-permissions-command application ':clear)
+      (test-assert (and (null (permission-state-rules (application-permission-state application)))
+                        (eq (application--saved-permission-mode configuration conversation) ':ask))
+                   "clearing exact approvals leaves the saved mode in place")
+      (let* ((directory (merge-pathnames "channel-permissions/" (config :state-root configuration)))
+             (pathname  (first (uiop:directory-files directory "*.sexp")))
+             (warned-p  nil))
+        (test-assert (test-fixture-permissions-p *platform* pathname ':private-file)
+                     "channel authority is private on disk")
+        (snapshot-write-text pathname "(:channel-permission :version 1 :mode :full-access)")
+        (handler-bind ((permissions-load-warning
+                         (lambda (condition)
+                           (declare (ignore condition))
+                           (setf warned-p t)
+                           (muffle-warning))))
+          (test-assert (eq (application--saved-permission-mode configuration conversation) ':ask)
+                       "corrupt mode data cannot grant full access"))
+        (test-assert warned-p "corrupt mode data is reported")
+        (delete-file pathname)
+        (ensure-directories-exist (uiop:ensure-directory-pathname pathname))
+        (test-assert (handler-case
+                         (progn
+                           (application-set-channel-permission-mode application ':full-access)
+                           nil)
+                       (permissions-error () t))
+                     "a failed mode write is reported")
+        (test-assert (eq (application-permission-mode application) ':ask)
+                     "an uncommitted mode cannot elevate live access"))))
+  nil)
+
 (-> test-external-permission-persistence () null)
 (defun test-external-permission-persistence ()
   "Exercise domain isolation, stale merging, reload, clear, and publication failure."

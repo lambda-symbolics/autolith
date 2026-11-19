@@ -859,12 +859,13 @@ dependencies."
           (:immutable-p boolean)
           (:pristine-p boolean)
           (:permission-mode (member :ask :auto :sandboxed :full-access))
+          (:explicit-permission-mode (option keyword))
           (:fresh-conversation-p boolean)
           (:image-replay-failures list))
     application)
 (defun main--connect-application
     (&key configuration conversation-id immutable-p pristine-p permission-mode
-          fresh-conversation-p
+          explicit-permission-mode fresh-conversation-p
           (image-replay-failures nil image-state-loaded-p))
   "Create or reconnect the active application for one normal or handoff startup.
 
@@ -873,14 +874,18 @@ state, including an empty list after successful or pristine startup."
   (if (and (not pristine-p)
            (not fresh-conversation-p)
            (typep *active-application* 'application))
-      (application-reconnect *active-application*
-                             :conversation-id conversation-id
-                             :immutable-p     immutable-p
-                             :permission-mode permission-mode)
+      (apply #'application-reconnect *active-application*
+             :conversation-id conversation-id
+             :immutable-p     immutable-p
+             :permission-mode permission-mode
+             (when explicit-permission-mode
+               (list :explicit-permission-mode explicit-permission-mode)))
       (apply #'application-create configuration
              :conversation-id conversation-id
              :permission-mode permission-mode
-             (append (when pristine-p (list :pristine-p t))
+             (append (when explicit-permission-mode
+                       (list :explicit-permission-mode explicit-permission-mode))
+                     (when pristine-p (list :pristine-p t))
                      (when image-state-loaded-p
                        (list :image-replay-failures image-replay-failures))))))
 
@@ -957,10 +962,7 @@ state, including an empty list after successful or pristine startup."
                                    :source ':override))
               (terminal-theme-install (config :terminal-theme base))
               base))
-         (permission-mode
-           (or explicit-permission-mode
-               (config :permission-mode configuration)
-               ':ask))
+         (permission-mode          (or (config :permission-mode configuration) ':ask))
          (handoff-record
            (localgroup-handoff-selection
             configuration
@@ -1014,23 +1016,28 @@ state, including an empty list after successful or pristine startup."
     (when (and handoff-record (getf (rest handoff-record) :world-p))
       (let* ((*localgroup-startup-record* handoff-record)
              (status                      (world-server-run configuration
-                                                            :permission-mode permission-mode)))
+                                                            :permission-mode
+                                                            (or explicit-permission-mode permission-mode))))
         (when status
           (uiop:quit status)))
       (return-from main--start-session nil))
     (when read-only-p
       (unless (main--interactive-input-p)
         (error 'configuration-error :message "Read-only opening requires an interactive terminal."))
+      (when explicit-permission-mode
+        (error 'configuration-error :message "--read-only cannot be combined with --permissions."))
       (when image-values
         (error 'configuration-error :message "--read-only cannot be combined with --image.")))
     (when detached-p
       (main--start-detached configuration
-                            :permission-mode permission-mode
+                            :permission-mode (if pristine-p
+                                                 (or explicit-permission-mode permission-mode)
+                                                 permission-mode)
                             :immutable-p     immutable-p
                             :pristine-p      pristine-p
                             :conversation-id effective-open-id
                             :launch          (main--launch-options
-                                              command :permission-mode permission-mode))
+                                              command :permission-mode explicit-permission-mode))
       (return-from main--start-session nil))
     (when (and (string-equal (software-type) "Linux")
                (not (application--command-sandbox-available-p)))
@@ -1052,7 +1059,7 @@ state, including an empty list after successful or pristine startup."
                                                (null effective-open-id))
                     :recovery-diagnosis recovery-diagnosis
                     :launch             (main--launch-options
-                                         command :permission-mode permission-mode)
+                                         command :permission-mode explicit-permission-mode)
                     :images             (mapcar #'namestring (main--image-pathnames image-values)))
                    (progn
                      (world-client-run-script
@@ -1060,7 +1067,7 @@ state, including an empty list after successful or pristine startup."
                       :conversation-id (or effective-open-id recovery-conversation-id)
                       :permission-mode permission-mode
                       :immutable-p     immutable-p
-                      :launch          (main--launch-options command :permission-mode permission-mode))
+                      :launch          (main--launch-options command :permission-mode explicit-permission-mode))
                      t)))
       (return-from main--start-session nil))
     (when read-only-p
@@ -1073,10 +1080,14 @@ state, including an empty list after successful or pristine startup."
                    :conversation-id      effective-open-id
                    :immutable-p          immutable-p
                    :pristine-p           pristine-p
-                   :permission-mode      permission-mode
+                   :permission-mode      (if pristine-p
+                                             (or explicit-permission-mode permission-mode)
+                                             permission-mode)
                    :fresh-conversation-p (not (null fresh-handoff-p))
-                   (when image-state-loaded-p
-                     (list :image-replay-failures image-replay-failures))))
+                   (append (when (and explicit-permission-mode (not pristine-p))
+                             (list :explicit-permission-mode explicit-permission-mode))
+                           (when image-state-loaded-p
+                             (list :image-replay-failures image-replay-failures)))))
       (application--clear-recovery-environment)
       (when (and (getopt* command ':simulate-crash)
                  (not (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))))

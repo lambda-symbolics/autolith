@@ -767,6 +767,7 @@
 (define-test-suite world-server test-world-server-endpoint-recovery
  test-world-server-endpoint-precedence test-world-server-endpoint-escalation
  test-world-server-cold-channels test-world-server-child-maintenance
+  test-world-server-channel-permission-modes
  test-world-server-wake-channel test-world-server-stop-reason
  test-world-server-control-z-detach test-world-server-status-line
  test-world-client-stop-outcomes test-world-client-exit-observation
@@ -905,6 +906,7 @@
     test-command-permission-persistence
     test-command-permission-corruption
     test-command-permission-write-failure
+    test-channel-permission-state
     test-external-permission-persistence
     test-external-tool-permission-modes
     test-command-classification-cache-bounds

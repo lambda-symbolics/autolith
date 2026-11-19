@@ -190,7 +190,7 @@ Clicking the rendered call's header inserts it into the composer.")
     :initform      ':ask
     :accessor      application-permission-mode
     :type          (member :ask :auto :sandboxed :full-access)
-    :documentation "The command approval behavior for this process session.")
+    :documentation "The effective command approval behavior for the current channel.")
    (command-classifications
     :initform      (make-hash-table :test #'equal :synchronized t)
     :reader        application-command-classifications
@@ -1168,14 +1168,36 @@ newly acquired lease."
         (setf (application-conversation-lease application) nil))))
   nil)
 
+(-> application--saved-permission-mode (configuration conversation) (option keyword))
+(defun application--saved-permission-mode (configuration conversation)
+  "Read the authority saved locally for CONVERSATION."
+  (permissions-channel-mode configuration (conversation-pathname conversation)
+                            (conversation-created-at conversation)))
+
+(-> application-set-channel-permission-mode
+    (application (member :ask :auto :sandboxed :full-access)) null)
+(defun application-set-channel-permission-mode (application mode)
+  "Save an explicitly selected channel MODE before granting it to APPLICATION."
+  (when (slot-boundp application 'conversation)
+    (let ((conversation (application-conversation application)))
+      (permissions-save-channel-mode (application-configuration application)
+                                     (conversation-pathname conversation)
+                                     (conversation-created-at conversation)
+                                     :mode mode)))
+  (setf (application-permission-mode application) mode)
+  nil)
+
 (-> application-create
     (configuration &key (:conversation-id (option string))
                         (:permission-mode (member :ask :auto :sandboxed :full-access))
+                        (:explicit-permission-mode (option keyword))
+                        (:ignore-saved-permission-mode-p boolean)
                         (:pristine-p boolean)
                         (:image-replay-failures list))
     application)
 (defun application-create
     (configuration &key conversation-id (permission-mode ':ask) pristine-p
+                        explicit-permission-mode ignore-saved-permission-mode-p
                         (image-replay-failures nil image-state-loaded-p))
   "Create a connected application, loading CONVERSATION-ID with PERMISSION-MODE.
 
@@ -1201,11 +1223,13 @@ leaves no registrations of the user init it ran."
                                                         :pristine-p pristine-p)
              (prog1 (application--build
                      (provider-bootstrap-configuration configuration)
-                     :conversation-id          conversation-id
-                     :permission-mode          permission-mode
-                     :pristine-p               pristine-p
-                     :recovery-p               t
-                     :mutation-replay-failures mutation-replay-failures)
+                     :conversation-id                conversation-id
+                     :permission-mode                permission-mode
+                     :explicit-permission-mode       explicit-permission-mode
+                     :ignore-saved-permission-mode-p ignore-saved-permission-mode-p
+                     :pristine-p                     pristine-p
+                     :recovery-p                     t
+                     :mutation-replay-failures       mutation-replay-failures)
                (setf completed-p t)))
         (unless completed-p
           (application--extension-registry-restore
@@ -1321,6 +1345,8 @@ The caller owns APPLICATION and its resources if any initialization step fails."
 (-> application--build
     (configuration &key (:conversation-id (option string))
                         (:permission-mode (member :ask :auto :sandboxed :full-access))
+                        (:explicit-permission-mode (option keyword))
+                        (:ignore-saved-permission-mode-p boolean)
                         (:pristine-p boolean)
                         (:recovery-p boolean)
                         (:mutation-replay-failures list)
@@ -1329,6 +1355,7 @@ The caller owns APPLICATION and its resources if any initialization step fails."
     application)
 (defun application--build
     (configuration &key conversation-id (permission-mode ':ask) pristine-p
+                        explicit-permission-mode ignore-saved-permission-mode-p
                         recovery-p mutation-replay-failures client-pane
                         tool-registry-function)
   "Build one connected application on bootstrapped CONFIGURATION.
@@ -1393,7 +1420,10 @@ servers. Release acquired resources if construction fails."
                       :tool-registry           registry
                       :worker                  worker
                       :permission-state        permission-state
-                      :permission-mode         permission-mode
+                      :permission-mode         (or explicit-permission-mode
+                                                   (unless (or pristine-p ignore-saved-permission-mode-p)
+                                                     (application--saved-permission-mode configuration conversation))
+                                                   permission-mode)
                       :pristine-p              pristine-p
                       :installation-provenance provenance
                       :update-availability     update
@@ -1408,6 +1438,8 @@ servers. Release acquired resources if construction fails."
                 :history-floor-sequence (third recovery-state))
                (application-connect-task-presentation application)
                (application--load-goal application)
+               (when explicit-permission-mode
+                 (application-set-channel-permission-mode application explicit-permission-mode))
                (application-publish-recovery-session application)
                (application-world-sync application)
                (telemetry--call-safely
@@ -1457,12 +1489,13 @@ servers. Release acquired resources if construction fails."
 (-> application-reconnect
     (application &key (:conversation-id (option string))
                       (:immutable-p boolean)
-                      (:permission-mode (member :ask :auto :sandboxed :full-access)))
+                      (:permission-mode (member :ask :auto :sandboxed :full-access))
+                      (:explicit-permission-mode (option keyword)))
     application)
 (defun application-reconnect
     (application &key conversation-id
                    (immutable-p nil immutable-p-supplied-p)
-                   (permission-mode ':ask))
+                   (permission-mode ':ask) explicit-permission-mode)
   "Build and commit a replacement using PERMISSION-MODE without damaging APPLICATION."
   (let* ((previous                               (application-configuration application))
          (hurry-up-p                             (application-hurry-up-p application))
@@ -1563,7 +1596,9 @@ servers. Release acquired resources if construction fails."
                                 :tool-registry           registry
                                 :worker                  worker
                                 :permission-state        permission-state
-                                :permission-mode         permission-mode
+                                :permission-mode         (or explicit-permission-mode
+                                                             (application--saved-permission-mode configuration conversation)
+                                                             permission-mode)
                                 :pristine-p              (application-pristine-p application)
                                 :installation-provenance provenance
                                 :update-availability     update
@@ -1589,6 +1624,8 @@ servers. Release acquired resources if construction fails."
                          (setf failure-stage ':install)
                          (application-connect-task-presentation new-application)
                          (context-runtime-reset)
+                         (when explicit-permission-mode
+                           (application-set-channel-permission-mode new-application explicit-permission-mode))
                          (application-publish-recovery-session new-application)
                          (management-repl-transfer application new-application)
                          (telemetry--call-safely
@@ -2162,6 +2199,13 @@ roleless inbox handoff. That handoff retires the former child role with its runt
          (ui                          (application-ui application))
          (previous-configuration      (application-configuration application))
          (previous-conversation       (application-conversation application))
+         (previous-permission-mode    (application-permission-mode application))
+         (permission-mode
+           (if (eq previous-conversation conversation)
+               previous-permission-mode
+               (or (application--saved-permission-mode configuration conversation)
+                   (config :permission-mode configuration)
+                   ':ask)))
          (previous-conversation-lease
            (and (slot-boundp application 'conversation-lease)
                 (application-conversation-lease application)))
@@ -2211,6 +2255,7 @@ roleless inbox handoff. That handoff retires the former child role with its runt
                      application-swapped-p t)
                (setf (application-configuration application) configuration
                      (application-conversation application) conversation
+                     (application-permission-mode application) permission-mode
                      (application-conversation-lease application)
                      conversation-lease
                      (application-provider application) provider
@@ -2242,6 +2287,8 @@ roleless inbox handoff. That handoff retires the former child role with its runt
                 previous-configuration
                 (application-conversation application)
                 previous-conversation
+                (application-permission-mode application)
+                previous-permission-mode
                 (application-conversation-lease application)
                 previous-conversation-lease
                 (application-provider application)

@@ -2679,8 +2679,8 @@ as the terminal UI's exclusive-input function."
       (list :name "auto" :value ':auto :argument nil
             :description
             (if sandbox-available-p
-                "classify automatically this session as sandboxed, full access, or denied"
-                "classify automatically this session as full access or denied"))
+                "remember automatic classification for this channel: sandbox, full access, or deny"
+                "remember automatic classification for this channel: full access or deny"))
       (list :name "once" :value ':once :argument nil
             :description
             (if external-tool-p
@@ -2693,10 +2693,10 @@ as the terminal UI's exclusive-input function."
                     (application--abbreviated-directory (namestring directory)))))
      (when sandbox-available-p
        (list (list :name "sandbox" :value ':sandbox :argument nil
-                   :description "allow sandboxed commands for this session")))
+                    :description "remember sandbox access for this channel")))
      (list
       (list :name "full" :value ':full :argument nil
-            :description "let it ride with full user privileges for this session")
+             :description "remember full user privileges for this channel across restarts")
       (list :name "deny" :value ':deny :argument nil
             :description (if external-tool-p "do not call the external tool"
                              "do not run the command"))))))
@@ -2860,7 +2860,7 @@ the commands of one instruction rather than the whole session."
   "Apply a shared permission CHOICE, rejecting unavailable grants."
   (case choice
     (:auto
-     (setf (application-permission-mode application) ':auto)
+     (application-set-channel-permission-mode application ':auto)
      (multiple-value-bind (decision reason)
          (if (eq kind ':external-tool)
              (application--model-command-permission
@@ -2870,7 +2870,7 @@ the commands of one instruction rather than the whole session."
         application (or request command) directory :decision decision
                                                    :reason   reason)))
     (:full
-     (setf (application-permission-mode application) ':full-access)
+     (application-set-channel-permission-mode application ':full-access)
      ':full-access)
     (:once
      ':full-access)
@@ -2885,7 +2885,7 @@ the commands of one instruction rather than the whole session."
     (:sandbox
      (if (and (eq kind ':command) (application--command-sandbox-available-p))
          (progn
-           (setf (application-permission-mode application) ':sandboxed)
+           (application-set-channel-permission-mode application ':sandboxed)
            ':sandboxed)
          ':deny))
     (otherwise

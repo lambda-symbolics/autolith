@@ -852,6 +852,8 @@ instead says so."
            (world-server--host-for server arguments)
          (channel-loading-report 5 "Starting channel")
          (world-server--wait-ready server host)
+         (unless started-p
+           (world-server--reconcile-launch server host (getf arguments :launch)))
          (loop for (identifier . message) in skipped
                do (application-present (world-host-application host)
                                        (application-failure-line
@@ -1144,8 +1146,6 @@ host to publish its endpoint."
                               "Channel ~A is already running, so its tools cannot take the editor's MCP servers. Open it without them, or close it elsewhere first."
                               (conversation-identifier-display identifier))
                       :operation ':open :identifier identifier))
-             (world-server--reconcile-launch server host
-                                             (getf arguments :launch))
              (values host nil))
             (world-server--start-host server :conversation-id identifier
                                       :directory
@@ -1242,7 +1242,7 @@ an unhosted one starts when its conversation is free and loads. A channel
 whose conversation cannot be loaded is passed over, as an (IDENTIFIER .
 MESSAGE) pair, so one damaged conversation never keeps the workspace from
 opening. Return NIL for the host when no channel qualifies."
-  (let ((launch (getf arguments :launch)) (skipped nil))
+  (let ((skipped nil))
     (dolist
         (candidate (world-server--latest-candidates server workspace)
                    (values nil nil (nreverse skipped)))
@@ -1253,8 +1253,7 @@ opening. Return NIL for the host when no channel qualifies."
          (host
           (world-server--check-host-opening host)
           (when (world-server--workspace-host-suitable-p host arguments)
-            (world-server--reconcile-launch server host launch)
-            (return (values host nil (nreverse skipped)))))
+             (return (values host nil (nreverse skipped)))))
          (t
           (handler-case
            (return
@@ -1304,32 +1303,47 @@ running keeps the mode it started under."
 
 (-> world-server--reconcile-launch (world-server world-host list) null)
 (defun world-server--reconcile-launch (server host launch)
-  "Apply compatible LAUNCH options to HOST or signal a conflict.
-
-Change the permission mode only when no terminal controls the channel and
-no turn or job is running. A request for the current mode needs no change."
-  (let ((conflict (world-server--launch-conflict host launch))
-        (display  (conversation-identifier-display (world-host-channel host))))
+  "Apply compatible LAUNCH options at the channel boundary or signal a conflict."
+  (let* ((conflict    (world-server--launch-conflict host launch))
+         (display     (conversation-identifier-display (world-host-channel host)))
+         (application (world-host-application host))
+         (requested   (getf launch :permission-mode)))
     (when conflict
       (error 'world-error
              :message    (format nil "Channel ~A is already running and cannot take ~A. Open it without that option, or open another channel."
                                  display conflict)
              :operation  ':open
              :identifier (world-host-channel host)))
-    (let ((mode        (getf launch :permission-mode))
-          (application (world-host-application host)))
-      (when (and mode (not (eq mode (application-permission-mode application))))
-        (when (world-host-attached-p host)
-          (error 'world-error
-                 :message    (format nil "Channel ~A is controlled by another terminal and keeps its permission mode ~(~A~)."
-                                     display (application-permission-mode application))
-                 :operation  ':open
-                 :identifier (world-host-channel host)))
-        (setf (application-permission-mode application)
-              (world-server--permission-mode server mode))
-        (application-present application
-                             (format nil "permission mode changed to ~(~A~) by a terminal opening this channel"
-                                     (application-permission-mode application))))))
+    (when requested
+      (let ((mode (world-server--permission-mode server requested))
+            (hub  (application-client-hub application)))
+        (flet ((may-select-mode-p ()
+                 "Refuse a different mode on a controlled or working channel; the caller holds the hub lock."
+                 (let ((reason (cond ((client-hub-clients hub)
+                                      "controlled by another terminal")
+                                     ((world-host-jobs-live-p host)
+                                      "working"))))
+                   (when (and reason (not (eq mode (application-permission-mode application))))
+                     (error 'world-error
+                            :message    (format nil "Channel ~A is ~A and keeps its permission mode ~(~A~)."
+                                                display reason (application-permission-mode application))
+                            :operation  ':open
+                            :identifier (world-host-channel host)))
+                   (null reason))))
+          (when (with-lock-held ((client-hub-lock hub)) (may-select-mode-p))
+            (application-clients-call-as-work
+             application
+             (lambda ()
+               (let ((changed-p nil))
+                 (with-lock-held ((client-hub-lock hub))
+                   (when (may-select-mode-p)
+                     (setf changed-p (not (eq mode (application-permission-mode application))))
+                     (application-set-channel-permission-mode application mode)))
+                 (when changed-p
+                   (application-present application
+                                        (format nil "permission mode changed to ~(~A~) by a terminal opening this channel"
+                                                mode))
+                   (application-clients-publish-state application))))))))))
   nil)
 
 (-> world-host-working-p (world-host) boolean)
@@ -1338,7 +1352,15 @@ no turn or job is running. A request for the current mode needs no change."
   (let* ((application (world-host-application host))
          (controller  (application-input-controller application)))
     (or (and controller (application-input-controller-turn-active-p controller))
-        (plusp (nth-value 0 (localgroup--task-counts application))))))
+        (world-host-jobs-live-p host))))
+
+(-> world-host-jobs-live-p (world-host) boolean)
+(defun world-host-jobs-live-p (host)
+  "Return true while HOST owns a child or session job."
+  (multiple-value-bind (children active-children session-jobs)
+      (localgroup--task-counts (world-host-application host))
+    (declare (ignore active-children))
+    (or (plusp children) (plusp (or session-jobs 0)))))
 
 (-> world-server--permission-mode (world-server t) keyword)
 (defun world-server--permission-mode (server value)
@@ -1564,12 +1586,10 @@ forgotten again when no thread could start."
          (application
           (application--build configuration :conversation-id conversation-id
                               :permission-mode
-                              (world-server--permission-mode server
-                                                             (or
-                                                              (getf launch
-                                                                    :permission-mode)
-                                                              (getf arguments
-                                                                    :permission-mode)))
+                              (world-server--permission-mode server (getf arguments :permission-mode))
+                              :explicit-permission-mode
+                              (when (getf launch :permission-mode)
+                                (world-server--permission-mode server (getf launch :permission-mode)))
                               :mutation-replay-failures
                               (world-server-mutation-replay-failures server)
                               :client-pane

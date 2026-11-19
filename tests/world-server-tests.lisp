@@ -352,6 +352,60 @@ Keep the override until the captured thread exits; replacement threads pass thro
                     "a channel idle past the idle minutes is unloaded"))))
   nil)
 
+(-> test-world-server-channel-permission-modes () null)
+(defun test-world-server-channel-permission-modes ()
+  "Restore independent channel modes on cold open and after replacing the server."
+  (with-test-configuration (configuration root)
+    (let ((channels nil))
+      (labels ((open-channel (identifier &optional launch)
+                 "Open IDENTIFIER using a caller default that cannot override a channel choice."
+                 (localgroup-query-record
+                  (world-client-entry configuration) ':open
+                  (list :channel identifier :launch launch :permission-mode ':auto
+                        :rows 30 :columns 90 :styled-p nil)))
+
+               (application-for (server identifier)
+                 "Find the owner of a channel after its open completed."
+                 (world-host-application (world-server--find-host server identifier)))
+
+               (check-modes (server)
+                 "Open and verify every mode from a newly constructed application."
+                 (dolist (entry channels)
+                   (open-channel (first entry))
+                   (test-assert (eq (application-permission-mode (application-for server (first entry)))
+                                    (rest entry))
+                                "cold channel restores its own mode over the caller default"))))
+        (world-server-tests--call-with-server
+         configuration
+         (lambda (server)
+           (test-call-with-function-replacements
+            (list (list 'application--command-sandbox-available-p (constantly t)))
+            (lambda ()
+              (dolist (entry '((:ask . :ask) (:auto . :auto) (:sandbox . :sandboxed) (:full . :full-access)))
+                (let* ((workspace (world-tests--workspace root (string-downcase (symbol-name (first entry)))))
+                       (response  (world-server-tests--open (world-client-entry configuration) workspace :new-p t))
+                       (id        (getf (rest response) :session-id))
+                       (owner     (application-for server id)))
+                  (application-clients-call-as-work
+                   owner (lambda ()
+                           (conversation-append-user-message (application-conversation owner) "saved channel")
+                           (application-permissions-command owner (first entry))))
+                  (push (cons id (rest entry)) channels)))))
+           (let ((minute (* 60 internal-time-units-per-second)))
+             (world-server--unload-cold-hosts server :now 0)
+             (world-server--unload-cold-hosts server :now (* 31 minute)))
+           (test-assert (task-tests--wait-until (lambda () (null (world-server--hosts server))) 30)
+                        "selected permissions alone do not keep hosts loaded")
+           (check-modes server)
+           (let* ((entry (first channels))
+                  (id    (first entry)))
+             (open-channel id '(:permission-mode :ask))
+             (setf (rest entry) ':ask)
+             (test-assert (eq (application-permission-mode (application-for server id)) ':ask)
+                          "an explicit open replaces the saved full mode"))))
+        (world-server-tests--call-with-server configuration #'check-modes))))
+  nil)
+
 (-> test-world-server-child-maintenance () null)
 (defun test-world-server-child-maintenance ()
   "Test maintenance releases visited idle children and refuses attached or running hosts."

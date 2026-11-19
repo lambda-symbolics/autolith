@@ -417,7 +417,8 @@
          (progn
            (setf application
                  (application-create configuration
-                                     :permission-mode permission-mode))
+                                     :permission-mode                permission-mode
+                                     :ignore-saved-permission-mode-p t))
            (let* ((definition
                     (run-job--resolve-definition
                      (application-configuration application) request))

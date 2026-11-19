@@ -95,6 +95,14 @@ string.
 
 ** Automatic permissions
 
+Choose a channel's permission mode with =(permissions :ask)=,
+=(permissions :auto)=, =(permissions :sandbox)=, or =(permissions :full)=.
+The mode is stored locally and restored when you reopen a saved channel after
+an unload or restart. Full access uses your full user privileges, including
+after reopening.
+In an approval picker, choose =once= to grant access for just one operation, or
+=always= to save an approval for that exact operation.
+
 Use =(permissions :auto)= to classify operations without an approval picker.
 During a fresh classification, read =judging= and the operation in the status
 bar. Cached decisions skip this phase. In fullscreen, read the decision beside

@@ -241,3 +241,72 @@
                :operation ':write
                :cause     cause))))
   nil)
+
+
+;;;; -- Channel Permission Modes --
+
+(-> permissions--channel-mode-form-p (t) boolean)
+(defun permissions--channel-mode-form-p (form)
+  "Recognize one private channel authorization record."
+  (and (record-check
+        form :tag ':channel-permission :versions '(1)
+        :fields           (list (list :indicator ':created-at :required t :validate #'integerp)
+                                (list :indicator ':mode :required t
+                                      :validate (lambda (mode)
+                                                  (member mode '(:ask :auto :sandboxed :full-access)))))
+        :allow-other-keys nil)
+       t))
+
+(-> permissions--channel-mode-store
+    (configuration pathname integer &key (:recover-read-error (option function)))
+    sexp-store:snapshot-store)
+(defun permissions--channel-mode-store (configuration identity created-at &key recover-read-error)
+  "Store channel authority in private state, outside transferable conversation data."
+  (let* ((key      (ironclad:byte-array-to-hex-string
+                    (ironclad:digest-sequence ':sha256
+                                             (utf8-string-to-octets (namestring identity)))))
+         (pathname (merge-pathnames (format nil "channel-permissions/~A.sexp" key)
+                                    (config :state-root configuration))))
+    (make-instance 'sexp-store:snapshot-store
+                   :pathname           pathname
+                   :lock-pathname      (make-pathname :type "lock" :defaults pathname)
+                   :initial-state      (constantly nil)
+                   :validator          #'permissions--channel-mode-form-p
+                   :decoder            (lambda (form)
+                                         (when (eql (record-property form ':created-at) created-at)
+                                           (record-property form ':mode)))
+                   :encoder            (lambda (mode)
+                                         (list ':channel-permission :version 1
+                                               :created-at created-at :mode mode))
+                   :recover-read-error recover-read-error)))
+
+(-> permissions-channel-mode (configuration pathname integer) (option keyword))
+(defun permissions-channel-mode (configuration identity created-at)
+  "Return the saved channel mode, or ASK when its private state cannot be read."
+  (handler-case
+      (sexp-store:store-read (permissions--channel-mode-store configuration identity created-at))
+    (sexp-store:store-error (cause)
+      (warn 'permissions-load-warning
+            :pathname (sexp-store:store-error-pathname cause)
+            :cause    cause)
+      ':ask)))
+
+(-> permissions-save-channel-mode
+    (configuration pathname integer &key (:mode (member :ask :auto :sandboxed :full-access)))
+    null)
+(defun permissions-save-channel-mode (configuration identity created-at &key mode)
+  "Commit MODE for this channel before it can become effective."
+  (handler-case
+      (sexp-store:store-transact
+       (permissions--channel-mode-store configuration identity created-at
+                                        :recover-read-error (constantly nil))
+       (lambda (current)
+         (values mode nil (not (eq current mode)))))
+    (sexp-store:store-error (cause)
+      (error 'permissions-error
+             :message   (format nil "Could not save the channel permission mode: ~A"
+                                 (sexp-store:store-error-message cause))
+             :pathname  (sexp-store:store-error-pathname cause)
+             :operation ':write
+             :cause     cause)))
+  nil)

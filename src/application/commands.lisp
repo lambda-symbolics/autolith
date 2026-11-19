@@ -2324,14 +2324,6 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
                                     (command-permission-directory rule)))))))
         (application-hint-line "no exact approvals are saved"))))
 
-(-> application--set-durable-permission-mode (application keyword) null)
-(defun application--set-durable-permission-mode (application mode)
-  "Set APPLICATION's session permission MODE and persist ask or auto."
-  (setf (application-permission-mode application) mode)
-  (when (member mode '(:ask :auto) :test #'eq)
-    (setf (config :permission-mode (application-configuration application)) mode))
-  nil)
-
 (-> application--permission-mode-entry (keyword string) list)
 (defun application--permission-mode-entry (mode description)
   "Return a permission MODE receipt, emphasizing full user authority as a warning."
@@ -2343,20 +2335,20 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
 
 (-> application-permissions-command (application t) null)
 (defun application-permissions-command (application argument)
-  "Apply ARGUMENT to APPLICATION's session command permissions."
+  "Apply ARGUMENT to APPLICATION's channel command permissions."
   (let ((choice (and argument
                      (application--control-choice argument '(:ask :auto :sandbox :full :list :clear)))))
     (cond
       ((null choice)
        nil)
       ((eq choice ':ask)
-       (application--set-durable-permission-mode application ':ask)
+       (application-set-channel-permission-mode application ':ask)
        (application-present
         application
         (application--permission-mode-entry
          ':ask "Commands will ask before running unless the exact command was saved.")))
       ((eq choice ':auto)
-       (application--set-durable-permission-mode application ':auto)
+       (application-set-channel-permission-mode application ':auto)
        (application-present
         application
         (application--permission-mode-entry
@@ -2370,17 +2362,17 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
        (unless (application--command-sandbox-available-p)
          (error 'configuration-error
                 :message (application--command-sandbox-unavailable-message)))
-       (setf (application-permission-mode application) ':sandboxed)
+       (application-set-channel-permission-mode application ':sandboxed)
        (application-present
         application
         (application--permission-mode-entry
-         ':sandboxed "Commands may run for this session inside the workspace sandbox.")))
+         ':sandboxed "Commands in this channel may run inside the workspace sandbox.")))
       ((eq choice ':full)
-       (setf (application-permission-mode application) ':full-access)
+       (application-set-channel-permission-mode application ':full-access)
        (application-present
         application
         (application--permission-mode-entry
-         ':full-access "Commands may run for this session with your full user privileges.")))
+         ':full-access "Commands in this channel may run with your full user privileges, including after reopening.")))
       ((eq choice ':list)
        (application-present application (application-saved-permissions-entry application)))
       ((eq choice ':clear)
@@ -2534,9 +2526,11 @@ the settings page and commands use the same setters."
        (when (application-ui application)
          (terminal-ui-set-prompt-padding (application-ui application) value)))
       (:permission-mode
-       (if value
-           (application--set-durable-permission-mode application value)
-           (setf (config :permission-mode configuration) nil)))
+       (setf (config :permission-mode configuration) value)
+       (unless (and (slot-boundp application 'conversation)
+                    (application--saved-permission-mode configuration
+                                                        (application-conversation application)))
+         (setf (application-permission-mode application) (or value ':ask))))
       (t
        (setf (config name configuration) value))))
   nil)
@@ -3463,8 +3457,8 @@ pristine or recovery session runs apart from it."
     (:name              "/permissions"
      :help-topic        :workspace
      :help-order        2
-     :description       "choose command access for this session"
-     :tip               "Use `(permissions :ask)` for approval prompts, `:auto` for automatic authorization, `:sandbox` for workspace confinement, or `:full` for session-wide host access."
+     :description       "choose and remember command access for this channel"
+     :tip               "Use `(permissions :ask)` for approval prompts, `:auto` for automatic authorization, `:sandbox` for workspace confinement, or `:full` for host access in this channel across restarts."
      :busy-behavior     :apply
      :terminal-behavior :exclusive-without-arguments
      :callable          t

@@ -179,6 +179,10 @@
                     "operation" name
                     "arguments" (agentcomms:json-object "input" input))))
 
+                (saved-mode ()
+                  "Read the mode from private state, independently of live publication."
+                  (application--saved-permission-mode configuration (application-conversation application)))
+
                 (idle ()
                   "Wait until the channel has finished its preceding command."
                   (test-assert
@@ -200,9 +204,8 @@
                    (idle)
                    (test-assert (eq mode (application-permission-mode application))
                                 "structured modes use the registered permissions command")
-                   (when (member mode '(:ask :auto))
-                     (test-assert (eq mode (config :permission-mode (application-configuration application)))
-                                  "ask and auto persist through the command's configuration hook")))
+                   (test-assert (eq mode (saved-mode))
+                                "structured mode changes persist for this channel"))
                  (test-assert (equal '(:full-access :ask :auto) published)
                               "executed mode commands publish their resulting state")
                  (setf published nil)
@@ -251,7 +254,7 @@
                                 "ACP preserves its scheduled delivery and presentation envelope"))
                  (test-assert (and (eq ':full-access (application-permission-mode application))
                                    (null published)
-                                   (eq ':ask (config :permission-mode (application-configuration application))))
+                                   (eq ':full-access (saved-mode)))
                               "busy mode acceptance neither applies nor publishes before the safe boundary")
                  (test-assert
                   (handler-case (progn (invoke "goal" "pause") nil)
@@ -265,7 +268,7 @@
                   "both scheduled commands execute and publish at the channel boundary")
                  (test-assert (and (equal '(:ask :auto) published)
                                    (eq ':ask (application-permission-mode application))
-                                   (eq ':ask (config :permission-mode (application-configuration application))))
+                                   (eq ':ask (saved-mode)))
                               "safe-boundary execution preserves command ordering and persistence")
                  (idle)
                  (let ((result (invoke "permissions" "auto")))

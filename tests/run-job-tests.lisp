@@ -422,8 +422,10 @@
              (test-call-with-function-replacements
               (list
                (list 'application-create
-                     (lambda (active-configuration &key permission-mode)
+                     (lambda (active-configuration &key permission-mode ignore-saved-permission-mode-p)
                        (declare (ignore permission-mode))
+                       (test-assert ignore-saved-permission-mode-p
+                                    "a one-shot job never inherits saved channel authority")
                        (setf created-p t)
                        (user-init-load active-configuration)
                        (make-instance 'application
