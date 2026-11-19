@@ -393,7 +393,29 @@ A failed gather publishes a stale observation; the next one tries again."
         (setf (world-sidebar-last-success-at sidebar)
               (or observed-at (funcall (world-sidebar-clock-function sidebar)))
               (world-sidebar-failure sidebar) nil))
+    (unless (getf inputs :runtime-unknown-p)
+      (world-sidebar--prune-view-state sidebar inputs))
     (or (world-sidebar--take sidebar inputs) changed-p)))
+
+(-> world-sidebar--prune-view-state (world-sidebar list) null)
+(defun world-sidebar--prune-view-state (sidebar inputs)
+  "Drop counts and fold choices for channels and groups absent from a complete catalogue."
+  (let ((live (make-hash-table :test #'equal)))
+    (flet ((prune (table)
+             (maphash (lambda (key value)
+                        (declare (ignore value))
+                        (unless (gethash key live) (remhash key table)))
+                      table)))
+      (dolist (channel (getf inputs :channels))
+        (setf (gethash (channel-identifier channel) live) t))
+      (when (getf inputs :inbox)
+        (setf (gethash (channel-identifier (getf inputs :inbox)) live) t))
+      (prune (world-sidebar-seen sidebar))
+      (prune (world-sidebar-mentions-seen sidebar))
+      (dolist (group (getf inputs :groups))
+        (setf (gethash (world-repository-group-key group) live) t))
+      (prune (world-sidebar-toggled sidebar))))
+  nil)
 
 (-> world-sidebar--take (world-sidebar list) boolean)
 (defun world-sidebar--take (sidebar inputs)
@@ -521,12 +543,11 @@ them. INCLUDE-CLOSED-P retains every descendant for structured clients."
 
              (forest-entries (trees depth)
                "Return the shown entries of TREES at DEPTH and all of their entries."
-               (let ((shown nil)
-                     (all   nil))
-                 (dolist (tree trees (values shown all))
-                   (multiple-value-bind (tree-shown tree-all) (tree-entries tree depth)
-                     (setf shown (nconc shown tree-shown)
-                           all   (nconc all tree-all))))))
+               (loop for tree in trees
+                     for (tree-shown tree-all) = (multiple-value-list (tree-entries tree depth))
+                     nconc tree-shown into shown
+                     nconc tree-all into all
+                     finally (return (values shown all))))
 
              (tree-entries (tree depth)
                "Return the shown entries of TREE at DEPTH and all of its entries."
@@ -702,6 +723,13 @@ A newly hosted channel without durable history sorts by its creation time."
                       (world-sidebar-configuration sidebar)
                       (mapcar #'channel-identifier channels)
                       :cache (world-sidebar-pathnames sidebar))))
+    ;; Only the gathering thread owns the locator cache. Its keys pair the
+    ;; lookup precedence with a channel identifier.
+    (maphash (lambda (key pathname)
+               (declare (ignore pathname))
+               (unless (world-channel-find world (rest key))
+                 (remhash key (world-sidebar-pathnames sidebar))))
+             (world-sidebar-pathnames sidebar))
     (mapcar #'rest
             (stable-sort
              (mapcar (lambda (channel)

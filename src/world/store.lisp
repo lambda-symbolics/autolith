@@ -812,16 +812,17 @@ CHANNELS arrive newest first, which orders the groups and their members."
   "Return MEMBERS as (CHANNEL . CHILDREN) trees, each channel under its parent.
 
 A channel whose parent is not among MEMBERS is a root."
-  (labels ((children (parent)
-             "Return the trees of PARENT's members, or of the roots without a PARENT."
-             (loop for channel in members
-                   when (if parent
-                            (equal (channel-parent channel) (channel-identifier parent))
-                            (or (null (channel-parent channel))
-                                (not (find (channel-parent channel) members
-                                           :key #'channel-identifier :test #'equal))))
-                     collect (cons channel (children channel)))))
-    (children nil)))
+  (let ((nodes (make-hash-table :test #'equal))
+        (roots nil))
+    (dolist (channel members)
+      (setf (gethash (channel-identifier channel) nodes) (list channel)))
+    ;; Prepending in reverse presentation order preserves both roots and siblings.
+    (dolist (channel (reverse members) roots)
+      (let ((node   (gethash (channel-identifier channel) nodes))
+            (parent (gethash (channel-parent channel) nodes)))
+        (if parent
+            (push node (rest parent))
+            (push node roots))))))
 
 (-> world--residence-channel (world string) channel)
 (defun world--residence-channel (world name)

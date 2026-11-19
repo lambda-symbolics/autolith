@@ -18,7 +18,19 @@
                      (values (list (list :session-id "bfirst1" :state ':idle
                                          :terminal-attached-p t :message-count 5)) t))))
        (lambda ()
+         ;; Simulate a long-lived panel whose formerly hosted channels were removed.
+         (loop for n below 256
+               for id = (format nil "retired-~D" n)
+               do (setf (gethash id (world-sidebar-seen sidebar)) 8
+                        (gethash id (world-sidebar-mentions-seen sidebar)) 2
+                        (gethash id (world-sidebar-toggled sidebar)) ':closed
+                        (gethash (cons nil id) (world-sidebar-pathnames sidebar)) #P"old.sexp"))
          (screen-panel-refresh sidebar)
+         (test-assert (and (<= (hash-table-count (world-sidebar-pathnames sidebar)) 2)
+                           (<= (hash-table-count (world-sidebar-seen sidebar)) 2)
+                           (<= (hash-table-count (world-sidebar-mentions-seen sidebar)) 2)
+                           (zerop (hash-table-count (world-sidebar-toggled sidebar))))
+                      "a fresh catalogue releases retired channels' locator, counter and fold entries")
          (let ((position (position "bfirst1" (world-sidebar-tests--keys sidebar) :test #'equal)))
            (test-assert position "the durable channel is present")
            (setf (world-sidebar-selected sidebar) position
