@@ -160,6 +160,7 @@
                            "a client that never said it evaluates is not asked")
            (localgroup-client-close plain)))
        (let ((connection (localgroup-client-connect record :name "lisp" :evaluates-p t))
+             (started    (sb-thread:make-semaphore))
              (gate       (sb-thread:make-semaphore)))
          (unwind-protect
               (progn
@@ -200,6 +201,7 @@
                 (test-call-with-function-replacements
                  (list (list 'client-evaluate-request
                              (lambda (request)
+                                (sb-thread:signal-semaphore started)
                                (sb-thread:wait-on-semaphore gate :timeout 30)
                                (list :evaluation  (getf (rest request) :id)
                                      :succeeded-p t
@@ -208,39 +210,58 @@
                    (let ((*client-evaluation-seconds* 0.5))
                      (test-assert (eq (code "(+ 1 2)") ':timeout)
                                   "a client that stays silent is given up on"))
-                  (test-assert (task-tests--wait-until
-                                (lambda ()
+                   (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
+                                "The timed-out request occupied the evaluation worker.")
+                   (sb-sys:with-deadline (:seconds 10)
+                     (localgroup-client-call connection ':state))
+                   (test-assert (with-lock-held (*client-evaluator-lock*)
                                   (null (client-evaluator-work
-                                         (localgroup-client-connection-evaluator connection)))) 5)
-                               "A negotiated cancellation detaches the timed-out work owner.")
-                  (multiple-value-bind (failure message) (code "(+ 1 2)")
-                    (test-assert (and (eq failure ':failed) (search "busy" message))
-                                 "An abandoned worker refuses new work explicitly."))
-                  (let ((controller (application-input-controller application)))
-                    (setf (application-input-controller-turn-cancellation-p controller) t)
-                    (unwind-protect
-                         (test-assert (eq (code "(+ 1 2)") ':cancelled)
-                                      "a cancelled turn stops waiting for the client")
-                      (setf (application-input-controller-turn-cancellation-p controller) nil)))
-                  (sb-thread:signal-semaphore gate)
-                  (test-assert (task-tests--wait-until (lambda () (null *client-evaluator-active*)) 5)
-                               "The abandoned worker exits before the next independent request.")
-                  (let* ((failure nil)
-                         (asker   (make-thread
-                                   (lambda () (setf failure (code "(+ 1 2)")))
-                                   :name "client evaluation asker")))
-                    (test-assert (task-tests--wait-until
-                                  (lambda ()
-                                    (client-hub-evaluations (application-client-hub application)))
-                                  10)
-                                 "the channel waits for the client's answer")
-                    (localgroup-client-close connection)
-                    (join-thread asker)
-                    (test-assert (eq failure ':client-left)
-                                 "a client that leaves ends the wait")))))
+                                         (localgroup-client-connection-evaluator connection))))
+                                "A negotiated cancellation detaches the timed-out work owner.")
+                   (multiple-value-bind (failure message) (code "(+ 1 2)")
+                     (test-assert (and (eq failure ':failed) (search "busy" message))
+                                  "An abandoned worker refuses new work explicitly."))
+                   (let ((hub        (application-client-hub application))
+                         (controller (application-input-controller application)))
+                     (dolist (action '(:cancelled :client-left))
+                       (sb-thread:signal-semaphore gate)
+                       (test-assert (task-tests--wait-until
+                                     (lambda ()
+                                       (with-lock-held (*client-evaluator-lock*)
+                                         (null *client-evaluator-active*)))
+                                     5)
+                                    "The abandoned worker exits before the next request.")
+                       (let* ((failure nil)
+                              (asker   (make-thread
+                                        (lambda ()
+                                          (let ((*client-evaluation-seconds* 10))
+                                            (setf failure (code "(+ 1 2)"))))
+                                        :name "client evaluation asker")))
+                         (unwind-protect
+                              (progn
+                                (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
+                                             "The peer starts the evaluation before the interruption.")
+                                (ecase action
+                                  (:cancelled
+                                   (with-lock-held ((client-hub-lock hub))
+                                     (setf (application-input-controller-turn-cancellation-p controller) t)))
+                                  (:client-left
+                                   (localgroup-client-close connection)))
+                                (join-thread asker)
+                                (test-assert (eq failure action)
+                                             (format nil "An evaluation interrupted by ~S returned ~S." action failure))
+                                (when (eq action ':cancelled)
+                                  (sb-sys:with-deadline (:seconds 10)
+                                    (localgroup-client-call connection ':state))))
+                           (with-lock-held ((client-hub-lock hub))
+                             (setf (application-input-controller-turn-cancellation-p controller) nil)))))))))
            (sb-thread:signal-semaphore gate 8)
            (localgroup-client-close connection)
-           (test-assert (task-tests--wait-until (lambda () (null *client-evaluator-active*)) 5)
+           (test-assert (task-tests--wait-until
+                         (lambda ()
+                           (with-lock-held (*client-evaluator-lock*)
+                             (null *client-evaluator-active*)))
+                         5)
                         "Structured teardown leaves no cooperative worker running.")))
        (test-assert (null (client-hub-evaluations (application-client-hub application)))
                     "no finished or abandoned evaluation stays with the channel"))))
