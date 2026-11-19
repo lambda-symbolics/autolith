@@ -527,12 +527,11 @@
       (line-editor-set-text (terminal-ui-editor ui) "(sta")
       (terminal-ui--reconcile-completions ui)
       (unwind-protect
-           (let* ((before  (length (funcall seen)))
-                  (entries (loop for index below 100
-                                 collect (list :name        (format nil "(dynamic-~D)" index)
-                                               :description (make-string 10000 :initial-element #\x)))))
-             (setf (terminal-ui-completion-function server) (constantly entries))
+           (let ((entries (loop for index below 100
+                                collect (list :name        (format nil "(dynamic-~D)" index)
+                                              :description (make-string 10000 :initial-element #\x)))))
              (with-terminal-ui-locked (server)
+               (setf (terminal-ui-completion-function server) (constantly entries))
                (terminal-ui--present-live server))
              (test-assert (funcall await ':completions
                                    (lambda (event)
@@ -541,8 +540,12 @@
                                                 :key (lambda (entry) (getf entry :name)) :test #'equal))))
                           "Changed server capabilities publish a fresh bounded catalog.")
              (let ((events (remove-if-not
-                            (lambda (event) (eq (getf (rest event) :operation) ':completions))
-                            (nthcdr before (funcall seen)))))
+                            (lambda (event)
+                              (let ((fields (rest event)))
+                                (and (eq (getf fields :operation) ':completions)
+                                     (find (getf (first (getf fields :entries)) :name) entries
+                                           :key (lambda (entry) (getf entry :name)) :test #'equal))))
+                            (funcall seen))))
                (test-assert (= (length events) 4) "A large catalog crosses the real wire in bounded chunks.")
                (dolist (event (butlast events))
                  (image-daemon:daemon-packet-string (client-portable event))
@@ -556,7 +559,8 @@
                                         (terminal-ui-completions ui))
                                  (null (terminal-ui--reconcile-completions ui)))
                             "The final catalog chunk atomically replaces suggestions and invalidates a cached draft.")))
-        (setf (terminal-ui-completion-function server) provider))))
+        (with-terminal-ui-locked (server)
+          (setf (terminal-ui-completion-function server) provider)))))
   nil)
 
 (-> test-presentation-client () null)
