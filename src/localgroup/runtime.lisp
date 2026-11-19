@@ -24,10 +24,7 @@
             localgroup-session-attach-watchdog-thread :type t :documentation
             "The bounded thread exiting a launch nobody attaches to.")
            (owner-thread :initform (current-thread) :reader localgroup-session-owner-thread
-            :documentation "The serving thread that published this endpoint.")
-           (attachment-failure :initform nil :accessor localgroup-session-attachment-failure
-            :documentation
-            "The latest failed attachment's original condition, bounded backtrace and cleanup failures."))
+            :documentation "The serving thread that published this endpoint."))
           (:documentation "One authenticated local control endpoint for a primary application."))
 
 (-> localgroup-registry-directory (configuration) pathname)
@@ -171,15 +168,11 @@ conversation transaction can roll back before releasing either lease."
 
 (-> application-terminal-attached-p (application) boolean)
 (defun application-terminal-attached-p (application)
-  "Return true while a terminal shows APPLICATION: a relay with an attached client, or an interactive terminal of its own."
+  "Return true while a terminal shows APPLICATION: its own, or that of a client that controls its presentation."
   (let ((terminal (and (slot-boundp application 'ui)
                        (application-ui application)
                        (terminal-ui-terminal (application-ui application)))))
-    (and terminal
-         (if (typep terminal 'localgroup-terminal)
-             (image-daemon:relay-attached-p terminal)
-             (terminal-interactive-p terminal))
-         t)))
+    (and terminal (terminal-interactive-p terminal) t)))
 
 (-> localgroup-status-snapshot (localgroup-session) list)
 (defun localgroup-status-snapshot (session)
@@ -188,7 +181,10 @@ conversation transaction can roll back before releasing either lease."
          (configuration     (application-configuration application))
          (conversation      (application-conversation application))
          (terminal          (terminal-ui-terminal (application-ui application)))
-         (client-pids       (multiple-value-list (localgroup-terminal-client-pids terminal)))
+         (client-pids       (multiple-value-list
+                             (if (application-presentation application)
+                                 (application-presenting-client-pids application)
+                                 (and (terminal-interactive-p terminal) (current-process-id)))))
          (controller        (application-input-controller application))
          (paused-p          (application-localgroup-paused-p application))
          (active-p          nil)
@@ -270,42 +266,17 @@ conversation transaction can roll back before releasing either lease."
             :terminal-attached-p
             (application-terminal-attached-p application)
             :terminal-attachment
-            (let ((terminal (terminal-ui-terminal (application-ui application))))
-              (if (typep terminal 'localgroup-terminal)
-                  (image-daemon:relay-attachment-kind terminal)
-                  (if (terminal-interactive-p terminal)
-                      ':foreground
-                      ':detached)))
-            :observer-count
-            (let ((terminal (terminal-ui-terminal (application-ui application))))
-              (if (typep terminal 'localgroup-terminal)
-                  (image-daemon:relay-observer-count terminal)
-                  0))
+            (cond
+              ((not (terminal-interactive-p terminal))
+               ':detached)
+              ((application-presentation application)
+               ':remote)
+              (t
+               ':foreground))
+            :observer-count     (length (second client-pids))
             :created-at         (image-daemon:daemon-runtime-created-at session)))))
 
 ;;;; -- Localgroup Terminal Ownership --
-
-(-> localgroup--terminal (localgroup-session) localgroup-terminal)
-(defun localgroup--terminal (session)
-  "Return SESSION's attachable relay terminal."
-  (let ((terminal
-         (terminal-ui-terminal
-          (application-ui (localgroup-session-application session)))))
-    (unless (typep terminal 'localgroup-terminal)
-      (error 'localgroup-error :message
-             "This Autolith session has no attachable terminal relay." :operation
-             ':attach :session-id (image-daemon:daemon-runtime-identifier session)))
-    terminal))
-
-(-> localgroup--attachment-mode (list) keyword)
-(defun localgroup--attachment-mode (arguments)
-  "Return the validated attachment mode selected by ARGUMENTS."
-  (let ((mode (or (getf arguments :mode) ':control)))
-    (unless (member mode '(:read-only :control :take-over))
-      (error 'localgroup-error
-             :message   "The localgroup attachment mode is invalid."
-             :operation ':attach))
-    mode))
 
 (defparameter *localgroup-first-attach-timeout-seconds* 60
   "The maximum seconds a launch waits for the client it was started for.")
@@ -387,27 +358,22 @@ between that check and the close."
 
 (-> localgroup--controller-lost (localgroup-session) boolean)
 (defun localgroup--controller-lost (session)
-  "Exit SESSION after controller loss unless explicitly detached or hosted to linger.
+  "Exit SESSION after controller loss unless explicitly detached, stopping, or hosted to linger.
 Persist pending input and cancel any active turn when exiting. Return true on exit."
   (let ((exit-p
          (with-lock-held ((image-daemon:daemon-runtime-lock session))
            (not (or (localgroup-session-detached-explicitly-p session)
-                    (localgroup-session-linger-p session))))))
+                    (localgroup-session-linger-p session)
+                    (image-daemon:daemon-runtime-stopping-p session))))))
     (when exit-p (localgroup--exit-abandoned-session session))
     exit-p))
 
 (-> localgroup--first-attach-overdue-p (localgroup-session) boolean)
 (defun localgroup--first-attach-overdue-p (session)
   "Return true when SESSION never met the controlling client it was launched for."
-  (let ((terminal
-         (terminal-ui-terminal
-          (application-ui (localgroup-session-application session)))))
-    (and
-     (not
-      (with-lock-held ((image-daemon:daemon-runtime-lock session))
-        (localgroup-session-controller-seen-p session)))
-     (or (not (typep terminal 'localgroup-terminal))
-         (not (image-daemon:relay-attached-p terminal))))))
+  (and (not (with-lock-held ((image-daemon:daemon-runtime-lock session))
+              (localgroup-session-controller-seen-p session)))
+       (not (application-terminal-attached-p (localgroup-session-application session)))))
 
 (-> localgroup--attach-watchdog (localgroup-session) null)
 (defun localgroup--attach-watchdog (session)
@@ -429,17 +395,9 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
      (sleep 0.25)))
   nil)
 
-(-> localgroup--detach-live-region (application) null)
-(defun localgroup--detach-live-region (application)
-  "Retract APPLICATION's live terminal rows after controlling ownership ends."
-  (let ((ui (application-ui application)))
-    (when ui
-      (terminal-ui-detach ui)))
-  nil)
-
 (-> localgroup--terminal-event-p (t) boolean)
 (defun localgroup--terminal-event-p (event)
-  "Accept relay input, bounded pointer events and the side panel's channel commands."
+  "Accept a client's keys, bounded pointer events and the side panel's channel commands."
   (not (null (or (image-daemon:daemon-terminal-event-p event)
                  (channel-command-text event)
                  (typep event '(cons (eql :scroll) (cons (member -1 1) null)))
@@ -447,224 +405,43 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
                                 (cons (integer 1 10000)
                                  (cons (integer 1 10000) null))))))))
 
-(-> localgroup--accept-client-packet (application list &key (:attachment (option image-daemon:attachment))) boolean)
-(defun localgroup--accept-client-packet (application packet &key attachment)
-  "Take an evaluation answer from its originating terminal ATTACHMENT."
-  (and (client-evaluation-reply-p packet)
-       (application-answer-evaluation application (getf (rest packet) :evaluation)
-                                      :attachment  attachment
-                                      :succeeded-p (getf (rest packet) :succeeded-p)
-                                      :text        (getf (rest packet) :text))))
-
-(-> localgroup--version-mismatch-notice (application t) (option terminal-styled-text))
-(defun localgroup--version-mismatch-notice (application client-version)
-  "Return an informational transcript note when CLIENT-VERSION differs from this server."
-  (when (and (non-empty-string-p client-version)
-             (not (string= client-version *autolith-version*)))
-    (application-notice-line
-     (format nil "Client/server version mismatch: client Autolith ~A; ~A Autolith ~A."
-             (bounded-string client-version :limit 64)
-             (if (application-world-server application)
-                 "world server"
-                 "server")
-             *autolith-version*))))
-
-(-> localgroup--attachment-failure-message (condition) string)
-(defun localgroup--attachment-failure-message (condition)
-  "Describe a refusal without printing arbitrary condition arguments."
-  (handler-case
-      (bounded-string
-       (typecase condition
-         (autolith-error
-          (autolith-error-message condition))
-         (image-daemon:daemon-error
-          (image-daemon:daemon-error-message condition))
-         (t
-          (application-crash-condition-report condition)))
-       :limit 500)
-    (error () "The endpoint could not complete this attachment.")))
-
-(-> localgroup--serve-attachment
-    (localgroup-session list &key (:socket sb-bsd-sockets:socket) (:stream stream))
-    null)
-(defun localgroup--serve-attachment (session request &key socket stream)
-  "Refuse before queue commitment, or send a terminal failure after commitment.
-
-Capture the original condition and backtrace before any diagnostic or cleanup
-operation. Drain through the sole attachment writer outside endpoint locks."
-  (let* ((application      (localgroup-session-application session))
-         (controller       (application-input-controller application))
-         (attachment       nil)
-         (terminal         nil)
-         (stage            "request")
-         (failure          nil)
-         (backtrace        nil)
-         (record           nil)
-         (cleanup-failures nil))
-    (labels ((capture (condition)
-               (unless failure
-                 (setf failure condition
-                       backtrace (handler-case (application-safe-backtrace) (error nil nil)))))
-
-             (attempt (name function)
-               (handler-case (funcall function)
-                             (error (condition) (push (list name condition) cleanup-failures)
-                                    nil)))
-
-             (retain-failure ()
-               (setf record (list :condition failure :backtrace backtrace :stage stage)
-                     (localgroup-session-attachment-failure session) record))
-
-             (attach (rows columns styled-p)
-               (let ((previous nil))
-                 (unwind-protect
-                     (with-lock-held ((image-daemon:daemon-runtime-lock session))
-                       (unless (localgroup-session-admits-attachment-p session)
-                         (error 'localgroup-error :message
-                                (if (localgroup-session-closing-p session)
-                                    "The localgroup session is closing."
-                                    "The localgroup session is stopping.")
-                                :operation ':attach))
-                       (multiple-value-bind (attached-p direct-p replaced)
-                           (image-daemon:relay-attach terminal attachment :rows rows :columns
-                                                      columns :styled-p styled-p :session-id
-                                                      (image-daemon:daemon-runtime-identifier
-                                                       session)
-                                                      :defer-revocation-p t)
-                         (setf previous replaced)
-                         (values attached-p direct-p)))
-                   (when previous
-                     (attempt "revocation"
-                      (lambda ()
-                        (image-daemon:relay-retire-attachment terminal previous :packet '(:revoked)))))))))
-      (unwind-protect
-          (handler-case
-           (handler-bind ((error #'capture))
-             (unless (localgroup--valid-request-p request session)
-               (error 'localgroup-error :message "The localgroup request was rejected." :operation
-                      ':attach))
-             (let* ((arguments (localgroup--request-field request :arguments))
-                    (mode      (localgroup--attachment-mode arguments))
-                    (rows      (or (getf arguments :rows) *terminal-default-rows*))
-                    (columns   (or (getf arguments :columns) *terminal-default-columns*))
-                    (styled-p  (not (null (getf arguments :styled-p)))))
-               (setf terminal (localgroup--terminal session)
-                     attachment
-                       (localgroup-attachment-create socket stream mode
-                                                     :client-pid  (getf arguments :client-pid)
-                                                     :evaluates-p (getf arguments :evaluates-p)
-                                                     :cancels-evaluation-p
-                                                     (getf arguments :cancels-evaluation-p))
-                     stage "admission")
-               (unless
-                   (if (eq mode ':read-only)
-                       (attach rows columns styled-p)
-                       (application-input-controller-call-with-exclusive-input controller
-                                                                               (lambda ()
-                                                                                 (let ((attached-p
-                                                                                        (attach
-                                                                                         rows
-                                                                                         columns
-                                                                                         styled-p)))
-                                                                                   (when attached-p
-                                                                                     (application-input-controller--open-prompt-if-ready
-                                                                                      controller))
-                                                                                   attached-p))))
-                 (error 'localgroup-error :message "The attachment handshake could not be queued."
-                        :operation                 ':attach))
-               (setf stage "replay")
-               (application-sync-window-title application)
-               (localgroup-terminal-replay-screen terminal attachment)
-               (let ((notice
-                      (localgroup--version-mismatch-notice application
-                                                           (getf arguments :client-version))))
-                 (when notice (application-present application notice)))
-               (unless (eq mode ':read-only)
-                 (localgroup--note-controller-attached session)
-                 (application-world-attached application)
-                 (let ((notice (getf arguments :notice)))
-                   (when (stringp notice)
-                     (application-present application
-                                          (application-failure-line
-                                           (bounded-string notice :limit 500))))))
-               (setf stage "input")
-               (image-daemon:relay-read-attachment
-                terminal attachment
-                :event-validator #'localgroup--terminal-event-p
-                :packet-function (lambda (packet)
-                                   (localgroup--accept-client-packet application packet :attachment attachment)))))
-           (error (condition) (capture condition) (retain-failure)
-                  (let* ((message (localgroup--attachment-failure-message failure))
-                         (packet
-                          (if (and attachment
-                                   (image-daemon:attachment-handshake-committed-p attachment))
-                              (list :exit :status 1 :message message :details
-                                    (list :reason "attachment-failure" :stage stage))
-                              (list :error :message message))))
-                    (attempt "failure-delivery"
-                     (lambda ()
-                       (if attachment
-                           (image-daemon:attachment-finish attachment packet)
-                           (daemon-write-packet stream packet)))))))
-        (when attachment
-          (let ((controlled-p nil))
-            (when terminal
-              (attempt "detach"
-               (lambda () (setf controlled-p (image-daemon:relay-detach terminal attachment)))))
-            (when controlled-p
-              (attempt "live-region" (lambda () (localgroup--detach-live-region application))))
-            (attempt "transport" (lambda () (image-daemon:attachment-close attachment)))
-            (when controlled-p
-              (attempt "controller-loss" (lambda () (localgroup--controller-lost session)))))
-          (when (and (null record) (image-daemon:attachment-failure attachment))
-            (setf record (copy-list (image-daemon:attachment-failure attachment))
-                  (localgroup-session-attachment-failure session) record)))
-        (when cleanup-failures
-          (unless record
-            (setf record (list :stage "cleanup")
-                  (localgroup-session-attachment-failure session) record))
-          (setf (getf record :cleanup-failures) (nreverse cleanup-failures)
-                (localgroup-session-attachment-failure session) record))))
-    nil))
-
 (-> localgroup--detach-terminal (localgroup-session) list)
 (defun localgroup--detach-terminal (session)
-  "Release SESSION's current controlling terminal."
-  (let* ((application (localgroup-session-application session))
-         (terminal    (localgroup--terminal session)))
-    (when (eq (image-daemon:relay-attachment-kind terminal) ':foreground)
+  "Tell the terminal client that controls SESSION's channel to leave it running.
+
+A session on its own terminal cannot leave it."
+  (let ((application (localgroup-session-application session))
+        (identifier  (image-daemon:daemon-runtime-identifier session)))
+    (unless (application-presentation application)
       (error 'localgroup-error
              :message    "This foreground process cannot detach. Open a supervised session first."
              :operation  ':detach
-             :session-id (image-daemon:daemon-runtime-identifier session)))
+             :session-id identifier))
+    (unless (application-client-tell application ':detach)
+      (error 'localgroup-error
+             :message    "No terminal shows this channel."
+             :operation  ':detach
+             :session-id identifier))
     (localgroup--mark-explicit-detach session)
-    (image-daemon:relay-release-control terminal)
-    (localgroup--detach-live-region application)
-    (list :ok :operation :detach :scheduled-p nil :session-id
-          (image-daemon:daemon-runtime-identifier session))))
+    (list :ok :operation :detach :scheduled-p nil :session-id identifier)))
 
 (-> localgroup-finish-attachments
     ((option application)
      &key (:status (integer 0 255)) (:message (option string)) (:details list))
     boolean)
 (defun localgroup-finish-attachments (application &key status message details)
-  "Tell APPLICATION's attached terminals the session exits with STATUS and MESSAGE.
+  "Tell the terminals that show APPLICATION's channel that the session exits with STATUS and MESSAGE.
 
-A detached session's own launcher only logs its exit status, so the relaying
-terminal must exit with it instead for the outer launcher to update, roll back,
-or recover. DETAILS carries what that launcher needs besides the status, such
-as the session's crash capsule. Return true when APPLICATION's terminal is a
-relay; a terminal that already disconnected costs nothing."
-  (let* ((ui       (and application (application-ui application)))
-         (terminal (and ui (terminal-ui-terminal ui))))
-    (when (typep terminal 'localgroup-terminal)
-      (handler-case
-          (image-daemon:relay-finish terminal :status  status
-                                              :message message
-                                              :details details)
-        (error ()
-          nil))
-      t)))
+A detached session's own launcher only logs its exit status, so the terminal
+that shows it must exit with it instead for the outer launcher to update,
+roll back, or recover. DETAILS carries what that launcher needs besides the
+status, such as the session's crash capsule. Each terminal is let go once it
+has the word, since the endpoint closes next. Return true when APPLICATION's
+clients present it; one that already left costs nothing."
+  (when (and application (application-presentation application))
+    (application-clients-finish-presenting
+     application ':exit :status status :message message :details details)
+    t))
 
 
 ;;;; -- Localgroup Request Handling --
@@ -743,15 +520,6 @@ last controlling client vanishes."
                   :error-function   (lambda (condition)
                                       (localgroup--endpoint-failed session condition)))
                  (application-localgroup-session application) session)
-           (let ((terminal   (terminal-ui-terminal (application-ui application)))
-                 (controller (application-input-controller application)))
-             (when (and controller (typep terminal 'localgroup-terminal))
-               (image-daemon:relay-set-wake-function
-                terminal
-                (lambda ()
-                  (with-lock-held ((application-input-controller-lock controller))
-                    (sb-thread:condition-broadcast
-                     (application-input-controller-condition-variable controller)))))))
            (unless restart-p (localgroup-handoff-assert-startup-active))
            (let ((hub (application-client-hub application)))
              (with-lock-held ((client-hub-lock hub))
@@ -815,10 +583,8 @@ Any other message is rejected, as a request this process has no use for."
     (localgroup-session list &key (:socket t) (:stream t))
     null)
 (defun localgroup--handle-request (session request &key socket stream)
-  "Dispatch authenticated requests according to Autolith's command and attachment policy."
+  "Dispatch authenticated requests according to Autolith's command and client policy."
   (case (localgroup--request-field request :operation)
-    (:attach
-     (localgroup--serve-attachment session request :socket socket :stream stream))
     (:client
      (localgroup--serve-client session request :socket socket :stream stream))
     (:message

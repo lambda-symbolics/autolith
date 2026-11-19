@@ -479,21 +479,15 @@ Clicking the rendered call's header inserts it into the composer.")
     (terminal-ui)
     (option (cons (integer 1) (integer 1))))
 (defun application-pending-terminal-size (ui)
-  "Consume one pending resize of UI's terminal and return refreshed rows and columns.
+  "Consume this process's pending terminal resize and return the measured rows and columns, or NIL without one.
 
-A relayed client size takes precedence over local measurement: a
-relayed session cannot measure its terminal, so the packet is the only
-truthful source of dimensions."
-  (let ((relayed (terminal-relayed-resize-consume (terminal-ui-terminal ui))))
-    (cond
-      (relayed
-       (setf *terminal-resize-pending-p* nil)
-       relayed)
-      (*terminal-resize-pending-p*
-       (setf *terminal-resize-pending-p* nil)
-       (multiple-value-bind (rows columns)
-           (terminal-current-size)
-         (cons rows columns))))))
+Only a session on a terminal of its own sees one. A channel's presentation is
+told its client's pane with CHANNEL-PRESENTATION-SET-GEOMETRY."
+  (declare (ignore ui))
+  (when (shiftf *terminal-resize-pending-p* nil)
+    (multiple-value-bind (rows columns)
+        (terminal-current-size)
+      (cons rows columns))))
 
 (defparameter *application-prompt* "❯ "
   "The styled input prompt shown on the live editor row.")
@@ -518,40 +512,41 @@ exchange without scrolling through reasoning and tool activity.")
   "The dim hint shown on the inbox's prompt row while input is empty.")
 
 (-> application-terminal-ui-create
-    (&key (:relay-presentation list) (:configuration (option configuration)) (:inbox-p boolean))
+    (&key (:client-pane list) (:configuration (option configuration)) (:inbox-p boolean))
     terminal-ui)
-(defun application-terminal-ui-create (&key relay-presentation configuration inbox-p)
-  "Create the standard interactive terminal UI at the current terminal size.
+(defun application-terminal-ui-create (&key client-pane configuration inbox-p)
+  "Create the UI of a session: a terminal UI on this process's terminal, or a presentation.
 
 INBOX-P gives it the inbox's prompt hint instead of the one inviting a question.
 
-RELAY-PRESENTATION supplies :ROWS, :COLUMNS, :STYLED-P and :BOOT-PRESENTED-P
-for a relay without a direct terminal, whose startup client attaches later.
-CONFIGURATION, when given, lets the composer complete @ participant names
-from its world."
-  (multiple-value-bind (rows columns)
-      (terminal-current-size)
-    (terminal-ui-create
-     :terminal
-     (if relay-presentation
-         (localgroup-terminal-create :rows             (getf relay-presentation :rows)
-                                     :columns          (getf relay-presentation :columns)
-                                     :styled-p         (getf relay-presentation :styled-p)
-                                     :boot-presented-p (not (null (getf relay-presentation :boot-presented-p))))
-         (localgroup-terminal-create
-          :direct-terminal
-          (unless (localgroup-startup-detached-p)
-            (stream-terminal-create
-             :rows                  rows
-             :columns               columns
-             :input-file-descriptor (terminal-standard-input-file-descriptor)))))
-     :prompt                  *application-prompt*
-     :prompt-padding          (if configuration (config :prompt-padding configuration) 1)
-     :message-header-prefixes *application-message-header-prefixes*
-     :placeholder             (if inbox-p *application-inbox-placeholder* *application-placeholder*)
-     :completion-function     #'application-command-completion-entries
-     :mention-function        (and configuration
-                                   (application-world-mention-function configuration)))))
+A session without a terminal of its own has a presentation, which its clients
+render. CLIENT-PANE marks a channel a world server hosts and states the :ROWS
+and :COLUMNS of the client that opened it; a detached session takes them from
+its startup record. CONFIGURATION, when given, lets a terminal's composer
+complete @ participant names from its world."
+  (let ((placeholder (if inbox-p *application-inbox-placeholder* *application-placeholder*))
+        (padding     (if configuration (config :prompt-padding configuration) 1))
+        (pane        (or client-pane (rest *localgroup-startup-record*))))
+    (if pane
+        (channel-presentation-create :rows           (getf pane :rows)
+                                     :columns        (getf pane :columns)
+                                     :prompt         *application-prompt*
+                                     :prompt-padding padding
+                                     :placeholder    placeholder)
+        (multiple-value-bind (rows columns)
+            (terminal-current-size)
+          (terminal-ui-create
+           :terminal                (stream-terminal-create
+                                     :rows                  rows
+                                     :columns               columns
+                                     :input-file-descriptor (terminal-standard-input-file-descriptor))
+           :prompt                  *application-prompt*
+           :prompt-padding          padding
+           :message-header-prefixes *application-message-header-prefixes*
+           :placeholder             placeholder
+           :completion-function     #'application-command-completion-entries
+           :mention-function        (and configuration
+                                         (application-world-mention-function configuration)))))))
 
 (-> application--configuration-for-conversation
     (configuration conversation)
@@ -1250,12 +1245,12 @@ Validate PREVIOUS-PROVIDER against the effective registrations before replacing 
           (:permission-mode (member :ask :auto :sandboxed :full-access))
           (:pristine-p boolean) (:installation-provenance installation-provenance)
           (:update-availability (option update-availability))
-          (:recovering-p boolean) (:relay-presentation list) (:hurry-up-p boolean))
+          (:recovering-p boolean) (:client-pane list) (:hurry-up-p boolean))
     application)
 (defun application--make-connected-application
     (&key configuration conversation conversation-lease provider tool-registry worker
           permission-state (permission-mode ':ask) pristine-p installation-provenance
-          update-availability recovering-p relay-presentation hurry-up-p)
+          update-availability recovering-p client-pane hurry-up-p)
   "Construct an application around caller-owned resources without initializing history.
 The caller must retain the result before fallible connection initialization."
   (let* ((agent (agent-create :configuration configuration
@@ -1265,9 +1260,9 @@ The caller must retain the result before fallible connection initialization."
                               :hurry-up-p    hurry-up-p
                               :worker        worker))
          (ui    (application-terminal-ui-create
-                 :relay-presentation relay-presentation
-                 :configuration      configuration
-                 :inbox-p            (conversation-inbox-p conversation))))
+                 :client-pane   client-pane
+                 :configuration configuration
+                 :inbox-p       (conversation-inbox-p conversation))))
     (make-instance 'application
                    :configuration           configuration
                    :conversation            conversation
@@ -1316,20 +1311,20 @@ The caller owns APPLICATION and its resources if any initialization step fails."
                         (:pristine-p boolean)
                         (:recovery-p boolean)
                         (:mutation-replay-failures list)
-                        (:relay-presentation list)
+                        (:client-pane list)
                         (:tool-registry-function (option function)))
     application)
 (defun application--build
     (configuration &key conversation-id (permission-mode ':ask) pristine-p
-                        recovery-p mutation-replay-failures relay-presentation
+                        recovery-p mutation-replay-failures client-pane
                         tool-registry-function)
   "Build one connected application on bootstrapped CONFIGURATION.
 
 Load CONVERSATION-ID if supplied; otherwise try automatic recovery when
 RECOVERY-P is true, falling back to a fresh conversation.
 MUTATION-REPLAY-FAILURES are the private image replay diagnostics to report.
-RELAY-PRESENTATION is a plist of :ROWS, :COLUMNS and :STYLED-P for a relay
-terminal awaiting a client. Without it, use this process's terminal setup.
+CLIENT-PANE is a plist of the :ROWS and :COLUMNS of the client a hosted
+channel opens for. Without it, use this process's terminal setup.
 TOOL-REGISTRY-FUNCTION, called with the conversation's configuration, builds
 the tool registry instead of the ordinary one, as for an editor's own MCP
 servers. Release acquired resources if construction fails."
@@ -1390,7 +1385,7 @@ servers. Release acquired resources if construction fails."
                       :installation-provenance provenance
                       :update-availability     update
                       :recovering-p            (not (null recovering-conversation-p))
-                      :relay-presentation      relay-presentation)
+                      :client-pane             client-pane)
                      (application-mutation-replay-failures application)
                      mutation-replay-failures)
                (application--initialize-connection
@@ -1889,7 +1884,7 @@ retiring the old registry."
                     (application-ui application)))
         (title (application--window-title application)))
     (when (and ui title)
-      (terminal-write-window-title (terminal-ui-terminal ui) title))))
+      (terminal-ui-set-window-title ui title))))
 
 (-> application-set-working-directory
     (application (or pathname string) &key (:on-commit (option function)))
@@ -2038,14 +2033,70 @@ state and update the title afterward; later failures do not roll back the runtim
       (application-sync-window-title application)
       directory)))
 
+(-> application--input-history-resident (list (option (integer 1))) list)
+(defun application--input-history-resident (entries character-limit)
+  "Return the newest of ENTRIES that hold CHARACTER-LIMIT characters together, and always the newest one."
+  (if character-limit
+      (let ((characters 0))
+        (last entries
+              (max 1 (loop for entry in (reverse entries)
+                           while (<= (incf characters (length entry)) character-limit)
+                           count t))))
+      entries))
+
+(-> application--input-history-fit (list (integer 1)) list)
+(defun application--input-history-fit (entries character-limit)
+  "Return ENTRIES, cutting the long ones when together they hold more than CHARACTER-LIMIT characters.
+
+Each entry then keeps an equal share at most, so the count and the order
+stay. A cut entry ends with a note of its full length, so a recalled input
+never passes for whole. This bounds what one history packet carries, whatever
+was once submitted."
+  (if (<= (reduce #'+ entries :key #'length) character-limit)
+      entries
+      (let ((share (max 1 (floor character-limit (length entries)))))
+        (mapcar (lambda (entry)
+                  (if (<= (length entry) share)
+                      entry
+                      (let* ((note (format nil "… [cut from ~D characters]" (length entry)))
+                             (cut  (concatenate 'string
+                                                (subseq entry 0 (max 0 (- share (length note))))
+                                                note)))
+                        (subseq cut 0 (min share (length cut))))))
+                entries))))
+
+(-> application-input-history-page
+    (application &key (:start (integer 0)) (:limit (integer 1))) list)
+(defun application-input-history-page (application &key start limit)
+  "Return up to LIMIT of APPLICATION's durable inputs from absolute position START, bounded for one packet."
+  (application--input-history-fit
+   (conversation-input-history-page (application-conversation application)
+                                    :start start
+                                    :limit (min limit *terminal-history-page-size*))
+   *terminal-history-character-limit*))
+
+(-> application-input-history-window (terminal-ui conversation) (values list (integer 0) boolean))
+(defun application-input-history-window (ui conversation)
+  "Return the newest inputs UI's editor keeps, the offset of the first, and whether the rest pages in.
+
+The window obeys both of the editor's budgets, so it is also what a client is sent."
+  (let* ((editor (terminal-ui-editor ui))
+         (limit  (line-editor-history-character-limit editor)))
+    (multiple-value-bind (entries total complete-p)
+        (conversation-input-history-page conversation :limit (line-editor-history-limit editor))
+      (let ((resident (application--input-history-resident entries limit)))
+        (values (if limit
+                    (application--input-history-fit resident limit)
+                    resident)
+                (- total (length resident))
+                complete-p)))))
+
 (-> application--load-conversation-input-history (terminal-ui conversation) terminal-ui)
 (defun application--load-conversation-input-history (ui conversation)
   "Install complete indexed paging or an explicitly local recent input window."
-  (multiple-value-bind (entries total complete-p)
-      (conversation-input-history-page
-       conversation :limit (line-editor-history-limit (terminal-ui-editor ui)))
+  (multiple-value-bind (entries offset complete-p) (application-input-history-window ui conversation)
     (terminal-ui-load-history
-     ui entries :offset (- total (length entries))
+     ui entries :offset offset
      :older-function
      (when complete-p
        (lambda (end)
@@ -2706,25 +2757,7 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
 (-> application--tool-schema-entry (application list) (option list))
 (defun application--tool-schema-entry (application names)
   "Return one width-bounded schema row for ordered namespace NAMES."
-  (when names
-    (let* ((maximum-width
-             (max 1
-                  (1- (application--transcript-columns application))))
-           (row
-             (append
-              (list (terminal-span ':tool "▸ tool schemas: "))
-              (loop for namespace in names
-                    for first-name-p = t then nil
-                    append
-                    (append
-                     (unless first-name-p
-                       (list (terminal-span ':dim ", ")))
-                     (list (terminal-span ':syntax-function namespace)))))))
-      (if (<= (terminal--spans-width row) maximum-width)
-          row
-          (append
-           (terminal--clip-spans row (max 0 (1- maximum-width)))
-           (list (terminal-span ':dim "…")))))))
+  (terminal-tool-schema-entry names (application--transcript-columns application)))
 
 (-> application--tool-search-entry (application json-object) (option list))
 (defun application--tool-search-entry (application item)

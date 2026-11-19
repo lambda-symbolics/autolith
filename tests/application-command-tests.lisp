@@ -1135,20 +1135,6 @@
           (api-key-read-hidden "Example" :stream stream)))
   "provider authentication was saved")
 
-(defclass application-authentication-test-localgroup-terminal (localgroup-terminal)
-  ((events
-    :initarg       :events
-    :accessor      application-authentication-test-localgroup-terminal-events
-    :type          list
-    :documentation "The semantic authentication input events still queued."))
-  (:documentation "A localgroup terminal with scripted authentication input."))
-
-(defmethod terminal-read-event
-    ((terminal application-authentication-test-localgroup-terminal))
-  "Read TERMINAL's next scripted authentication event."
-  (or (pop (application-authentication-test-localgroup-terminal-events terminal))
-      ':end-of-input))
-
 (-> test-terminal-authentication-streams () null)
 (defun test-terminal-authentication-streams ()
   "Test terminal classes select authentication streams through the protocol."
@@ -1183,17 +1169,17 @@
             (not echo-disabled-p)
             (= descriptor 7))
        "stream terminals expose their direct authentication streams")))
-  (let ((terminal (localgroup-terminal-create)))
+  (let ((terminal (terminal-ui-terminal (channel-presentation-create))))
     (multiple-value-bind
           (input output stop-ui-p echo-disabled-p descriptor)
         (terminal-authentication-streams terminal)
       (test-assert
        (and (typep input 'application-authentication-input-stream)
-            (typep output 'application-authentication-output-stream)
+            (typep output 'presentation-output-stream)
             (not stop-ui-p)
             echo-disabled-p
             (null descriptor))
-       "localgroup terminals adapt semantic events without stopping the UI")))
+       "a presentation's terminal adapts its clients' events and transcript without stopping the UI")))
   nil)
 
 (-> test-application-authentication-command () null)
@@ -1387,162 +1373,131 @@
        "auth immediately presents provider identity, instructions, and completion")
       (test-assert (not (search "Open the provider login page now." captured-text))
        "callable auth does not buffer login instructions in local Lisp output")))
-  (let* ((terminal
-          (make-instance 'application-authentication-test-localgroup-terminal
-                         :direct-terminal nil :events
-                         (list '(:paste "sek") ':backspace '(:insert "cret") ':submit)))
-         (attachment-stream                 (make-string-output-stream))
-         (controller
-          (make-instance 'image-daemon:attachment :socket nil :stream attachment-stream
-                         :mode ':control))
-         (ui                                (terminal-ui-create :terminal terminal))
-         (application                       (make-instance 'application :ui ui :configuration (make-configuration)))
-         (suspended-during-authentication-p nil)
-         (repaint-during-authentication-p   nil)
-         (paste-input                       nil)
-         (line-input                        nil)
-         (provider
-          (make-instance 'application-authentication-test-provider :read-input-p t
-                         :activity-callback
-                         (lambda ()
-                           (setf suspended-during-authentication-p
-                                   (terminal-ui-live-output-suspended-p ui))
-                           (let ((history-length
-                                  (length (image-daemon:relay-history-text terminal))))
-                             (terminal-ui-stream-update ui :rows
-                                                        (list
-                                                         (list
-                                                          (terminal-span ':plain
-                                                                         "Deferred stream row.")))
-                                                        :tail "Deferred stream tail.")
-                             (terminal-ui-append-finalized ui ':deferred-auth
-                                                           "Deferred finalized row.")
-                             (terminal-ui--paint-live ui)
-                             (setf repaint-during-authentication-p
-                                     (/= history-length
-                                         (length
-                                          (image-daemon:relay-history-text
-                                           terminal))))))))
-         (stopped-p                         nil)
-         (started-p                         nil))
-    (setf (image-daemon:relay-controller terminal) controller
-          (terminal-interactive-p terminal) t)
-    (terminal-ui-start ui)
-    (unwind-protect
-        (progn
-         (test-call-with-function-replacements
-          (list
-           (list 'application--authentication-provider
-                 (lambda (candidate provider-name)
-                   (declare (ignore candidate provider-name))
-                   provider))
-           (list 'terminal-ui-stop
-                 (lambda (candidate)
-                   (declare (ignore candidate))
-                   (setf stopped-p t)
-                   nil))
-           (list 'terminal-ui-start
-                 (lambda (candidate)
-                   (declare (ignore candidate))
-                   (setf started-p t)
-                   nil)))
-          (lambda ()
-            (application-authenticate application "grok")
-            (setf paste-input (application-authentication-test-provider-input provider)
-                  (application-authentication-test-provider-input provider) nil
-                  (application-authentication-test-localgroup-terminal-events terminal)
-                  (list '(:line "line-secret")))
-            (application-authenticate application "grok")
-            (setf line-input (application-authentication-test-provider-input provider))))
-         (let ((history (image-daemon:relay-history-text terminal)))
-           (test-assert
-            (and (not stopped-p) (not started-p) (terminal-ui-started-p ui)
-                 (eq (image-daemon:relay-controller terminal) controller)
-                 (not (application-authentication-test-provider-styled-p provider)))
-            "localgroup auth preserves the attached plain terminal transport")
-           (test-assert
-            (and suspended-during-authentication-p (not repaint-during-authentication-p)
-                 (not (terminal-ui-live-output-suspended-p ui))
-                 (zerop (length (terminal-ui-deferred-live-appended-text ui)))
-                 (zerop (length (terminal-ui-deferred-live-appended-display ui))))
-            "localgroup auth defers concurrent live output until resume")
-           (test-assert
-            (and
-             (typep (application-authentication-test-provider-stream provider)
-                    'application-authentication-output-stream)
-             (null
-              (application-authentication-test-provider-input-file-descriptor provider))
-             (string= paste-input "secret") (string= line-input "line-secret"))
-            "localgroup auth accepts pasted, edited, and completed hidden lines")
-           (test-assert
-            (and (search "authenticating provider grok" history)
-                 (search "Open the provider login page now." history)
-                 (search "provider authentication was saved" history)
-                 (search "Deferred stream row." history)
-                 (search "Deferred finalized row." history))
-            "localgroup auth shows direct and deferred output in order of ownership")))
-      (terminal-ui-stop ui)))
   (with-test-configuration (configuration)
-    (let* ((conversation                         (conversation-create configuration :identifier "fullscreen-auth"))
-           (secret                               "SYNTHETIC-HIDDEN-INPUT")
-           (captured                             (make-string-output-stream))
-           (packets                              (make-string-output-stream))
-           (terminal                             (make-instance 'application-authentication-test-localgroup-terminal
-                                                                :direct-terminal nil :rows 24 :columns 80
-                                                                :events (list (list :paste secret) ':submit)))
-           (controller                           (make-instance 'image-daemon:attachment
-                                                                :socket nil :stream packets :mode ':control))
-           (ui                                   (terminal-ui-create :terminal terminal :fullscreen-p t))
-           (application                          (make-instance 'application :configuration configuration
-                                                                :conversation conversation :ui ui))
-           (whole-screen-during-authentication-p nil)
+    (let* ((conversation                      (conversation-create configuration :identifier "hosted-auth"))
+           (secret                            "SYNTHETIC-HIDDEN-INPUT")
+           (captured                          (make-string-output-stream))
+           (ui                                (application-terminal-ui-create
+                                               :client-pane   '(:rows 24 :columns 80)
+                                               :configuration configuration))
+           (terminal                          (terminal-ui-terminal ui))
+           (application                       (make-instance 'application :configuration configuration
+                                                                          :conversation  conversation
+                                                                          :ui            ui))
+           (keys                              nil)
+           (modal-during-authentication-p     nil)
+           (suspended-during-authentication-p nil)
            (provider
-             (make-instance 'application-authentication-test-provider :read-input-p t
+             (make-instance 'application-authentication-test-provider
+                            :read-input-p      t
                             :activity-callback
                             (lambda ()
-                              (setf whole-screen-during-authentication-p
-                                    (localgroup-terminal-screen-whole-p terminal))))))
-      (setf (image-daemon:relay-controller terminal) controller
-            (terminal-interactive-p terminal) t)
-      (unwind-protect
-           (progn
-             (image-daemon:attachment-start controller)
-             (terminal-ui-start ui)
-             (test-call-with-function-replacements
-              (list (list 'application--authentication-provider
-                          (lambda (candidate provider-name)
-                            (declare (ignore candidate provider-name))
-                            provider)))
-              (lambda ()
-                (let ((*standard-output* captured))
-                  (test-assert
-                   (eq (application-run-lisp-input application "(auth \"grok\")") ':continue)
-                   "callable fullscreen auth reads queued localgroup input"))))
-             (test-assert
-              (and whole-screen-during-authentication-p
-                   (string= (application-authentication-test-provider-input provider) secret)
-                   (null (application-authentication-test-localgroup-terminal-events terminal))
-                   (eq (image-daemon:relay-controller terminal) controller)
-                   (not (localgroup-terminal-screen-whole-p terminal))
-                   (not (terminal-ui-live-output-suspended-p ui)))
-              "fullscreen auth owns the whole display and input, then restores the channel")
-             (image-daemon:attachment-finish controller nil)
-             (let ((packet-text (get-output-stream-string packets)))
+                              (setf modal-during-authentication-p
+                                    (plusp (presentation-terminal-modal-depth terminal))
+                                    suspended-during-authentication-p
+                                    (terminal-ui-live-output-suspended-p ui))
+                              (terminal-ui-append-finalized ui (list ':during-authentication (make-identifier))
+                                                            "Row shown during authentication.")
+                              ;; The client's keys arrive while the provider waits for them.
+                              (dolist (event (shiftf keys nil))
+                                (presentation-terminal-offer-event terminal event)))))
+           (stopped-p                         nil)
+           (started-p                         nil)
+           (paste-input                       nil)
+           (line-input                        nil))
+      (flet ((typed (events function)
+               "Call FUNCTION, which authenticates, while a client types EVENTS, and return the hidden input read."
+               (setf keys events)
+               (funcall function)
+               (shiftf (application-authentication-test-provider-input provider) nil))
+
+             (published ()
+               "Return every event the channel published to its clients, printed."
+               (with-standard-io-syntax
+                 (prin1-to-string
+                  (deque->list (client-hub-event-journal (application-client-hub application)))))))
+        ;; A client is at the channel, so somebody can type.
+        (setf (presentation-terminal-interactive-function terminal) (constantly t))
+        (terminal-ui-start ui)
+        (unwind-protect
+             (progn
+               (test-call-with-function-replacements
+                (list
+                 (list 'application--authentication-provider
+                       (lambda (candidate provider-name)
+                         (declare (ignore candidate provider-name))
+                         provider))
+                 (list 'terminal-ui-stop
+                       (lambda (candidate)
+                         (declare (ignore candidate))
+                         (setf stopped-p t)
+                         nil))
+                 (list 'terminal-ui-start
+                       (lambda (candidate)
+                         (declare (ignore candidate))
+                         (setf started-p t)
+                         nil)))
+                (lambda ()
+                  (setf paste-input (typed (list '(:paste "sek") ':backspace '(:insert "cret") ':submit)
+                                           (lambda () (application-authenticate application "grok")))
+                        line-input  (typed (list '(:line "line-secret"))
+                                           (lambda () (application-authenticate application "grok"))))))
                (test-assert
-                (and (search "Open the provider login page now." packet-text)
-                     (not (search secret packet-text)))
-                "provider instructions reach the terminal without echoing hidden input"))
-             (test-assert
-              (notany (lambda (text)
-                        (or (search secret text)
-                            (search "Open the provider login page now." text)))
-                      (list (get-output-stream-string captured)
-                            (with-standard-io-syntax
-                              (prin1-to-string
-                               (conversation-records-from conversation 0 most-positive-fixnum)))))
-              "provider I/O is absent from Lisp output and durable conversation records"))
-        (unwind-protect (terminal-ui-stop ui)
-          (image-daemon:attachment-close controller)))))
+                (and (not stopped-p) (not started-p) (terminal-ui-started-p ui))
+                "hosted auth keeps the channel's presentation running")
+               (test-assert
+                (and modal-during-authentication-p
+                     (not suspended-during-authentication-p)
+                     (zerop (presentation-terminal-modal-depth terminal))
+                     (not (terminal-ui-live-output-suspended-p ui)))
+                "hosted auth takes the clients' events and keeps the transcript showing, then gives both back")
+               (test-assert
+                (and
+                 (typep (application-authentication-test-provider-stream provider)
+                        'presentation-output-stream)
+                 (null
+                  (application-authentication-test-provider-input-file-descriptor provider))
+                 (string= paste-input "secret") (string= line-input "line-secret"))
+                "hosted auth accepts pasted, edited, and completed hidden lines")
+               (let* ((transcript (test-localgroup--presented-text application))
+                      (positions  (mapcar (lambda (text) (search text transcript))
+                                          '("authenticating provider grok"
+                                            "Open the provider login page now."
+                                            "Row shown during authentication."
+                                            "provider authentication was saved"))))
+                 (test-assert
+                  (and (every #'integerp positions) (apply #'< positions))
+                  "hosted auth shows provider output and what the channel presents meanwhile in order"))
+               (test-call-with-function-replacements
+                (list (list 'application--authentication-provider
+                            (lambda (candidate provider-name)
+                              (declare (ignore candidate provider-name))
+                              provider)))
+                (lambda ()
+                  (let* ((*standard-output* captured)
+                         (outcome           nil)
+                         (input             (typed (list (list :paste secret) ':submit)
+                                                   (lambda ()
+                                                     (setf outcome
+                                                           (application-run-lisp-input
+                                                            application "(auth \"grok\")"))))))
+                    (test-assert (and (eq outcome ':continue) (string= input secret))
+                                 "callable hosted auth reads the client's events"))))
+               (test-assert
+                (and (search "Open the provider login page now." (published))
+                     (not (search secret (published)))
+                     (not (search "line-secret" (published))))
+                "provider instructions reach the clients without echoing hidden input")
+               (test-assert
+                (notany (lambda (text)
+                          (or (search secret text)
+                              (search "Open the provider login page now." text)))
+                        (list (get-output-stream-string captured)
+                              (with-standard-io-syntax
+                                (prin1-to-string
+                                 (conversation-records-from conversation 0 most-positive-fixnum)))))
+                "provider I/O is absent from Lisp output and durable conversation records"))
+          (terminal-ui-stop ui)))))
   nil)
 
 (-> test-application-typed-action-controls () null)

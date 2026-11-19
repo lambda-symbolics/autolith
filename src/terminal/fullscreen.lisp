@@ -81,6 +81,10 @@ When output exceeds the limit, older output is evicted and can be loaded with (h
   "Use application-owned transcript scrolling for this UI."
   t)
 
+(defmethod terminal-ui-pages-p ((ui fullscreen-terminal-ui))
+  "A fullscreen UI paints pages over its transcript."
+  t)
+
 (defmethod terminal-ui-transcript-position ((ui fullscreen-terminal-ui))
   "Return where the last frame's transcript window is."
   (fullscreen-terminal-ui-position ui))

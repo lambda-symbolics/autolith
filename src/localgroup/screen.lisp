@@ -2,14 +2,10 @@
 
 ;;;; -- Client Screen --
 
-;;; A terminal client of a hosted fullscreen session receives the session's
-;;; screen as frames of display rows rather than as painted output, and
-;;; paints them on its own terminal. The client therefore owns the alternate
-;;; buffer, the frame painter and the cursor, and composes its own side
-;;; panel beside the session's rows.
-
-(defparameter *localgroup-screen-dimension-limit* 10000
-  "The largest frame height or width a client accepts from a session.")
+;;; A terminal client renders the channel it shows into a pane and paints
+;;; the pane's frames on its own terminal. The client therefore owns the
+;;; alternate buffer, the frame painter and the cursor, and composes its own
+;;; side panel beside the pane's rows.
 
 (defparameter *localgroup-screen-toggle-event* '(:control #\s)
   "The key event showing or hiding the side panel.")
@@ -136,7 +132,7 @@ switches. The default methods leave the choice local to each screen."))
     :initform      nil
     :accessor      localgroup-screen-frame
     :type          (option clinedi:frame-snapshot)
-    :documentation "The session's frame snapshot, or NIL before a complete frame.")
+    :documentation "The pane's frame, or NIL before the first one.")
 
    (boot-ui
     :initform      nil
@@ -176,7 +172,7 @@ switches. The default methods leave the choice local to each screen."))
     :initform      nil
     :accessor      localgroup-screen-whole-screen-p
     :type          boolean
-    :documentation "Whether the session's frame asks for the whole screen, hiding the side panel.")
+    :documentation "Whether the pane's frame asks for the whole screen, hiding the side panel.")
    (panel
     :initarg       :panel
     :initform      nil
@@ -192,11 +188,11 @@ switches. The default methods leave the choice local to each screen."))
     :accessor      localgroup-screen-resize-pending-p
     :type          boolean
     :documentation "Whether the session's pane changed size since the client last told the session."))
-  (:documentation "The whole screen a client paints from a hosted session's frames."))
+  (:documentation "The whole screen of a terminal client: the pane of the channel it shows, beside its side panel."))
 
 (-> localgroup-screen-create (&key (:terminal terminal) (:panel t)) localgroup-screen)
 (defun localgroup-screen-create (&key terminal panel)
-  "Return a screen painting a session's frames on the client's TERMINAL beside PANEL."
+  "Return a screen painting a channel's pane on the client's TERMINAL beside PANEL."
   (make-instance 'localgroup-screen :terminal terminal :panel panel))
 
 (-> localgroup-screen-panel-shown-p (localgroup-screen) boolean)
@@ -409,60 +405,29 @@ the panel for reuse across attachments."
         (localgroup-screen--paint screen))))
   nil)
 
-(-> localgroup-screen--frame-row-p (t) boolean)
-(defun localgroup-screen--frame-row-p (row)
-  "Return true when ROW is an (INDEX TEXT) pair of a frame."
-  (and (consp row)
-       (consp (rest row))
-       (null (rest (rest row)))
-       (typep (first row) '(integer 0))
-       (stringp (second row))))
+(-> localgroup-screen-show-frame
+    (localgroup-screen clinedi:frame-snapshot
+     &key (:cursor-row (integer 0)) (:cursor-column (integer 0)) (:cursor-visible-p t)
+          (:whole-screen-p t))
+    null)
+(defun localgroup-screen-show-frame
+    (screen frame &key (cursor-row 0) (cursor-column 0) (cursor-visible-p t) whole-screen-p)
+  "Show FRAME, the pane's complete rows, with its cursor, and paint what changed.
 
-(-> localgroup-screen--frame-packet-p (t) boolean)
-(defun localgroup-screen--frame-packet-p (packet)
-  "Return true when PACKET is a well-formed frame."
-  (and (consp packet)
-       (eq (first packet) ':frame)
-       (let ((properties (rest packet)))
-         (and (listp properties)
-              (handler-case (evenp (list-length properties))
-                (type-error ()
-                  nil))
-              (typep (getf properties :height)
-                     `(integer 1 ,*localgroup-screen-dimension-limit*))
-              (typep (getf properties :width)
-                     `(integer 1 ,*localgroup-screen-dimension-limit*))
-              (typep (getf properties :cursor-row) '(integer 0))
-              (typep (getf properties :cursor-column) '(integer 0))
-              (let ((rows (getf properties :rows)))
-                (and (listp rows)
-                     (handler-case (not (null (list-length rows)))
-                       (type-error ()
-                         nil))
-                     (every #'localgroup-screen--frame-row-p rows)))))))
-
-(-> localgroup-screen-handle-packet (localgroup-screen t) boolean)
-(defun localgroup-screen-handle-packet (screen packet)
-  "Apply a frame or screen PACKET from the session and return whether it was one.
-
-A complete frame takes the screen when the client does not show one yet. A
-frame of changed rows arriving before any complete frame is dropped, since
-there is nothing to change; the session sends a complete frame to every
-client it has not synchronized."
-  (cond
-    ((localgroup-screen--frame-packet-p packet)
-     (with-lock-held ((localgroup-screen-lock screen))
-       (when (localgroup-screen--apply-frame screen (rest packet))
-          (setf (localgroup-screen-loading screen) nil
-                (localgroup-screen-boot-ui screen) nil)
-         (localgroup-screen--paint screen)))
-     t)
-    ((equal packet '(:screen :leave))
-     (with-lock-held ((localgroup-screen-lock screen))
-       (localgroup-screen--leave screen))
-     t)
-    (t
-     nil)))
+The first frame that fits the pane takes the screen. WHOLE-SCREEN-P hides the
+side panel for the frame."
+  (with-lock-held ((localgroup-screen-lock screen))
+    (localgroup-screen--take-whole-screen screen (not (null whole-screen-p)))
+    (setf (localgroup-screen-frame screen)   frame
+          (localgroup-screen-cursor screen)  (list cursor-row cursor-column
+                                                   (not (null cursor-visible-p)))
+          (localgroup-screen-loading screen) nil
+          (localgroup-screen-boot-ui screen) nil)
+    (when (and (not (localgroup-screen-active-p screen))
+               (localgroup-screen--frame-fits-p screen))
+      (localgroup-screen--enter screen))
+    (localgroup-screen--paint screen))
+  nil)
 
 (-> localgroup-screen-show-loading
     (localgroup-screen string &key (:step (integer 1 6)) (:description string)
@@ -545,26 +510,6 @@ before the first channel frame; channel switches retain their side panel."
   (with-lock-held ((localgroup-screen-lock screen))
     (localgroup-screen--leave screen))
   nil)
-
-(-> localgroup-screen--apply-frame (localgroup-screen list) boolean)
-(defun localgroup-screen--apply-frame (screen properties)
-  "Record the frame PROPERTIES describe and return whether there is a frame to paint."
-  (localgroup-screen--take-whole-screen screen (not (null (getf properties :whole-screen-p))))
-  (let ((frame (clinedi:frame-snapshot-apply
-                (localgroup-screen-frame screen) (getf properties :rows)
-                :height     (getf properties :height)
-                :width      (getf properties :width)
-                :complete-p (not (null (getf properties :complete-p))))))
-    (when frame
-      (setf (localgroup-screen-frame screen) frame
-            (localgroup-screen-cursor screen)
-            (list (getf properties :cursor-row)
-                  (getf properties :cursor-column)
-                  (not (null (getf properties :cursor-visible-p)))))
-      (unless (or (localgroup-screen-active-p screen)
-                  (not (localgroup-screen--frame-fits-p screen)))
-        (localgroup-screen--enter screen)))
-    (not (null frame))))
 
 (-> localgroup-screen--take-whole-screen (localgroup-screen boolean) null)
 (defun localgroup-screen--take-whole-screen (screen whole-screen-p)

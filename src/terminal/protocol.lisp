@@ -22,42 +22,8 @@ Older inputs page in from the conversation as history traversal reaches them.")
 ;;;; -- Terminal Objects --
 
 (defclass terminal (clinedi:terminal)
-  ((relayed-resize
-    :initform      nil
-    :accessor      terminal-relayed-resize
-    :type          (option (cons (integer 1) (integer 1)))
-    :documentation "Pending (rows . columns) relayed by a controlling client, or NIL.
-
-A relayed session's process has no controlling terminal, so its own
-kernel size reports only ever see fallback defaults. Controlling
-clients therefore relay exact dimensions, and the interactive reader
-applies them through TERMINAL-UI-RESIZE. All terminal dimension
-mutation passes through TERMINAL-SET-DIMENSIONS. Each terminal keeps
-its own pending size, so several relayed terminals in one process
-never apply each other's resizes.")
-   (relayed-resize-lock
-    :initform      (make-lock "Autolith relayed terminal resize")
-    :reader        terminal-relayed-resize-lock
-    :type          t
-    :documentation "The lock making relayed resize publication and consumption atomic."))
+  ()
   (:documentation "Autolith's terminal transport extension point."))
-
-(-> terminal-relayed-resize-publish (terminal integer integer) null)
-(defun terminal-relayed-resize-publish (terminal rows columns)
-  "Park positive ROWS and COLUMNS as TERMINAL's pending relayed resize."
-  (when (and (plusp rows) (plusp columns))
-    (with-lock-held ((terminal-relayed-resize-lock terminal))
-      (setf (terminal-relayed-resize terminal) (cons rows columns))))
-  nil)
-
-(-> terminal-relayed-resize-consume
-    (terminal)
-    (option (cons (integer 1) (integer 1))))
-(defun terminal-relayed-resize-consume (terminal)
-  "Atomically consume and return TERMINAL's newest relayed size."
-  (with-lock-held ((terminal-relayed-resize-lock terminal))
-    (prog1 (terminal-relayed-resize terminal)
-      (setf (terminal-relayed-resize terminal) nil))))
 
 
 ;;;; -- Whole-Screen Frames --
@@ -66,8 +32,8 @@ never apply each other's resizes.")
   (:documentation "Take TERMINAL's whole screen for painted frames and return a restoration token.
 
 A terminal written directly enters the alternate buffer with keyboard and
-mouse reporting; a relayed terminal leaves that to its clients, which take
-their screens with the first frame."))
+mouse reporting. A channel's presentation and a client's pane have no screen
+of their own: the client's screen takes its terminal with the first frame."))
 
 (defgeneric terminal-screen-leave (terminal token)
   (:documentation "Give TERMINAL's screen back, restoring the native mode TOKEN captured on entry."))
@@ -76,10 +42,10 @@ their screens with the first frame."))
     (terminal painter rows &key cursor-row cursor-column cursor-visible-p whole-screen-p)
   (:documentation "Show display ROWS as TERMINAL's whole screen with the cursor at CURSOR-ROW and CURSOR-COLUMN.
 
-PAINTER rewrites only the rows that changed on a terminal written directly;
-a relayed terminal sends its clients the rows that changed since the frame
-each of them holds. WHOLE-SCREEN-P asks those clients to hide their side
-panels while such frames show, as during the boot screen."))
+PAINTER rewrites only the rows that changed on a terminal written directly.
+A channel's presentation sends ROWS to its clients as a page, and a client's
+pane hands them to the client's screen. WHOLE-SCREEN-P asks that screen to
+hide its side panel while such frames show, as during the boot screen."))
 
 (defgeneric terminal-screen-invalidate (terminal painter)
   (:documentation "Forget what TERMINAL's screen shows, so the next paint rewrites it completely."))
@@ -667,6 +633,13 @@ Autolith repaints its own prompt, so prompt starts disable terminal redraw."
 
 (defmethod terminal-ui-fullscreen-p ((ui terminal-ui))
   "Use native scrollback for the ordinary terminal UI."
+  nil)
+
+(defgeneric terminal-ui-pages-p (ui)
+  (:documentation "Return true when UI can give a page, such as the memory manager, its whole screen."))
+
+(defmethod terminal-ui-pages-p ((ui terminal-ui))
+  "An inline UI has only the terminal's scrollback."
   nil)
 
 (defgeneric terminal-ui-transcript-position (ui)

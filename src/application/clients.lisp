@@ -2,11 +2,13 @@
 
 ;;;; -- Channel Clients --
 
-;;; A channel client is a program other than a terminal that follows one
-;;; channel through the structured client protocol: an editor speaking ACP
-;;; today, a web, GUI or phone client later. It receives the channel's events
-;;; as portable plists and sends commands back. An image-daemon attachment
-;;; handles each client's bounded output queue and writer.
+;;; A channel client is a program that follows one channel through the
+;;; structured client protocol: the terminal client, an editor speaking ACP,
+;;; a GUI. It receives the channel's events as portable plists and sends
+;;; commands back. A client that presents, as the terminal client does, also
+;;; receives the channel's (:ui ...) presentation events and renders them
+;;; itself. An image-daemon attachment handles each client's bounded output
+;;; queue and writer.
 
 (defclass channel-client ()
   ((identifier
@@ -38,6 +40,24 @@
     :reader        channel-client-cancels-evaluation-p
     :type          boolean
     :documentation "Whether this client explicitly supports evaluation cancellation.")
+   (presents-p
+    :initarg       :presents-p
+    :initform      nil
+    :reader        channel-client-presents-p
+    :type          boolean
+    :documentation "Whether the client renders the channel's presentation, as a terminal client does.")
+   (watches-p
+    :initarg       :watches-p
+    :initform      nil
+    :reader        channel-client-watches-p
+    :type          boolean
+    :documentation "Whether a client that presents only watches: the channel takes no input from it and is not laid out for it.")
+   (pid
+    :initarg       :pid
+    :initform      nil
+    :reader        channel-client-pid
+    :type          (option (integer 1))
+    :documentation "The process a presenting client says it is, or NIL.")
    (attachment
     :accessor      channel-client-attachment
     :type          image-daemon:attachment
@@ -66,6 +86,10 @@
     :accessor      client-hub-clients
     :type          list
     :documentation "The structured clients attached to the channel.")
+   (controller
+    :initform      nil
+    :accessor      client-hub-controller
+    :documentation "The presenting client that attached or sent a command last, or NIL.")
    (admitting-p
     :initform      t
     :accessor      client-hub-admitting-p
@@ -144,6 +168,101 @@
   "Return true while a structured client that answers approvals follows APPLICATION's channel."
   (not (null (some #'channel-client-approves-p (application-clients application)))))
 
+(-> channel-client--receives-p (channel-client list) boolean)
+(defun channel-client--receives-p (client event)
+  "Return true when EVENT is CLIENT's to receive.
+
+A client that presents receives the presentation events and nothing else; it
+renders what they describe. Every other client receives the rest: records,
+streamed text and status, which it presents its own way."
+  (eq (eq (first event) ':ui)
+      (channel-client-presents-p client)))
+
+(-> channel-client-controls-p (channel-client) boolean)
+(defun channel-client-controls-p (client)
+  "Return true when CLIENT presents the channel to someone who can answer it, not only watch it."
+  (and (channel-client-presents-p client)
+       (not (channel-client-watches-p client))))
+
+(-> application-clients-controlled-p (application &key (:except (option channel-client))) boolean)
+(defun application-clients-controlled-p (application &key except)
+  "Return true while a client whose user can answer the channel presents APPLICATION's channel.
+
+EXCEPT, a client that is leaving, does not count."
+  (not (null (some (lambda (client)
+                     (and (not (eq client except))
+                          (channel-client-controls-p client)))
+                   (application-clients application)))))
+
+(-> application-clients-note-controller (application channel-client) null)
+(defun application-clients-note-controller (application client)
+  "Remember CLIENT as the one its user is at, when it controls: questions and channel switches go to it."
+  (when (channel-client-controls-p client)
+    (let ((hub (application-client-hub application)))
+      (with-lock-held ((client-hub-lock hub))
+        (setf (client-hub-controller hub) client))))
+  nil)
+
+(-> application-controlling-client (application) (option channel-client))
+(defun application-controlling-client (application)
+  "Return the client APPLICATION's user is at, or NIL when none controls the channel.
+
+That is the controlling client that attached or sent a command last, while it
+stays attached, and otherwise the one that attached last. A client that only
+watches is never it."
+  (let ((hub (application-client-hub application)))
+    (with-lock-held ((client-hub-lock hub))
+      (let ((controller (client-hub-controller hub)))
+        (if (and controller (member controller (client-hub-clients hub)))
+            controller
+            (find-if #'channel-client-controls-p (client-hub-clients hub)))))))
+
+(-> channel-client-tell (channel-client keyword &rest t) boolean)
+(defun channel-client-tell (client operation &rest fields)
+  "Send presentation OPERATION with FIELDS to CLIENT alone and return true while it is attached."
+  (unless (channel-client-closed-p client)
+    (channel-client-enqueue client (client-portable (list* :ui :operation operation fields)))
+    t))
+
+(-> application-client-tell (application keyword &rest t) boolean)
+(defun application-client-tell (application operation &rest fields)
+  "Send presentation OPERATION with FIELDS to the controlling client alone and return true when it has one.
+
+Use this for what only the terminal its user is at should do, such as moving
+to another channel."
+  (let ((client (application-controlling-client application)))
+    (and client
+         (apply #'channel-client-tell client operation fields))))
+
+(-> application-clients-finish-presenting (application keyword &rest t) null)
+(defun application-clients-finish-presenting (application operation &rest fields)
+  "Tell every presenting client presentation OPERATION with FIELDS as the last thing it hears, then let it go.
+
+Each client is given the daemon's stop deadline to take what was queued for
+it, so the word reaches a client that reads before the endpoint closes."
+  (let ((event (client-portable (list* :ui :operation operation fields))))
+    (dolist (client (remove-if-not #'channel-client-presents-p (application-clients application)))
+      (channel-client-finish client event)))
+  nil)
+
+(-> application-client-attached-p (application channel-client) boolean)
+(defun application-client-attached-p (application client)
+  "Return true while CLIENT follows APPLICATION's channel."
+  (not (null (member client (application-clients application)))))
+
+(-> application-presenting-client-pids (application) (values (option integer) list))
+(defun application-presenting-client-pids (application)
+  "Return the controlling client's process and the sorted processes of the other presenting clients."
+  (let ((controller (application-controlling-client application)))
+    (values (and controller (channel-client-pid controller))
+            (sort (remove-duplicates
+                   (loop for client in (application-clients application)
+                         for pid = (channel-client-pid client)
+                         when (and pid (channel-client-presents-p client)
+                                   (not (eq client controller)))
+                           collect pid))
+                  #'<))))
+
 (-> application-clients-publish (application list) null)
 (defun application-clients-publish (application event)
   "Sequence and retain EVENT, then queue it for every subscriber in that same order."
@@ -158,10 +277,39 @@
         (loop while (> (deque-count (client-hub-event-journal hub)) *channel-client-journal-limit*)
               do (deque-pop-front (client-hub-event-journal hub)))
         (dolist (client (client-hub-clients hub))
-          (when (channel-client--queue-event client portable)
+          (when (and (channel-client--receives-p client portable)
+                     (channel-client--queue-event client portable))
             (push client overflow)))))
     (dolist (client overflow)
       (channel-client-close client)))
+  nil)
+
+(-> application-presentation (application) (option channel-presentation))
+(defun application-presentation (application)
+  "Return the presentation APPLICATION's channel publishes to its clients, or NIL in a direct session."
+  (let ((ui (and (slot-boundp application 'ui) (application-ui application))))
+    (and (typep ui 'channel-presentation) ui)))
+
+(-> application-presentation-connect (application) null)
+(defun application-presentation-connect (application)
+  "Send what APPLICATION's presentation publishes to its clients, and let it ask whether someone can answer it."
+  (let ((presentation (application-presentation application)))
+    (when presentation
+      (setf (channel-presentation-publish-function presentation)
+            (lambda (event)
+              (application-clients-publish application event))
+            (channel-presentation-turn-state-function presentation)
+            (lambda ()
+              (let ((controller (application-input-controller application)))
+                (and controller (application-input-controller-turn-state controller))))
+            (channel-presentation-history-function presentation)
+            (lambda ()
+              (if (slot-boundp application 'conversation)
+                  (application-input-history-window presentation (application-conversation application))
+                  (values nil 0 nil)))
+            (presentation-terminal-interactive-function (terminal-ui-terminal presentation))
+            (lambda ()
+              (application-clients-controlled-p application)))))
   nil)
 
 (-> application-clients-add
@@ -175,8 +323,10 @@ cursor outside the retained tail is refused rather than skipping events."
     (error 'localgroup-error :operation ':client
            :message                     "A channel event cursor must be a nonnegative integer."))
   (let* ((hub          (application-client-hub application))
-         (conversation (and (slot-boundp application 'conversation) (application-conversation application))))
-    (flet ((subscribe ()
+         (conversation (and (slot-boundp application 'conversation) (application-conversation application)))
+         (presentation (and (channel-client-presents-p client)
+                            (application-presentation application))))
+    (flet ((subscribe (replay)
              (with-lock-held ((client-hub-lock hub))
                (unless (client-hub-admitting-p hub)
                  (error 'localgroup-error :operation ':client :retry-p t
@@ -196,19 +346,36 @@ cursor outside the retained tail is refused rather than skipping events."
                                                 :record-sequence (application-clients--record-sequence application)))))
                      (error 'localgroup-error :operation ':client :message "The client greeting queue is full.")))
                  (dolist (event events)
-                   (when (and after-sequence (> (getf (rest event) :sequence) after-sequence))
+                   (when (and after-sequence (> (getf (rest event) :sequence) after-sequence)
+                              (channel-client--receives-p client event))
                      (when (channel-client--queue-event client event)
                        (error 'localgroup-error :operation ':client
                               :message                     "The retained event tail exceeds the client queue."))))
+                 (dolist (event replay)
+                   (when (channel-client--queue-event client (client-portable event))
+                     (error 'localgroup-error :operation ':client
+                            :message                     "The channel's presentation exceeds the client queue.")))
                  (with-lock-held ((image-daemon:attachment-lock (channel-client-attachment client)))
                    (unless (channel-client-closed-p client)
                      (setf (channel-client-hub client) hub)
                      (push client (client-hub-clients hub))))))))
-      (if conversation
-          (with-recursive-lock-held ((conversation-append-lock conversation))
-            (application-clients--follow-conversation application)
-            (subscribe))
-          (subscribe)))
+      (flet ((attach ()
+               (application-clients--follow-conversation application)
+               ;; A client that presents and holds no cursor starts from what the channel shows
+               ;; now. The replay reads the durable inputs, so it is made before the hub is held.
+               (subscribe (and presentation (null after-sequence)
+                               (channel-presentation-replay presentation)))))
+        (flet ((attach-appending ()
+                 (if conversation
+                     (with-recursive-lock-held ((conversation-append-lock conversation))
+                       (attach))
+                     (attach))))
+          ;; The presentation's lock comes first, as it does when the channel
+          ;; publishes a change, so the replay and the live events never overlap.
+          (if presentation
+              (with-terminal-ui-locked (presentation)
+                (attach-appending))
+              (attach-appending)))))
     ;; The serving scope owns cleanup, after transmitting an attachment refusal.
     (image-daemon:attachment-start (channel-client-attachment client)))
   nil)
@@ -322,14 +489,19 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
 
 (-> channel-client-create
     (&key (:socket t) (:stream stream) (:transport-lock t) (:name string) (:approves-p boolean)
-          (:evaluates-p boolean) (:cancels-evaluation-p boolean))
+          (:evaluates-p boolean) (:cancels-evaluation-p boolean) (:presents-p boolean)
+          (:watches-p boolean) (:pid (option (integer 1))))
     channel-client)
 (defun channel-client-create
-    (&key socket stream transport-lock (name "client") (approves-p t) evaluates-p cancels-evaluation-p)
+    (&key socket stream transport-lock (name "client") (approves-p t) evaluates-p cancels-evaluation-p
+          presents-p watches-p pid)
   "Create a structured client and its deferred output attachment."
   (let ((client (make-instance 'channel-client :name name :approves-p approves-p
                                                :evaluates-p          evaluates-p
-                                               :cancels-evaluation-p cancels-evaluation-p)))
+                                               :cancels-evaluation-p cancels-evaluation-p
+                                               :presents-p           presents-p
+                                               :watches-p            watches-p
+                                               :pid                  pid)))
     (setf (channel-client-attachment client)
           (make-instance 'channel-client-transport
                          :client client :socket socket :stream stream :mode ':read-only

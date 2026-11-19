@@ -25,22 +25,23 @@
                           (search fragment (getf answer :text)))
                      (format nil "~S answers ~:[a failure~;its result~] naming ~S"
                              forms succeeded-p fragment)))))
-  (let ((evaluator (make-instance 'client-evaluator))
-        (answers   nil))
+  (let* ((answers   nil)
+         (evaluator (make-instance 'client-evaluator
+                                   :delivery (lambda (packet)
+                                               (push packet answers)))))
     (client-evaluator-start evaluator '(:evaluation :id "e2" :forms ("(* 6 7)")))
-    (test-assert (task-tests--wait-until
-                  (lambda () (setf answers (client-evaluator-take evaluator)))
-                  10)
+    (test-assert (task-tests--wait-until (lambda () (null *client-evaluator-active*)) 10)
                  "an evaluator finishes a request on a thread of its own")
     (test-assert (and (typep answers '(cons list null))
                       (client-evaluation-reply-p (first answers))
                       (search "42" (getf (rest (first answers)) :text)))
-                 "the finished answer is the packet the channel accepts")
-    (test-assert (null (client-evaluator-take evaluator))
-                 "an answer is taken once"))
-  (let ((evaluator  (make-instance 'client-evaluator))
-        (connection (make-instance 'localgroup-client-connection))
-        (evaluated  0))
+                 "the finished answer is delivered once, as the packet the channel accepts"))
+  (let* ((answers    nil)
+         (evaluator  (make-instance 'client-evaluator
+                                    :delivery (lambda (packet)
+                                                (push packet answers))))
+         (connection (make-instance 'localgroup-client-connection))
+         (evaluated  0))
     (test-call-with-function-replacements
      (list (list 'self-evaluate-sources
                  (lambda (&rest arguments) (declare (ignore arguments)) (incf evaluated) "unexpected")))
@@ -62,8 +63,8 @@
                       "Malformed or unidentified evaluation envelopes are refused before reading their forms.")
          (client-evaluator-start evaluator request)
          (localgroup-client--evaluate connection request))
-       (test-assert (and (zerop evaluated) (null (client-evaluator-take evaluator)))
-                    "Neither client route evaluates or answers malformed envelopes."))))
+       (test-assert (and (zerop evaluated) (null answers))
+                    "Neither an evaluator nor a connection evaluates or answers malformed envelopes."))))
   (client-evaluation-tests--lifecycle)
   (client-evaluation-tests--stalled-writer)
   nil)
@@ -176,97 +177,55 @@
 
 (-> test-client-evaluation-terminal-client () null)
 (defun test-client-evaluation-terminal-client ()
-  "Test a channel evaluates forms in the controlling terminal client that says it evaluates."
+  "Test a channel evaluates forms in the terminal client its user is at, before any other client that evaluates."
   (client-protocol-tests--call
    (lambda (application record)
-     (multiple-value-bind (socket stream)
-         (daemon-connect (localgroup--record-port (rest record)))
-       (let ((answerer nil))
-         (unwind-protect
-              (progn
-                (daemon-write-packet
-                 stream
-                 (list :localgroup-request
-                       :version   *daemon-protocol-version*
-                       :token     (localgroup--record-token (rest record))
-                       :operation ':attach
-                       :arguments (list :mode ':control :rows 31 :columns 91 :styled-p nil
-                                        :evaluates-p t)))
-                (test-assert (eq (first (test-localgroup--read-packet stream)) ':attached)
-                             "the terminal client attaches")
-                (setf answerer
-                      (make-thread
-                       (lambda ()
-                         (loop for packet = (handler-case (daemon-read-packet stream)
-                                              (error ()
-                                                nil))
-                               while packet
-                               do (when (eq (first packet) ':evaluation)
-                                    (daemon-write-packet
-                                     stream (cons :evaluated (client-evaluate-request packet))))))
-                       :name "client evaluation terminal"))
-                (test-assert (task-tests--wait-until
-                              (lambda () (application-evaluating-attachment application))
-                              10)
-                             "the controlling terminal is the client that evaluates")
-                (test-assert (search "\"client\""
-                                     (application-evaluate-on-client
-                                      application '("(string-downcase \"CLIENT\")")))
-                             "the terminal client's rendered result comes back")
-                (test-assert (eq (client-evaluation-tests--failure
-                                  (lambda ()
-                                    (application-evaluate-on-client application '("(error \"boom\")"))))
-                                 ':failed)
-                             "forms that fail in the terminal client fail the evaluation")
-                (let* ((hub        (application-client-hub application))
-                       (attachment (application-evaluating-attachment application))
-                       (other      (localgroup-attachment-create nil (make-string-output-stream) ':read-only))
-                       (pending    (make-instance 'client-evaluation :attachment attachment))
-                       (packet     (list :evaluated :evaluation (client-evaluation-identifier pending)
-                                         :succeeded-p t :text "terminal result")))
-                  (unwind-protect
-                       (progn
-                         (with-lock-held ((client-hub-lock hub))
-                           (push pending (client-hub-evaluations hub)))
-                         (test-assert (and (not (localgroup--accept-client-packet application packet :attachment other))
-                                           (not (localgroup--accept-client-packet application packet)))
-                                      "An unrelated or unidentified terminal attachment cannot answer an evaluation.")
-                         (test-assert
-                          (not (application-answer-evaluation application (client-evaluation-identifier pending)
-                                                              :attachment attachment :text "missing status"))
-                          "The answer boundary also rejects an omitted boolean status.")
-                         (dolist (status '(:omitted :yes))
-                           (let ((malformed (list :evaluated :evaluation (client-evaluation-identifier pending)
-                                                  :text      "invalid")))
-                             (unless (eq status ':omitted)
-                               (setf malformed (append malformed (list :succeeded-p status))))
-                             (test-assert (not (localgroup--accept-client-packet application malformed
-                                                                               :attachment attachment))
-                                          "Terminal replies require an explicit boolean status.")))
-                         (test-assert (and (null (client-evaluation-answer pending))
-                                           (localgroup--accept-client-packet application packet :attachment attachment)
-                                           (not (localgroup--accept-client-packet application packet :attachment attachment)))
-                                      "The originating terminal attachment can answer exactly once."))
-                    (with-lock-held ((client-hub-lock hub))
-                      (setf (client-hub-evaluations hub) (remove pending (client-hub-evaluations hub))))))
-                (test-assert (notany (lambda (packet)
-                                       (localgroup--accept-client-packet application packet))
-                                     '((:evaluated :evaluation 3)
-                                       (:evaluated :evaluation "none" :succeeded-p t :text "stray")
-                                       (:evaluated :evaluation "none" :text)
-                                       (:evaluated . 3)
-                                       (:other)))
-                             "malformed and stray answers are taken by nobody")
-                (test-assert (client-evaluation-reply-p
-                              '(:evaluated :evaluation "e" :text "ok" :succeeded-p t :elapsed 3))
-                             "an answer with a field this version does not know is still an answer"))
-           ;; Shutting the socket down wakes the answerer's blocked read; closing alone does not.
-           ; mallet:suppress no-ignore-errors -- the endpoint may have closed the socket already
-           (ignore-errors (sb-bsd-sockets:socket-shutdown socket :direction ':io))
-           (when answerer
-             (join-thread answerer))
-           ; mallet:suppress no-ignore-errors -- the endpoint may have closed the socket already
-           (ignore-errors (sb-bsd-sockets:socket-close socket)))))))
+     (let ((terminal (test-localgroup--present record :evaluates-p t))
+           (other    (localgroup-client-connect record :name "lisp" :evaluates-p t)))
+       (unwind-protect
+            (let ((controller (application-controlling-client application)))
+              (test-assert (and controller
+                                (channel-client-presents-p controller)
+                                (eq (application-evaluating-attachment application)
+                                    (channel-client-attachment controller)))
+                           "the terminal client evaluates, though another client that evaluates attached after it")
+              (test-assert (search "\"client\""
+                                   (application-evaluate-on-client
+                                    application '("(string-downcase \"CLIENT\")")))
+                           "the terminal client's rendered result comes back")
+              (test-assert (eq (client-evaluation-tests--failure
+                                (lambda ()
+                                  (application-evaluate-on-client application '("(error \"boom\")"))))
+                               ':failed)
+                           "forms that fail in the terminal client fail the evaluation")
+              (dolist (answer '((:evaluation 3)
+                                (:evaluation "none" :succeeded-p t :text "stray")
+                                (:evaluation "none")))
+                (test-assert (null (getf (apply #'localgroup-client-call terminal ':evaluated answer)
+                                         :accepted-p))
+                             (format nil "the answer ~S is taken by nobody" answer)))
+              (test-call-with-function-replacements
+               (list (list 'client-evaluate-request
+                           (lambda (request)
+                             (list :evaluation  (getf (rest request) :id)
+                                   :succeeded-p t
+                                   :text        "ok"
+                                   :elapsed     3))))
+               (lambda ()
+                 (test-assert (search "ok" (application-evaluate-on-client application '("(+ 1 2)")))
+                              "an answer with a field this version does not know is still an answer")))
+              (localgroup-client-close terminal)
+              (test-assert (task-tests--wait-until
+                            (lambda ()
+                              (let ((attachment (application-evaluating-attachment application)))
+                                (and attachment
+                                     (null (application-controlling-client application))
+                                     (search "3" (application-evaluate-on-client
+                                                  application '("(+ 1 2)"))))))
+                            10)
+                           "once the terminal left, the client attached last evaluates"))
+         (localgroup-client-close terminal)
+         (localgroup-client-close other)))))
   nil)
 
 (-> test-self-eval-client-target () null)
@@ -333,76 +292,86 @@ from the client")))
                        "without a presenting observer there is no client to ask")))))
   nil)
 
-(-> client-evaluation-tests--abandoned-owner (keyword) list)
-(defun client-evaluation-tests--abandoned-owner (route)
-  "Start gated work through ROUTE and return weak owner references after attachment teardown."
-  (let* ((connection (and (eq route ':structured)
-                          (make-instance 'localgroup-client-connection :socket nil
-                                         :stream                               (make-string-output-stream))))
-         (owner      (if connection (localgroup-client-connection-evaluator connection)
-                         (make-instance 'client-evaluator)))
+(-> client-evaluation-tests--abandoned-owner () list)
+(defun client-evaluation-tests--abandoned-owner ()
+  "Start gated work over a connection and return weak references to its owner and to it after teardown."
+  (let* ((connection (make-instance 'localgroup-client-connection
+                                    :socket nil
+                                    :stream (make-string-output-stream)))
+         (owner      (localgroup-client-connection-evaluator connection))
          (other      (make-instance 'client-evaluator))
          (request    '(:evaluation :id "abandoned" :forms ("(values)"))))
-    (if connection (localgroup-client--evaluate connection request)
-        (client-evaluator-start owner request))
+    (localgroup-client--evaluate connection request)
     (client-evaluator-cancel other "abandoned")
     (test-assert (eq owner (client-evaluator-work-owner *client-evaluator-active*))
                  "Cancellation from another attachment cannot abandon this owner.")
     (client-evaluator-cancel owner "abandoned")
-    (if connection (localgroup-client-close connection) (client-evaluator-close owner))
+    (localgroup-client-close connection)
     (list (sb-ext:make-weak-pointer owner)
           (sb-ext:make-weak-pointer connection))))
 
 (-> client-evaluation-tests--lifecycle () null)
 (defun client-evaluation-tests--lifecycle ()
-  "Check global admission, abandoned-owner collection, bounded replies and eventual slot release."
-  (dolist (route '(:terminal :structured))
-    (let ((gate    (sb-thread:make-semaphore))
-          (started (sb-thread:make-semaphore))
-          (calls   0))
-      (test-call-with-function-replacements
-       (list (list 'self-evaluate-sources
-                   (lambda (&rest arguments)
-                     (declare (ignore arguments))
-                     (incf calls)
-                     (sb-thread:signal-semaphore started)
-                     (sb-thread:wait-on-semaphore gate :timeout 10)
-                     (make-string (* 2 *self-evaluation-character-limit*) :initial-element #\x))))
-       (lambda ()
-         (unwind-protect
-             (let* ((weak         nil)
-                    (control      (make-instance 'client-evaluator))
-                    (control-weak (sb-ext:make-weak-pointer control))
-                    (other        (make-instance 'client-evaluator)))
-               (join-thread
-                (make-thread (lambda ()
-                               (setf weak (client-evaluation-tests--abandoned-owner route))
-                               nil)
-                             :name "evaluation owner producer"))
-               (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
-                            "The original image worker is running after its attachment leaves.")
-               (test-assert (and *client-evaluator-active*
-                                 (null (client-evaluator-work-owner *client-evaluator-active*)))
-                            "Abandoned work holds capacity without a delivery owner.")
-               (sb-ext:gc :full t)
-               (test-assert (eq control (sb-ext:weak-pointer-value control-weak))
-                            "The positive control deliberately retains its owner across collection.")
-               (test-assert (every (lambda (pointer) (null (sb-ext:weak-pointer-value pointer))) weak)
-                            "A blocked worker retains neither its owner nor its connection.")
-               (dotimes (index (1+ *client-evaluator-answer-limit*))
-                 (test-assert
-                  (eq (client-evaluator-start
-                       other (list :evaluation :id (format nil "busy-~D" index) :forms '("(values)")))
-                      ':busy)
-                  "New requests receive bounded busy replies instead of starting more workers."))
-               (test-assert (and (= calls 1) (client-evaluator-closed-p other)
-                                 (null (client-evaluator-answers other))
-                                 (eq (client-evaluation-tests--failure
-                                      (lambda () (client-evaluator-take other))) ':closed))
-                            "Overflow disconnects evaluation delivery explicitly and drops queued replies."))
-           (sb-thread:signal-semaphore gate)
-           (test-assert (task-tests--wait-until (lambda () (null *client-evaluator-active*)) 5)
-                        "Only actual worker exit releases shared capacity."))))))
+  "Check global admission, abandoned-owner collection, busy replies and eventual slot release."
+  (let ((gate    (sb-thread:make-semaphore))
+        (started (sb-thread:make-semaphore))
+        (calls   0))
+    (test-call-with-function-replacements
+     (list (list 'self-evaluate-sources
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   (incf calls)
+                   (sb-thread:signal-semaphore started)
+                   (sb-thread:wait-on-semaphore gate :timeout 10)
+                   (make-string (* 2 *self-evaluation-character-limit*) :initial-element #\x))))
+     (lambda ()
+       (unwind-protect
+            (let* ((weak         nil)
+                   (control      (make-instance 'client-evaluator))
+                   (control-weak (sb-ext:make-weak-pointer control))
+                   (replies      nil)
+                   (other        (make-instance 'client-evaluator
+                                                :delivery (lambda (packet)
+                                                            (push packet replies))))
+                   (broken       (make-instance 'client-evaluator
+                                                :delivery (lambda (packet)
+                                                            (declare (ignore packet))
+                                                            (error "The transport is gone.")))))
+              (join-thread
+               (make-thread (lambda ()
+                              (setf weak (client-evaluation-tests--abandoned-owner))
+                              nil)
+                            :name "evaluation owner producer"))
+              (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
+                           "The original image worker is running after its attachment leaves.")
+              (test-assert (and *client-evaluator-active*
+                                (null (client-evaluator-work-owner *client-evaluator-active*)))
+                           "Abandoned work holds capacity without a delivery owner.")
+              (sb-ext:gc :full t)
+              (test-assert (eq control (sb-ext:weak-pointer-value control-weak))
+                           "The positive control deliberately retains its owner across collection.")
+              (test-assert (every (lambda (pointer) (null (sb-ext:weak-pointer-value pointer))) weak)
+                           "A blocked worker retains neither its owner nor its connection.")
+              (dotimes (index 3)
+                (test-assert
+                 (eq (client-evaluator-start
+                      other (list :evaluation :id (format nil "busy-~D" index) :forms '("(values)")))
+                     ':busy)
+                 "New requests are refused as busy instead of starting more workers."))
+              (test-assert (and (= calls 1)
+                                (= 3 (length replies))
+                                (every (lambda (packet)
+                                         (and (client-evaluation-reply-p packet)
+                                              (null (getf (rest packet) :succeeded-p))))
+                                       replies)
+                                (not (client-evaluator-closed-p other)))
+                           "Each refused request is answered as busy through its owner's delivery.")
+              (client-evaluator-start broken '(:evaluation :id "broken" :forms ("(values)")))
+              (test-assert (client-evaluator-closed-p broken)
+                           "A delivery that fails closes its owner."))
+         (sb-thread:signal-semaphore gate)
+         (test-assert (task-tests--wait-until (lambda () (null *client-evaluator-active*)) 5)
+                      "Only actual worker exit releases shared capacity.")))))
   nil)
 
 (defclass client-evaluation-tests-output (trivial-gray-streams:fundamental-character-output-stream)

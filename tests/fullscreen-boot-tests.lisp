@@ -195,10 +195,10 @@
             (localgroup-screen-resized screen)
             (test-assert (= 72 (clinedi:frame-snapshot-width (localgroup-screen--loading-frame screen)))
                          "the boot panel follows terminal resizes")
-            (localgroup-screen-handle-packet
-             screen (list :frame :height 18 :width (- 72 (screen-panel-width panel 72) 1)
-                                 :complete-p t :rows '((0 "restored"))
-                                 :cursor-row 1 :cursor-column 0 :cursor-visible-p t))
+            (localgroup-screen-show-frame
+             screen (clinedi:make-frame-snapshot
+                     '("restored") :height 18 :width (- 72 (screen-panel-width panel 72) 1))
+             :cursor-row 1)
             (test-assert (and (null (localgroup-screen-loading screen))
                               (null (localgroup-screen-boot-ui screen))
                               (eq (localgroup-screen-painted-layout screen) ':beside)
@@ -372,12 +372,12 @@
 
 (-> test-fullscreen-boot-idle-resize () null)
 (defun test-fullscreen-boot-idle-resize ()
-  "Repaint a waiting boot screen on a relayed resize without waiting for input."
-  (let* ((terminal                    (make-instance 'queued-recording-terminal :columns 80 :rows 24))
-         (waits                       0)
-         (repainted-p                 nil)
-         (*terminal-resize-pending-p* nil)
-         (boot-screen                 (symbol-function 'terminal-ui-boot-screen)))
+  "Repaint a waiting boot screen on a resize without waiting for input."
+  (let* ((terminal    (make-instance 'queued-recording-terminal :columns 80 :rows 24))
+         (waits       0)
+         (repainted-p nil)
+         (pending     nil)
+         (boot-screen (symbol-function 'terminal-ui-boot-screen)))
     (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t))
       (test-call-with-function-replacements
        (list (list 'terminal-ui-boot-screen
@@ -391,7 +391,10 @@
          (test-assert
           (eq ':start
               (terminal-ui-boot-sequence
-               ui :duration 0 :linger-p t :resize-callback #'application-pending-terminal-size
+               ui :duration 0 :linger-p t
+               :resize-callback (lambda (target)
+                                  (declare (ignore target))
+                                  (shiftf pending nil))
                :wait-function
                (lambda (seconds)
                  (declare (ignore seconds))
@@ -399,7 +402,7 @@
                  (let ((phase-count (length *terminal-ui-boot-sequence-phases*)))
                    (cond
                      ((= waits (1+ phase-count))
-                      (terminal-relayed-resize-publish terminal 9 28))
+                      (setf pending (cons 9 28)))
                      ((= waits (+ 2 phase-count))
                       (test-assert repainted-p "resize redraws before a start key is available")
                       (queued-recording-terminal-enqueue terminal '(:insert " ")))

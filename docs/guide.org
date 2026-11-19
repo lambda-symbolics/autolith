@@ -607,9 +607,9 @@ Clicking a web address in the fullscreen transcript opens it in the default
 browser, and every fenced code block ends with a =⧉ copy= label that copies the
 block's source. Copies go to the host clipboard through wl-clipboard, xclip or
 xsel, pbcopy, or the Windows clipboard, and the terminal also receives an OSC 52
-request, so a terminal reached over SSH or a localgroup relay copies on your own
-machine. Web addresses in every mode are emitted as OSC 8 hyperlinks, which
-terminals open with their usual modifier-click.
+request, so a terminal reached over SSH copies on your own machine. Web
+addresses in every mode are emitted as OSC 8 hyperlinks, which terminals open
+with their usual modifier-click.
 
 Clicking a tool call's header in the fullscreen transcript inserts its Lisp
 invocation, such as =(resource.read :uri "file:///tmp/notes.org")=, into the

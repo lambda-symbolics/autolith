@@ -26,6 +26,20 @@
 ;;;   (:state :id N)
 ;;;   (:operation :id N :method METHOD :params PARAMS)
 ;;;
+;;; A client that says :presents-p when it attaches, with the :rows and
+;;; :columns of its pane, renders the channel itself: it receives the
+;;; channel's (:ui :operation OPERATION ...) presentation events, reads its
+;;; own keys, and also writes
+;;;
+;;;   (:input :id N :action ACTION [:text TEXT] [:images PATHNAMES])
+;;;   (:event :id N :event EVENT), a key for the channel's open picker
+;;;   (:geometry :id N :rows ROWS :columns COLUMNS)
+;;;   (:input-history :id N :start START :limit LIMIT)
+;;;   (:detach :id N), before it leaves a channel that is to keep running
+;;;
+;;; One that also says :watches-p only watches: the channel is not laid out
+;;; for its pane, asks it nothing, and refuses its input.
+;;;
 ;;; and the server answers each with (:reply :id N :ok T ...) or
 ;;; (:reply :id N :error MESSAGE), in order with the events. An operation
 ;;; runs on a thread of its own, since it may wait for the channel while the
@@ -60,23 +74,37 @@
                        :approves-p           (getf arguments :approves-p t)
                        :evaluates-p          (not (null (getf arguments :evaluates-p)))
                        :cancels-evaluation-p (eq (getf arguments :cancels-evaluation-p) t)
+                       :presents-p           (not (null (getf arguments :presents-p)))
+                       :watches-p            (not (null (getf arguments :watches-p)))
+                       :pid                  (let ((pid (getf arguments :client-pid)))
+                                               (and (typep pid '(integer 1)) pid))
                        :stream               stream
                        :socket               socket
-                       :transport-lock       (image-daemon:daemon-runtime-lock session))))
+                       :transport-lock       (image-daemon:daemon-runtime-lock session)))
+         (inputs      (make-instance 'client-input-queue)))
     (unwind-protect
          (progn
+           (when (channel-client-controls-p client)
+             (localgroup--client-geometry application arguments))
            (handler-case
                (application-clients-add
                 application client
                 :after-sequence (getf arguments :after-sequence)
                 :attached       (list :attached
-                                      :client-id (channel-client-identifier client)
-                                      :session-id (image-daemon:daemon-runtime-identifier session)
-                                      :state      (localgroup-status-snapshot session)))
+                                      :client-id      (channel-client-identifier client)
+                                      :session-id     (image-daemon:daemon-runtime-identifier session)
+                                      :server-version *autolith-version*
+                                      :state          (localgroup-status-snapshot session)))
              (localgroup-error (condition)
               (daemon-write-packet stream (list :error  :message (autolith-error-message condition)
                                                :retry-p (localgroup-error-retry-p condition)))
               (return-from localgroup--serve-client nil)))
+           (application-clients-note-controller application client)
+           (when (channel-client-controls-p client)
+             ;; A terminal shows the channel from now on.
+             (localgroup--note-controller-attached session)
+             (application-sync-window-title application)
+             (application-world-attached application))
            ;; A client of another version may send what this one cannot read:
            ;; an undecodable packet is skipped and a malformed command dropped.
            (loop for command = (handler-case (daemon-read-decodable-packet stream)
@@ -84,25 +112,151 @@
                                    nil))
                  while (and command (not (channel-client-closed-p client)))
                  do (when (localgroup-message-p command)
-                      (let ((reply (lambda ()
-                                     (channel-client-enqueue
-                                      client (localgroup--client-reply
-                                              session command :attachment (channel-client-attachment client))))))
-                        ;; Operations may wait for an approval answered on this connection.
-                        (if (eq (first command) ':operation)
-                            (make-thread reply :name "Autolith client operation")
-                            (funcall reply))))))
-      (channel-client-close client)))
+                      (application-clients-note-controller application client)
+                      (localgroup--run-client-command session command
+                                                      :client client
+                                                      :inputs inputs))))
+      (client-input-queue-close inputs)
+      (channel-client-close client)
+      ;; A session that serves one terminal ends when nobody is left at it.
+      (when (and (channel-client-controls-p client)
+                 (not (application-clients-controlled-p application :except client)))
+        (localgroup--controller-lost session))))
   nil)
 
-(-> localgroup--client-reply (localgroup-session list &key (:attachment (option image-daemon:attachment))) list)
-(defun localgroup--client-reply (session packet &key attachment)
-  "Run the client command PACKET in SESSION's channel and return its reply."
+(-> localgroup--queued-input-p (list) boolean)
+(defun localgroup--queued-input-p (command)
+  "Return true when client COMMAND is input that waits its turn: every action but cancelling."
+  (and (eq (first command) ':input)
+       (not (member (getf (rest command) :action) '(:interrupt :escape)))))
+
+(-> localgroup--client-geometry (application list) null)
+(defun localgroup--client-geometry (application arguments)
+  "Lay APPLICATION's presentation out for a client whose pane has ARGUMENTS' :ROWS and :COLUMNS."
+  (let ((presentation (application-presentation application)))
+    (when presentation
+      (channel-presentation-set-geometry presentation
+                                         :rows     (getf arguments :rows)
+                                         :columns  (getf arguments :columns)
+                                         :styled-p (getf arguments :styled-p t))))
+  nil)
+
+
+;;;; -- Ordered Input --
+
+(defclass client-input-queue ()
+  ((lock
+    :initform      (make-lock "Autolith client input")
+    :reader        client-input-queue-lock
+    :documentation "The lock guarding the waiting input.")
+   (condition-variable
+    :initform      (make-condition-variable :name "Autolith client input")
+    :reader        client-input-queue-condition-variable
+    :documentation "Signaled when input arrives or the queue closes.")
+   (functions
+    :initform      (make-deque)
+    :reader        client-input-queue-functions
+    :documentation "The input not yet run, oldest first.")
+   (thread
+    :initform      nil
+    :accessor      client-input-queue-thread
+    :documentation "The thread running the input, started with the first one.")
+   (closed-p
+    :initform      nil
+    :accessor      client-input-queue-closed-p
+    :type          boolean
+    :documentation "Whether the client left."))
+  (:documentation "One client's input, run in the order it arrived on a thread beside the connection's reader."))
+
+(-> client-input-queue--run (client-input-queue) null)
+(defun client-input-queue--run (queue)
+  "Run QUEUE's input in order until its client leaves."
+  (loop
+    (let ((function (with-lock-held ((client-input-queue-lock queue))
+                      (loop
+                        (cond
+                          ((client-input-queue-closed-p queue)
+                           (return nil))
+                          ((not (deque-empty-p (client-input-queue-functions queue)))
+                           (return (deque-pop-front (client-input-queue-functions queue))))
+                          (t
+                           (condition-wait (client-input-queue-condition-variable queue)
+                                           (client-input-queue-lock queue))))))))
+      (unless function
+        (return nil))
+      (funcall function))))
+
+(-> client-input-queue-push (client-input-queue function) null)
+(defun client-input-queue-push (queue function)
+  "Run FUNCTION after the input that arrived before it."
+  (with-lock-held ((client-input-queue-lock queue))
+    (unless (client-input-queue-closed-p queue)
+      (deque-push-back (client-input-queue-functions queue) function)
+      (unless (client-input-queue-thread queue)
+        (setf (client-input-queue-thread queue)
+              (make-thread (lambda () (client-input-queue--run queue))
+                           :name "Autolith client input")))
+      (condition-notify (client-input-queue-condition-variable queue))))
+  nil)
+
+(-> client-input-queue-close (client-input-queue) null)
+(defun client-input-queue-close (queue)
+  "Drop QUEUE's waiting input and let its thread end after what it runs now."
+  (with-lock-held ((client-input-queue-lock queue))
+    (setf (client-input-queue-closed-p queue) t)
+    (deque-clear (client-input-queue-functions queue))
+    (condition-notify (client-input-queue-condition-variable queue)))
+  nil)
+
+(defparameter *localgroup-watching-client-commands* '(:state :input-history)
+  "The commands a client that only watches a channel may send: those that change nothing.")
+
+(-> localgroup--run-client-command
+    (localgroup-session list &key (:client channel-client) (:inputs client-input-queue)) null)
+(defun localgroup--run-client-command (session command &key client inputs)
+  "Run COMMAND for CLIENT and queue its reply: at once, beside the reader, or on a thread of its own.
+
+An operation may wait for an approval answered on this connection, so it gets
+a thread. Input may run a command that asks this client a question, so it
+runs beside the reader through INPUTS, in the order it arrived. Each command
+is this call's own, however many the reader takes meanwhile."
+  (flet ((reply ()
+           (channel-client-enqueue
+            client (localgroup--client-reply session command
+                                             :attachment (channel-client-attachment client)
+                                             :watching-p (channel-client-watches-p client)))))
+    (cond
+      ((eq (first command) ':operation)
+       (make-thread #'reply :name "Autolith client operation"))
+      ((localgroup--queued-input-p command)
+       (client-input-queue-push inputs #'reply))
+      (t
+       (reply))))
+  nil)
+
+(-> localgroup--client-reply
+    (localgroup-session list
+     &key (:attachment (option image-daemon:attachment)) (:watching-p boolean))
+    list)
+(defun localgroup--client-reply (session packet &key attachment watching-p)
+  "Run the client command PACKET in SESSION's channel and return its reply.
+
+ATTACHMENT is the one the command came over, which an evaluation's answer is
+checked against. A client that only watches, as WATCHING-P says, is refused
+whatever would change the channel."
   (let ((identifier (getf (rest packet) :id)))
     (handler-case
-        (client-portable
-         (list* :reply :id identifier :ok t
-                 (localgroup--client-command session (first packet) (rest packet) :attachment attachment)))
+        (progn
+          (when (and watching-p
+                     (not (member (first packet) *localgroup-watching-client-commands*)))
+            (error 'localgroup-error
+                   :message    "A client that only watches a channel sends it nothing."
+                   :operation  ':client
+                   :session-id (image-daemon:daemon-runtime-identifier session)))
+          (client-portable
+           (list* :reply :id identifier :ok t
+                  (localgroup--client-command session (first packet) (rest packet)
+                                              :attachment attachment))))
       (error (condition)
         (list :reply        :id identifier
                      :error (bounded-string (princ-to-string condition) :limit 1000))))))
@@ -169,6 +323,44 @@
            nil))
         (:state
          (list :state (localgroup-status-snapshot session)))
+        (:input
+         (let ((action (getf arguments :action))
+               (text   (getf arguments :text))
+               (images (getf arguments :images)))
+           (unless (and controller (keywordp action) (typep text '(or null string))
+                        (listp images) (every #'stringp images))
+             (refuse "An input names its action and may carry text and image pathnames."))
+           (application-localgroup-resume application)
+           (list :handled-p
+                 (not (null (input-port-apply
+                             controller action
+                             (cond
+                               (images
+                                (user-message-input-create
+                                 :text            (or text "")
+                                 :image-pathnames (mapcar #'image-input-validate-pathname images)))
+                               (t
+                                text))))))))
+        (:geometry
+         (localgroup--client-geometry application arguments)
+         nil)
+        (:detach
+         (localgroup--mark-explicit-detach session)
+         nil)
+        (:event
+         (let ((event        (getf arguments :event))
+               (presentation (application-presentation application)))
+           (list :accepted-p
+                 (and presentation
+                      (localgroup--terminal-event-p event)
+                      (presentation-terminal-offer-event
+                       (terminal-ui-terminal presentation) event)))))
+        (:input-history
+         (let ((start (getf arguments :start))
+               (limit (getf arguments :limit)))
+           (unless (and (typep start '(integer 0)) (typep limit '(integer 1)))
+             (refuse "An input history page names its start and its limit."))
+           (list :entries (application-input-history-page application :start start :limit limit))))
         (:operation
          (let ((method (getf arguments :method))
                (params (client-json (getf arguments :params))))
@@ -278,10 +470,10 @@
 (-> localgroup-client-connect
     (cons &key (:name string) (:event-function function) (:approves-p boolean)
           (:evaluates-p boolean) (:after-sequence (option integer))
-          (:cancelled-p (option function)))
+          (:cancelled-p (option function)) (:arguments list))
     localgroup-client-connection)
 (defun localgroup-client-connect (entry &key (name "client") event-function (approves-p t)
-                                           evaluates-p after-sequence cancelled-p)
+                                           evaluates-p after-sequence cancelled-p arguments)
   "Connect to the channel of localgroup endpoint ENTRY as a structured client NAME.
 
 EVENT-FUNCTION is called on the reader thread with each event, and with
@@ -289,7 +481,8 @@ EVENT-FUNCTION is called on the reader thread with each event, and with
 for them. APPROVES-P says whether this client answers approvals; one that
 does not leaves them to a terminal or another client. With EVALUATES-P the
 connection runs the forms the channel sends in this image and answers them
-itself; EVENT-FUNCTION never sees those requests."
+itself; EVENT-FUNCTION never sees those requests. ARGUMENTS is a plist of
+what else the client states, such as :PRESENTS-P and its pane's size."
   (let ((record (rest entry))
         (socket nil)
         (stream nil))
@@ -302,10 +495,12 @@ itself; EVENT-FUNCTION never sees those requests."
                                      :version   *daemon-protocol-version*
                                      :token     (localgroup--record-token record)
                                      :operation ':client
-                                     :arguments (list :name name :approves-p approves-p
-                                                      :evaluates-p     evaluates-p
-                                                 :cancels-evaluation-p evaluates-p
-                                                      :after-sequence  after-sequence)))
+                                     :arguments (list* :name                 name
+                                                       :approves-p           approves-p
+                                                       :evaluates-p          evaluates-p
+                                                       :cancels-evaluation-p evaluates-p
+                                                       :after-sequence       after-sequence
+                                                       arguments)))
           (let ((greeting (localgroup-client--read-greeting stream cancelled-p)))
             (unless (eq (first greeting) ':attached)
               (error 'localgroup-client-rejected
@@ -348,33 +543,45 @@ itself; EVENT-FUNCTION never sees those requests."
           (setf (localgroup-client-connection-write-failed-p connection) t)))))
   nil)
 
+(-> localgroup-client--take-identifier (localgroup-client-connection &key (:await-p boolean)) integer)
+(defun localgroup-client--take-identifier (connection &key await-p)
+  "Return the identifier CONNECTION's next command takes, registering a reply to wait for when AWAIT-P."
+  (with-lock-held ((localgroup-client-connection-lock connection))
+    (when (or (localgroup-client-connection-closed-p connection)
+              (localgroup-client-connection-checkpoint-reconnect-id connection))
+      (error 'localgroup-error
+             :message   "The client connection is not accepting requests."
+             :operation ':client))
+    (let ((identifier (incf (localgroup-client-connection-next-identifier connection))))
+      (when await-p
+        (setf (gethash identifier (localgroup-client-connection-replies connection)) nil))
+      identifier)))
+
+(-> localgroup-client--write
+    (localgroup-client-connection keyword &key (:identifier integer) (:arguments list)) null)
+(defun localgroup-client--write (connection command &key identifier arguments)
+  "Write COMMAND with IDENTIFIER and ARGUMENTS, disconnecting when the transport fails."
+  (let ((frame (image-daemon:daemon-packet-string (list* command :id identifier arguments))))
+    (handler-case (localgroup-client--write-frame connection frame)
+      (error (condition)
+        (localgroup-client--disconnect connection)
+        (error 'localgroup-request-interrupted
+               :message      (format nil "The request was interrupted during transport: ~A. Its execution outcome is unknown."
+                                     condition)
+               :operation ':client :identifier identifier :command command
+               :reconnect-id (localgroup-client-connection-checkpoint-reconnect-id connection)))))
+  nil)
+
 (-> localgroup-client-call (localgroup-client-connection keyword &rest t) list)
 (defun localgroup-client-call (connection command &rest arguments)
   "Send COMMAND with ARGUMENTS and return its reply's fields, or signal its error.
 
-Each call owns one pending reply entry, removed on every exit. Socket
-writes are serialized separately so blocked I/O cannot prevent teardown."
-  (let ((identifier (with-lock-held ((localgroup-client-connection-lock connection))
-                      (when (or (localgroup-client-connection-closed-p connection)
-                                (localgroup-client-connection-checkpoint-reconnect-id connection))
-                        (error 'localgroup-error
-                               :message   "The client connection is not accepting requests."
-                               :operation ':client))
-                      (let ((identifier (incf (localgroup-client-connection-next-identifier connection))))
-                        (setf (gethash identifier (localgroup-client-connection-replies connection)) nil)
-                        identifier))))
+Each call owns one pending reply entry, removed on every exit."
+  (let ((identifier (localgroup-client--take-identifier connection :await-p t)))
     (unwind-protect
          (progn
-           (let ((frame (image-daemon:daemon-packet-string (list* command :id identifier arguments))))
-             (handler-case
-                  (localgroup-client--write-frame connection frame)
-               (error (condition)
-                 (localgroup-client--disconnect connection)
-                (error 'localgroup-request-interrupted
-                       :message      (format nil "The request was interrupted during transport: ~A. Its execution outcome is unknown."
-                                             condition)
-                       :operation ':client :identifier identifier :command command
-                       :reconnect-id (localgroup-client-connection-checkpoint-reconnect-id connection)))))
+           (localgroup-client--write connection command :identifier identifier
+                                                        :arguments  arguments)
            (with-lock-held ((localgroup-client-connection-lock connection))
              (loop
                (let ((reply (gethash identifier (localgroup-client-connection-replies connection))))
@@ -393,6 +600,19 @@ writes are serialized separately so blocked I/O cannot prevent teardown."
                                     (localgroup-client-connection-lock connection))))))))
       (with-lock-held ((localgroup-client-connection-lock connection))
         (remhash identifier (localgroup-client-connection-replies connection))))))
+
+(-> localgroup-client-send (localgroup-client-connection keyword &rest t) null)
+(defun localgroup-client-send (connection command &rest arguments)
+  "Send COMMAND with ARGUMENTS and return at once.
+
+Its reply is dropped when it comes, unless the channel refused the command:
+then the connection's event function receives (:REFUSED :MESSAGE TEXT).
+
+Use this for a command whose outcome arrives as events, and which the
+channel may answer by asking this client something first."
+  (localgroup-client--write connection command
+                            :identifier (localgroup-client--take-identifier connection)
+                            :arguments  arguments))
 
 (-> localgroup-client-close (localgroup-client-connection) null)
 (defun localgroup-client-close (connection)
@@ -455,13 +675,21 @@ is skipped and a malformed one dropped."
                   ((not (localgroup-message-p packet))
                    nil)
                   ((eq (first packet) ':reply)
-                   (with-lock-held ((localgroup-client-connection-lock connection))
-                     (let ((identifier (getf (rest packet) :id))
-                           (replies    (localgroup-client-connection-replies connection)))
-                       (when (nth-value 1 (gethash identifier replies))
-                         (setf (gethash identifier replies) packet)
-                         (sb-thread:condition-broadcast
-                          (localgroup-client-connection-condition-variable connection))))))
+                   (let ((awaited-p
+                           (with-lock-held ((localgroup-client-connection-lock connection))
+                             (let ((identifier (getf (rest packet) :id))
+                                   (replies    (localgroup-client-connection-replies connection)))
+                               (when (nth-value 1 (gethash identifier replies))
+                                 (setf (gethash identifier replies) packet)
+                                 (sb-thread:condition-broadcast
+                                  (localgroup-client-connection-condition-variable connection))
+                                 t)))))
+                     ;; Nobody waits for the reply to a command that was only
+                     ;; sent; its refusal still has to reach the client.
+                     (when (and (not awaited-p) event-function
+                                (stringp (getf (rest packet) :error)))
+                       (funcall event-function
+                                (list :refused :message (getf (rest packet) :error))))))
                   ((and evaluates-p (eq (first packet) ':evaluation))
                    (localgroup-client--evaluate connection packet))
                   ((and evaluates-p (eq (first packet) ':cancel-evaluation))

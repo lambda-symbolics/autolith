@@ -55,14 +55,9 @@
     (unwind-protect
          (progn
            (configuration-ensure-directories configuration)
-           (multiple-value-bind (new-application controller relay conversation)
-               (test-localgroup--relay-application configuration)
-             (declare (ignore controller relay conversation))
-             (setf application new-application
-                   session (localgroup-start new-application)
-                   pathname
-                   (test-localgroup--write-startup-ticket
-                    new-application session ':detach)))
+           (setf application (values (test-localgroup--leased-application configuration))
+                 session     (localgroup-start application)
+                 pathname    (test-localgroup--write-startup-ticket application session ':detach))
            (let ((record (localgroup-handoff--read configuration pathname)))
              (setf process
                    (localgroup-handoff--launch-supervised
@@ -167,11 +162,8 @@
     (unwind-protect
          (progn
            (configuration-ensure-directories configuration)
-           (multiple-value-bind (new-application controller relay conversation)
-               (test-localgroup--relay-application
-                configuration :persisted-p t)
-             (declare (ignore controller relay conversation))
-             (setf application new-application))
+           (setf application (values (test-localgroup--leased-application configuration
+                                                                         :persisted-p t)))
            (let ((*active-application* application))
              (test-call-with-function-replacements
               (list

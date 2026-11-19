@@ -532,36 +532,6 @@ second reports whether shutdown was prepared."
        controller pending-publication nil))
     (values active-p prepared-p)))
 
-(-> application-input-controller--defer-lisp-submission-p
-    (application-input-controller (or string user-message-input))
-    boolean)
-(defun application-input-controller--defer-lisp-submission-p (controller input)
-  "Continue incomplete Lisp INPUT or reject its image attachments in place."
-  (let* ((text    (user-message-input-text input))
-         (async-p (input-async-lisp-p text))
-         (source  (if async-p
-                      (subseq text (input-async-lisp-prefix-length text))
-                      text)))
-    (when (or async-p (input-lisp-p text))
-      (let* ((application
-               (application-input-controller-application controller))
-             (ui (application-ui application)))
-        (cond
-          ((user-message-input-image-pathnames input)
-           (application-present
-            application
-            (application-failure-line "local Lisp input cannot include image attachments"))
-           (terminal-ui-set-input ui input)
-           t)
-          ((application-lisp-input-incomplete-p source)
-           (terminal-ui-set-input
-            ui
-            (application-lisp-input-with-text
-             input (concatenate 'string text (string #\Newline))))
-           t)
-          (t
-           nil))))))
-
 (-> application-input-controller--virtual-work-items
     (application-input-controller)
     list)
@@ -959,6 +929,26 @@ The caller must hold CONTROLLER's publication lock."
      (when pending-publication
        (application-input-controller--publish-pending-publication-locked
         controller pending-publication nil))))
+  (application-input-controller--note-turn controller)
+  nil)
+
+(-> application-input-controller-turn-state (application-input-controller) list)
+(defun application-input-controller-turn-state (controller)
+  "Return whether CONTROLLER works, cancels its turn, or holds a recalled follow-up, as :TURN fields.
+
+The slots are read without the controller's lock, so presenting a change
+never waits for work that holds it."
+  (list :active-p     (not (null (application-input-controller-active-p controller)))
+        :cancelling-p (not (null (application-input-controller-turn-cancellation-p controller)))
+        :editing-p    (not (null (application-input-controller-follow-up-edit-index controller)))))
+
+(-> application-input-controller--note-turn (application-input-controller) null)
+(defun application-input-controller--note-turn (controller)
+  "Tell a hosted channel's clients whether CONTROLLER still works, when that changed."
+  (let ((presentation (application-presentation
+                       (application-input-controller-application controller))))
+    (when presentation
+      (channel-presentation-note-turn presentation)))
   nil)
 
 (-> application-input-controller-turn-active-p
@@ -2503,103 +2493,77 @@ may execute immediately; other Lisp waits for the idle boundary."
        (application-input-controller--publish-counts controller))
      (not (null selected-work)))))
 
+(defmethod input-port-turn-active-p ((controller application-input-controller))
+  "Return true while CONTROLLER's main thread is processing one work item."
+  (application-input-controller-turn-active-p controller))
+
+(defmethod input-port-follow-up-editing-p ((controller application-input-controller))
+  "Return true while CONTROLLER has recalled one queued follow-up into the draft."
+  (application-input-controller--follow-up-editing-p controller))
+
+(defmethod input-port-apply
+    ((controller application-input-controller) action &optional payload)
+  "Act on input ACTION in CONTROLLER's session, whether its own reader or a client asked."
+  (case action
+    (:submit
+     (unless (application-input-controller--handle-recalled-submission controller payload)
+       (application-input-controller--handle-submission
+        controller payload
+        :steer-p (application-input-controller-turn-active-p controller)))
+     t)
+    (:queue
+     (unless (application-input-controller--handle-recalled-submission
+              controller payload :prefer-steering-p nil)
+       (application-input-controller--handle-queue-submission controller payload))
+     t)
+    (:command
+     (application-input-controller--handle-submission controller payload :steer-p nil)
+     t)
+    (:detach
+     (application-input-controller--handle-submission controller "(detach)" :steer-p nil)
+     t)
+    (:interrupt
+     (case (application-input-controller--active-turn-interrupt-action controller)
+       (:force
+        (application-input-controller--force-interrupt-exit controller)
+        t)
+       (:hint
+        t)
+       (t
+        (not (null (application-input-controller--request-active-turn-cancellation
+                    controller
+                    :force-exit-window-p t
+                    :pause-queued-work-p t))))))
+    (:escape
+     (not (null (or (application-input-controller--turn-cancellation-active-p controller)
+                    (application-input-controller--request-active-turn-cancellation
+                     controller)))))
+    (:restore-follow-up
+     (application-input-controller--restore-follow-up-edit controller)
+     t)
+    (:cleared
+     (application-input-controller--clear-follow-up-edit controller)
+     t)
+    (:edit-queue
+     (application-input-controller--recall-follow-up controller)
+     t)
+    (:cycle-queue
+     (application-input-controller--cycle-follow-up controller payload)
+     t)
+    (:end-of-input
+     (application-input-controller--request-exit controller ':end-of-input)
+     t)
+    (:exit
+     (application-input-controller--request-exit controller ':interrupt)
+     t)))
+
 (-> application-input-controller--process-event
     (application-input-controller t)
     null)
 (defun application-input-controller--process-event (controller event)
   "Apply terminal EVENT and publish any resulting work or exit request."
-  (let ((ui (application-ui
-             (application-input-controller-application controller)))
-        (follow-up-editing-p
-          (application-input-controller--follow-up-editing-p controller)))
-    (when (terminal-ui-boot-divert-event ui event)
-      (return-from application-input-controller--process-event nil))
-    (when (and (eq event ':interrupt) follow-up-editing-p)
-      (terminal-ui-process-event
-       ui event :queue-editing-p follow-up-editing-p)
-      (application-input-controller--restore-follow-up-edit controller)
-      (setf follow-up-editing-p nil))
-    (let ((active-interrupt-action
-            (and (eq event ':interrupt)
-                 (application-input-controller--active-turn-interrupt-action
-                  controller))))
-      (cond
-        ((eq event ':detach)
-         (application-input-controller--handle-submission controller "(detach)" :steer-p nil))
-        ((channel-command-text event)
-         (application-input-controller--handle-submission
-          controller (channel-command-text event) :steer-p nil))
-        ((eq event ':stream-end)
-         (application-input-controller--request-exit
-          controller ':end-of-input))
-        ((eq active-interrupt-action ':force)
-         (application-input-controller--force-interrupt-exit controller))
-        ((eq active-interrupt-action ':hint)
-         nil)
-        ((and (eq event ':interrupt)
-              (application-input-controller--request-active-turn-cancellation
-               controller
-               :force-exit-window-p t
-               :pause-queued-work-p t))
-         nil)
-        ((and (eq event ':escape)
-              (terminal-ui-completion-menu-present-p ui))
-         (terminal-ui-process-event
-          ui event :queue-editing-p follow-up-editing-p)
-         nil)
-        ((and (eq event ':escape)
-              (or
-               (application-input-controller--turn-cancellation-active-p
-                controller)
-               (application-input-controller--request-active-turn-cancellation
-                controller)))
-         nil)
-        (t
-         (let ((turn-active-p
-                 (application-input-controller-turn-active-p controller)))
-           (multiple-value-bind (action payload)
-               (terminal-ui-process-event
-                ui
-                event
-                :queue-completion-p turn-active-p
-                :queue-editing-p    follow-up-editing-p)
-             (case action
-               (:cleared
-                (application-input-controller--clear-follow-up-edit controller))
-               (:submit
-                (unless
-                    (application-input-controller--defer-lisp-submission-p
-                     controller payload)
-                  (unless
-                      (application-input-controller--handle-recalled-submission
-                       controller payload)
-                    (application-input-controller--handle-submission
-                     controller
-                     payload
-                     :steer-p
-                     (application-input-controller-turn-active-p
-                      controller)))))
-               (:queue
-                (unless
-                    (application-input-controller--defer-lisp-submission-p
-                     controller payload)
-                  (unless
-                      (application-input-controller--handle-recalled-submission
-                       controller payload :prefer-steering-p nil)
-                    (application-input-controller--handle-queue-submission
-                     controller payload))))
-               (:edit-queue
-                (application-input-controller--recall-follow-up controller))
-               (:cycle-queue
-                (application-input-controller--cycle-follow-up
-                 controller payload))
-               (:end-of-input
-                (application-input-controller--request-exit
-                 controller ':end-of-input))
-               (:interrupt
-                (application-input-controller--request-exit
-                 controller ':interrupt))))))))
-   nil))
+  (terminal-ui-dispatch-event
+   (application-ui (application-input-controller-application controller)) controller event))
 
 (-> application-input-controller--input-ready-p
     (application-input-controller)

@@ -154,10 +154,10 @@
                     (declare (ignore entry arguments))
                     (push operation operations)
                     (list :ok :status (status))))
-            (list 'localgroup-attach-record
-                  (lambda (configuration entry mode &key panel)
-                    (declare (ignore configuration entry panel))
-                    (push (list identifier mode) attached)
+            (list 'channel-view-run
+                  (lambda (view &rest arguments)
+                    (declare (ignore arguments))
+                    (push (channel-subscription-identifier view) attached)
                     nil))
             (list 'localgroup-relay-exit
                   (lambda (&rest arguments) (declare (ignore arguments))))
@@ -424,22 +424,20 @@
                 (when open-error (error open-error))
                 (push arguments opened)
                 (values identifier started-p)))
-        (list 'localgroup--find-record
-              (lambda (find-configuration session-id)
-                (declare (ignore find-configuration))
-                (test-assert (member session-id (list identifier "c6uouHJ") :test #'string=)
-                             "the client attaches to the channel the server opened")
-                record))
-        (list 'localgroup-attach-record
-              (lambda (attach-configuration entry mode &key panel screen notice client-version deadline attached-function)
-                (declare (ignore attach-configuration notice client-version deadline))
-                (test-assert (and panel screen)
-                             "plain starts and explicit opens attach with the same world navigation UI")
-                (push (list (rest entry) mode) attached)
-                (when attach-error (error attach-error))
-                (when attached-function (funcall attached-function))
-                (when switch-to
-                  (list :switch :session-id (shiftf switch-to nil)))))
+        (list 'channel-view-run
+              (lambda (view &key attached-function notice client-version boot-p)
+                (declare (ignore notice client-version boot-p))
+                (let ((channel (channel-subscription-identifier view)))
+                  (test-assert (member channel (list identifier "c6uouHJ") :test #'string=)
+                               "the client attaches to the channel the server opened")
+                  (test-assert (localgroup-screen-panel (channel-view-screen view))
+                               "plain starts and explicit opens attach with the same world navigation UI")
+                  (push (list channel (if (channel-view-read-only-p view) ':read-only ':control))
+                        attached)
+                  (when attach-error (error attach-error))
+                  (when attached-function (funcall attached-function))
+                  (when switch-to
+                    (list ':switch :session-id (shiftf switch-to nil))))))
         (list 'world-client-entry
               (lambda (candidate)
                 (declare (ignore candidate))

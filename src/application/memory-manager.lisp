@@ -614,8 +614,8 @@ keeps its side panel beside it. Restore the ordinary frame on every exit."
                   (setf (terminal-ui-live-output-suspended-p ui) t))
                 (loop
                   (terminal-ui-refresh-size ui nil)
-                  ;; The UI's own painter sends a hosted session's clients frames,
-                  ;; which they show beside their side panels like any other.
+                  ;; A channel without a terminal sends its clients these rows as a
+                  ;; page, which they show beside their side panels.
                   (with-terminal-ui-locked (ui)
                     (multiple-value-bind (rows row column visible-p) (memory-manager--frame manager)
                       (setf (fullscreen-terminal-ui-cursor-visible-p ui) visible-p)

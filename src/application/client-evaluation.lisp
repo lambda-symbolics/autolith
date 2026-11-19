@@ -80,14 +80,14 @@ another version adds are ignored."
 (defun application-evaluating-attachment (application)
   "Return the attachment of the client that evaluates forms for APPLICATION's channel, or NIL.
 
-The controlling terminal comes first, then the structured client attached last."
-  (let* ((ui         (application-ui application))
-         (controller (and ui (localgroup-terminal-controller (terminal-ui-terminal ui)))))
+The terminal client its user is at comes first, then the client attached last."
+  (let ((controller (application-controlling-client application)))
     (find-if (lambda (attachment)
                (and (attachment-evaluates-p attachment)
                     (not (image-daemon:attachment-closed-p attachment))))
-             (append (and controller (list controller))
-                     (mapcar #'channel-client-attachment (application-clients application))))))
+             (mapcar #'channel-client-attachment
+                     (append (and controller (list controller))
+                             (application-clients application))))))
 
 (-> application-evaluate-on-client
     (application list &key (:restart-name (option string))
@@ -221,15 +221,13 @@ The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
             :text (bounded-string text :limit *self-evaluation-character-limit*)))))
 
 (defclass client-evaluator ()
-  ((answers :initform nil :accessor client-evaluator-answers :type list
-            :documentation "Bounded finished packets awaiting terminal output, newest first.")
-   (work :initform nil :accessor client-evaluator-work
+  ((work :initform nil :accessor client-evaluator-work
          :documentation "This owner's current work token, or NIL after abandonment.")
    (closed-p :initform nil :accessor client-evaluator-closed-p :type boolean
              :documentation "Whether this attachment stopped accepting evaluation work and replies.")
    (delivery :initarg :delivery :initform nil :accessor client-evaluator-delivery
              :type          (option function)
-             :documentation "A bounded structured transport delivery callback, or NIL for terminal polling."))
+             :documentation "The bounded transport callback a finished answer is handed to, or NIL without one."))
   (:documentation "Attachment-owned evaluation delivery, independent of an uncooperative worker."))
 
 (defclass client-evaluator-work ()
@@ -245,9 +243,6 @@ The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
 (defvar *client-evaluator-active* nil
   "The admitted work token, held until its worker really exits, including abandoned work.")
 
-(defparameter *client-evaluator-answer-limit* 8
-  "Maximum bounded terminal answer packets retained by one attached evaluator.")
-
 (-> client-evaluator-close (client-evaluator) null)
 (defun client-evaluator-close (evaluator)
   "Abandon EVALUATOR without waiting for Lisp code; sever its work and delivery references."
@@ -256,7 +251,6 @@ The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
       (setf (client-evaluator-work-owner (client-evaluator-work evaluator)) nil))
     (setf (client-evaluator-work evaluator) nil
           (client-evaluator-delivery evaluator) nil
-          (client-evaluator-answers evaluator) nil
           (client-evaluator-closed-p evaluator) t))
   nil)
 
@@ -268,33 +262,22 @@ The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
       (when (and (stringp identifier) work
                  (equal identifier (client-evaluator-work-identifier work)))
         (setf (client-evaluator-work-owner work) nil
-              (client-evaluator-work evaluator) nil)))
-    (setf (client-evaluator-answers evaluator)
-          (remove identifier (client-evaluator-answers evaluator)
-                  :key (lambda (packet) (getf (rest packet) :evaluation)) :test #'equal)))
+              (client-evaluator-work evaluator) nil))))
   nil)
 
 (-> client-evaluator--deliver (client-evaluator list &optional (option client-evaluator-work)) null)
 (defun client-evaluator--deliver (evaluator packet &optional work)
-  "Deliver a bounded PACKET outside the admission lock, or queue it with finite backpressure."
-  (let ((delivery   nil)
-        (overflow-p nil))
-    (with-lock-held (*client-evaluator-lock*)
-      (when (and (not (client-evaluator-closed-p evaluator))
-                 (or (null work) (eq evaluator (client-evaluator-work-owner work))))
-        (cond
-          ((client-evaluator-delivery evaluator)
-           (setf delivery (client-evaluator-delivery evaluator)))
-          ((< (length (client-evaluator-answers evaluator)) *client-evaluator-answer-limit*)
-           (push packet (client-evaluator-answers evaluator)))
-          (t
-           (setf overflow-p t)))))
-    (cond
-      (delivery
-       (handler-case (funcall delivery packet)
-         (error () (client-evaluator-close evaluator))))
-      (overflow-p
-       (client-evaluator-close evaluator))))
+  "Hand a bounded PACKET to EVALUATOR's delivery callback outside the admission lock.
+
+A closed owner, one without a callback, and one that WORK no longer belongs to get nothing."
+  (let ((delivery (with-lock-held (*client-evaluator-lock*)
+                    (and (not (client-evaluator-closed-p evaluator))
+                         (or (null work) (eq evaluator (client-evaluator-work-owner work)))
+                         (client-evaluator-delivery evaluator)))))
+    (when delivery
+      (handler-case (funcall delivery packet)
+        (error ()
+          (client-evaluator-close evaluator)))))
   nil)
 
 (-> client-evaluator--run (client-evaluator-work t) null)
@@ -354,11 +337,3 @@ The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
         evaluator (list :evaluated :evaluation (getf (rest request) :id) :succeeded-p nil
                         :text "Client evaluation is busy; abandoned work retains capacity until it exits."))))
     status))
-
-(-> client-evaluator-take (client-evaluator) list)
-(defun client-evaluator-take (evaluator)
-  "Drain bounded terminal replies; refuse a closed or overflowed evaluation owner."
-  (with-lock-held (*client-evaluator-lock*)
-    (when (client-evaluator-closed-p evaluator)
-      (client-evaluation--fail ':closed "Client evaluation delivery closed or exceeded its bounded queue."))
-    (nreverse (shiftf (client-evaluator-answers evaluator) nil))))

@@ -449,7 +449,6 @@
   test-fullscreen-boot-reader-diversion
   test-fullscreen-boot-idle-resize
   test-terminal-fullscreen-relayed-wheel
-  test-terminal-fullscreen-relay-startup-output
   test-detached-fullscreen-streaming
   test-fullscreen-authentication-lifecycle
   test-terminal-fullscreen-clicks
@@ -792,8 +791,7 @@
  test-world-client-refusal-ends-start test-world-client-switch-failures
  test-world-host-health test-world-client-attachment-recovery
  test-world-host-cleanup-retry
- test-main-attachment-choice test-localgroup-client-termination
- test-localgroup-client-cleanup-cause test-localgroup-client-accepted-setup-failure
+ test-main-attachment-choice test-localgroup-client-accepted-setup-failure
  test-localgroup-client-checkpoint-recovery
  test-main-world-client-cleanup-cause
  test-application-conversation-maintenance
@@ -807,6 +805,13 @@
   test-portable-cycles
   test-portable-structural-bounds
   test-portable-operation-rejections)
+
+(define-test-suite presentation
+  test-presentation-wire-forms
+  test-presentation-model-publishes
+  test-presentation-applies
+  test-presentation-pages-and-readers
+  test-presentation-client)
 
 (define-test-suite client-protocol
   test-client-protocol-channel
@@ -1090,6 +1095,7 @@
   test-conversation-input-history-recovery
   test-conversation-input-history-interruption
   test-conversation-input-history-page-load
+  test-application-input-history-packets
   test-conversation-maintenance-concurrent-input
   test-application-conversation-maintenance-repair)
 
@@ -1663,7 +1669,7 @@
   test-terminal-untrusted-text
   test-terminal-finalized-scrollback
   test-terminal-resize-frame
-  test-terminal-relayed-resize
+  test-terminal-pending-resize
   test-terminal-resize-lock-contention
   test-terminal-line-editor
   test-terminal-history-replacement
@@ -1695,11 +1701,9 @@
 
 (define-test-suite localgroup
   test-localgroup-stop-retry
-  test-localgroup-attachment-failure-boundary
   test-localgroup-endpoint-failure-isolation
   test-localgroup-message-dispatch
   test-localgroup-conversation-identity
-  test-localgroup-terminal-restart
   test-localgroup-picker-waits-for-relayed-input
   test-localgroup-remote-detach-never-pauses-reader
   test-localgroup-checkpoint-source-precheck-order
@@ -1709,8 +1713,6 @@
   test-localgroup-session-exit-relay
   test-localgroup-open-instruction-relay
   test-localgroup-relay-exit
-  test-localgroup-relay-frames
-  test-localgroup-frame-snapshots
   test-localgroup-screen-paints-frames
   test-localgroup-screen-loading
   test-localgroup-screen-panel
@@ -1722,8 +1724,7 @@
   test-localgroup-orphan-reconciliation
   test-localgroup-client-pids
   test-localgroup-startup-reader
-  test-localgroup-attachments
-  test-localgroup-attachment-acknowledgment)
+  test-localgroup-attachments)
 
 (define-test-suite localgroup-handoff
   test-localgroup-handoff-site-arguments

@@ -105,23 +105,32 @@
                                (application-tool-outcome-tests--text application))
                        "widening recovers all merged names from semantic sources")))))
   (with-test-configuration (configuration)
-    (let* ((application (application-tool-outcome-tests--application configuration))
-           (terminal    (localgroup-terminal-create :rows 24 :columns 100))
-           (ui          (terminal-ui-create :terminal terminal :fullscreen-p t)))
-      (setf (application-ui application) ui)
-      (with-terminal-ui (ui ui)
+    (let* ((application  (application-tool-outcome-tests--application configuration))
+           (presentation (application-terminal-ui-create
+                          :client-pane   '(:rows 24 :columns 100)
+                          :configuration configuration))
+           (terminal     (terminal-ui-terminal presentation)))
+      (setf (application-ui application) presentation)
+      (with-terminal-ui (presentation presentation)
         (test-assert (and (not (terminal-interactive-p terminal))
                           (not (terminal-plain-output-p terminal)))
-                     "a started client-less relay retains a resident viewport without an append-only sink")
+                     "a started presentation without clients has no append-only sink")
         (application-tool-outcome-tests--present
          application (application-tool-outcome-tests--schemas 1 '("web" "search")))
         (application-tool-outcome-tests--present
          application (application-tool-outcome-tests--schemas 2 '("skill" "shodan")))
-        (test-assert (and (= 1 (clinedi:transcript-viewport-chunk-count
-                                (fullscreen-terminal-ui-viewport ui)))
-                          (search "web, search, skill, shodan"
-                                  (application-tool-outcome-tests--text application)))
-                     "client-less relay viewports coalesce schema rows before a client attaches"))))
+        (with-terminal-ui (client (terminal-ui-create
+                                   :terminal     (make-instance 'recording-terminal :columns 100 :rows 24)
+                                   :fullscreen-p t))
+          (dolist (event (mapcar #'client-portable (channel-presentation-replay presentation)))
+            (apply #'presentation-apply client (getf (rest event) :operation) (rest event)))
+          (let ((viewport (fullscreen-terminal-ui-viewport client)))
+            (test-assert (and (= 1 (clinedi:transcript-viewport-chunk-count viewport))
+                              (search "web, search, skill, shodan"
+                                      (format nil "~{~A~^~%~}"
+                                              (loop for row below (clinedi:transcript-viewport-row-count viewport)
+                                                    collect (clinedi:transcript-viewport-row-text viewport row)))))
+                         "a client that attaches later coalesces the schema rows the channel presented before it"))))))
   (with-test-configuration (configuration)
     (let* ((application (application-tool-outcome-tests--application configuration))
            (ui          (application-ui application))

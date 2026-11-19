@@ -129,7 +129,10 @@ remaining selected revisions; interruption leaves them pending."
            (let ((*terminal-ui-boot-linger-prompt* (onboarding-source-text "boot-linger"))
                  (*terminal-ui-boot-start-label*   (onboarding-source-text "boot-start")))
              (case (terminal-ui-boot-sequence
-                    ui :screen-p (config :boot-screen-p configuration) :linger-p t
+                    ;; A hosted channel's client already showed the boot screen.
+                    ui :screen-p     (and (config :boot-screen-p configuration)
+                                          (null (application-presentation application)))
+                    :linger-p        t
                     :resize-callback #'application-pending-terminal-size
                     :duration        (config :boot-screen-seconds configuration)
                     :tip-seconds     (config :boot-screen-tip-seconds configuration))
@@ -177,10 +180,11 @@ Without BOOT-SCREEN-P the session skips both and only takes the screen."
   (let* ((ui            (application-ui application))
          (terminal      (terminal-ui-terminal ui))
          (configuration (application-configuration application))
+         (hosted-p      (not (null (application-presentation application))))
          (pending       (and onboarding-p boot-screen-p (config :onboarding-p configuration)
                              (onboarding-state-pending configuration
                                                        (onboarding-pages configuration)))))
-    (when (and pending (typep terminal 'localgroup-terminal))
+    (when (and pending hosted-p)
       (catch 'onboarding-client-wait-ended
         (terminal-ui--await-interactive
          terminal
@@ -190,21 +194,24 @@ Without BOOT-SCREEN-P the session skips both and only takes the screen."
            (sleep seconds))
          *localgroup-first-attach-timeout-seconds*)))
     (let ((outcome
-            (if (and pending (terminal-interactive-p terminal)
-                     (not (application-input-controller-exit-requested-p controller)))
-                (application-onboard application :new-only-p t)
-                (terminal-ui-boot-sequence
+            (cond
+              ((and pending (terminal-interactive-p terminal)
+                    (not (application-input-controller-exit-requested-p controller)))
+               (application-onboard application :new-only-p t))
+              ;; A hosted channel has no screen: its terminal client shows the boot screen.
+              (hosted-p
+               ':start)
+              (t
+               (terminal-ui-boot-sequence
                  ui :screen-p     (and boot-screen-p (config :boot-screen-p configuration))
                  :duration        (config :boot-screen-seconds configuration)
-                 :presented-p     (and (typep terminal 'localgroup-terminal)
-                                       (localgroup-terminal-boot-presented-p terminal))
                  :linger-p        (config :boot-screen-linger-p configuration)
                  :tip-seconds     (config :boot-screen-tip-seconds configuration)
                  :resize-callback #'application-pending-terminal-size
                  :halted-function
                  (lambda () (application-input-controller-exit-requested-p controller))
                  :direct-input-p-function
-                 (lambda () (not (application-input-controller-reader-live-p controller)))))))
+                 (lambda () (not (application-input-controller-reader-live-p controller))))))))
       (let ((notice (config :saved-model-selection-notice configuration)))
         (when (non-empty-string-p notice)
           (application-present application notice)

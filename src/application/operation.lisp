@@ -528,6 +528,7 @@ never returned. Refresh an unchanged query after two seconds without blocking in
 (defmethod initialize-instance :after ((application application) &key)
   "Connect a newly initialized APPLICATION to operation completion, transcript clicks and status."
   (application-operation-connect-ui application)
+  (application-presentation-connect application)
   (application-connect-transcript-actions application)
   (application-connect-program-status application))
 

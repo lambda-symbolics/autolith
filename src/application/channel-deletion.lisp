@@ -31,16 +31,13 @@ its idle host ends it."
 (defun application--channel-deletion-ready-p (request)
   "Return whether REQUEST's invoking command and terminal attachment have left."
   (let* ((source     (getf request :source))
-         (controller (application-input-controller source))
-         (terminal   (terminal-ui-terminal (application-ui source))))
+         (controller (application-input-controller source)))
     (and (or (null controller)
              (null (getf request :work))
              (with-lock-held ((application-input-controller-lock controller))
                (not (eq (application-input-controller-active-work controller)
                         (getf request :work)))))
-         (with-lock-held ((image-daemon:relay-lock terminal))
-           (not (eq (image-daemon:relay-controller terminal)
-                    (getf request :attachment)))))))
+         (not (application-client-attached-p source (getf request :attachment))))))
 
 (-> application--finish-channel-deletion (application list) null)
 (defun application--finish-channel-deletion (application request)
@@ -72,8 +69,7 @@ attachment have left. It never waits for or interrupts unrelated work."
   (let* ((server     (application-world-server application))
          (terminal   (terminal-ui-terminal (application-ui application)))
          (controller (application-input-controller application))
-         (attachment (with-lock-held ((image-daemon:relay-lock terminal))
-                       (image-daemon:relay-controller terminal))))
+         (attachment (application-controlling-client application)))
     (unless (and server controller attachment)
       (error 'configuration-error :message "This channel has no controlling terminal to move."))
     ;; A destination that starts for this move takes the terminal's presentation,
@@ -91,7 +87,7 @@ attachment have left. It never waits for or interrupts unrelated work."
            (request (list :source application :target identifier :work work :attachment attachment)))
       (unless target
         (error 'configuration-error :message "The destination channel is not ready; nothing was deleted."))
-      (unless (localgroup-terminal-switch-controller terminal destination :controller attachment)
+      (unless (channel-client-tell attachment ':switch :session-id destination)
         (error 'configuration-error :message "The controlling terminal disconnected; nothing was deleted."))
       (unless (application-input-controller-enqueue-work target (list :channel-deletion request))
         (error 'configuration-error :message "The destination channel stopped; nothing was deleted."))
@@ -140,12 +136,11 @@ turn, external work on another thread, pending input, and live asynchronous jobs
   "Move the invoking client outside IDENTIFIER's subtree, then remove it safely."
   (let* ((world       (application-world application))
          (inbox       (world-inbox-channel world))
-         (destination (and inbox (channel-identifier inbox)))
-         (terminal    (terminal-ui-terminal (application-ui application))))
+         (destination (and inbox (channel-identifier inbox))))
     (unless destination
       (error 'configuration-error :message "There is no inbox to move to; nothing was deleted."))
     (cond
-      ((and (application-hosted-p application) (typep terminal 'localgroup-terminal))
+      ((and (application-presentation application) (application-controlling-client application))
        (application--handoff-channel-deletion application identifier destination))
       ((application-clients-attached-p application)
        (channel--busy identifier "(delete)" :state ':attached))

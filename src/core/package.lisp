@@ -693,6 +693,7 @@
                 #:line-editor-cursor
                 #:line-editor-history
                 #:line-editor-history-limit
+                #:line-editor-history-character-limit
                 #:line-editor-set-text
                 #:line-editor-clear
                 #:line-editor-handle-event
@@ -703,6 +704,7 @@
                 #:selector-items
                 #:selector-selection
                 #:selector-visible-count
+                #:selector-window
                 #:selector-move
                 #:selector-set-items
                 #:selector-arrange
@@ -717,8 +719,6 @@
                 #:alternate-screen-leave-sequence
                 #:mouse-reporting-enable-sequence
                 #:mouse-reporting-disable-sequence
-                #:make-mode-tracking-output-stream
-                #:mode-tracking-output-stream-restore
                 #:default-color-sequence
                 #:default-color-reset-sequence
                 #:read-event

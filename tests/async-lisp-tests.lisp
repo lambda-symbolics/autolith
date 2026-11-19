@@ -196,14 +196,14 @@
      (let ((controller (lisp-machine-tests--controller application))
            (submitted  nil))
        (test-assert
-        (application-input-controller--defer-lisp-submission-p controller "? (list 1")
+        (terminal-ui-defer-lisp-submission-p (application-ui application) "? (list 1")
         "an incomplete async form continues editing")
        (test-assert
         (string= (line-editor-text (terminal-ui-editor (application-ui application)))
                  (format nil "? (list 1~%"))
         "continuation preserves the async prefix")
        (test-assert
-        (not (application-input-controller--defer-lisp-submission-p controller "? *package*"))
+        (not (terminal-ui-defer-lisp-submission-p (application-ui application) "? *package*"))
         "a bare symbol is complete async input")
        (test-call-with-function-replacements
         (list (list 'application-run-async-lisp-input

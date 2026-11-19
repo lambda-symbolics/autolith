@@ -2,30 +2,21 @@
 
 ;;;; -- Localgroup Tests --
 
-(-> test-localgroup--make-main-thread () sb-thread:thread)
-(defun test-localgroup--make-main-thread ()
-  "Return an idle application owner after installing its cancellation boundary."
-  (let* ((ready (sb-thread:make-semaphore :name "Localgroup test owner ready"))
-         (thread
-           (make-thread
-            (lambda ()
-              (loop
-                (handler-case
-                    (progn
-                      (sb-thread:signal-semaphore ready)
-                      (sleep 60))
-                  (application-turn-cancelled ()
-                    nil))))
-            :name "Localgroup test main thread")))
-    (sb-thread:wait-on-semaphore ready)
-    thread))
+(-> test-localgroup--application (configuration &key (:presented-p boolean))
+    (values application application-input-controller))
+(defun test-localgroup--application (configuration &key presented-p)
+  "Return a minimal APPLICATION and responsive controller for localgroup tests.
 
-(-> test-localgroup--application (configuration) (values application application-input-controller))
-(defun test-localgroup--application (configuration)
-  "Return a minimal APPLICATION and responsive controller for localgroup tests."
+With PRESENTED-P it has no terminal of its own, as a detached session: its UI
+is a presentation, which the clients of its endpoint render. Otherwise it
+shows on a test terminal."
   (let* ((conversation (conversation-create configuration))
-         (ui           (terminal-ui-create
-                        :terminal (make-instance 'recording-terminal :columns 80)))
+         (ui           (if presented-p
+                           (application-terminal-ui-create
+                            :client-pane   '(:rows 24 :columns 80)
+                            :configuration configuration)
+                           (terminal-ui-create
+                            :terminal (make-instance 'recording-terminal :columns 80))))
          (application
            (make-instance 'application
                           :configuration configuration
@@ -43,26 +34,157 @@
   "Return one packet after a bounded wait for STREAM input."
   (test-assert
    (task-tests--wait-until (lambda () (listen stream)) 10)
-   "the localgroup attachment produces its next packet promptly")
+   "the localgroup connection produces its next packet promptly")
   (or (daemon-read-packet stream)
-      (error "The localgroup attachment closed before its next packet.")))
+      (error "The localgroup connection closed before its next packet.")))
 
-(-> test-localgroup--attach
-    (localgroup-session keyword
-     &key (:styled-p boolean) (:client-version (option string)) (:client-pid t))
-    (values sb-bsd-sockets:socket stream list))
-(defun test-localgroup--attach (session mode &key styled-p client-version (client-pid nil pid-supplied-p))
-  "Open one test attachment to SESSION with MODE and optional client metadata."
-  (multiple-value-bind (socket stream)
-      (daemon-connect (image-daemon:daemon-runtime-port session))
-    (daemon-write-packet stream
-                         (list :localgroup-request :version *daemon-protocol-version*
-                               :token              (image-daemon:daemon-runtime-token session)
-                               :operation ':attach :arguments
-                               (append (list :mode mode :rows 31 :columns 91 :styled-p styled-p
-                                             :client-version client-version)
-                                       (when pid-supplied-p (list :client-pid client-pid)))))
-    (values socket stream (test-localgroup--read-packet stream))))
+(-> test-localgroup--present
+    ((or localgroup-session cons)
+     &key (:rows integer) (:columns integer) (:styled-p boolean) (:evaluates-p boolean)
+          (:watches-p boolean) (:client-pid (option integer)))
+    (values localgroup-client-connection function function))
+(defun test-localgroup--present
+    (endpoint &key (rows 31) (columns 91) (styled-p t) evaluates-p watches-p client-pid)
+  "Attach a client that presents to the channel at ENDPOINT, a session or its endpoint entry.
+
+The client states a pane of ROWS by COLUMNS and, when given, the process
+CLIENT-PID, as a terminal client does. With WATCHES-P it only watches. It has
+answered one command when this returns, so the channel has finished what it
+does for a terminal that just attached.
+
+Return its connection, a function returning the events it has seen, oldest
+first, and a function that waits for a presentation event. That function
+takes an operation and optionally a test of the event; it returns the first
+(:ui :operation OPERATION ...) event the test accepts, or NIL when none came
+in time. The caller closes the connection with LOCALGROUP-CLIENT-CLOSE."
+  (let* ((lock       (make-lock "presenting test client"))
+         (events     nil)
+         (entry      (if (typep endpoint 'localgroup-session)
+                         (cons (image-daemon:daemon-runtime-registry-pathname endpoint)
+                               (image-daemon:daemon-runtime-record endpoint))
+                         endpoint))
+         (connection (localgroup-client-connect
+                      entry
+                      :name           "terminal"
+                      :evaluates-p    evaluates-p
+                      :arguments      (list :presents-p t
+                                            :watches-p  watches-p
+                                            :rows       rows
+                                            :columns    columns
+                                            :styled-p   styled-p
+                                            :client-pid client-pid)
+                      :event-function (lambda (event)
+                                        (with-lock-held (lock)
+                                          (push event events))))))
+    (flet ((seen ()
+             "Return the events seen so far, oldest first."
+             (with-lock-held (lock)
+               (reverse events))))
+      ;; The channel reads this client's commands only after it settled the attachment.
+      (localgroup-client-call connection ':state)
+      (values connection
+              #'seen
+              (lambda (operation &optional (test (constantly t)))
+                (let ((found nil))
+                  (task-tests--wait-until
+                   (lambda ()
+                     (setf found
+                           (find-if (lambda (event)
+                                      (and (eq (first event) ':ui)
+                                           (eq (getf (rest event) :operation) operation)
+                                           (funcall test event)))
+                                    (seen))))
+                   20)
+                  found))))))
+
+(-> test-localgroup--await-served (localgroup-session &optional (integer 0)) boolean)
+(defun test-localgroup--await-served (session &optional (remaining 0))
+  "Wait until SESSION serves only REMAINING connections and return whether it came to that.
+
+A connection's serving thread ends after what the session does for a client that left."
+  (task-tests--wait-until
+   (lambda ()
+     (with-lock-held ((image-daemon:daemon-runtime-lock session))
+       (= remaining (length (image-daemon:daemon-runtime-client-threads session)))))
+   10))
+
+(-> test-localgroup--status (localgroup-session) list)
+(defun test-localgroup--status (session)
+  "Return the fields of the status SESSION's endpoint answers a request with."
+  (rest (getf (rest (daemon-call (image-daemon:daemon-runtime-port session)
+                                 (image-daemon:daemon-runtime-token session) ':status))
+              :status)))
+
+(-> test-localgroup--event-text (list) string)
+(defun test-localgroup--event-text (event)
+  "Return the plain text transcript presentation EVENT shows, or the empty string for any other event.
+
+An :APPEND shows its entry and a :RECORDS each record's entry on a line of its own."
+  (flet ((entry-text (entry)
+           "Return styled wire ENTRY without its styles."
+           (if (stringp entry)
+               entry
+               (format nil "~{~A~}" (mapcar #'second entry)))))
+    (let ((fields (rest event)))
+      (case (and (eq (first event) ':ui) (getf fields :operation))
+        (:append
+         (entry-text (getf fields :entry)))
+        (:records
+         (format nil "~{~A~^~%~}"
+                 (mapcar (lambda (presentation) (entry-text (second presentation)))
+                         (getf fields :presentations))))
+        (otherwise
+         "")))))
+
+(-> test-localgroup--presented-text (application) string)
+(defun test-localgroup--presented-text (application)
+  "Return the transcript text a client attaching to APPLICATION's hosted channel now would be replayed.
+
+Each transcript event takes a line of its own."
+  (let ((presentation (application-presentation application)))
+    (format nil "~{~A~%~}"
+            (remove "" (mapcar #'test-localgroup--event-text
+                               (with-terminal-ui-locked (presentation)
+                                 (channel-presentation-replay presentation)))
+                    :test #'string=))))
+
+(-> test-localgroup-stop-retry () null)
+(defun test-localgroup-stop-retry ()
+  "Attempt independent cleanup stages and retain endpoint ownership for retry."
+  (dolist (failing-stage '(:watchdog :runtime :registry))
+    (let* ((application (make-instance 'application))
+           (session     (make-instance 'localgroup-session :application application))
+           (cause       (make-condition 'simple-error :format-control "cleanup failed"))
+           (attempts    nil)
+           (fail-p      t))
+      (setf (application-localgroup-session application) session)
+      (flet ((attempt (stage)
+               (push stage attempts)
+               (when (and fail-p (eq stage failing-stage))
+                 (error cause))))
+        (test-call-with-function-replacements
+         (list (list 'image-daemon:daemon-stop-thread
+                     (lambda (thread) (declare (ignore thread)) (attempt ':watchdog)))
+               (list 'image-daemon:daemon-runtime-stop
+                     (lambda (runtime) (declare (ignore runtime)) (attempt ':runtime)))
+               (list 'localgroup--delete-owned-registry
+                     (lambda (runtime) (declare (ignore runtime)) (attempt ':registry))))
+         (lambda ()
+           (let ((failure (handler-case (localgroup-stop application)
+                            (localgroup-stop-error (condition) condition))))
+             (test-assert
+              (and (typep failure 'localgroup-stop-error)
+                   (eq session (application-localgroup-session application))
+                   (equal (reverse attempts) '(:watchdog :runtime :registry))
+                   (eq cause (second (first (localgroup-stop-error-failures failure)))))
+              "cleanup preserves the original stage failure, attempts every stage, and retains ownership"))
+           (setf fail-p nil attempts nil)
+           (localgroup-stop application)
+           (test-assert
+            (and (null (application-localgroup-session application))
+                 (equal (reverse attempts) '(:watchdog :runtime :registry)))
+            "retry completes owned cleanup before releasing the application slot"))))))
+  nil)
 
 (-> test-localgroup-endpoint-failure-isolation () null)
 (defun test-localgroup-endpoint-failure-isolation ()
@@ -162,209 +284,56 @@
         (when application (application-release-conversation-lease application)))))
   nil)
 
-(-> test-localgroup-terminal-restart () null)
-(defun test-localgroup-terminal-restart ()
-  "Test that stopping a relay retains its direct terminal for restart."
-  (let* ((direct
-          (stream-terminal-create :input-stream          (make-string-input-stream "")
-                                  :output-stream         (make-string-output-stream)
-                                  :input-file-descriptor -1))
-         (relay (localgroup-terminal-create :direct-terminal direct)))
-    (terminal-start relay)
-    (test-assert (terminal-started-p direct) "a direct relay starts its direct terminal")
-    (terminal-stop relay)
-    (test-assert (eq (image-daemon:relay-direct-terminal relay) direct)
-     "stopping a relay retains its direct transport")
-    (test-assert (not (terminal-started-p direct))
-     "stopping a relay stops its direct terminal")
-    (terminal-start relay)
-    (test-assert (terminal-started-p direct)
-     "a stopped direct relay restarts its direct terminal")
-    (terminal-stop relay))
-  nil)
-
-(-> localgroup-tests--queued-packets (image-daemon:attachment) list)
-(defun localgroup-tests--queued-packets (attachment)
-  "Return the packets queued for ATTACHMENT as forms, oldest first."
-  (loop for text across (structlisp:deque->vector (image-daemon:attachment-queue attachment))
-        collect (with-standard-io-syntax
-                  (let ((*read-eval* nil))
-                    (read-from-string text t nil :start (1+ (position #\Newline text)))))))
-
-(-> localgroup-tests--frames (image-daemon:attachment) list)
-(defun localgroup-tests--frames (attachment)
-  "Return the frame packets queued for ATTACHMENT, oldest first."
-  (remove ':frame (localgroup-tests--queued-packets attachment) :key #'first :test-not #'eq))
-
-(-> localgroup-tests--frame-text-p (list string) boolean)
-(defun localgroup-tests--frame-text-p (frame text)
-  "Return true when one row of FRAME contains TEXT."
-  (not (null (some (lambda (row) (search text (second row))) (getf (rest frame) :rows)))))
-
-(-> test-localgroup-relay-frames () null)
-(defun test-localgroup-relay-frames ()
-  "Test a hosted fullscreen session sending its screen to clients as frames of rows."
-  (let* ((terminal   (localgroup-terminal-create :rows 8 :columns 40))
-         (ui         (terminal-ui-create :terminal terminal :fullscreen-p t))
-         (controller (make-instance 'image-daemon:attachment :socket nil
-                                    :stream (make-broadcast-stream) :mode ':control))
-         (observer   (make-instance 'image-daemon:attachment :socket nil
-                                    :stream (make-broadcast-stream) :mode ':read-only)))
-    (image-daemon:relay-attach terminal controller :rows 8 :columns 40 :styled-p nil
-                                                   :session-id "frames")
-    (unwind-protect
-         (progn
-           (terminal-ui-start ui)
-           (terminal-ui-append-finalized ui 1 (list (terminal-span ':plain "first line")))
-           (let ((frames (localgroup-tests--frames controller)))
-             (test-assert (and frames (getf (rest (first frames)) :complete-p)
-                               (= (getf (rest (first frames)) :height) 8)
-                               (= (getf (rest (first frames)) :width) 40))
-                          "the first paint sends the controller a complete frame of its size")
-             (test-assert (some (lambda (frame) (localgroup-tests--frame-text-p frame "first line"))
-                                frames)
-                          "frames carry the transcript rows"))
-           (image-daemon:relay-attach terminal observer :rows 8 :columns 40 :styled-p nil
-                                                        :session-id "frames")
-           (localgroup-terminal-replay-screen terminal observer)
-           (let ((frames (localgroup-tests--frames observer)))
-             (test-assert (and (= (length frames) 1)
-                               (getf (rest (first frames)) :complete-p)
-                               (localgroup-tests--frame-text-p (first frames) "first line"))
-                          "a client attaching later is replayed one complete frame"))
-           (localgroup-terminal-replay-screen terminal observer)
-           (test-assert (= (length (localgroup-tests--frames observer)) 1)
-                        "a replay is sent once per attachment")
-           (terminal-ui-append-finalized ui 2 (list (terminal-span ':plain "second line")))
-           (let ((frame (first (last (localgroup-tests--frames observer)))))
-             (test-assert (and (not (getf (rest frame) :complete-p))
-                               (localgroup-tests--frame-text-p frame "second line")
-                               (not (localgroup-tests--frame-text-p frame "first line")))
-                          "later paints send only the rows that changed"))
-           (terminal-ui-detach ui)
-           (test-assert (and (member '(:screen :leave) (localgroup-tests--queued-packets observer)
-                                     :test #'equal)
-                             (member '(:screen :leave) (localgroup-tests--queued-packets controller)
-                                     :test #'equal))
-                        "leaving the screen tells every client to give its own back")
-           (terminal-ui-stop ui))
-      (terminal-stop terminal)))
-  nil)
-
-(-> test-localgroup-frame-snapshots () null)
-(defun test-localgroup-frame-snapshots ()
-  "Test relay snapshot ownership, metadata-only packets and complete-frame synchronization."
-  (let* ((terminal   (localgroup-terminal-create :rows 3 :columns 20))
-         (painter    (clinedi:make-frame-painter))
-         (controller (make-instance 'image-daemon:attachment :socket nil
-                                    :stream (make-broadcast-stream) :mode ':control))
-         (observer   (make-instance 'image-daemon:attachment :socket nil
-                                    :stream (make-broadcast-stream) :mode ':read-only))
-         (text       (copy-seq "row")))
-    (labels ((paint (&key (cursor-row 0) whole-screen-p)
-               "Paint the current mutable text and a blank tail."
-               (terminal-screen-paint terminal painter (list text)
-                                      :cursor-row cursor-row :whole-screen-p whole-screen-p))
-
-             (latest (attachment)
-               "Return the last frame queued for ATTACHMENT."
-               (rest (first (last (localgroup-tests--frames attachment))))))
-      (image-daemon:relay-attach terminal controller :rows 3 :columns 20 :styled-p nil
-                                 :session-id "snapshots")
-      (unwind-protect
-           (progn
-             (terminal-screen-enter terminal)
-             (terminal-screen-paint terminal painter (list text "clear"))
-             (setf (char text 0) #\R)
-             (paint)
-             (test-assert (and (not (getf (latest controller) :complete-p))
-                               (equal (getf (latest controller) :rows) '((0 "Row") (1 ""))))
-                          "mutable caller rows cannot alter the relay baseline, and blanking is sent")
-             (let ((count (length (localgroup-tests--frames controller))))
-               (paint)
-               (test-assert (= count (length (localgroup-tests--frames controller)))
-                            "identical rows and metadata do not queue another frame"))
-             (paint :cursor-row 1)
-             (test-assert (and (null (getf (latest controller) :rows))
-                               (= 1 (getf (latest controller) :cursor-row)))
-                          "a cursor-only paint queues a row-free delta")
-             (paint :cursor-row 1 :whole-screen-p t)
-             (test-assert (and (null (getf (latest controller) :rows))
-                               (getf (latest controller) :whole-screen-p))
-                          "a whole-screen hint queues a row-free delta")
-             (image-daemon:relay-attach terminal observer :rows 3 :columns 20 :styled-p nil
-                                        :session-id "snapshots")
-             (let ((count (length (localgroup-tests--frames controller))))
-               (paint :cursor-row 1 :whole-screen-p t)
-               (test-assert (and (= count (length (localgroup-tests--frames controller)))
-                                 (getf (latest observer) :complete-p)
-                                 (equal (getf (latest observer) :rows) '((0 "Row"))))
-                            "an unsynchronized observer receives sparse complete rows without a controller update"))
-             (terminal-set-dimensions terminal 21 :rows 3)
-             (paint :cursor-row 1 :whole-screen-p t)
-             (test-assert (every (lambda (attachment)
-                                   (and (getf (latest attachment) :complete-p)
-                                        (= 21 (getf (latest attachment) :width))))
-                                 (list controller observer))
-                          "a width-only resize sends complete frames to both synchronized attachments"))
-        (terminal-stop terminal))))
-  (let* ((terminal (make-instance 'recording-terminal :columns 21 :rows 3))
-         (screen   (localgroup-screen-create :terminal terminal))
-         (text     (copy-seq "owned")))
-    (unwind-protect
-         (progn
-           (localgroup-screen-handle-packet
-            screen (list :frame :height 3 :width 21 :complete-p t :rows (list (list 0 text))
-                         :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
-           (setf (char text 0) #\X
-                 (recording-terminal-chunks terminal) nil)
-           (localgroup-screen-resized screen)
-           (test-assert (some (lambda (chunk) (search "owned" chunk))
-                              (recording-terminal-chunks terminal))
-                        "a forced repaint uses client-owned rows rather than mutated packet strings"))
-      (localgroup-screen-close screen)))
-  nil)
+(-> test-localgroup--show-rows
+    (localgroup-screen list
+     &key (:height integer) (:width integer) (:cursor-row integer) (:cursor-column integer)
+          (:cursor-visible-p t) (:whole-screen-p t))
+    null)
+(defun test-localgroup--show-rows
+    (screen rows
+     &key height width (cursor-row 0) (cursor-column 0) (cursor-visible-p t) whole-screen-p)
+  "Show ROWS, a pane's display rows from its top, as SCREEN's frame of HEIGHT by WIDTH."
+  (localgroup-screen-show-frame screen
+                                (clinedi:make-frame-snapshot rows :height height :width width)
+                                :cursor-row       cursor-row
+                                :cursor-column    cursor-column
+                                :cursor-visible-p cursor-visible-p
+                                :whole-screen-p   whole-screen-p))
 
 (-> test-localgroup-screen-paints-frames () null)
 (defun test-localgroup-screen-paints-frames ()
-  "Test a client painting a session's frames on its own terminal."
+  "Test a client painting its pane's frames on its own terminal."
   (let* ((terminal (make-instance 'recording-terminal :columns 40 :rows 8))
          (screen   (localgroup-screen-create :terminal terminal)))
     (flet ((output ()
              "Return everything written to the client terminal so far."
              (apply #'concatenate 'string (reverse (recording-terminal-chunks terminal))))
-           (frame (complete-p rows)
-             "Return a frame packet of ROWS for the test terminal."
-             (list :frame :height 8 :width 40 :complete-p complete-p :rows rows
-                          :cursor-row 3 :cursor-column 1 :cursor-visible-p t)))
-      (test-assert (not (localgroup-screen-handle-packet screen '(:other)))
-                   "packets that are not frames are left to the caller")
-      (test-assert (and (localgroup-screen-handle-packet screen (frame nil '((0 "early"))))
-                        (not (localgroup-screen-active-p screen))
+
+           (show (&rest rows)
+             "Show ROWS as the pane's frame."
+             (test-localgroup--show-rows screen rows :height 8 :width 40
+                                                     :cursor-row 3 :cursor-column 1)))
+      (test-assert (and (not (localgroup-screen-active-p screen))
                         (zerop (length (output))))
-                   "changed rows before any complete frame are dropped")
-      (test-assert (not (localgroup-screen-handle-packet
-                         screen (list :frame :height 0 :width 40 :complete-p t :rows nil
-                                             :cursor-row 0 :cursor-column 0)))
-                   "a malformed frame is not consumed")
-      (localgroup-screen-handle-packet screen (frame t '((0 "hello") (2 "world"))))
+                   "a screen without a frame leaves the terminal alone")
+      (show "hello" "" "world")
       (test-assert (and (localgroup-screen-active-p screen)
                         (search (alternate-screen-enter-sequence) (output))
                         (search "hello" (output))
                         (search "world" (output)))
-                   "the first complete frame takes the screen and paints its rows")
+                   "the first frame takes the screen and paints its rows")
       (setf (recording-terminal-chunks terminal) nil)
-      (localgroup-screen-handle-packet screen (frame nil '((0 "bye"))))
+      (show "bye" "" "world")
       (test-assert (and (search "bye" (output)) (not (search "world" (output))))
-                   "changed rows repaint only themselves")
+                   "a later frame repaints only the rows that changed")
       (setf (recording-terminal-chunks terminal) nil)
       (localgroup-screen-resized screen)
       (test-assert (and (search "bye" (output)) (search "world" (output)))
                    "a resize repaints the whole frame")
-      (localgroup-screen-handle-packet screen '(:screen :leave))
+      (localgroup-screen-close screen)
       (test-assert (and (not (localgroup-screen-active-p screen))
                         (search (alternate-screen-leave-sequence) (output)))
-                   "a leave gives the screen back")
+                   "closing gives the screen back")
       (localgroup-screen-close screen)
       (test-assert (= 1 (count-if (lambda (chunk) (search (alternate-screen-leave-sequence) chunk))
                                   (recording-terminal-chunks terminal)))
@@ -398,11 +367,9 @@
          (let ((failed-p nil))
            (handler-case
                (progn
-                 (localgroup-screen-handle-packet
-                  screen '(:frame :height 8 :width 40 :complete-p t :rows ((0 "hello"))
-                                  :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+                 (test-localgroup--show-rows screen '("hello") :height 8 :width 40)
                  (when (eq failure ':leave)
-                   (localgroup-screen-handle-packet screen '(:screen :leave))))
+                   (localgroup-screen-close screen)))
              (terminal-error (failure) (setf failed-p (eq failure condition))))
            (test-assert failed-p "The injected terminal failure reaches its caller"))
          (when (eq failure ':leave)
@@ -469,10 +436,8 @@
            (text     "pending navigation"))
       (unwind-protect
            (progn
-             (localgroup-screen-handle-packet
-              screen (list :frame :height 8 :width columns :complete-p t
-                                  :whole-screen-p t :rows '((0 "previous") (3 "old row"))
-                                  :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+             (test-localgroup--show-rows screen '("previous" "" "" "old row")
+                                         :height 8 :width columns :whole-screen-p t)
              (setf (recording-terminal-chunks terminal) nil)
              (localgroup-screen-show-loading screen text)
              (test-assert (and (localgroup-screen-active-p screen)
@@ -499,20 +464,12 @@
                                       (localgroup-screen--loading-frame screen))))
                           "resizing repaints loading without establishing a channel frame")
              (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
-               (setf (recording-terminal-chunks terminal) nil)
-               (localgroup-screen-handle-packet
-                screen (list :frame :height height :width width :complete-p nil
-                                    :rows '((0 "unbased")) :cursor-row 0 :cursor-column 0))
-               (test-assert (null (recording-terminal-chunks terminal))
-                            "incremental rows cannot use the temporary loading frame as a baseline")
-               (localgroup-screen-handle-packet
-                screen (list :frame :height height :width width :complete-p t
-                                    :rows '((0 "ready")) :cursor-row 0 :cursor-column 0))
-              (test-assert (equalp (clinedi:frame-snapshot-rows (localgroup-screen-frame screen))
-                                   #("ready" "" "" "" "" "" "" ""))
-                           "the new channel replaces loading without rows from the previous channel")
-              (test-assert (null (localgroup-screen-loading screen))
-                           "the destination's complete frame ends loading")))
+               (test-localgroup--show-rows screen '("ready") :height height :width width)
+               (test-assert (equalp (clinedi:frame-snapshot-rows (localgroup-screen-frame screen))
+                                    #("ready" "" "" "" "" "" "" ""))
+                            "the new channel replaces loading without rows from the previous channel")
+               (test-assert (null (localgroup-screen-loading screen))
+                            "the destination's frame ends loading")))
         (localgroup-screen-close screen))))
   (let* ((terminal (make-instance 'recording-terminal))
          (screen   (localgroup-screen-create :terminal terminal)))
@@ -551,16 +508,13 @@
                         (not (localgroup-screen-take-resize screen))
                         (equal (pane) '(6 80)))
                    "a streamed toggle changes neither panel preference nor prompt geometry")
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 80 :complete-p t :rows ((0 "initial fullscreen"))
-                       :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+      (test-localgroup--show-rows screen '("initial fullscreen") :height 6 :width 80)
       (test-assert (and (localgroup-screen-active-p screen)
                         (equal (pane) '(6 69))
                         (localgroup-screen-take-resize screen))
                    "entering fullscreen reserves the sidebar and requests matching session dimensions")
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 69 :complete-p t :rows ((0 "host row") (1 "second"))
-                :cursor-row 1 :cursor-column 2 :cursor-visible-p t))
+      (test-localgroup--show-rows screen '("host row" "second")
+                                  :height 6 :width 69 :cursor-row 1 :cursor-column 2)
       (let ((painted (output)))
         (test-assert (and (search "PANEL-A   │host row" painted)
                           (search "PANEL-B   │second" painted))
@@ -605,38 +559,30 @@
                         (eq (localgroup-screen-filter-event screen '(:control #\s)) ':ignore))
                    "the focus key shows a hidden panel and moves to it")
       (localgroup-screen-take-resize screen)
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 80 :complete-p t :rows ((0 "wide channel"))
-                :cursor-row 1 :cursor-column 2 :cursor-visible-p t))
+      (test-localgroup--show-rows screen '("wide channel")
+                                  :height 6 :width 80 :cursor-row 1 :cursor-column 2)
       (test-assert (equal (localgroup-screen-filter-event screen '(:click 5 2)) '(:click 5 2))
                    "with the panel hidden clicks keep their columns")
       (localgroup-screen-filter-event screen '(:control #\s))
       (localgroup-screen-take-resize screen)
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 69 :complete-p t :rows ((0 "boot screen"))
-                :cursor-row 0 :cursor-column 0 :cursor-visible-p nil :whole-screen-p t))
+      (test-localgroup--show-rows screen '("boot screen")
+                                  :height 6 :width 69 :cursor-visible-p nil :whole-screen-p t)
       (test-assert (and (equal (pane) '(6 80))
                         (localgroup-screen-take-resize screen))
                    "a frame asking for the whole screen hides the panel and resizes the pane")
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 80 :complete-p t :rows ((0 "listener"))
-                :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+      (test-localgroup--show-rows screen '("listener") :height 6 :width 80)
       (test-assert (and (equal (pane) '(6 69))
                         (localgroup-screen-take-resize screen))
                    "the next ordinary frame brings the panel back")
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 69 :complete-p t :rows ((0 "docked channel"))
-                       :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
-      (localgroup-screen-handle-packet screen '(:screen :leave))
+      (test-localgroup--show-rows screen '("docked channel") :height 6 :width 69)
+      (localgroup-screen-close screen)
       (test-assert (and (equal (pane) '(6 80))
                         (localgroup-screen-take-resize screen)
                         (not (localgroup-screen-take-resize screen))
                         (equal (localgroup-screen-filter-event screen '(:control #\s)) '(:control #\s))
                         (equal (localgroup-screen-filter-event screen '(:click 20 2)) '(:click 20 2)))
                    "leaving fullscreen restores full-width streamed input despite the cached painted layout")
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 80 :complete-p t :rows ((0 "fullscreen again"))
-                       :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+      (test-localgroup--show-rows screen '("fullscreen again") :height 6 :width 80)
       (test-assert (and (equal (pane) '(6 69)) (localgroup-screen-take-resize screen))
                    "a later fullscreen attachment restores the saved sidebar preference")
       (terminal-set-dimensions terminal 50 :rows 6)
@@ -653,12 +599,15 @@
     (let* ((terminal (make-instance 'recording-terminal :columns 120 :rows 8))
            (sidebar  (world-sidebar-create configuration))
            (screen   (localgroup-screen-create :terminal terminal :panel sidebar)))
-      (labels ((send-frame (width text &key whole-p (height 8) (complete-p t))
-                 "Receive a server frame with an explicit geometry and whole-screen hint."
-                 (localgroup-screen-handle-packet
-                  screen (list :frame :height height :width width :whole-screen-p whole-p
-                               :complete-p complete-p :rows (list (list 0 text))
-                               :cursor-row 1 :cursor-column 2 :cursor-visible-p (not whole-p))))
+      (labels ((send-frame (width text &key whole-p (height 8))
+                 "Show a frame with an explicit geometry and whole-screen hint."
+                 (test-localgroup--show-rows screen (list text)
+                                             :height           height
+                                             :width            width
+                                             :cursor-row       1
+                                             :cursor-column    2
+                                             :cursor-visible-p (not whole-p)
+                                             :whole-screen-p   whole-p))
 
                (output ()
                  "Return the physical terminal output since its last reset."
@@ -692,9 +641,6 @@
                           (localgroup-screen-take-resize screen)
                           (equal (localgroup-screen-filter-event screen '(:click 50 2)) '(:click 23 2)))
                      "a pending toggle preserves the painted layout and its pointer coordinates")
-        (send-frame 120 "delta without matching baseline" :complete-p nil)
-        (test-assert (zerop (length (output)))
-                     "a width-only delta cannot reuse the narrower frame's baseline")
         (send-frame 120 "full-width channel")
         (test-assert (and (search "full-width channel" (output))
                           (not (search "│" (output)))
@@ -717,83 +663,121 @@
 
 (-> test-localgroup-picker-waits-for-relayed-input () null)
 (defun test-localgroup-picker-waits-for-relayed-input ()
-  "Test a modal picker blocks until its controlling relay sends a fresh event."
-  (let* ((terminal      (localgroup-terminal-create))
-         (ui            (terminal-ui-create :terminal terminal))
-         (attachment
-          (make-instance 'image-daemon:attachment :socket nil :stream
-                         (make-broadcast-stream) :mode ':control))
-         (result        ':pending)
-         (picker-thread nil))
-    (terminal-start terminal)
-    (multiple-value-bind (attached-p released-p)
-        (image-daemon:relay-attach terminal attachment :rows 24 :columns 80 :styled-p nil
-         :session-id "picker-test")
-      (declare (ignore released-p))
-      (test-assert attached-p "the test relay accepts a controlling attachment"))
-    (unwind-protect
-        (progn
-         (setf picker-thread
-                 (make-thread
-                  (lambda ()
-                    (setf result
-                            (terminal-ui-select ui :title "pick one" :items
-                                                '((:name "default" :argument nil
-                                                   :description "the default choice")))))
-                  :name "Autolith relayed picker test"))
-         (test-assert (task-tests--wait-until (lambda () (terminal-ui-selector ui)) 2)
-          "the relayed picker opens before receiving input")
-         (sleep 0.05)
-         (test-assert (and (eq result ':pending) (thread-alive-p picker-thread))
-          "an empty attached relay does not submit or cancel the picker")
-         (image-daemon:relay-enqueue-event terminal attachment ':submit)
-         (test-assert (task-tests--wait-until (lambda () (not (eq result ':pending))) 2)
-          "a fresh relayed submit event completes the picker")
-         (test-assert (string= result "default")
-          "the fresh submit accepts the selected item"))
-      (terminal-stop terminal)
-      (when picker-thread (join-thread picker-thread))))
+  "Test a modal picker blocks until the client that controls its channel sends a fresh event."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (application controller)
+        (test-localgroup--application configuration :presented-p t)
+      (let ((ui            (application-ui application))
+            (result        ':pending)
+            (connection    nil)
+            (picker-thread nil))
+        (unwind-protect
+             (progn
+               (configuration-ensure-directories configuration)
+               (terminal-ui-start ui)
+               (multiple-value-bind (client seen await)
+                   (test-localgroup--present (localgroup-start application :linger-p t))
+                 (declare (ignore seen))
+                 (setf connection    client
+                       picker-thread (make-thread
+                                      (lambda ()
+                                        (setf result
+                                              (terminal-ui-select
+                                               ui
+                                               :title "pick one"
+                                               :items '((:name        "default"
+                                                         :argument    nil
+                                                         :description "the default choice")))))
+                                      :name "Autolith relayed picker test"))
+                 (test-assert (funcall await ':modal (lambda (event) (getf (rest event) :open-p)))
+                              "the picker opens on its client before receiving input")
+                 (test-assert (and (not (task-tests--wait-until
+                                         (lambda () (not (eq result ':pending)))
+                                         (* 2 *presentation-terminal-poll-seconds*)))
+                                   (thread-alive-p picker-thread))
+                              "an attached client that sends nothing neither submits nor cancels the picker")
+                 (test-assert (getf (localgroup-client-call connection ':event :event ':submit) :accepted-p)
+                              "the open picker takes its client's key")
+                 (test-assert (task-tests--wait-until (lambda () (not (eq result ':pending))) 10)
+                              "a fresh submit event from the client completes the picker")
+                 (test-assert (equal result "default")
+                              "the fresh submit accepts the selected item")))
+          (when connection (localgroup-client-close connection))
+          (when picker-thread (join-thread picker-thread))
+          (localgroup-stop application)
+          (application-input-controller-stop controller)
+          (terminal-ui-stop ui)))))
   nil)
 
 (-> test-localgroup-remote-detach-never-pauses-reader () null)
 (defun test-localgroup-remote-detach-never-pauses-reader ()
-  "Test remote detach releases control without trying to join the input reader."
-  (let* ((terminal    (localgroup-terminal-create))
-         (ui          (terminal-ui-create :terminal terminal))
-         (application (make-instance 'application :ui ui))
-         (session
-          (make-instance 'localgroup-session :application application :identifier
-                         "remote-detach" :token "token" :listener nil :port 1
-                         :registry-pathname #P"remote-detach.sexp" :created-at
-                         (local-time:now)))
-         (attachment
-          (make-instance 'image-daemon:attachment :socket nil :stream
-                         (make-broadcast-stream) :mode ':control)))
-    (multiple-value-bind (attached-p released-p)
-        (image-daemon:relay-attach terminal attachment :rows 24 :columns 80 :styled-p nil
-         :session-id "remote-detach")
-      (declare (ignore released-p))
-      (test-assert attached-p "the remote detach test attaches its controller"))
-    (terminal-ui-start ui)
-    (terminal-ui-set-status ui "working")
-    (test-assert (plusp (terminal-ui-live-row-count ui))
-     "the attached relay paints transient live rows")
-    (test-call-with-function-replacements
-     (list
-      (list 'application-input-controller-call-with-reader-paused
-            (lambda (&rest arguments)
-              (declare (ignore arguments))
-              (error "Remote detach tried to pause the responsive reader."))))
-     (lambda ()
-       (let ((result (localgroup--detach-terminal session)))
-         (test-assert
-          (and (not (getf (rest result) :scheduled-p))
-               (eq (image-daemon:relay-attachment-kind terminal) ':detached))
-          "remote detach releases the controlling client immediately")
-         (test-assert (zerop (terminal-ui-live-row-count ui))
-          "remote detach retracts the stale live region"))))
-    (terminal-ui-stop ui)
-    nil))
+  "Test a remote detach tells the controlling terminal client to leave without joining the input reader."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (application controller)
+        (test-localgroup--application configuration :presented-p t)
+      (multiple-value-bind (direct direct-controller)
+          (test-localgroup--application configuration)
+        (flet ((refusal (session)
+                 "Return the message a detach of SESSION is refused with, or NIL when it is taken."
+                 (handler-case (progn (localgroup--detach-terminal session) nil)
+                   (localgroup-error (condition)
+                     (autolith-error-message condition)))))
+          (unwind-protect
+               (progn
+                 (configuration-ensure-directories configuration)
+                 (terminal-ui-start (application-ui application))
+                 (let* ((session    (localgroup-start application))
+                        (identifier (image-daemon:daemon-runtime-identifier session))
+                        (entry      (cons (image-daemon:daemon-runtime-registry-pathname session)
+                                          (localgroup--registry-record session))))
+                   (test-assert (search "cannot detach"
+                                        (refusal (make-instance 'localgroup-session
+                                                                :application       direct
+                                                                :identifier        "remote-detach"
+                                                                :token             "token"
+                                                                :listener          nil
+                                                                :port              1
+                                                                :registry-pathname #P"remote-detach.sexp"
+                                                                :created-at        (local-time:now))))
+                                "a session on its own terminal cannot leave it")
+                   (test-assert (search "No terminal shows" (refusal session))
+                                "a channel nobody shows has no terminal to detach")
+                   (let ((watcher (test-localgroup--present session :watches-p t)))
+                     (unwind-protect
+                          (test-assert (search "No terminal shows" (refusal session))
+                                       "a client that only watches is no terminal to detach")
+                       (localgroup-client-close watcher)))
+                   (test-assert (not (with-lock-held ((image-daemon:daemon-runtime-lock session))
+                                       (localgroup-session-detached-explicitly-p session)))
+                                "a refused detach marks nothing")
+                   (world-server-tests--call-with-terminal-client
+                    configuration identifier
+                    (lambda (type await-exit view)
+                      (declare (ignore type view))
+                      (test-call-with-function-replacements
+                       (list
+                        (list 'application-input-controller-call-with-reader-paused
+                              (lambda (&rest arguments)
+                                (declare (ignore arguments))
+                                (error "Remote detach tried to pause the responsive reader."))))
+                       (lambda ()
+                         (let ((result (localgroup-query-record entry ':detach)))
+                           (test-assert (and (eq (first result) ':ok)
+                                             (not (getf (rest result) :scheduled-p)))
+                                        "a remote detach is answered at once"))))
+                      (test-assert (multiple-value-bind (exit ended-p) (funcall await-exit)
+                                     (and ended-p (null exit)))
+                                   "the controlling terminal client leaves as after its own detach")))
+                   (test-assert (test-localgroup--await-served session)
+                                "the session finishes serving the client that left")
+                   (test-assert (and (not (application-terminal-attached-p application))
+                                     (null (application-input-controller-exit-reason controller)))
+                                "a session whose terminal was told to leave keeps running without it")))
+            (localgroup-stop application)
+            (application-input-controller-stop controller)
+            (application-input-controller-stop direct-controller)
+            (terminal-ui-stop (application-ui application)))))))
+  nil)
 
 (-> test-localgroup-session-identifiers () null)
 (defun test-localgroup-session-identifiers ()
@@ -1150,32 +1134,29 @@
           (every (lambda (line) (<= (text-cell-width line) 24))
                  (uiop/utility:split-string narrow-output :separator '(#\Newline))))
      "localgroup status exposes start times and fits separated borderless narrow cards"))
-  (let ((*standard-input*  (make-string-input-stream ""))
-        (*standard-output* (make-string-output-stream)))
-    (test-call-with-function-replacements
-     (list
-      (list 'clinedi:terminal-capture-input-mode
-            (lambda (terminal)
-              (declare (ignore terminal))
-              nil))
-      (list 'daemon-connect
-            (lambda (port)
-              (declare (ignore port))
-              (error "Noninteractive attach reached the network."))))
-     (lambda ()
-       (test-assert
-        (handler-case
-         (progn
-          (localgroup-attach-record (test-configuration)
-                                    (cons #P"noninteractive.sexp"
-                                          (list :localgroup-endpoint :session-id "NONTTY"
-                                                :port 1 :token "unused"))
-                                    ':read-only)
-          nil)
-         (localgroup-error (condition)
-          (and (eq (daemon-error-operation condition) ':attach)
-               (search "interactive terminal" (autolith-error-message condition)))))
-        "localgroup attach rejects noninteractive input before connecting"))))
+  (with-test-configuration (configuration)
+    (let ((screen (localgroup-screen-create
+                   :terminal (make-instance 'recording-terminal :columns 80))))
+      (test-call-with-function-replacements
+       (list
+        (list 'terminal--terminal-mode-or-nil
+              (lambda (terminal)
+                (declare (ignore terminal))
+                nil))
+        (list 'daemon-connect
+              (lambda (port)
+                (declare (ignore port))
+                (error "Noninteractive attach reached the network."))))
+       (lambda ()
+         (test-assert
+          (handler-case
+              (progn
+                (channel-view-run (channel-view-create configuration "NONTTY" screen :read-only-p t))
+                nil)
+            (localgroup-error (condition)
+              (and (eq (daemon-error-operation condition) ':attach)
+                   (search "interactive terminal" (autolith-error-message condition)))))
+          "a terminal client rejects noninteractive input before connecting")))))
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (application   nil)
@@ -1293,179 +1274,120 @@
 
 (-> test-localgroup-checkpoint-reconnect-transition () null)
 (defun test-localgroup-checkpoint-reconnect-transition ()
-  "Test repeated checkpoint reconnects over real controller and observer sockets."
-  (with-test-configuration (configuration root)
-    (let* ((relay       (localgroup-terminal-create))
-           (application (make-instance 'application
-                                       :configuration configuration
-                                       :conversation  (conversation-create configuration)
-                                       :ui            (terminal-ui-create :terminal relay)))
-           (controller  (make-instance 'application-input-controller
-                                       :application application :main-thread (current-thread)))
-           (outputs     (list (make-string-output-stream) (make-string-output-stream)))
-           (threads     nil))
-      (setf (application-input-controller application) controller)
-      (unwind-protect
-           (test-call-with-function-replacements
-            (list (list 'stream-terminal-create
-                        (lambda (&rest arguments)
-                          (declare (ignore arguments))
-                          (make-instance 'recording-terminal :columns 80)))
-                  (list 'terminal--terminal-mode-or-nil (lambda (terminal) (declare (ignore terminal)) t))
-                  (list 'terminal-input-ready-p (lambda (terminal) (declare (ignore terminal)) nil))
-                  (list 'platform-watch-terminal-resize
-                        (lambda (&rest arguments) (declare (ignore arguments)) nil))
-                  (list 'application-sync-window-title
-                        (lambda (application) (declare (ignore application)) nil)))
-            (lambda ()
-              (configuration-ensure-directories configuration)
-              (terminal-start relay)
-              (let* ((session  (localgroup-start application))
-                     (pathname (image-daemon:daemon-runtime-registry-pathname session))
-                     (entry    (cons pathname (localgroup--registry-record session))))
-                (loop for mode in '(:control :read-only)
-                      for output in outputs
-                      do (let ((client-mode   mode)
-                               (client-output output))
-                           (push (make-thread
-                                  (lambda ()
-                                    (let ((*standard-output* client-output))
-                                      (localgroup-attach-record configuration entry client-mode)))
-                                  :name "Checkpoint test client")
-                                 threads)))
-                (dotimes (iteration 2)
-                  (test-assert
-                   (task-tests--wait-until
-                    (lambda ()
-                      (with-lock-held ((image-daemon:relay-lock relay))
-                        (and (image-daemon:relay-controller relay)
-                             (= (length (image-daemon:relay-observers relay)) 1))))
-                    10)
-                   "controller and observer attach before each checkpoint")
-                  (test-assert
-                   (equal (multiple-value-list (localgroup-terminal-client-pids relay))
-                          (list (current-process-id) (list (current-process-id))))
-                   "the actual terminal clients send their PIDs on initial attach and reconnect")
-                  (let ((image-daemon:*relay-history-character-limit* 8))
-                    (terminal--write relay (format nil "old-~D" iteration))
-                    (test-assert
-                     (eq (handler-case
-                             (application-call-with-localgroup-quiesced
-                              application
-                              (lambda ()
-                                (test-assert (null (application-localgroup-session application))
-                                             "the endpoint is absent in the saver context")
-                                (terminal--write relay (format nil "gap-~D" iteration))
-                                (sleep 0.15)
-                                (when (= iteration 1)
-                                  (error 'localgroup-error :message  "Synthetic save failure."
-                                                          :operation ':checkpoint))
-                                ':saved))
-                           (localgroup-error () ':failed))
-                         (if (zerop iteration) ':saved ':failed))
-                     "checkpoint success and failure restore the parent endpoint"))
-                  (test-assert
-                   (task-tests--wait-until
-                    (lambda ()
-                      (with-lock-held ((image-daemon:relay-lock relay))
-                        (and (image-daemon:relay-controller relay)
-                             (= (length (image-daemon:relay-observers relay)) 1))))
-                    10)
-                   "both clients reconnect to the parent endpoint")
-                  (setf session (application-localgroup-session application))
-                  (let ((snapshot (localgroup-status-snapshot session)))
-                    (test-assert
-                     (and (= (getf (rest snapshot) :terminal-client-pid) (current-process-id))
-                          (equal (getf (rest snapshot) :observer-client-pids) (list (current-process-id))))
-                     "successful and failed checkpoints restore both attached clients' PIDs"))
-                  (test-assert
-                   (equal (localgroup--wait-for-checkpoint-entry
-                           entry (localgroup-session-checkpoint-reconnect-id session))
-                          (cons pathname (localgroup--registry-record session)))
-                   "the persistent transition accepts another authenticated observer")
-                  (terminal--write relay (format nil "new-~D" iteration)))
-                (image-daemon:relay-finish relay :status 0 :message "done")
-                (dolist (thread threads)
-                  (test-assert
-                   (equal (sb-thread:join-thread thread :timeout 10 :default ':timeout)
-                          '(:status 0 :message "done"))
-                   "the reconnected client receives the normal application exit"))
-                (setf threads nil)
-                (dolist (output outputs)
-                  (let ((text (get-output-stream-string output)))
-                    (dolist (marker '("old-0" "gap-0" "new-0" "old-1" "gap-1" "new-1"))
-                      (let ((position (search marker text)))
-                        (test-assert
-                         (and position (null (search marker text :start2 (1+ position))))
-                         "each client receives queued, reconnect and live output exactly once")))))
-                (localgroup-stop application)
-                (test-assert (null (image-daemon:daemon-registry-read pathname))
-                             "stopping a checkpoint endpoint removes its extended registry record"))))
-        (when threads
-          (image-daemon:relay-finish relay :status 1)
-          (dolist (thread threads) (image-daemon:daemon-stop-thread thread)))
-        (localgroup-stop application)
-        (application-input-controller-stop controller)
-        (terminal-ui-stop (application-ui application))
-        (application-release-conversation-lease application)
-        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
-  nil)
+  "Test repeated checkpoint reconnects of a controlling and a watching terminal client over real sockets."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (application controller)
+        (test-localgroup--application configuration :presented-p t)
+      (let ((presentation (application-ui application)))
+        (unwind-protect
+             (progn
+               (configuration-ensure-directories configuration)
+               (terminal-ui-start presentation)
+               (let* ((session    (localgroup-start application))
+                      (identifier (image-daemon:daemon-runtime-identifier session))
+                      (pathname   (image-daemon:daemon-runtime-registry-pathname session))
+                      (entry      (cons pathname (localgroup--registry-record session))))
+                 (world-server-tests--call-with-terminal-client
+                  configuration identifier
+                  (lambda (type await-controlling-exit controlling)
+                    (declare (ignore type))
+                    (world-server-tests--call-with-terminal-client
+                     configuration identifier
+                     (lambda (type await-watching-exit watching)
+                       (declare (ignore type))
+                       (labels ((present (marker iteration)
+                                  "Show a line naming MARKER and ITERATION in the channel's transcript."
+                                  (terminal-ui-append-finalized
+                                   presentation (list ':checkpoint-test marker iteration)
+                                   (format nil "~A-~D" marker iteration)))
 
-(-> test-localgroup-attachment-acknowledgment () null)
-(defun test-localgroup-attachment-acknowledgment ()
-  "Keep ordinary and handoff handshakes bounded, committing before unbounded terminal input."
-  (dolist (mode '(:blocked :accepted :handoff))
-    (let* ((socket (make-instance 'sb-bsd-sockets:inet-socket :type ':stream :protocol ':tcp))
-           (gate   (sb-thread:make-semaphore))
-           (screen (localgroup-screen-create :terminal (make-instance 'recording-terminal :columns 80)))
-           (entry  '("endpoint" :localgroup-session :port 1 :token "test" :session-id "bfirst1"))
-           (acknowledgments 0) (responses 0) (input-p nil))
-      (unwind-protect
-           (test-call-with-function-replacements
-            (list (list 'daemon-connect
-                        (lambda (port)
-                          (declare (ignore port))
-                          (values socket (make-two-way-stream (make-string-input-stream "") (make-string-output-stream)))))
-                  (list 'daemon-read-response
-                        (lambda (candidate operation)
-                          (declare (ignore candidate operation))
-                          (incf responses)
-                          (when (eq mode ':blocked) (sb-thread:wait-on-semaphore gate))
-                          (if (and (eq mode ':handoff) (= responses 1))
-                              '(:handoff :session-id "bfirst1" :old-pid 1)
-                              '(:attached :history ""))))
-                  (list 'localgroup--wait-for-handoff-entry
-                        (lambda (&rest arguments) (declare (ignore arguments)) entry))
-                  (list 'terminal--terminal-mode-or-nil (lambda (terminal) (declare (ignore terminal)) t))
-                  (list 'platform-watch-terminal-resize (lambda (&rest arguments) (declare (ignore arguments)) nil))
-                  (list 'localgroup--attach-terminal-loop
-                        (lambda (&rest arguments)
-                          (declare (ignore arguments))
-                          (setf input-p t)
-                          (test-assert (= acknowledgments 1) "input starts only after one acknowledgment commits navigation")
-                          (sb-thread:wait-on-semaphore gate :timeout 0.06)
-                          nil)))
-            (lambda ()
-              (let ((expired-p
-                      (handler-case
-                          (progn
-                            (localgroup-attach-record nil entry ':control :screen screen
-                                                     :deadline                    (+ (get-internal-real-time)
-                                                                                     (ceiling (* 0.03 internal-time-units-per-second)))
-                                                     :attached-function           (lambda () (incf acknowledgments)))
-                            nil)
-                        (localgroup-error () t))))
-                (test-assert (if (eq mode ':blocked)
-                                 (and expired-p (zerop acknowledgments) (not input-p))
-                                 (and (not expired-p) (= acknowledgments 1) input-p))
-                             "a blocked acknowledgment times out without input, while accepted and handed-off input outlive the handshake deadline"))))
-        (localgroup-client-screen-release screen)
-        (sb-bsd-sockets:socket-close socket))))
+                                (attached-p ()
+                                  "Return true while the controlling and the watching client follow the channel."
+                                  (and (application-controlling-client application)
+                                       (= 2 (length (application-clients application)))))
+
+                                (disconnected-p (view)
+                                  "Return true once VIEW's connection to the old endpoint ended."
+                                  (localgroup-client-connection-closed-p
+                                   (channel-subscription-connection view)))
+
+                                (shown (view text)
+                                  "Return how many rows of VIEW's pane show TEXT."
+                                  (presentation-tests--shown (channel-view-ui view) text)))
+                         (dotimes (iteration 2)
+                           (test-assert (task-tests--wait-until #'attached-p 10)
+                                        "the controlling and the watching client attach before each checkpoint")
+                           (test-assert
+                            (equal (multiple-value-list (application-presenting-client-pids application))
+                                   (list (current-process-id) (list (current-process-id))))
+                            "the terminal clients state their processes on the first attach and on reconnect")
+                           (present "old" iteration)
+                           (test-assert
+                            (eq (handler-case
+                                    (application-call-with-localgroup-quiesced
+                                     application
+                                     (lambda ()
+                                       (test-assert (null (application-localgroup-session application))
+                                                    "the endpoint is absent in the saver context")
+                                       (present "gap" iteration)
+                                       (test-assert (task-tests--wait-until
+                                                     (lambda ()
+                                                       (and (disconnected-p controlling)
+                                                            (disconnected-p watching)))
+                                                     10)
+                                                    "both clients lose the endpoint that stopped for the checkpoint")
+                                       (when (= iteration 1)
+                                         (error 'localgroup-error :message   "Synthetic save failure."
+                                                                  :operation ':checkpoint))
+                                       ':saved))
+                                  (localgroup-error ()
+                                    ':failed))
+                                (if (zerop iteration) ':saved ':failed))
+                            "checkpoint success and failure restore the parent endpoint")
+                           (test-assert (task-tests--wait-until #'attached-p 10)
+                                        "both clients reconnect to the parent endpoint")
+                           (setf session (application-localgroup-session application))
+                           (let ((status (rest (localgroup-status-snapshot session))))
+                             (test-assert
+                              (and (eql (getf status :terminal-client-pid) (current-process-id))
+                                   (equal (getf status :observer-client-pids) (list (current-process-id)))
+                                   (eq (getf status :terminal-attachment) ':remote))
+                              "successful and failed checkpoints restore both attached clients' PIDs"))
+                           (test-assert (null (application-input-controller-exit-reason controller))
+                                        "a controlling client that leaves for a checkpoint is no lost terminal")
+                           (test-assert
+                            (equal (localgroup--wait-for-checkpoint-entry
+                                    entry (localgroup-session-checkpoint-reconnect-id session))
+                                   (cons pathname (localgroup--registry-record session)))
+                            "the persistent transition accepts another authenticated client")
+                           (present "new" iteration))
+                         (dolist (view (list controlling watching))
+                           (test-assert (task-tests--wait-until (lambda () (plusp (shown view "new-1"))) 10)
+                                        "each client follows the channel after the last reconnect")
+                           (dolist (marker '("old-0" "gap-0" "new-0" "old-1" "gap-1" "new-1"))
+                             (test-assert (= 1 (shown view marker))
+                                          "each client shows queued, reconnect and live output exactly once")))
+                         (test-assert (and (<= (shown controlling "version mismatch") 1)
+                                           (zerop (shown watching "version mismatch")))
+                                      "a reconnect shows a client of another version no further version note")
+                         (localgroup-finish-attachments application :status 0 :message "done")
+                         (dolist (await-exit (list await-controlling-exit await-watching-exit))
+                           (test-assert (equal (funcall await-exit) '(:status 0 :message "done" :details nil))
+                                        "the reconnected client receives the normal application exit"))))
+                     :read-only-p t))
+                  :client-version "0.0.0")
+                 (localgroup-stop application)
+                 (test-assert (null (image-daemon:daemon-registry-read pathname))
+                              "stopping a checkpoint endpoint removes its extended registry record")))
+          (localgroup-stop application)
+          (application-input-controller-stop controller)
+          (terminal-ui-stop presentation)
+          (application-release-conversation-lease application)))))
   nil)
 
 (-> test-localgroup-checkpoint-reconnect-boundaries () null)
 (defun test-localgroup-checkpoint-reconnect-boundaries ()
-  "Test bounded identity/authentication rejection and ordinary attachment endings."
+  "Test bounded rejection of a checkpoint endpoint with another identity or authentication."
   (with-test-configuration (configuration)
    (multiple-value-bind (application controller)
        (test-localgroup--application configuration)
@@ -1521,75 +1443,6 @@
        (localgroup-stop application)
        (application-input-controller-stop controller)
        (application-release-conversation-lease application))))
-  (test-call-with-function-replacements
-   (list
-    (list 'terminal-input-ready-p
-          (lambda (terminal) (declare (ignore terminal)) nil))
-    (list 'localgroup--wait-for-checkpoint-entry
-          (lambda (&rest arguments)
-            (declare (ignore arguments))
-            (error "An ordinary attachment end must not reconnect"))))
-   (lambda ()
-     (dolist
-         (packet
-          '(nil (:detached) (:revoked) (:exit :status 76 :message "restart")))
-       (let* ((wire
-               (if packet
-                   (daemon-packet-string packet)
-                   ""))
-              (output            (make-string-output-stream))
-              (*standard-output* output)
-              (socket
-               (make-instance 'sb-bsd-sockets:inet-socket :type ':stream
-                              :protocol                         ':tcp))
-              (result
-               (unwind-protect
-                   (localgroup--attach-terminal-loop
-                    (make-string-input-stream wire)
-                    (make-instance 'recording-terminal :columns 80) ':control
-                    :socket socket)
-                 (sb-bsd-sockets:socket-close socket))))
-          (test-assert
-           (if packet
-               (equal result (when (eq (first packet) ':exit) (rest packet)))
-               (and (eq (first result) ':attachment-lost)
-                    (eq (getf (rest result) :kind) ':unexpected-eof)))
-           "EOF reports attachment loss; detach, revocation and application exit end reception directly")
-         (test-call-with-function-replacements
-          (list
-           (list 'localgroup--attach-record-once
-                 (lambda (&rest arguments)
-                   (declare (ignore arguments))
-                   result)))
-          (lambda ()
-            (test-assert
-             (equal (localgroup-attach-record nil '("unused") ':control)
-                    result)
-             "the outer attachment loop does not wait after ordinary endings")))))))
-  (let ((versions nil) (calls 0))
-    (test-call-with-function-replacements
-     (list
-      (list 'localgroup--attach-record-once
-            (lambda
-                (configuration entry mode
-                 &key history-position panel screen notice client-version
-                 attached-function deadline)
-              (declare
-               (ignore configuration entry mode history-position panel screen
-                notice attached-function deadline))
-              (push client-version versions)
-              (if (= (incf calls) 1)
-                  '(:checkpoint-reconnect :id "saved" :history-position 0)
-                  '(:detached))))
-      (list 'localgroup--wait-for-checkpoint-entry
-            (lambda (&rest arguments)
-              (declare (ignore arguments))
-              '("replacement"))))
-     (lambda ()
-       (localgroup-attach-record nil '("initial") ':control :client-version
-                                 "0.0.0")))
-    (test-assert (equal (reverse versions) '("0.0.0" nil))
-     "checkpoint reconnection does not repeat the initial version notice"))
   nil)
 
 (-> test-localgroup-checkpoint-source-precheck-order () null)
@@ -1600,480 +1453,459 @@
     (test-withheld ':forked-image-saver
                    "checkpoint source validation with an attached client")
     (return-from test-localgroup-checkpoint-source-precheck-order nil))
-  (with-test-configuration (configuration root)
+  (with-test-configuration (configuration)
     (let* ((application   nil)
            (controller    nil)
            (session       nil)
-           (socket        nil)
-           (stream        nil)
+           (connection    nil)
            (quiesce-count 0))
       (unwind-protect
            (progn
              (configuration-ensure-directories configuration)
              (multiple-value-setq (application controller)
-               (test-localgroup--application configuration))
-             (setf (application-ui application)
-                   (terminal-ui-create :terminal (localgroup-terminal-create)))
+               (test-localgroup--application configuration :presented-p t))
              (terminal-ui-start (application-ui application))
-             (setf session (localgroup-start application))
-             (multiple-value-setq (socket stream)
-               (test-localgroup--attach session ':control))
-             (let ((*checkpoint-thread-quiescer*
-                     (lambda (function)
-                       (declare (ignore function))
-                       (incf quiesce-count)
-                       (error "The quiescer must not run after precheck failure")))
-                   (backend (checkpoint-backend-create configuration nil)))
-               (test-assert
-                (handler-case
-                    (test-call-with-function-replacements
-                     (list
-                      (list
-                       'checkpoint--source-snapshot
-                       (lambda (active-configuration &key allow-dirty-p)
-                         (declare (ignore active-configuration allow-dirty-p))
-                         (error 'checkpoint-error
-                                :message  "Synthetic source check failure."
-                                :stage    ':validation
-                                :pathname nil))))
-                     (lambda ()
-                       (checkpoint-create backend)))
-                  (checkpoint-error (condition)
-                    (and (eq (checkpoint-error-stage condition) ':validation)
-                         (search "Synthetic source check failure."
-                                 (autolith-error-message condition)))))
-                "source-check failure is reported before session quiescence")
-               (test-assert (zerop quiesce-count)
-                "source-check failure does not invoke session quiescence")
-               (test-assert (eq (application-localgroup-session application) session)
-                "source-check failure preserves the active localgroup session"))
-             (terminal--write (localgroup--terminal session) "after-source-failure")
-             (loop for response = (test-localgroup--read-packet stream)
-                   when (and (eq (first response) ':output)
-                             (search "after-source-failure" (second response)))
-                     do (test-assert t "the original socket receives output after failure")
-                        (return)))
-        (when stream (ignore-errors (close stream)))
-        (when (and socket (null stream))
-          (ignore-errors (sb-bsd-sockets:socket-close socket)))
+             (setf session (localgroup-start application :linger-p t))
+             (multiple-value-bind (client seen await)
+                 (test-localgroup--present session)
+               (declare (ignore seen))
+               (setf connection client)
+               (let ((*checkpoint-thread-quiescer*
+                       (lambda (function)
+                         (declare (ignore function))
+                         (incf quiesce-count)
+                         (error "The quiescer must not run after precheck failure")))
+                     (backend (checkpoint-backend-create configuration nil)))
+                 (test-assert
+                  (handler-case
+                      (test-call-with-function-replacements
+                       (list
+                        (list
+                         'checkpoint--source-snapshot
+                         (lambda (active-configuration &key allow-dirty-p)
+                           (declare (ignore active-configuration allow-dirty-p))
+                           (error 'checkpoint-error
+                                  :message  "Synthetic source check failure."
+                                  :stage    ':validation
+                                  :pathname nil))))
+                       (lambda ()
+                         (checkpoint-create backend)))
+                    (checkpoint-error (condition)
+                      (and (eq (checkpoint-error-stage condition) ':validation)
+                           (search "Synthetic source check failure."
+                                   (autolith-error-message condition)))))
+                  "source-check failure is reported before session quiescence")
+                 (test-assert (zerop quiesce-count)
+                              "source-check failure does not invoke session quiescence")
+                 (test-assert (eq (application-localgroup-session application) session)
+                              "source-check failure preserves the active localgroup session"))
+               (terminal-ui-append-finalized (application-ui application) ':after-source-failure
+                                             "after-source-failure")
+               (test-assert (and (funcall await ':append
+                                          (lambda (event)
+                                            (search "after-source-failure"
+                                                    (test-localgroup--event-text event))))
+                                 (not (localgroup-client-connection-closed-p connection)))
+                            "the original connection receives output after the failure")))
+        (when connection (localgroup-client-close connection))
         (when application (localgroup-stop application))
         (when controller (application-input-controller-stop controller))
-        (when application (ignore-errors (terminal-ui-stop (application-ui application))))
-        (when application (application-release-conversation-lease application))
-        (platform-delete-directory-tree *platform* root
-                                        :validate          t
-                                        :if-does-not-exist ':ignore))))
+        (when application
+          (terminal-ui-stop (application-ui application))
+          (application-release-conversation-lease application)))))
   nil)
 
 (-> test-localgroup-detached-terminal-lifecycle () null)
 (defun test-localgroup-detached-terminal-lifecycle ()
-  "Test detached prompt handoff and bounded shutdown with idle clients."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (terminal      (localgroup-terminal-create))
-         (conversation  (conversation-create configuration))
-         (ui            (terminal-ui-create :terminal terminal))
-         (application
-          (make-instance 'application :configuration configuration :conversation
-                         conversation :ui ui))
-         (controller
-          (make-instance 'application-input-controller :application application
-                         :main-thread                               (current-thread)))
-         (session       nil)
-         (socket        nil)
-         (stream        nil)
-         (stop-thread   nil)
-         (wedged-thread nil)
-         (stopped-p     nil)
-         (stop-failure  nil))
-    (setf (application-input-controller application) controller)
-    (unwind-protect
-        (progn
-         (configuration-ensure-directories configuration)
-         (terminal-ui-start ui)
-         (test-assert
-          (not (application-input-controller--open-prompt-if-ready controller))
-          "a detached terminal cannot draw its prompt before control attaches")
-         (setf session (localgroup-start application))
-         (multiple-value-bind (attached-socket attached-stream response)
-             (test-localgroup--attach session ':control)
-           (setf socket attached-socket
-                 stream attached-stream)
-           (test-assert (eq (first response) ':attached)
-            "a detached terminal accepts its first controlling attachment")
-           (test-assert
-            (task-tests--wait-until
-             (lambda () (eq (terminal-ui-prompt-marker-state ui) ':input)) 2)
-            "control attachment draws the initial prompt without a keypress")
-           (setf wedged-thread
-                   (make-thread (lambda () (loop (sleep 60))) :name
-                                "Autolith wedged localgroup test client"))
-           (with-lock-held ((image-daemon:daemon-runtime-lock session))
-             (push wedged-thread (image-daemon:daemon-runtime-client-threads session)))
-           (setf stop-thread
-                   (make-thread
-                    (lambda ()
-                      (handler-case (localgroup-stop application)
-                                    (error (condition) (setf stop-failure condition)))
-                      (setf stopped-p t))
-                    :name "Autolith localgroup stop test"))
-           (test-assert (task-tests--wait-until (lambda () stopped-p) 3)
-            "localgroup shutdown never waits indefinitely for idle clients")
-           (test-assert
-            (and (null stop-failure) (not (thread-alive-p wedged-thread))
-                 (null (application-localgroup-session application))
-                 (not
-                  (probe-file (image-daemon:daemon-runtime-registry-pathname session))))
-            "bounded shutdown reaps clients and unpublishes the session")))
-      (when stream (ignore-errors (close stream)))
-      (when (and socket (null stream))
-        (ignore-errors (sb-bsd-sockets:socket-close socket)))
-      (image-daemon:daemon-stop-thread stop-thread)
-      (image-daemon:daemon-stop-thread wedged-thread)
-      (when (application-localgroup-session application) (localgroup-stop application))
-      (application-input-controller-stop controller)
-      (ignore-errors (terminal-ui-stop ui))
-      (application-release-conversation-lease application)
-      (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
-                                             ':ignore)))
+  "Test a detached session meeting its first terminal client and bounded shutdown with idle clients."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (application controller)
+        (test-localgroup--application configuration :presented-p t)
+      (let ((ui            (application-ui application))
+            (session       nil)
+            (connection    nil)
+            (stop-thread   nil)
+            (wedged-thread nil)
+            (stopped-p     nil)
+            (stop-failure  nil))
+        (unwind-protect
+             (progn
+               (configuration-ensure-directories configuration)
+               (terminal-ui-start ui)
+               (setf session (localgroup-start application))
+               (test-assert (and (not (application-terminal-attached-p application))
+                                 (eq (getf (test-localgroup--status session) :terminal-attachment)
+                                     ':detached))
+                            "a detached session is at no terminal before a client attaches")
+               (setf connection (test-localgroup--present session))
+               (test-assert (and (application-terminal-attached-p application)
+                                 (eq (getf (test-localgroup--status session) :terminal-attachment)
+                                     ':remote))
+                            "the first controlling client puts the detached session at a terminal")
+               (setf wedged-thread
+                     (make-thread (lambda () (loop (sleep 60)))
+                                  :name "Autolith wedged localgroup test client"))
+               (with-lock-held ((image-daemon:daemon-runtime-lock session))
+                 (push wedged-thread (image-daemon:daemon-runtime-client-threads session)))
+               (setf stop-thread
+                     (make-thread
+                      (lambda ()
+                        (handler-case (localgroup-stop application)
+                          (error (condition)
+                            (setf stop-failure condition)))
+                        (setf stopped-p t))
+                      :name "Autolith localgroup stop test"))
+               (test-assert (task-tests--wait-until (lambda () stopped-p) 3)
+                            "localgroup shutdown never waits indefinitely for idle clients")
+               (test-assert
+                (and (null stop-failure) (not (thread-alive-p wedged-thread))
+                     (null (application-localgroup-session application))
+                     (not (probe-file (image-daemon:daemon-runtime-registry-pathname session))))
+                "bounded shutdown reaps clients and unpublishes the session")
+               (test-assert (task-tests--wait-until
+                             (lambda () (localgroup-client-connection-closed-p connection))
+                             10)
+                            "the idle client's connection ends with the endpoint")
+               (test-assert (null (application-input-controller-exit-reason controller))
+                            "a client the stopping endpoint let go is no lost terminal"))
+          (when connection (localgroup-client-close connection))
+          (image-daemon:daemon-stop-thread stop-thread)
+          (image-daemon:daemon-stop-thread wedged-thread)
+          (when (application-localgroup-session application) (localgroup-stop application))
+          (application-input-controller-stop controller)
+          (terminal-ui-stop ui)
+          (application-release-conversation-lease application)))))
   nil)
 
 (-> test-localgroup-client-pids () null)
 (defun test-localgroup-client-pids ()
-  "Exercise client PID reporting through observation, takeover, detach and connection loss."
+  "Exercise client PID and attachment reporting through watching, control, detach and connection loss."
   (with-test-configuration (configuration)
-    (let* ((terminal    (localgroup-terminal-create))
-           (application (make-instance 'application :configuration configuration
-                                                    :conversation  (conversation-create configuration)
-                                                    :ui            (terminal-ui-create :terminal terminal)))
-           (main-thread (test-localgroup--make-main-thread))
-           (controller  (make-instance 'application-input-controller :application application
-                                                                    :main-thread  main-thread))
-           (session     nil)
-           (clients     nil))
-      (setf (application-input-controller application) controller)
-      (labels ((attach (mode &rest arguments)
-                 "Attach a test terminal and retain its connection for cleanup."
-                 (multiple-value-bind (socket stream response)
-                     (apply #'test-localgroup--attach session mode arguments)
-                   (push (cons socket stream) clients)
-                   (test-assert (eq (first response) ':attached) "the terminal attaches")
-                   stream))
+    (multiple-value-bind (application controller)
+        (test-localgroup--application configuration :presented-p t)
+      (let ((session     nil)
+            (connections nil))
+        (labels ((attach (&rest arguments)
+                   "Attach a presenting test client and retain its connection for cleanup."
+                   (multiple-value-bind (connection seen await)
+                       (apply #'test-localgroup--present session arguments)
+                     (declare (ignore seen))
+                     (push connection connections)
+                     (values connection await)))
 
-               (status ()
-                 "Query the published endpoint's current status."
-                 (getf (rest (daemon-call (image-daemon:daemon-runtime-port session)
-                                         (image-daemon:daemon-runtime-token session) ':status))
-                       :status))
+                 (reported-p (pid observers attachment)
+                   "Check the controlling PID, observer PIDs, attachment kind and CLI projection together."
+                   (let ((status (test-localgroup--status session)))
+                     (and (eql (getf status :terminal-client-pid) pid)
+                          (equal (getf status :observer-client-pids) observers)
+                          (= (getf status :observer-count) (length observers))
+                          (eq (getf status :terminal-attachment) attachment)
+                          (eq (getf status :terminal-attached-p) (eq attachment ':remote))
+                          (string= (localgroup--status-field-text (cons :localgroup-status status) ':pid)
+                                   (if pid (princ-to-string pid) "-")))))
 
-               (reported-p (pid observers)
-                 "Check the controlling PID, observer PIDs and CLI projection together."
-                 (let ((snapshot (status)))
-                   (and (eql (getf (rest snapshot) :terminal-client-pid) pid)
-                        (equal (getf (rest snapshot) :observer-client-pids) observers)
-                        (string= (localgroup--status-field-text snapshot ':pid)
-                                 (if pid (princ-to-string pid) "-")))))
-
-               (await-report (pid observers)
-                 "Wait for attachment teardown and check its published PID state."
-                 (test-assert (task-tests--wait-until (lambda () (reported-p pid observers)) 5)
-                              "status reports exactly the active controlling and observing clients")))
-        (unwind-protect
-             (progn
-               (configuration-ensure-directories configuration)
-               (terminal-start terminal)
-               (application-input-controller--start-reader controller)
-               (setf session (localgroup-start application :linger-p t))
-               (await-report nil nil)
-               (let ((observer (attach ':read-only :client-pid 1201)))
-                 (await-report nil '(1201))
-                 (attach ':read-only :client-pid 1202)
-                 (await-report nil '(1201 1202))
-                 (attach ':control :client-pid 2201)
-                 (await-report 2201 '(1201 1202))
-                 (test-assert
-                  (and (= (getf (rest (status)) :pid) (current-process-id))
-                       (eq (localgroup-owner-reachability
-                            (image-daemon:daemon-runtime-registry-pathname session)
-                            (image-daemon:daemon-runtime-identifier session) (current-process-id))
-                           ':reachable))
-                  "the endpoint's process identity and owner reachability use the server PID")
-                 (let ((control (attach ':take-over)))
-                   (daemon-write-packet control '(:resize :rows 43 :columns 117 :styled-p nil))
-                   (test-assert
-                    (task-tests--wait-until
-                     (lambda ()
-                       (and (= (terminal-rows terminal) 43) (= (terminal-columns terminal) 117)
-                            (getf (rest (status)) :terminal-attached-p)))
-                     5)
-                    "a legacy client keeps terminal control and processes input after takeover")
-                   (await-report nil '(1201 1202)))
-                 (let ((control (attach ':take-over :client-pid 3301)))
-                   (await-report 3301 '(1201 1202))
-                   (daemon-write-packet control '(:detach))
-                   (await-report nil '(1201 1202)))
-                 (attach ':control :client-pid 4401)
-                 (await-report 4401 '(1201 1202))
-                 (localgroup--detach-terminal session)
-                 (await-report nil '(1201 1202))
-                 (let ((control (attach ':control :client-pid 5501)))
-                   (await-report 5501 '(1201 1202))
-                   (close control)
-                   (await-report nil '(1201 1202)))
-                 (daemon-write-packet observer '(:detach))
-                 (await-report nil '(1202)))
-               (dolist (pid '(0 -1 "123" 1.5))
-                 (multiple-value-bind (socket stream response)
-                     (test-localgroup--attach session ':control :client-pid pid)
-                   (push (cons socket stream) clients)
-                   (test-assert (eq (first response) ':error)
-                                "an invalid client PID is rejected before terminal ownership changes")))
-               (await-report nil '(1202))
-               (let ((closed (make-instance 'localgroup-attachment :socket nil :stream nil
-                                                                 :mode ':read-only :client-pid 9999)))
-                 (with-lock-held ((image-daemon:relay-lock terminal))
-                   (push closed (image-daemon:relay-observers terminal))
-                   (with-lock-held ((image-daemon:attachment-lock closed))
-                     (setf (image-daemon:attachment-closed-p closed) t)))
-                 (await-report nil '(1202))
-                 (image-daemon:relay-detach terminal closed)))
-          (dolist (client clients)
-            ; mallet:suppress no-ignore-errors -- test cleanup closes connections already revoked or lost
-            (ignore-errors (close (rest client)))
-            ; mallet:suppress no-ignore-errors -- closing the stream may already have closed its socket
-            (ignore-errors (sb-bsd-sockets:socket-close (first client))))
-          (when session (localgroup-stop application))
-          (application-input-controller-stop controller)
-          (image-daemon:daemon-stop-thread main-thread)
-          (terminal-stop terminal)
-          (application-release-conversation-lease application)))))
+                 (await-report (pid observers attachment)
+                   "Wait for the endpoint to report exactly these clients and this attachment."
+                   (test-assert (task-tests--wait-until
+                                 (lambda () (reported-p pid observers attachment)) 5)
+                                "status reports exactly the active controlling and observing clients")))
+          (unwind-protect
+               (progn
+                 (configuration-ensure-directories configuration)
+                 (terminal-ui-start (application-ui application))
+                 (setf session (localgroup-start application :linger-p t))
+                 (await-report nil nil ':detached)
+                 (let ((watcher (attach :watches-p t :client-pid 1201)))
+                   (await-report nil '(1201) ':detached)
+                   (attach :watches-p t :client-pid 1202)
+                   (await-report nil '(1201 1202) ':detached)
+                   (test-assert (null (application-controlling-client application))
+                                "clients that only watch are never the controlling client")
+                   (let ((earlier (attach :client-pid 2201)))
+                     (await-report 2201 '(1201 1202) ':remote)
+                     (test-assert
+                      (and (= (getf (test-localgroup--status session) :pid) (current-process-id))
+                           (eq (localgroup-owner-reachability
+                                (image-daemon:daemon-runtime-registry-pathname session)
+                                (image-daemon:daemon-runtime-identifier session) (current-process-id))
+                               ':reachable))
+                      "the endpoint's process identity and owner reachability use the server PID")
+                     (let ((later (attach :client-pid 3301)))
+                       (await-report 3301 '(1201 1202 2201) ':remote)
+                       (localgroup-client-call earlier ':state)
+                       (await-report 2201 '(1201 1202 3301) ':remote)
+                       (localgroup-client-call watcher ':state)
+                       (await-report 2201 '(1201 1202 3301) ':remote)
+                       (localgroup-client-close later)
+                       (await-report 2201 '(1201 1202) ':remote))
+                     (localgroup-client-call earlier ':detach)
+                     (localgroup-client-close earlier)
+                     (await-report nil '(1201 1202) ':detached))
+                   (multiple-value-bind (control await) (attach :client-pid 4401)
+                     (await-report 4401 '(1201 1202) ':remote)
+                     (localgroup--detach-terminal session)
+                     (test-assert (funcall await ':detach)
+                                  "a remote detach tells the controlling client to leave")
+                     (localgroup-client-close control)
+                     (await-report nil '(1201 1202) ':detached))
+                   (let ((control (attach :client-pid 5501)))
+                     (await-report 5501 '(1201 1202) ':remote)
+                     (localgroup-client-close control)
+                     (await-report nil '(1201 1202) ':detached))
+                   (localgroup-client-close watcher)
+                   (await-report nil '(1202) ':detached))
+                 (dolist (pid '(nil 0 -1 "123" 1.5))
+                   (let ((connection (localgroup-client-connect
+                                      (cons (image-daemon:daemon-runtime-registry-pathname session)
+                                            (image-daemon:daemon-runtime-record session))
+                                      :name      "terminal"
+                                      :arguments (list :presents-p t :rows 31 :columns 91
+                                                       :client-pid pid))))
+                     (push connection connections)
+                     (test-assert (task-tests--wait-until
+                                   (lambda () (reported-p nil '(1202) ':remote)) 5)
+                                  (format nil "a controlling client that states the process ~S is reported without one"
+                                          pid))
+                     (localgroup-client-close connection)
+                     (await-report nil '(1202) ':detached))))
+            (mapc #'localgroup-client-close connections)
+            (when session (localgroup-stop application))
+            (application-input-controller-stop controller)
+            (terminal-ui-stop (application-ui application))
+            (application-release-conversation-lease application))))))
   nil)
 
 (-> test-localgroup-attachments () null)
 (defun test-localgroup-attachments ()
-  "Test read-only observation and controlling terminal handoff over the endpoint."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (output        (make-string-output-stream))
-         (direct
-          (stream-terminal-create :input-stream (make-string-input-stream "")
-                                  :output-stream output :input-file-descriptor 0 :rows 24
-                                  :columns      80))
-         (relay         (localgroup-terminal-create :direct-terminal direct))
-         (conversation  (conversation-create configuration))
-         (ui            (terminal-ui-create :terminal relay))
-         (application
-          (make-instance 'application :configuration configuration :conversation
-                         conversation :ui ui))
-         (main-thread   (test-localgroup--make-main-thread))
-         (controller
-          (make-instance 'application-input-controller :application application
-                         :main-thread                               main-thread))
-         (session       nil)
-         (socket        nil)
-         (stream        nil))
-    (setf (application-input-controller application) controller)
-    (unwind-protect
-        (progn
-         (configuration-ensure-directories configuration)
-         (terminal-start relay)
-         (dolist (client-version (list nil "" *autolith-version* 42))
-           (test-assert (null (localgroup--version-mismatch-notice application client-version))
-                        "matching or absent client versions produce no mismatch note"))
-         (dolist (client-version '("0.0.0" "99.0.0"))
-           (let ((notice (localgroup--version-mismatch-notice application client-version)))
-             (test-assert (and notice
-                               (every (lambda (span) (eq (terminal-span-style span) ':notice)) notice))
-                          "older and newer clients receive informational, non-error notes")))
-         (terminal--write relay (format nil "before attachment~%"))
-         (setf session (localgroup-start application))
-         (multiple-value-bind (read-only-socket read-only-stream response)
-             (test-localgroup--attach session ':read-only)
-           (unwind-protect
+  "Test a client that watches and a client that controls a session's presentation over the endpoint."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (application controller)
+        (test-localgroup--application configuration :presented-p t)
+      (let* ((ui       (application-ui application))
+             (terminal (terminal-ui-terminal ui))
+             (session  nil)
+             (watcher  nil)
+             (control  nil))
+        (flet ((shows-p (await text)
+                 "Wait for a transcript event that shows TEXT and return whether one came."
+                 (not (null (funcall await ':append
+                                     (lambda (event)
+                                       (search text (test-localgroup--event-text event)))))))
+
+               (refusal (connection command &rest arguments)
+                 "Return the message COMMAND is refused with, or NIL when the channel takes it."
+                 (handler-case (progn (apply #'localgroup-client-call connection command arguments) nil)
+                   (localgroup-error (condition)
+                     (autolith-error-message condition))))
+
+               (work-items ()
+                 "Return the work the session's controller has queued."
+                 (with-lock-held ((application-input-controller-lock controller))
+                   (application-input-controller--state controller :work-items))))
+          (unwind-protect
                (progn
-                (test-assert
-                 (and (eq (first response) ':attached)
-                      (search "before attachment" (getf (rest response) :history)))
-                 "read-only attach receives bounded existing terminal output")
-                (terminal--write relay (format nil "observer output~%"))
-                (let ((packet (test-localgroup--read-packet read-only-stream)))
-                  (test-assert
-                   (and (eq (first packet) ':output)
-                        (string= (second packet) (format nil "observer output~%")))
-                   "read-only attach receives live terminal output"))
-                (daemon-write-packet read-only-stream
-                                     (list :event (list :insert "ignored")))
-                (sleep 0.05)
-                (test-assert (string= (line-editor-text (terminal-ui-editor ui)) "")
-                 "read-only attachment cannot inject terminal input")
-                (daemon-write-packet read-only-stream '(:detach)))
-             (ignore-errors (close read-only-stream))
-             (ignore-errors (sb-bsd-sockets:socket-close read-only-socket))))
-         (test-assert (image-daemon:relay-release-direct relay)
-          "a detached process can release its original foreground terminal")
-         (application-input-controller--start-reader controller)
-         (multiple-value-setq (socket stream)
-           (multiple-value-bind (control-socket control-stream response)
-               (test-localgroup--attach session ':control :client-version "0.0.0")
-             (test-assert
-              (and (eq (first response) ':attached)
-                   (eq (image-daemon:relay-attachment-kind relay) ':remote)
-                   (task-tests--wait-until
-                    (lambda ()
-                      (and (= (terminal-rows relay) 31) (= (terminal-columns relay) 91)))
-                    2))
-              "control attaches to a detached terminal relay")
-             (values control-socket control-stream)))
-         (test-assert
-          (loop for packet = (test-localgroup--read-packet stream)
-                repeat 10
-                thereis (and (eq (first packet) ':output)
-                             (stringp (second packet))
-                             (search "0.0.0" (second packet))
-                             (search *autolith-version* (second packet))))
-          "the connected channel transcript includes both client and server versions")
-         (daemon-write-packet stream (list :event (list :insert "remote")))
-         (test-assert
-          (task-tests--wait-until
-           (lambda () (string= (line-editor-text (terminal-ui-editor ui)) "remote")) 2)
-          "controlling attachment input reaches the ordinary line editor")
-         (daemon-write-packet stream (list :event ':submit))
-         (test-assert
-          (task-tests--wait-until
-           (lambda ()
-             (with-lock-held ((application-input-controller-lock controller))
-               (equal (application-input-controller--state controller :work-items)
-                      (list (list ':message "remote")))))
-           2)
-          "controlling attachment submission uses the ordinary input queue")
-         (daemon-write-packet stream (list :resize :rows 44 :columns 120 :styled-p t))
-         (test-assert
-          (task-tests--wait-until
-           (lambda ()
-             (and (= (terminal-rows relay) 44) (= (terminal-columns relay) 120)
-                  (terminal-styled-p relay)))
-           2)
-          "controlling attachment resize updates the live terminal")
-         (daemon-write-packet stream '(:detach))
-         (test-assert
-          (task-tests--wait-until
-           (lambda () (eq (image-daemon:relay-attachment-kind relay) ':detached)) 2)
-          "attachment detach leaves the application running without a terminal"))
-      (when stream (ignore-errors (close stream)))
-      (when (and socket (null stream))
-        (ignore-errors (sb-bsd-sockets:socket-close socket)))
-      (when session (localgroup-stop application))
-      (application-input-controller-stop controller)
-      (image-daemon:daemon-stop-thread main-thread)
-      (ignore-errors (terminal-stop relay))
-      (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
-                                             ':ignore)))
+                 (configuration-ensure-directories configuration)
+                 (terminal-ui-start ui)
+                 (terminal-ui-append-finalized ui ':before-attachment "before attachment")
+                 (setf session (localgroup-start application))
+                 (multiple-value-bind (connection seen await)
+                     (test-localgroup--present session :rows 11 :columns 41 :watches-p t)
+                   (declare (ignore seen))
+                   (setf watcher connection)
+                   (test-assert (shows-p await "before attachment")
+                                "a watching client is replayed what the channel shows")
+                   (terminal-ui-append-finalized ui ':observer-output "observer output")
+                   (test-assert (shows-p await "observer output")
+                                "a watching client receives what the channel presents")
+                   (test-assert (and (= (terminal-rows terminal) 24) (= (terminal-columns terminal) 80))
+                                "the channel is not laid out for a pane that only watches")
+                   (test-assert (and (not (terminal-interactive-p terminal))
+                                     (not (application-terminal-attached-p application))
+                                     (null (application-controlling-client application)))
+                                "a channel that is only watched has no controlling client and is at no terminal")
+                   (dolist (command '((:input :action :submit :text "ignored")
+                                      (:submit :text "ignored")
+                                      (:event :event :submit)
+                                      (:geometry :rows 50 :columns 150)
+                                      (:cancel)
+                                      (:mode :value :ask)
+                                      (:operation :method "status")
+                                      (:detach)))
+                     (test-assert (search "only watches" (apply #'refusal watcher command))
+                                  (format nil "a watching client's ~(~A~) command is refused" (first command))))
+                   (test-assert (and (null (work-items))
+                                     (= (terminal-columns terminal) 80)
+                                     (not (with-lock-held ((image-daemon:daemon-runtime-lock session))
+                                            (localgroup-session-detached-explicitly-p session))))
+                                "what a watching client was refused changed nothing")
+                   (test-assert (and (eq (first (getf (localgroup-client-call watcher ':state) :state))
+                                         ':localgroup-status)
+                                     (null (refusal watcher ':input-history :start 0 :limit 5)))
+                                "a watching client may ask for the channel's state and input history"))
+                 (multiple-value-bind (connection seen await)
+                     (test-localgroup--present session :rows 31 :columns 91)
+                   (declare (ignore seen))
+                   (setf control connection)
+                   (test-assert (and (terminal-interactive-p terminal)
+                                     (application-terminal-attached-p application)
+                                     (= (terminal-rows terminal) 31)
+                                     (= (terminal-columns terminal) 91)
+                                     (eq (getf (test-localgroup--status session) :terminal-attachment)
+                                         ':remote))
+                                "a controlling client puts the channel at a terminal and lays it out for its pane")
+                   (test-assert (shows-p await "observer output")
+                                "a controlling client is replayed what the channel showed before it")
+                   (localgroup-client-call control ':input :action ':submit :text "remote")
+                   (test-assert (equal (work-items) (list (list ':message "remote")))
+                                "a controlling client's submission uses the ordinary input queue")
+                   (localgroup-client-call control ':geometry :rows 44 :columns 120)
+                   (test-assert (and (= (terminal-rows terminal) 44) (= (terminal-columns terminal) 120))
+                                "a controlling client's new pane size lays the channel out again")
+                   (localgroup-client-call control ':detach)
+                   (localgroup-client-close control)
+                   (test-assert (test-localgroup--await-served session 1)
+                                "the session finishes serving the client that left"))
+                 (test-assert (and (eq (getf (test-localgroup--status session) :terminal-attachment)
+                                       ':detached)
+                                   (null (application-input-controller-exit-reason controller)))
+                              "a client that says it leaves on purpose leaves the session running without a terminal")
+                 ;; More history than a pane holds, as a channel in use has.
+                 (dotimes (index 60)
+                   (terminal-ui-append-finalized ui (list ':history-line index)
+                                                 (format nil "history line ~D" index)))
+                 (dolist (case (list (list nil nil) (list "" nil) (list *autolith-version* nil)
+                                     (list "0.0.0" t) (list "99.0.0" t)))
+                   (destructuring-bind (client-version noted-p) case
+                     (world-server-tests--call-with-terminal-client
+                      configuration (image-daemon:daemon-runtime-identifier session)
+                      (lambda (type await-exit view)
+                        (declare (ignore await-exit))
+                        (let ((view-ui (channel-view-ui view))
+                              (marker  (format nil "attached as ~S" client-version)))
+                          ;; The channel's replay comes before what it presents afterwards,
+                          ;; and the view reads a key only once it runs.
+                          (funcall type '(:insert "typed"))
+                          (terminal-ui-append-finalized ui (list ':attached-marker client-version) marker)
+                          (test-assert
+                           (and (task-tests--wait-until
+                                 (lambda ()
+                                   (string= "typed" (line-editor-text (terminal-ui-editor view-ui))))
+                                 10)
+                                (task-tests--wait-until
+                                 (lambda () (plusp (presentation-tests--shown view-ui marker))) 10))
+                           "the view follows its channel and reads its keys")
+                          (when noted-p
+                            (task-tests--wait-until
+                             (lambda () (plusp (presentation-tests--shown view-ui "version mismatch"))) 5))
+                          (let* ((rows    (with-terminal-ui-locked (view-ui)
+                                            (let ((viewport (fullscreen-terminal-ui-viewport view-ui)))
+                                              (loop for row below (clinedi:transcript-viewport-row-count viewport)
+                                                    collect (clinedi:transcript-viewport-row-text viewport row)))))
+                                 (notes   (loop for row in rows
+                                                for index from 0
+                                                when (search "version mismatch" row)
+                                                  collect index))
+                                 (history (position-if (lambda (row) (search "history line 59" row)) rows)))
+                            (test-assert
+                             (if noted-p
+                                 (and history
+                                      (= 1 (length notes))
+                                      (< history (first notes))
+                                      (search client-version (nth (first notes) rows))
+                                      (search *autolith-version* (nth (first notes) rows)))
+                                 (null notes))
+                             (format nil "a terminal client of version ~S shows ~:[no version note~;one note of both versions below the channel's transcript~]"
+                                     client-version noted-p)))))
+                      :client-version client-version))))
+            (when control (localgroup-client-close control))
+            (when watcher (localgroup-client-close watcher))
+            (when session (localgroup-stop application))
+            (application-input-controller-stop controller)
+            (terminal-ui-stop ui)
+            (application-release-conversation-lease application))))))
   nil)
 
 (-> test-localgroup-open-instruction-relay () null)
 (defun test-localgroup-open-instruction-relay ()
-  "Test the client reports reopen advice after receiving a real relay attachment's exit."
+  "Test the terminal client reports reopen advice after its channel told it that the session exits."
   (with-test-configuration (configuration)
-    (let* ((terminal     (localgroup-terminal-create))
-           (ui           (terminal-ui-create :terminal terminal))
-           (conversation (conversation-create configuration))
-           (application  (make-instance 'application :configuration configuration
-                                                     :conversation  conversation
-                                                     :ui            ui))
-           (controller   (make-instance 'application-input-controller :application application
-                                                                      :main-thread (current-thread)))
-           (socket       nil)
-           (stream       nil))
-      (setf (application-input-controller application) controller)
-      (unwind-protect
-           (progn
-             (configuration-ensure-directories configuration)
-             (conversation-append-user-message conversation "keep this conversation")
-             (terminal-ui-start ui)
-             (multiple-value-setq (socket stream)
-               (test-localgroup--attach (localgroup-start application) ':control :styled-p t))
-             (test-assert (null (application--present-open-instruction application))
-                          "The server leaves attached-channel reopen advice to the client")
-             (test-assert
-              (not (search (application--open-command application)
-                           (application-input-controller--forced-exit-message controller ':turn-cancellation)))
-              "The server's forced-exit notice leaves reopen advice to the client")
-             (localgroup-finish-attachments application :status 0 :message "Channel closed.")
-             (let* ((exit     (loop for packet = (test-localgroup--read-packet stream)
-                                   until (eq (first packet) ':exit)
-                                   finally (return packet)))
-                    (command  (application--open-command application))
-                    (output   (with-output-to-string (*error-output*)
-                                (localgroup-relay-exit configuration (rest exit) ':read-only
-                                                       :session-id (conversation-identifier conversation))))
-                    (position (search command output)))
-               (test-assert (not (search command (getf (rest exit) :message)))
-                            "The attachment exit packet carries no server-generated reopen command")
-               (test-assert (and position
-                                 (not (search command output :start2 (+ position (length command)))))
-                            "The client reports the attached channel's reopen command exactly once")))
-        (when stream (ignore-errors (close stream)))
-        (when (and socket (null stream))
-          (ignore-errors (sb-bsd-sockets:socket-close socket)))
-        (when (application-localgroup-session application) (localgroup-stop application))
-        (application-input-controller-stop controller)
-        (ignore-errors (terminal-ui-stop ui))
-        (application-release-conversation-lease application))))
+    (multiple-value-bind (application controller)
+        (test-localgroup--application configuration :presented-p t)
+      (let* ((conversation (application-conversation application))
+             (identifier   (conversation-identifier conversation)))
+        (unwind-protect
+             (progn
+               (configuration-ensure-directories configuration)
+               (conversation-append-user-message conversation "keep this conversation")
+               (terminal-ui-start (application-ui application))
+               (localgroup-start application)
+               (world-server-tests--call-with-terminal-client
+                configuration identifier
+                (lambda (type await-exit view)
+                  (declare (ignore type view))
+                  (test-assert (null (application--present-open-instruction application))
+                               "The server leaves attached-channel reopen advice to the client")
+                  (test-assert
+                   (not (search (application--open-command application)
+                                (application-input-controller--forced-exit-message
+                                 controller ':turn-cancellation)))
+                   "The server's forced-exit notice leaves reopen advice to the client")
+                  (localgroup-finish-attachments application :status 0 :message "Channel closed.")
+                  (multiple-value-bind (exit ended-p) (funcall await-exit)
+                    (let* ((command  (application--open-command application))
+                           (output   (with-output-to-string (*error-output*)
+                                       (localgroup-relay-exit configuration exit ':read-only
+                                                              :session-id identifier)))
+                           (position (search command output)))
+                      (test-assert (and ended-p
+                                        (eql (getf exit :status) 0)
+                                        (equal (getf exit :message) "Channel closed."))
+                                   "The exit the client is told carries no server-generated reopen command")
+                      (test-assert (and position
+                                        (not (search command output :start2 (+ position (length command)))))
+                                   "The client reports the attached channel's reopen command exactly once"))))))
+          (when (application-localgroup-session application) (localgroup-stop application))
+          (application-input-controller-stop controller)
+          (terminal-ui-stop (application-ui application))
+          (application-release-conversation-lease application)))))
   nil)
 
 (-> test-localgroup-session-exit-relay () null)
 (defun test-localgroup-session-exit-relay ()
-  "Test a detached session's launcher exit reaches its controlling terminal."
-  (with-test-configuration (configuration root)
-    (declare (ignore root))
-    (let* ((terminal (localgroup-terminal-create))
-           (ui       (terminal-ui-create :terminal terminal))
-           (application
-             (make-instance 'application :configuration configuration
-                                         :conversation  (conversation-create configuration)
-                                         :ui            ui))
-           (controller
-             (make-instance 'application-input-controller :application application
-                                                          :main-thread (current-thread)))
-           (message  "Autolith will update to 9.9.9 after restoring the terminal.")
-           (socket   nil)
-           (stream   nil))
-      (setf (application-input-controller application) controller)
-      (unwind-protect
-           (progn
-             (configuration-ensure-directories configuration)
-             (terminal-ui-start ui)
-             (multiple-value-bind (attached-socket attached-stream response)
-                 (test-localgroup--attach (localgroup-start application) ':control)
-               (setf socket attached-socket
-                     stream attached-stream)
-               (test-assert (eq (first response) ':attached)
-                            "the detached session accepts a controlling terminal"))
-             (test-assert (localgroup-finish-attachments application
-                                                         :status  76
-                                                         :message message)
-                          "a detached session finishes its relay attachments")
-             (test-assert
-              (equal (loop for packet = (test-localgroup--read-packet stream)
-                           until (eq (first packet) ':exit)
-                           finally (return packet))
-                     (list :exit :status 76 :message message))
-              "the controlling terminal receives the launcher status and message")
-             (multiple-value-bind (plain plain-controller)
-                 (test-localgroup--application configuration)
-               (unwind-protect
-                    (test-assert
-                     (not (localgroup-finish-attachments plain :status 76 :message message))
-                     "a session without a relay has no attachments to finish")
-                 (application-input-controller-stop plain-controller)
-                 (application-release-conversation-lease plain))))
-        (when stream (ignore-errors (close stream)))
-        (when (and socket (null stream))
-          (ignore-errors (sb-bsd-sockets:socket-close socket)))
-        (when (application-localgroup-session application) (localgroup-stop application))
-        (application-input-controller-stop controller)
-        (ignore-errors (terminal-ui-stop ui))
-        (application-release-conversation-lease application))))
+  "Test a detached session's launcher exit reaches its controlling terminal client."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (application controller)
+        (test-localgroup--application configuration :presented-p t)
+      (let ((message "Autolith will update to 9.9.9 after restoring the terminal.")
+            (details (list :crash-capsule "/tmp/capsule.sexp")))
+        (unwind-protect
+             (progn
+               (configuration-ensure-directories configuration)
+               (terminal-ui-start (application-ui application))
+               (world-server-tests--call-with-terminal-client
+                configuration (image-daemon:daemon-runtime-identifier (localgroup-start application))
+                (lambda (type await-exit view)
+                  (declare (ignore type view))
+                  (test-assert (localgroup-finish-attachments application
+                                                              :status  76
+                                                              :message message
+                                                              :details details)
+                               "a detached session tells its terminal clients that it exits")
+                  (test-assert (equal (funcall await-exit)
+                                      (list :status 76 :message message :details details))
+                               "the controlling terminal receives the launcher status, message and details")))
+               (multiple-value-bind (plain plain-controller)
+                   (test-localgroup--application configuration)
+                 (unwind-protect
+                      (test-assert
+                       (not (localgroup-finish-attachments plain :status 76 :message message))
+                       "a session on its own terminal has no clients to tell")
+                   (application-input-controller-stop plain-controller)
+                   (application-release-conversation-lease plain))))
+          (when (application-localgroup-session application) (localgroup-stop application))
+          (application-input-controller-stop controller)
+          (terminal-ui-stop (application-ui application))
+          (application-release-conversation-lease application)))))
   nil)
 
 (-> test-localgroup-relay-exit () null)

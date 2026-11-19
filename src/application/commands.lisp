@@ -1979,51 +1979,13 @@ searches every task directory."
    provider-name
    :reasoning-summaries-p (application-reasoning-traces-p application)))
 
-(defclass application-authentication-output-stream
-    (trivial-gray-streams:fundamental-character-output-stream)
-  ((terminal
-    :initarg       :terminal
-    :reader        application-authentication-output-stream-terminal
-    :type          terminal
-    :documentation "The terminal receiving authentication output."))
-  (:documentation "A character stream routing authentication output through a terminal."))
-
-(defmethod trivial-gray-streams:stream-write-char
-    ((stream application-authentication-output-stream) character)
-  "Write CHARACTER through STREAM's terminal."
-  (terminal--write
-   (application-authentication-output-stream-terminal stream)
-   (string character))
-  character)
-
-(defmethod trivial-gray-streams:stream-write-string
-    ((stream application-authentication-output-stream) string
-     &optional (start 0) end)
-  "Write STRING's selected range through STREAM's terminal."
-  (terminal--write
-   (application-authentication-output-stream-terminal stream)
-   (subseq string start end))
-  string)
-
-(defmethod trivial-gray-streams:stream-force-output
-    ((stream application-authentication-output-stream))
-  "Flush STREAM's terminal output."
-  (terminal-flush
-   (application-authentication-output-stream-terminal stream)))
-
-(defmethod trivial-gray-streams:stream-finish-output
-    ((stream application-authentication-output-stream))
-  "Finish STREAM's terminal output."
-  (terminal-flush
-   (application-authentication-output-stream-terminal stream)))
-
 (defclass application-authentication-input-stream
     (trivial-gray-streams:fundamental-character-input-stream)
   ((terminal
     :initarg       :terminal
     :reader        application-authentication-input-stream-terminal
-    :type          localgroup-terminal
-    :documentation "The attached terminal supplying hidden authentication input.")
+    :type          terminal
+    :documentation "The terminal whose client supplies hidden authentication input.")
    (pending
     :initform      ""
     :accessor      application-authentication-input-stream-pending
@@ -2034,16 +1996,7 @@ searches every task directory."
     :accessor      application-authentication-input-stream-position
     :type          (integer 0)
     :documentation "The next character index in PENDING."))
-  (:documentation "A hidden line stream consuming one localgroup controller's events."))
-
-(-> application-authentication-input-stream--controller-p
-    (application-authentication-input-stream)
-    boolean)
-(defun application-authentication-input-stream--controller-p (stream)
-  "Return true while STREAM's localgroup terminal has a controller."
-  (let ((terminal (application-authentication-input-stream-terminal stream)))
-    (with-lock-held ((image-daemon:relay-lock terminal))
-      (not (null (image-daemon:relay-controller terminal))))))
+  (:documentation "A hidden line stream consuming the events of one terminal's client."))
 
 (-> application-authentication-input-stream--fill
     (application-authentication-input-stream)
@@ -2087,7 +2040,8 @@ searches every task directory."
           ((member event '(:interrupt :escape :stream-end) :test #'eq)
            (return nil))
           ((eq event ':end-of-input)
-           (unless (application-authentication-input-stream--controller-p stream)
+           ;; Nobody is left at the channel's clients to type the rest.
+           (unless (terminal-interactive-p terminal)
              (return nil))
            (sleep 0.01)))))))
 
@@ -2136,42 +2090,57 @@ searches every task directory."
   (terminal-ui-call-with-blocked-status
    ui ':auth
    (lambda ()
-     (if (and (terminal-ui-fullscreen-p ui)
-              (fullscreen-terminal-ui-active-p ui))
-         (let ((terminal            (terminal-ui-terminal ui))
-               (output-mode         nil)
-               (transport-stopped-p nil))
-           (unwind-protect
-                (progn
-                  (with-terminal-ui-locked (ui)
-                    (setf (terminal-ui-live-output-suspended-p ui) t)
-                    (terminal--write terminal (mouse-reporting-disable-sequence))
-                    (when stop-ui-p
-                      (setf transport-stopped-p t)
-                      (terminal-stop terminal))
-                    (setf output-mode (platform-terminal-enable-fullscreen *platform*))
-                    (terminal-ui-fullscreen-invalidate ui)
-                    (terminal-ui-boot-screen ui ':authenticating "Provider authentication in progress"))
-                  (funcall function))
-             (with-terminal-ui-locked (ui)
-               (unwind-protect
-                    (platform-terminal-restore-fullscreen *platform* output-mode)
-                 (unwind-protect
-                      (when transport-stopped-p
-                        (terminal-start terminal))
+     (cond
+       ;; A hosted channel has no screen to give the provider: its output
+       ;; shows in the transcript, which a page such as the tour gives way
+       ;; to meanwhile, and its input comes from the client.
+       ((typep ui 'channel-presentation)
+        (let ((suspended-p (terminal-ui-live-output-suspended-p ui)))
+          (unwind-protect
+               (progn
+                 (with-terminal-ui-locked (ui)
+                   (setf (terminal-ui-live-output-suspended-p ui) nil)
+                   (terminal-ui--paint-live ui))
+                 (funcall function))
+            (with-terminal-ui-locked (ui)
+              (setf (terminal-ui-live-output-suspended-p ui) suspended-p)))))
+       ((and (terminal-ui-fullscreen-p ui)
+             (fullscreen-terminal-ui-active-p ui))
+        (let ((terminal            (terminal-ui-terminal ui))
+              (output-mode         nil)
+              (transport-stopped-p nil))
+          (unwind-protect
+               (progn
+                 (with-terminal-ui-locked (ui)
+                   (setf (terminal-ui-live-output-suspended-p ui) t)
+                   (terminal--write terminal (mouse-reporting-disable-sequence))
+                   (when stop-ui-p
+                     (setf transport-stopped-p t)
+                     (terminal-stop terminal))
+                   (setf output-mode (platform-terminal-enable-fullscreen *platform*))
                    (terminal-ui-fullscreen-invalidate ui)
-                   (unwind-protect
-                        (terminal--write terminal (mouse-reporting-enable-sequence))
-                     (application--authentication-ui-resume ui)))))))
-         (unwind-protect
-              (progn
-                (if stop-ui-p
-                    (terminal-ui-stop ui)
-                    (application--authentication-ui-suspend ui))
-                (funcall function))
-           (if stop-ui-p
-               (terminal-ui-start ui)
-               (application--authentication-ui-resume ui)))))))
+                   (terminal-ui-boot-screen ui ':authenticating "Provider authentication in progress"))
+                 (funcall function))
+            (with-terminal-ui-locked (ui)
+              (unwind-protect
+                   (platform-terminal-restore-fullscreen *platform* output-mode)
+                (unwind-protect
+                     (when transport-stopped-p
+                       (terminal-start terminal))
+                  (terminal-ui-fullscreen-invalidate ui)
+                  (unwind-protect
+                       (terminal--write terminal (mouse-reporting-enable-sequence))
+                    (application--authentication-ui-resume ui))))))))
+       (t
+        (unwind-protect
+             (progn
+               (if stop-ui-p
+                   (terminal-ui-stop ui)
+                   (application--authentication-ui-suspend ui))
+               (funcall function))
+          (if stop-ui-p
+              (terminal-ui-start ui)
+              (application--authentication-ui-resume ui))))))))
 
 (defgeneric terminal-authentication-streams (terminal)
   (:documentation
@@ -2190,12 +2159,12 @@ searches every task directory."
           t nil
           (stream-terminal-input-file-descriptor terminal)))
 
-(defmethod terminal-authentication-streams ((terminal localgroup-terminal))
-  "Adapt LOCALGROUP-TERMINAL events and output to authentication streams."
+(defmethod terminal-authentication-streams ((terminal presentation-terminal))
+  "Read a hosted channel's client events as hidden input and show output in its transcript."
   (values
    (make-instance 'application-authentication-input-stream
                   :terminal terminal)
-   (make-instance 'application-authentication-output-stream
+   (make-instance 'presentation-output-stream
                   :terminal terminal)
    nil t nil))
 
@@ -2900,7 +2869,7 @@ The current value and its source sit in aligned columns of their own."
   (let* ((configuration (application-configuration application))
          (ui            (application-ui application))
          (terminal      (terminal-ui-terminal ui)))
-    (if (and (application-hosted-p application) (typep terminal 'localgroup-terminal))
+    (if (application-presentation application)
         ;; A hosted channel keeps its conversation and its agent; the new
         ;; conversation is a channel of its own, and the terminal goes there.
         (let* ((presentation
@@ -2919,7 +2888,7 @@ The current value and its source sit in aligned columns of their own."
                                presentation)))
                        :session-id))
                (display (conversation-identifier-display identifier)))
-          (unless (localgroup-terminal-switch-controller terminal identifier)
+          (unless (application-client-tell application ':switch :session-id identifier)
             (application-present
              application
              (application-notice-line (format nil "new channel ~A opened; (open ~S) goes there"
@@ -3033,7 +3002,6 @@ show."
          (display    (and identifier (conversation-identifier-display identifier)))
          (current    (and identifier
                           (conversation-identifier (application-conversation application))))
-         (terminal   (and identifier (terminal-ui-terminal (application-ui application))))
          (controller (and identifier (application-input-controller application))))
     (cond
       ((null identifier)
@@ -3041,8 +3009,8 @@ show."
       ((string= identifier current)
        (application-present application
                             (application-notice-line (format nil "already in channel ~A" display))))
-      ((and (application-hosted-p application) (typep terminal 'localgroup-terminal))
-       (unless (localgroup-terminal-switch-controller terminal identifier)
+      ((application-presentation application)
+       (unless (application-client-tell application ':switch :session-id identifier)
          (application-present
           application
           (application-failure-line
