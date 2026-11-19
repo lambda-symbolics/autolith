@@ -199,6 +199,65 @@ replaces only the unmatched middle, after common prefix and suffix removal."
         (getf sample :history-digest) (getf sample :history-count) history)
        t))
 
+(-> provider-context--switch-source-model (codex-subscription-provider list) (option string))
+(defun provider-context--switch-source-model (provider sample)
+  "Identify the measured model under the same Codex endpoint and provider."
+  (let* ((configuration (provider-configuration provider))
+         (registration (model-provider-registration provider))
+         (name         (config :model-provider configuration))
+         (model-digest (rest (assoc "model" (getf sample :encoder-fields) :test #'equal))))
+    (when (and registration model-digest)
+      (loop for candidate in (provider-registration-models registration)
+            for model = (provider-model-name candidate)
+            when (and (equal model-digest (provider-cache-prefix--entry model))
+                      (loop for effort in (configuration--reasoning-efforts-for model name)
+                            thereis (equal (getf sample :policy)
+                                           (provider-cache-prefix--entry
+                                            (vector (symbol-name (class-name (class-of provider)))
+                                                    model name effort
+                                                    (config :provider-endpoint configuration))))))
+              return model))))
+
+(-> provider-context--switch-history (model-provider conversation &key (:sample list) (:current list))
+    (values list boolean))
+(defun provider-context--switch-history (provider conversation &key sample current)
+  "Check which CURRENT items are covered by a compatible Codex measurement.
+
+Verify the original measured prefix. Only sealed reasoning may disappear from
+that prefix. Count every new item and take no credit for removed reasoning."
+  (block nil
+    (unless (and (typep provider 'codex-subscription-provider)
+                 (conversation-context-usage-sample-p sample)
+                 (= 2 (getf sample :format)))
+      (return (values nil nil)))
+    (let* ((model (provider-context--switch-source-model provider sample))
+           (count (getf sample :history-count))
+           (old   (and model
+                       (conversation-input-items-for-family
+                        conversation (provider-family provider) :include-ephemeral-p nil :model model))))
+      (unless (and model (plusp count) (<= count (getf sample :wire-count))
+                   (provider-context--prefix-matches-p
+                    (getf sample :history-digest) count
+                    (mapcar #'provider-cache-prefix--entry old)))
+        (return (values nil nil)))
+      (let* ((model-changed-p (not (equal model (config :model (provider-configuration provider)))))
+             (prefix          (subseq old 0 count))
+             (covered         (if model-changed-p
+                                  (remove-if #'conversation--encrypted-reasoning-p prefix)
+                                  prefix))
+             (added           nil))
+        (dolist (item current)
+          (cond
+            ((and covered (eq item (first covered)))
+             (pop covered))
+            ((or (null covered) (and model-changed-p (conversation--encrypted-reasoning-p item)))
+             (push item added))
+            (t
+             (return (values nil nil)))))
+        (if covered
+            (values nil nil)
+            (values (nreverse added) t))))))
+
 (-> provider-context--request-items (model-provider hash-table) (option vector))
 (defun provider-context--request-items (provider request)
   "Return the encoder's declared conversation sequence."
@@ -245,6 +304,30 @@ replaces only the unmatched middle, after common prefix and suffix removal."
                     expected-fields)
              t)))))
 
+(-> provider-context--switched-input (model-provider hash-table &key (:context list) (:sample list))
+    (values (integer 0) boolean boolean))
+(defun provider-context--switched-input (provider request &key context sample)
+  "Use measured occupancy only if the final request contains the verified history."
+  (block nil
+    (unless (and (typep provider 'codex-subscription-provider)
+                 (= 2 (getf sample :format 0)))
+      (return (values 0 nil nil)))
+    (let* ((conversation (getf context :conversation))
+           (history      (provider-history-items provider conversation :include-ephemeral-p nil))
+           (items        (provider-context--request-items provider request)))
+      (multiple-value-bind (added matched-p)
+          (provider-context--switch-history provider conversation :sample sample :current history)
+        (unless (and matched-p items
+                     (provider-context--extends-p (mapcar #'provider-cache-prefix--entry history)
+                                                  (map 'list #'provider-cache-prefix--entry items))
+                     (provider-context--current-wire-p context request sample))
+          (return (values 0 nil nil)))
+        (values (+ (provider-context--header-charge sample context)
+                   (provider-context--input-tokens
+                    provider sample
+                    (concatenate 'vector added (subseq items (length history)))))
+                t t)))))
+
 (-> provider-context--matched-input (model-provider hash-table)
     (values (integer 0) boolean boolean))
 (defun provider-context--matched-input (provider request)
@@ -273,7 +356,9 @@ replaces only the unmatched middle, after common prefix and suffix removal."
                                                                                                                                                                                                  (values (+ tokens (if header-changed-p
                                                                                                                                                                                                                        (provider-context--header-charge sample context) 0))
                                                                                                                                                                                                          t (or header-changed-p uncertain-p))))))))
-    (values 0 nil nil)))
+    (if (and (eq provider (getf context :provider)) (getf context :eligible-p))
+        (provider-context--switched-input provider request :context context :sample sample)
+        (values 0 nil nil))))
 
 (-> provider-context--response-entries-p (list list) boolean)
 (defun provider-context--response-entries-p (entries output)

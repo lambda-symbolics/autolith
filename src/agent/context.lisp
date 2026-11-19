@@ -573,6 +573,15 @@ new retained history here; admission replaces temporary context when encoding."
         (return-from context-estimate-known-tokens
           (values (+ charge (provider-context--input-tokens provider sample (and new (coerce new 'vector))))
                   (and (null new) (equal header (getf sample :soft-header)))))))
+    (when (and provider (null (conversation-ephemeral-input-entries conversation)))
+      (multiple-value-bind (added matched-p)
+          (provider-context--switch-history provider conversation :sample sample :current items)
+        (when matched-p
+          (return-from context-estimate-known-tokens
+            (values (+ (provider-context--header-charge sample components)
+                       (provider-context--input-tokens
+                        provider sample (and added (coerce added 'vector))))
+                    nil)))))
     (values
      (provider-context--input-tokens provider nil (vector (system-prompt configuration) (request-context-session-state configuration :hurry-up-p hurry-up-p) (coerce items 'vector) tools))     nil)))
 

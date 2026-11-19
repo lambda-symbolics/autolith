@@ -3722,12 +3722,12 @@ later picker searches read it without scanning the log."
 (defun conversation--invalidate-context-usage (conversation kind &optional properties)
   "Discard measured context evidence when KIND replaces its coverage.
 
-PROPERTIES is the durable record property list when available. Provider usage
-metadata preserves coverage; published compaction, ownership changes and pending
-ordinary responses replace it."
+PROPERTIES is the durable record property list when available. Keep evidence
+across configuration changes; consumers check which policy and history it covers.
+Compaction and context adoption replace the measured history."
   (let ((metadata (getf properties :metadata)))
     (when (or (member kind '(:summary :native-compaction :context-adoption
-                             :configuration :precompaction))
+                             :precompaction))
               (and (eq kind :provider)
                    (getf metadata :context-adoption)))
       (setf (conversation-context-usage-sample conversation) nil)))
