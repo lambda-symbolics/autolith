@@ -6986,38 +6986,40 @@
      (list
       (list
        'application-create
-       (lambda (configuration &key conversation-id permission-mode)
-         (declare (ignore configuration conversation-id))
-         (make-instance 'application :permission-mode permission-mode)))
+       (lambda (configuration &key conversation-id permission-mode explicit-permission-mode)
+         (declare (ignore configuration conversation-id permission-mode))
+         (setf observed-mode explicit-permission-mode)
+         (make-instance 'application)))
       (list
        'application-run
        (lambda (application &rest arguments)
-         (declare (ignore arguments))
-         (setf observed-mode (application-permission-mode application)))))
+         (declare (ignore application arguments))
+         nil)))
      (lambda ()
        (let ((*main-direct-start-p* t))
          (main-dispatch '("--permissions" "sandbox")))))
     (test-assert (eq observed-mode ':sandboxed)
-                 "--permissions sets the initial application mode"))
+                 "--permissions reaches application creation as an explicit selection"))
   (let ((observed-mode        nil)
         (*active-application* (make-instance 'application)))
     (test-call-with-function-replacements
      (list
       (list
        'application-reconnect
-       (lambda (application &key conversation-id immutable-p permission-mode)
-         (declare (ignore application conversation-id immutable-p))
-         (make-instance 'application :permission-mode permission-mode)))
+       (lambda (application &key conversation-id immutable-p permission-mode explicit-permission-mode)
+         (declare (ignore application conversation-id immutable-p permission-mode))
+         (setf observed-mode explicit-permission-mode)
+         (make-instance 'application)))
       (list
        'application-run
        (lambda (application &rest arguments)
-         (declare (ignore arguments))
-         (setf observed-mode (application-permission-mode application)))))
+         (declare (ignore application arguments))
+         nil)))
      (lambda ()
        (let ((*main-direct-start-p* t))
          (main-dispatch '("--permissions" "full")))))
     (test-assert (eq observed-mode ':full-access)
-                 "--permissions sets the initial reconnect mode"))
+                 "--permissions reaches reconnect as an explicit selection"))
   (let* ((environment-names
            '("AUTOLITH_RECOVERY_CONVERSATION_ID"
              "AUTOLITH_RECOVERY_RENDERED_SEQUENCE"
