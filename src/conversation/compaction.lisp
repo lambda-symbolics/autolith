@@ -113,7 +113,7 @@ adopted context brought from another conversation."
     (nthcdr (length source) current)))
 
 (defparameter *conversation-compaction-row-metadata*
-  '(:family :handoff-family :checkpoint-summary :continuation :record)
+  '(:family :reasoning-model :handoff-family :checkpoint-summary :continuation :record)
   "The projection metadata a carried context row keeps for its item.")
 
 (-> conversation-compaction--serialize-item
@@ -284,6 +284,8 @@ readers that do not know the typed form."
   (case key
     (:checkpoint-summary
      t)
+    (:reasoning-model
+     (non-empty-string-p value))
     (:continuation
      (continuation-p value))
     (:record
@@ -419,7 +421,10 @@ handoff, which the family that owns the native window does not read."
           (dolist (item window)
             (setf (gethash item
                            (clinker-transcript:projection-metadata-table projection ':family))
-                  family))
+                  family)
+            (when (and (conversation--encrypted-reasoning-p item) (conversation-model conversation))
+              (setf (gethash item (clinker-transcript:projection-metadata-table projection ':reasoning-model))
+                    (conversation-model conversation))))
           (unless (member :continuation properties)
             (setf (gethash summary-item
                            (clinker-transcript:projection-metadata-table projection ':handoff-family))

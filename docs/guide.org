@@ -2404,6 +2404,10 @@ and tool schemas. After compaction it estimates the replacement context until
 next provider report. Compaction request usage is recorded separately as work
 spent on the checkpoint.
 
+When you switch Responses models, the new model receives the conversation and
+its tool exchanges without the previous model's encrypted reasoning. Switching
+back lets the original model use its own retained reasoning again.
+
 At narrow widths, the meter keeps the used and window counts and drops the bar.
 
 Use =(compact)= to compact the current conversation immediately,

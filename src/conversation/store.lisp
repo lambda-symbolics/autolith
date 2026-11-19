@@ -1993,6 +1993,11 @@ Run before post-publication adapters; callbacks must perform only local bookkeep
                       (error condition)))))))))
     normalized))
 
+(-> conversation--encrypted-reasoning-p (json-object) boolean)
+(defun conversation--encrypted-reasoning-p (item)
+  "Recognize an opaque reasoning item, not a native compaction checkpoint."
+  (and (reasoning-item-p item) (non-empty-string-p (json-get item "encrypted_content"))))
+
 (-> conversation--append-input-item (conversation json-object) json-object)
 (defun conversation--append-input-item (conversation item)
   "Append ITEM and attribute it to CONVERSATION's current model family."
@@ -2000,7 +2005,10 @@ Run before post-publication adapters; callbacks must perform only local bookkeep
     (let ((model (conversation-model conversation)))
       (when (non-empty-string-p model)
         (setf (gethash item (conversation-input-item-families conversation))
-              (model-family model (conversation-model-provider conversation))))
+              (model-family model (conversation-model-provider conversation)))
+        (when (conversation--encrypted-reasoning-p item)
+          (setf (gethash item (clinker-transcript:projection-metadata-table
+                               (conversation-projection conversation) ':reasoning-model)) model)))
       (clinker-transcript:projection-append (conversation-projection conversation) item))))
 
 (-> conversation--append-record-item (conversation json-object list) json-object)
@@ -2090,18 +2098,25 @@ FAILED-P records that ITEM is the result of a failed tool call."
   (values (gethash item (conversation-input-item-families conversation))))
 
 (-> conversation-input-items-for-family
-    (conversation keyword &key (:include-ephemeral-p boolean))
+    (conversation keyword &key (:include-ephemeral-p boolean) (:model (option string)))
     list)
 (defun conversation-input-items-for-family
-    (conversation family &key (include-ephemeral-p t))
-  "Return CONVERSATION's provider projection usable by FAMILY."
+    (conversation family &key (include-ephemeral-p t) model)
+  "Return ordered history for FAMILY. With MODEL, replay only its own sealed reasoning."
   (with-recursive-lock-held ((conversation-append-lock conversation))
-    (clinker-transcript:items-for-family
-     (conversation-input-items-for-request
-      conversation :include-ephemeral-p include-ephemeral-p)
-     family
-     :item-families    (conversation-input-item-families conversation)
-     :handoff-families (conversation-portable-handoff-families conversation))))
+    (let ((items (clinker-transcript:items-for-family
+                  (conversation-input-items-for-request conversation :include-ephemeral-p include-ephemeral-p)
+                  family
+                  :item-families    (conversation-input-item-families conversation)
+                  :handoff-families (conversation-portable-handoff-families conversation))))
+      (if model
+          (let ((owners (clinker-transcript:projection-metadata-table
+                         (conversation-projection conversation) ':reasoning-model)))
+            (remove-if (lambda (item)
+                         (and (conversation--encrypted-reasoning-p item)
+                              (not (equal model (gethash item owners)))))
+                       items))
+          items))))
 
 (-> conversation-compaction-summary-view
     (conversation (or list clinker-transcript:projection) &optional (option keyword))
@@ -2128,12 +2143,12 @@ already owns its metadata and is installed without an additional remap."
            :projection       (if (typep items 'clinker-transcript:projection)
                                  items
                                  (clinker-transcript:make-projection :items items)))))
-    (cond (family
-           (dolist (item (conversation-input-items view))
-             (setf (gethash item (conversation-input-item-families view)) family)))
-          ((not (typep items 'clinker-transcript:projection))
-           (conversation-compaction--copy-metadata
-            (conversation-projection conversation) (conversation-projection view) items)))
+    (unless (typep items 'clinker-transcript:projection)
+      (conversation-compaction--copy-metadata
+       (conversation-projection conversation) (conversation-projection view) items))
+    (when family
+      (dolist (item (conversation-input-items view))
+        (setf (gethash item (conversation-input-item-families view)) family)))
     view))
 
 (defparameter *conversation-inherited-reference-boundary*

@@ -34,6 +34,7 @@
   test-context-admission-mission-handoff-reasons
   test-context-admission-boundary
   test-context-admission-fresh-projection
+  test-context-admission-switched-reasoning
   test-context-admission-measured-reasoning
   test-context-admission-measured-transport-fields
   test-context-admission-measured-request-tails

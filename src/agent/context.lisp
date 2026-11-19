@@ -554,9 +554,12 @@ A matched measurement already includes request-local guidance. Charge only
 new retained history here; admission replaces temporary context when encoding."
   (let* ((tools      (if tool-registry (tool-registry-provider-schemas tool-registry) #()))
          (items      (conversation-input-items-for-family
-                      conversation
-                      (or family (model-family (config :model configuration)
-                                               (config :model-provider configuration)))))
+                      conversation (or family (and provider (provider-family provider))
+                                       (model-family (config :model configuration)
+                                                     (config :model-provider configuration)))
+                      :model (when (or (null provider) (typep provider 'responses-api-provider)
+                                       (null (compute-applicable-methods #'provider-configuration (list provider))))
+                               (config :model configuration))))
          (sample     (conversation-context-usage-sample conversation))
          (header     (and provider (provider-context--soft-header provider tools)))
          (components (and provider (provider-context--header-components provider tools))))

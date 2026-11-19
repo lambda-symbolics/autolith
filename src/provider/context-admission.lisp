@@ -153,8 +153,7 @@ replaces only the unmatched middle, after common prefix and suffix removal."
 (defun provider-context--history (provider conversation)
   "Fingerprint compatible retained history without storing prompt bodies."
   (mapcar #'provider-cache-prefix--entry
-          (conversation-input-items-for-family conversation (provider-family provider)
-                                               :include-ephemeral-p nil)))
+          (provider-history-items provider conversation :include-ephemeral-p nil)))
 
 (-> provider-context--extends-p (list list) boolean)
 (defun provider-context--extends-p (previous current)
@@ -320,8 +319,7 @@ messages that later change fail closed."
                  (let ((cached (json-get usage "cached_input_tokens")))
                    (or (null cached) (and (typep cached '(integer 0)) (<= cached input))))
                  (or (null total) (and (typep total '(integer 0)) (>= total (+ input output)))))
-        (let* ((history (conversation-input-items-for-family
-                         conversation (provider-family provider) :include-ephemeral-p nil))
+        (let* ((history (provider-history-items provider conversation :include-ephemeral-p nil))
                (entries (mapcar #'provider-cache-prefix--entry history))
                (before  (getf context :history)))
           (when (and (provider-context--extends-p before entries)

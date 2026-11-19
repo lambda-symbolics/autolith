@@ -189,14 +189,22 @@ establish shared history growth, never the provider's token boundary."
                 (append (getf options :shared-items)
                         (cl-llm-provider-api:wire-request-items projection)))))))
 
+(-> provider-history-items
+    (model-provider conversation &key (:include-ephemeral-p boolean)) list)
+(defun provider-history-items (provider conversation &key (include-ephemeral-p t))
+  "Select compatible history using the encoder's model, including for a detached request."
+  (conversation-input-items-for-family
+   conversation (provider-family provider) :include-ephemeral-p include-ephemeral-p
+   :model                                                       (when (typep provider 'responses-api-provider)
+                                                                  (config :model (provider-configuration provider)))))
+
 (-> provider-cache-prefix--volatile-history (model-provider conversation) list)
 (defun provider-cache-prefix--volatile-history (provider conversation)
   "Return projected history from the first difference without one-response items."
   (with-recursive-lock-held ((conversation-append-lock conversation))
     (when (conversation-ephemeral-input-entries conversation)
-      (let* ((history (conversation-input-items-for-family conversation (provider-family provider)))
-             (durable (conversation-input-items-for-family conversation (provider-family provider)
-                                                           :include-ephemeral-p nil))
+      (let* ((history (provider-history-items provider conversation))
+             (durable (provider-history-items provider conversation :include-ephemeral-p nil))
              (shared  (loop for item in history
                             for stable in durable
                             while (eq item stable)
@@ -638,9 +646,7 @@ context, so it shares that cached prefix. It delivers no context."
                                     :goal-context goal-context
                                     :compaction-p compaction-p))
          (history
-           (conversation-input-items-for-family
-            conversation (provider-family provider)
-            :include-ephemeral-p (not compaction-p))))
+           (provider-history-items provider conversation :include-ephemeral-p (not compaction-p))))
     (multiple-value-bind (items stable-context volatile-context)
         (context-delivery-project-items delivery conversation history)
       (let* ((suffix (if compaction-p
