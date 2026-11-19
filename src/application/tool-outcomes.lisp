@@ -106,10 +106,15 @@ METADATA-ONLY-P suppresses formatted outcome bodies during history selection."
                          (application--tool-outcome-key
                           application ':call (json-get item "call_id")))))
        (when call-key
-         (list :kind ':call :call-key call-key :state ':pending
-               :expandable-input-p (typep (application--find-tool
-                                           application (function-call-canonical-name item))
-                                          'lisp-source-input)))))
+         (let* ((tool (application--find-tool application (function-call-canonical-name item)))
+                (source-p (typep tool 'lisp-source-input)))
+           (append
+            (list :kind ':call :call-key call-key :state ':pending :expandable-input-p source-p)
+            (when (and source-p (not metadata-only-p))
+              (let ((*application-tool-call-invocation*
+                      (application--tool-call-invocation (function-call-canonical-name item) item)))
+                (list :source-input
+                      (application--lisp-input-description application item (tool-source-argument tool))))))))))
     (:tool-result
      (application--tool-result-outcome application record entry :metadata-only-p metadata-only-p))
     (:message

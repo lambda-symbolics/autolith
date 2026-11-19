@@ -2524,6 +2524,24 @@ line above."
              (terminal-span ':plain (string #\Newline)))
        (application--markdown-body application text)))))
 
+(-> application--transcript-header
+    (string (option string) (integer 1) &key (:style terminal-style)) list)
+(defun application--transcript-header (header detail columns &key (style ':plain))
+  "Return HEADER and optional DETAIL fitted to COLUMNS without application state."
+  (let ((spans (list (terminal-span style header))))
+    (when detail
+      (let ((available   (- columns 3 (text-cell-width header)))
+            (safe-detail (sanitize-text detail :single-line-p t)))
+        (when (> available 1)
+          (let ((visible (text-cell-prefix safe-detail (1- available))))
+            (setf spans
+                  (append spans
+                          (list (terminal-span
+                                 ':dim
+                                 (format nil "  ~A~:[~;…~]"
+                                         visible (< (length visible) (length safe-detail)))))))))))
+    spans))
+
 (-> application--transcript-entry
     (application &key (:style terminal-style) (:header string)
                  (:detail (option string)) (:body (option string))
@@ -2533,33 +2551,12 @@ line above."
     (application &key (style ':plain) (header "") detail body
                  (body-style ':dim) timestamp)
   "Return one styled transcript entry with HEADER, optional DETAIL, and BODY rows."
-  (let ((spans  (list (terminal-span style header)))
-        (detail (or detail
-                    (application--turn-timestamp-text application timestamp))))
-    (when detail
-      (let ((available   (- (application--transcript-columns application)
-                            3
-                            (text-cell-width header)))
-            (safe-detail (sanitize-text detail :single-line-p t)))
-        (when (> available 1)
-          (let ((visible (text-cell-prefix safe-detail (1- available))))
-            (setf spans
-                  (append spans
-                          (list (terminal-span
-                                 :dim
-                                 (format nil "  ~A~:[~;…~]"
-                                         visible
-                                         (< (length visible)
-                                            (length safe-detail)))))))))))
-    (when body
-      (setf spans
-            (append spans
-                    (list (terminal-span ':plain (string #\Newline))
-                          (terminal-span body-style
-                                         (application--indented-body
-                                          application
-                                          body))))))
-    spans))
+  (append (application--transcript-header
+           header (or detail (application--turn-timestamp-text application timestamp))
+           (application--transcript-columns application) :style style)
+          (when body
+            (list (terminal-span ':plain (string #\Newline))
+                  (terminal-span body-style (application--indented-body application body))))))
 
 
 ;;;; -- Tool Transcript Protocol --

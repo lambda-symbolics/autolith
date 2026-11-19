@@ -17,6 +17,95 @@
   "Return the operations of presentation EVENTS in order."
   (mapcar (lambda (event) (getf (rest event) :operation)) events))
 
+(-> presentation-tests--source-inputs () null)
+(defun presentation-tests--source-inputs ()
+  "Exercise bounded source packets, local lazy expansion and version fallback."
+  (with-test-configuration (configuration)
+    (dolist (count '(1 12 5000 10000))
+      (let* ((ui (channel-presentation-create :rows 24 :columns 80))
+             (application (make-instance 'application :configuration configuration
+                                         :tool-registry (make-default-tool-registry)
+                                         :conversation (conversation-create configuration) :ui ui))
+             (forms (make-array count :initial-element "(list :x 1)"))
+             (record nil)
+             (expanded-calls 0)
+             (render-calls 0)
+             (render #'render-source))
+        (when (= count 12)
+          (setf (aref forms 0) (format nil "(let ((value 1))~%  (list :value value))")
+                (aref forms 11) "(list :late-source #.(error \"source was evaluated\"))"))
+        (setf record
+              (application--record-presentation
+               application
+               (list :provider-item :seq 1 :wire-json
+                     (json-encode
+                      (agent-test-call :call-id "source-wire" :namespace "lisp" :name "eval"
+                                       :arguments (json-encode
+                                                   (json-object "forms" forms "repl" "source-wire"
+                                                                "compile" t "restart-value" "(+ 40 2)")))))))
+        (let ((expand (getf (third record) :expanded-entry-layout)))
+          (setf (getf (third record) :expanded-entry-layout)
+                (lambda (columns) (incf expanded-calls) (funcall expand columns))))
+        (test-call-with-function-replacements
+         (list (list 'render-source
+                     (lambda (&rest arguments) (incf render-calls) (apply render arguments))))
+         (lambda ()
+           (let* ((wire (client-portable (presentation-record->wire record 80)))
+                  (packet (image-daemon:daemon-packet-string (list :ui :operation :records :presentations (list wire))))
+                  (back (presentation-wire->record wire))
+                  (description (getf (third wire) :source-input)))
+             (test-assert (and (zerop expanded-calls) (zerop render-calls))
+                          "serialization and reconstruction never invoke the expanded layout or source renderer")
+             (test-assert (and (presentation--source-input-p description)
+                               (null (getf (third wire) :expanded-entry))
+                               (<= (length (getf description :actions)) 2)
+                               (< (length packet) (+ 16384 (* 4 (reduce #'+ forms :key #'length)))))
+                          "raw source and shared actions fit a packet proportional to input, including 110k source")
+             (test-assert (and (equal (first back) (first record))
+                               (equal (getf (third back) :call-key) (getf (third record) :call-key))
+                               (equal (presentation-entry->wire (second back))
+                                      (presentation-entry->wire (second record))))
+                          "identity and every collapsed header/input click survive the shared action table")
+             (let ((invocation (getf (getf (third back) :source-input) :invocation)))
+               (test-assert
+                (and (non-empty-string-p invocation) (search "lisp.eval" invocation)
+                     (find (list ':insert invocation) (second back) :test #'equal
+                           :key (lambda (span) (when (termdown:widget-p span) (termdown:widget-action span)))))
+                "durable source publication retains the bound local invocation as a header insertion action"))
+             (dolist (version '(2 :unknown))
+               (let ((future (copy-tree wire)))
+                 (setf (getf (getf (third future) :source-input) :version) version)
+                 (let ((fallback (presentation-wire->record future)))
+                   (test-assert (and (equal (first fallback) (first record))
+                                     (equal (terminal--spans-text (second fallback))
+                                            (terminal--spans-text (second record)))
+                                     (null (getf (third fallback) :expanded-entry-layout)))
+                                "an unsupported recipe preserves the collapsed representation without interpreting it"))))
+             (when (= count 12)
+               (let* ((key (getf (third back) :call-key))
+                      (terminal (make-instance 'recording-terminal :columns 80 :rows 24))
+                      (client-ui (fullscreen-test--ui terminal)))
+                 (with-terminal-ui (active client-ui)
+                   (terminal-ui-present-records active (list back))
+                   (test-assert (not (search ":late-source" (clinedi:transcript-viewport-chunk-text
+                                                              (fullscreen-terminal-ui-viewport active) 0)))
+                                "the initial resident input is collapsed")
+                   (with-terminal-ui-locked (active)
+                     (test-assert (terminal-ui-fullscreen--toggle-tool-input active key)
+                                  "the collapsed input action expands the local resident record"))
+                   (test-assert (search ":late-source" (clinedi:transcript-viewport-chunk-text
+                                                       (fullscreen-terminal-ui-viewport active) 0))
+                                "local expansion displays the complete source without reader evaluation")
+                   (dolist (columns '(32 80 120))
+                     (test-assert
+                      (equal (presentation-entry->wire (funcall (getf (third record) :expanded-entry-layout) columns))
+                             (presentation-entry->wire (funcall (getf (third back) :expanded-entry-layout) columns)))
+                      "native and remote expanded input agree at each local width, with arguments and multiline source"))
+                   (with-terminal-ui-locked (active)
+                     (test-assert (terminal-ui-fullscreen--toggle-tool-input active key)
+                                  "the expanded input action collapses locally")))))))))))
+  nil)
+
 (-> test-presentation-wire-forms () null)
 (defun test-presentation-wire-forms ()
   "Test styled text and records survive the wire, and what another version sent is tolerated."
@@ -72,6 +161,7 @@
     (test-assert (search "task, yield"
                          (terminal--spans-text (funcall (getf (third schema) :entry-layout) 80)))
                  "the client lays tool schema names out itself"))
+  (presentation-tests--source-inputs)
   nil)
 
 (-> test-presentation-model-publishes () null)

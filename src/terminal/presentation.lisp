@@ -80,6 +80,98 @@ A style this version does not know shows as plain text."
     (t
      0)))
 
+(-> presentation--source-input-p (t) boolean)
+(defun presentation--source-input-p (description)
+  "Recognize this version's data-only source input recipe."
+  (handler-case
+      (and (listp description) (eql 1 (getf description :version))
+           (stringp (getf description :header))
+           (listp (getf description :sources)) (every #'stringp (getf description :sources))
+           (listp (getf description :fields))
+           (every (lambda (field)
+                    (and (listp field) (stringp (getf field :label))
+                         (stringp (getf field :value)) (typep (getf field :style) 'terminal-style)))
+                  (getf description :fields))
+           (typep (getf description :restart-value) '(or null string))
+           (typep (getf description :invocation) '(or null string))
+           (typep (getf description :detail) '(or null string))
+           (typep (getf description :line-limit) '(integer 1))
+           (typep (getf description :lisp-columns) '(integer 1)))
+    (type-error () nil)))
+
+(-> presentation--source-input->wire (list list) (values list list))
+(defun presentation--source-input->wire (description entry)
+  "Share ENTRY's actions once beside raw source; retain legacy spans as a fallback."
+  (let ((actions nil)
+        (fields (copy-list description)))
+    (labels ((action-index (action)
+               "Intern one action in this record's small action table."
+               (or (position action actions :test #'equal)
+                   (prog1 (length actions)
+                     (setf actions (append actions (list action)))))))
+      (remf fields :invocation)
+      (setf (getf fields :header-action)
+            (when (getf description :invocation)
+              (action-index (list ':insert (getf description :invocation))))
+            (getf fields :entry-actions)
+            (loop for span in entry for index from 0
+                  when (termdown:widget-p span)
+                    collect (list index (action-index (termdown:widget-action span))))
+            (getf fields :actions) actions)
+      (values fields
+              (loop for span in entry
+                    collect (list (terminal-span-style span) (terminal-span-text span)))))))
+
+(-> presentation--wire-source-input
+    (t (or string list)) (values (option list) (or string list)))
+(defun presentation--wire-source-input (wire entry)
+  "Restore recognized source data and actions, or retain only collapsed ENTRY."
+  (handler-case
+      (if (and (listp entry) (presentation--source-input-p wire)
+               (listp (getf wire :actions)) (listp (getf wire :entry-actions)))
+          (let* ((description (copy-list wire))
+                 (actions (coerce (getf wire :actions) 'vector))
+                 (header-index (getf wire :header-action))
+                 (header-action (when (and (typep header-index '(integer 0))
+                                           (< header-index (length actions)))
+                                  (aref actions header-index)))
+                 (restored (coerce entry 'vector)))
+            (dolist (key '(:actions :entry-actions :header-action))
+              (remf description key))
+            (setf (getf description :invocation)
+                  (when (and (listp header-action) (= 2 (length header-action))
+                             (eq (first header-action) ':insert) (stringp (second header-action)))
+                    (second header-action)))
+            (dolist (reference (getf wire :entry-actions))
+              (when (and (listp reference) (= 2 (length reference))
+                         (typep (first reference) '(integer 0)) (< (first reference) (length restored))
+                         (typep (second reference) '(integer 0)) (< (second reference) (length actions)))
+                (let ((span (aref restored (first reference))))
+                  (setf (aref restored (first reference))
+                        (termdown:make-widget (terminal-span-style span) (terminal-span-text span)
+                                              (aref actions (second reference)))))))
+            (values description (coerce restored 'list)))
+          (values nil entry))
+    (type-error () (values nil entry))))
+
+(-> presentation--source-input-layouts (list) list)
+(defun presentation--source-input-layouts (description)
+  "Reconstruct local layouts around source data without rendering or evaluating it."
+  (let ((cache (make-hash-table :test #'equal)))
+    (flet ((layout (columns expanded-p)
+             "Render only the variant requested by the local viewport."
+             (let ((*application-transcript-source-cache* cache))
+               (declare (special *application-transcript-source-cache*))
+               (application--source-input-entry description columns :expanded-p expanded-p))))
+      (list :source-input description
+            :entry-layout (lambda (columns) (layout columns nil))
+            :expanded-entry-layout (lambda (columns) (layout columns t))
+            :source-characters
+            (lambda ()
+              (let ((*application-transcript-source-cache* cache))
+                (declare (special *application-transcript-source-cache*))
+                (application--record-source-characters description)))))))
+
 (-> presentation-record->wire (list (integer 1) &key (:lay-out-p boolean)) list)
 (defun presentation-record->wire (presentation columns &key lay-out-p)
   "Return (IDENTIFIER ENTRY METADATA) PRESENTATION as data, laid out at COLUMNS.
@@ -87,18 +179,19 @@ A style this version does not know shows as plain text."
 ENTRY is taken as its producer just laid it out; with LAY-OUT-P the record's
 layout function lays it out again, as for a client of another width.
 
-A record's layout functions cannot leave this image, so each is called here:
-the expanded input becomes :EXPANDED-ENTRY, an outcome's body :BODY, and a
-weight its number. A transform travels by its name in
-*PRESENTATION-ENTRY-TRANSFORMS*. The client lays tool schema names out itself."
+A source input travels as a versioned data recipe, rendered only by the local
+client. Other layouts become their rendered data. A transform travels by its
+name in *PRESENTATION-ENTRY-TRANSFORMS*."
   (destructuring-bind (identifier entry metadata) presentation
     (let ((wire nil))
       (loop for (key value) on metadata by (partial #'nthcdr 2)
             do (case key
                  ((:entry-layout :schema-layout)
                   nil)
+                 (:source-input
+                  nil)
                  (:expanded-entry-layout
-                  (when value
+                  (when (and value (not (getf metadata :source-input)))
                     (setf (getf wire :expanded-entry)
                           (presentation-entry->wire (funcall value columns)))))
                  (:body-layout
@@ -128,8 +221,14 @@ weight its number. A transform travels by its name in
                   (setf (getf wire key) value))))
       (let ((entry (if (and lay-out-p (getf metadata :entry-layout))
                        (funcall (getf metadata :entry-layout) columns)
-                       entry)))
-        (list identifier (and entry (presentation-entry->wire entry)) wire)))))
+                       entry))
+            (source (getf metadata :source-input)))
+        (if (presentation--source-input-p source)
+            (multiple-value-bind (description collapsed)
+                (presentation--source-input->wire source entry)
+              (setf (getf wire :source-input) description)
+              (list identifier collapsed wire))
+            (list identifier (and entry (presentation-entry->wire entry)) wire))))))
 
 (-> presentation-wire->record (t) (option list))
 (defun presentation-wire->record (wire)
@@ -142,6 +241,8 @@ input, and the row of tool schema names."
       (let ((metadata nil))
         (loop for (key value) on fields by (partial #'nthcdr 2)
               do (case key
+                   (:source-input
+                    nil)
                    (:expanded-entry
                     (let ((expanded (presentation-wire->entry value)))
                       (setf (getf metadata :expanded-entry-layout) (constantly expanded))))
@@ -163,7 +264,12 @@ input, and the row of tool schema names."
             (setf (getf metadata :schema-layout) #'terminal-tool-schema-entry
                   (getf metadata :entry-layout)
                   (lambda (columns) (terminal-tool-schema-entry names columns)))))
-        (list identifier (and entry (presentation-wire->entry entry)) metadata)))))
+        (multiple-value-bind (description entry)
+            (presentation--wire-source-input (getf fields :source-input)
+                                             (and entry (presentation-wire->entry entry)))
+          (when description
+            (setf metadata (append (presentation--source-input-layouts description) metadata)))
+          (list identifier entry metadata))))))
 
 (-> terminal-tool-schema-entry (list (integer 1)) (option list))
 (defun terminal-tool-schema-entry (names columns)

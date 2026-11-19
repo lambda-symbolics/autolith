@@ -128,16 +128,19 @@ letters but no lowercase letters."
 
 (-> application--tool-header (application string) string)
 (defun application--tool-header (application header)
-  "Parenthesize call names, then sanitize and clip HEADER to transcript width."
+  "Parenthesize and fit HEADER to APPLICATION's transcript width."
+  (application--tool-header-at-columns (application--transcript-columns application) header))
+
+(-> application--tool-header-at-columns ((integer 1) string) string)
+(defun application--tool-header-at-columns (columns header)
+  "Parenthesize call names, then sanitize and clip HEADER to COLUMNS."
   (let* ((call-header
            (if (and *application-provider-call-presentation*
                     (uiop:string-prefix-p "▸ " header))
                (format nil "▸ (~A)" (subseq header 2))
                header))
          (safe-header (sanitize-text call-header :single-line-p t))
-         (maximum-width
-           (max 1
-                 (1- (application--transcript-columns application)))))
+         (maximum-width (max 1 (1- columns))))
     (cond
       ((<= (text-cell-width safe-header) maximum-width)
        safe-header)
@@ -150,9 +153,13 @@ letters but no lowercase letters."
 
 (-> application--tool-row-spans (application list) list)
 (defun application--tool-row-spans (application row)
+  "Indent tool ROW at APPLICATION's transcript width."
+  (application--tool-row-spans-at-columns (application--transcript-columns application) row))
+
+(-> application--tool-row-spans-at-columns ((integer 1) list) list)
+(defun application--tool-row-spans-at-columns (columns row)
   "Indent tool ROW, retaining source actions through clipping and wrapping."
-  (let* ((columns       (application--transcript-columns application))
-         (maximum-width (max 1 (1- columns)))
+  (let* ((maximum-width (max 1 (1- columns)))
          (indented      (append (list (terminal-span ':plain "  ")) row))
          (action        (when (and row (every #'termdown:widget-p row))
                           (termdown:widget-action (first row))))
@@ -178,6 +185,14 @@ letters but no lowercase letters."
     (application string list &key (:style terminal-style))
     (values (option list) list))
 (defun application--inline-tool-call-header (application header rows &key (style ':tool))
+  "Fold call arguments into HEADER at APPLICATION's transcript width."
+  (application--inline-tool-call-header-at-columns
+   (application--transcript-columns application) header rows :style style))
+
+(-> application--inline-tool-call-header-at-columns
+    ((integer 1) string list &key (:style terminal-style))
+    (values (option list) list))
+(defun application--inline-tool-call-header-at-columns (columns header rows &key (style ':tool))
   "Fold complete leading argument rows into HEADER when they fit one line.
 
 Return the inline header spans and remaining body rows, or NIL and the original
@@ -212,9 +227,9 @@ header without participating in compaction."
                               (third row)))
                 (list (terminal-span style ")"))))
              (available-width
-               (max 1 (1- (application--transcript-columns application)))))
+              (max 1 (1- columns))))
         (when (<= (terminal--spans-width spans) available-width)
-          (return-from application--inline-tool-call-header
+          (return-from application--inline-tool-call-header-at-columns
             (values spans (nthcdr (length arguments) rows))))))
     (values nil rows)))
 
@@ -258,6 +273,11 @@ Without a bound *APPLICATION-TOOL-CALL-INVOCATION* the spans are unchanged."
 
 (-> application--tool-field-rows (application list) list)
 (defun application--tool-field-rows (application fields)
+  "Return aligned FIELDS at APPLICATION's transcript width."
+  (application--tool-field-rows-at-columns (application--transcript-columns application) fields))
+
+(-> application--tool-field-rows-at-columns ((integer 1) list) list)
+(defun application--tool-field-rows-at-columns (columns fields)
   "Return aligned, wrapped rows for tool detail FIELDS.
 
 Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
@@ -276,8 +296,7 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
                                :style (or (getf field :style) ':plain))))
          (available-width
            (max 0
-                 (- (application--transcript-columns application)
-                   3)))
+                 (- columns 3)))
          (column-widths
            (layout-column-widths
             (loop for field in safe-fields
@@ -554,21 +573,26 @@ structural discriminator as a readable heading instead."
     list)
 (defun application--generic-argument-rows (application arguments &key excluded-keys)
   "Return aligned argument fields followed immediately by multiline previews."
-  (when arguments
-    (let* ((fields    (application--argument-fields arguments :excluded-keys excluded-keys))
-           (multiline (remove-if-not
-                       (lambda (field) (find #\Newline (getf field :value))) fields)))
-      (append
-       (application--tool-field-rows
-        application (remove-if (lambda (field) (member field multiline)) fields))
-       (loop for field in multiline
-             append (cons
-                     (application--tool-section-row
-                      (application--lisp-key-token
-                       (sanitize-text (getf field :label) :single-line-p t)))
-                     (application--preview-rows
-                      (getf field :value) (getf field :style)
-                      *application-tool-call-lines* :gutter "│ ")))))))
+  (application--argument-field-rows
+   (application--transcript-columns application)
+   (when arguments (application--argument-fields arguments :excluded-keys excluded-keys))))
+
+(-> application--argument-field-rows ((integer 1) list) list)
+(defun application--argument-field-rows (columns fields)
+  "Lay out decoded argument FIELDS at COLUMNS, preserving multiline previews."
+  (let ((multiline (remove-if-not
+                    (lambda (field) (find #\Newline (getf field :value))) fields)))
+    (append
+     (application--tool-field-rows-at-columns
+      columns (remove-if (lambda (field) (member field multiline)) fields))
+     (loop for field in multiline
+           append (cons
+                   (application--tool-section-row
+                    (application--lisp-key-token
+                     (sanitize-text (getf field :label) :single-line-p t)))
+                   (application--preview-rows
+                    (getf field :value) (getf field :style)
+                    *application-tool-call-lines* :gutter "│ "))))))
 
 (-> application--restart-value-rows ((option json-object)) list)
 (defun application--restart-value-rows (arguments)
@@ -640,54 +664,81 @@ structural discriminator as a readable heading instead."
 
 ;;; Tool call specializations
 
+(-> application--lisp-input-description (application json-object string) list)
+(defun application--lisp-input-description (application call argument-name)
+  "Retain CALL's decoded display data without rendering its expanded source."
+  (application--transcript-source-value
+   (list ':source-input call argument-name *application-tool-call-invocation*)
+   (lambda ()
+     (let* ((arguments (application--function-call-arguments call))
+            (value     (and arguments (json-get arguments argument-name))))
+       (list :version 1 :header (format nil "▸ ~A" (function-call-canonical-name call))
+             :sources (if (and (vectorp value) (not (stringp value)) (every #'stringp value))
+                          (coerce value 'list)
+                          (list (application--presentation-value (or value ""))))
+             :fields (when arguments
+                       (application--argument-fields arguments :excluded-keys (list argument-name "restart-value")))
+             :restart-value (and arguments (json-get arguments "restart-value"))
+             :input-key (when (terminal-ui-fullscreen-p (application-ui application))
+                          (application--tool-outcome-key application ':call (json-get call "call_id")))
+             :invocation *application-tool-call-invocation*
+             :detail (application--turn-timestamp-text application nil)
+             :line-limit *application-tool-call-lines*
+             :lisp-columns *application-lisp-input-columns*)))))
+
+(-> application--source-input-entry (list (integer 1) &key (:expanded-p boolean)) list)
+(defun application--source-input-entry (description columns &key expanded-p)
+  "Lay out source display DESCRIPTION locally; its strings are never read or evaluated."
+  (let* ((*application-tool-input-expanded-p* expanded-p)
+         (*application-provider-call-presentation* t)
+         (*application-tool-call-invocation* (getf description :invocation))
+         (*application-tool-call-lines* (getf description :line-limit))
+         (header (getf description :header))
+         (input-key (getf description :input-key))
+         (source
+           (format nil "~{~A~^~%~}"
+                   (loop for text in (getf description :sources)
+                         collect
+                         (if (and expanded-p
+                                  (not (find-if (lambda (character) (find character '(#\Newline #\Return))) text)))
+                             (let ((width (min (getf description :lisp-columns) (max 1 (- columns 4)))))
+                               (application--transcript-source-value
+                                (list ':formatted-lisp text width)
+                                (lambda () (lisp-source-layout text width))))
+                             text))))
+         (source-rows
+           (application--source-preview-rows
+            source :language *application-common-lisp-language* :rainbow-parentheses-p t
+            :limit (if expanded-p (1+ (count #\Newline source)) *application-tool-call-lines*)))
+         (rows
+           (append
+            (application--argument-field-rows columns (getf description :fields))
+            (if input-key
+                (loop for row in source-rows
+                      collect (loop for span in row
+                                    collect (termdown:make-widget
+                                             (terminal-span-style span) (terminal-span-text span)
+                                             (list ':toggle-tool-input input-key))))
+                source-rows)
+            (application--restart-value-rows (json-object "restart-value" (getf description :restart-value))))))
+    (multiple-value-bind (inline-header body-rows)
+        (application--inline-tool-call-header-at-columns columns header rows)
+      (append
+       (application--tool-call-header-actions
+        (or inline-header
+            (application--transcript-header
+             (application--tool-header-at-columns columns header) (getf description :detail) columns :style ':tool)))
+       (loop for row in body-rows
+             append (list (terminal-span ':plain (string #\Newline)))
+             when row
+               append (application--tool-row-spans-at-columns columns row))))))
+
 (-> application--lisp-call-entry (application json-object string) list)
 (defun application--lisp-call-entry (application call argument-name)
   "Return syntax-highlighted Lisp input that a click expands in the fullscreen transcript."
-  (let* ((arguments (application--function-call-arguments call))
-         (value     (and arguments (json-get arguments argument-name)))
-         (source
-           (flet ((display-source (text)
-                    (if (and *application-tool-input-expanded-p*
-                             (not (find-if (lambda (character) (find character '(#\Newline #\Return))) text)))
-                        (let ((columns (min *application-lisp-input-columns*
-                                            (max 1 (- (application--transcript-columns application)
-                                                      4)))))
-                          (application--transcript-source-value
-                           (list ':formatted-lisp text columns)
-                           (lambda ()
-                             (lisp-source-layout text columns))))
-                        text)))
-             (if (and (vectorp value)
-                      (not (stringp value))
-                      (every #'stringp value))
-                 (format nil "~{~A~^~%~}" (map 'list #'display-source value))
-                 (display-source (application--presentation-value (or value ""))))))
-         (input-key
-           (when (terminal-ui-fullscreen-p (application-ui application))
-             (application--tool-outcome-key application ':call (json-get call "call_id"))))
-         (rows      (application--source-preview-rows
-                     source
-                     :language              *application-common-lisp-language*
-                     :rainbow-parentheses-p t
-                     :limit                 (if *application-tool-input-expanded-p*
-                                                (1+ (count #\Newline source))
-                                                *application-tool-call-lines*))))
-    (application--tool-entry
-     application
-     :style  ':tool
-     :header (format nil "▸ ~A" (function-call-canonical-name call))
-     :rows   (append
-              (application--generic-argument-rows
-               application arguments :excluded-keys (list argument-name "restart-value"))
-              (if input-key
-                  (loop for row in rows
-                        collect (loop for span in row
-                                      collect (termdown:make-widget
-                                               (terminal-span-style span)
-                                               (terminal-span-text span)
-                                               (list ':toggle-tool-input input-key))))
-                  rows)
-              (application--restart-value-rows arguments)))))
+  (application--source-input-entry
+   (application--lisp-input-description application call argument-name)
+   (application--transcript-columns application) :expanded-p *application-tool-input-expanded-p*))
 
 ;; Codex PlanUpdateCell reference: 5c19155cbd93bfa099016e7487259f61669823ff.
 (-> application--plan-update-text (t) (option string))
