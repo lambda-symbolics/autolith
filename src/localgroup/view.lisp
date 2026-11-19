@@ -183,6 +183,11 @@ modal reader so the view can act on it."
     :accessor      channel-view-exit
     :type          list
     :documentation "Why the view ends, or NIL while it runs: (:DETACHED), (:EXIT . FIELDS), (:SWITCH :SESSION-ID ID) or (:ATTACHMENT-LOST . FIELDS).")
+   (notes
+    :initform      nil
+    :accessor      channel-view-notes
+    :type          list
+    :documentation "The :NOTICE and :CLIENT-VERSION to show below the transcript once the channel replayed it, or NIL once shown.")
    (read-only-p
     :initarg       :read-only-p
     :initform      nil
@@ -362,6 +367,11 @@ The client's own boot screen comes first; the page shows once it ends."
               :details (and (listp details) details)))
   nil)
 
+(defmethod channel-view-apply ((view channel-view) (operation (eql :replayed)) &key &allow-other-keys)
+  "Show this terminal's own notes now that the channel's transcript stands above them."
+  (channel-view--present-notes view)
+  nil)
+
 (defmethod channel-view-apply
     ((view channel-view) (operation (eql :title)) &key title &allow-other-keys)
   "Name the terminal's window after the channel."
@@ -535,31 +545,44 @@ terminal a question."
         (sleep *channel-view-poll-seconds*)))
   nil)
 
-(-> channel-view--present-notices
-    (channel-view &key (:notice (option string)) (:client-version (option string))) null)
-(defun channel-view--present-notices (view &key notice client-version)
-  "Show NOTICE, and a note when CLIENT-VERSION is not the server's, below the channel's transcript."
-  (let* ((ui             (channel-view-ui view))
-         (greeting       (localgroup-client-connection-attached
-                          (channel-subscription-connection view)))
-         (server-version (getf (rest greeting) :server-version)))
-    (when notice
-      (terminal-ui-append-finalized ui (list ':view-notice (make-identifier))
-                                    (application-failure-line notice)))
-    (unless (non-empty-string-p server-version)
-      ;; Only a server that presents says its version; an older one sends this client nothing to show.
-      (terminal-ui-append-finalized
-       ui (list ':view-notice (make-identifier))
-       (application-failure-line
-        "this world server is older than the client and cannot present its channels; restart it with (update) or autolith stop")))
-    (when (and (non-empty-string-p client-version) (non-empty-string-p server-version)
-               (not (string= client-version server-version)))
-      (terminal-ui-append-finalized
-       ui (list ':view-notice (make-identifier))
-       (application-notice-line
-        (format nil "Client/server version mismatch: client Autolith ~A; world server Autolith ~A."
-                (bounded-string client-version :limit 64)
-                (bounded-string server-version :limit 64))))))
+(-> channel-view--server-version (channel-view) (option string))
+(defun channel-view--server-version (view)
+  "Return the version the server stated when it accepted VIEW, or NIL for one too old to present."
+  (let ((version (getf (rest (localgroup-client-connection-attached
+                              (channel-subscription-connection view)))
+                       :server-version)))
+    (and (non-empty-string-p version) version)))
+
+(-> channel-view--present-notes (channel-view) null)
+(defun channel-view--present-notes (view)
+  "Show VIEW's pending notice, and a note when its client's version is not the server's, once.
+
+They belong below the channel's transcript, so a view shows them when the
+channel says it has replayed it. A server too old to present replays nothing
+and is named at once."
+  (let ((ui             (channel-view-ui view))
+        (notes          (with-lock-held ((channel-view-state-lock view))
+                          (shiftf (channel-view-notes view) nil)))
+        (server-version (channel-view--server-version view)))
+    (when notes
+      (destructuring-bind (&key notice client-version) notes
+        (when notice
+          (terminal-ui-append-finalized ui (list ':view-notice (make-identifier))
+                                        (application-failure-line notice)))
+        (cond
+          ((null server-version)
+           (terminal-ui-append-finalized
+            ui (list ':view-notice (make-identifier))
+            (application-failure-line
+             "this world server is older than the client and cannot present its channels; restart it with (update) or autolith stop")))
+          ((and (non-empty-string-p client-version)
+                (not (string= client-version server-version)))
+           (terminal-ui-append-finalized
+            ui (list ':view-notice (make-identifier))
+            (application-notice-line
+             (format nil "Client/server version mismatch: client Autolith ~A; world server Autolith ~A."
+                     (bounded-string client-version :limit 64)
+                     (bounded-string server-version :limit 64)))))))))
   nil)
 
 (-> channel-view--boot (channel-view) null)
@@ -600,8 +623,8 @@ move to another channel, (:ATTACHMENT-LOST ...) when the channel went away,
 the exited channel's (:STATUS N :MESSAGE TEXT :DETAILS PLIST), or NIL after a
 detach, which leaves the channel running. ATTACHED-FUNCTION is called once
 the channel accepted the view.
-NOTICE and a CLIENT-VERSION that differs from the server's are then shown in
-the transcript. With BOOT-P the client's boot screen stays until the user
+NOTICE and a CLIENT-VERSION that differs from the server's are shown below
+the transcript once the channel has replayed it. With BOOT-P the client's boot screen stays until the user
 starts the session."
   (let* ((ui           (channel-view-ui view))
          (terminal     (localgroup-screen-terminal (channel-view-screen view)))
@@ -613,7 +636,10 @@ starts the session."
              :session-id (channel-subscription-identifier view)))
     (unwind-protect
          (progn
+           (setf (channel-view-notes view) (list :notice notice :client-version client-version))
            (channel-subscription-attach view)
+           (unless (channel-view--server-version view)
+             (channel-view--present-notes view))
            ;; The terminal reads keys one at a time from here on, and says when its size changes.
            (terminal-start terminal)
            (setf resize-watch
@@ -627,7 +653,6 @@ starts the session."
            (if boot-p
                (channel-view--boot view)
                (terminal-ui-start ui))
-           (channel-view--present-notices view :notice notice :client-version client-version)
            (loop until (with-lock-held ((channel-view-state-lock view))
                          (channel-view-exit view))
                  do (channel-view--step view))

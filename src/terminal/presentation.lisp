@@ -660,15 +660,17 @@ change exactly once."
 (defun channel-presentation-replay (ui)
   "Return the events that bring a client that just attached to what UI shows.
 
-The transcript is cleared and replayed from the log, then every state follows.
-Call this under UI's lock, before the client receives live events."
+The transcript is cleared and replayed from the log, then every state follows,
+and :REPLAYED ends them, so the client knows where its own notes go. Call
+this under UI's lock, before the client receives live events."
   (append
    (list (list :ui :operation ':reset))
    (loop for cell in (deque->list (channel-presentation-transcript-log ui))
          collect (first cell))
    (loop for operation in *channel-presentation-state-operations*
          collect (list* :ui :operation operation
-                        (nth-value 0 (channel-presentation-state ui operation))))))
+                        (nth-value 0 (channel-presentation-state ui operation))))
+   (list (list :ui :operation ':replayed))))
 
 (-> channel-presentation-set-geometry
     (channel-presentation &key (:rows (option integer)) (:columns (option integer)) (:styled-p t))
