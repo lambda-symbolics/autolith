@@ -563,6 +563,7 @@ compose."
                (decf (channel-presentation-log-characters ui) (second evicted))
                (channel-presentation--forget-cell ui evicted))))
   nil)
+
 (-> channel-presentation--log (channel-presentation list &key (:presentations list)) cons)
 (defun channel-presentation--log (ui event &key presentations)
   "Keep transcript EVENT for a client that attaches later and return its log cell.

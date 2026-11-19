@@ -413,10 +413,10 @@ Explicit rejection, including an expired replay cursor, is terminal."
                       :cancelled-p #'cancelled-p :allow-later-p allow-later-p)))
           (handler-case
               (return (localgroup-client-connect
-                       entry :name     (channel-subscription-name subscription)
-                       :approves-p     (channel-subscription-approves-p subscription)
-                       :evaluates-p    (channel-subscription-evaluates-p subscription)
-                       :arguments      (channel-subscription-arguments subscription)
+                       entry :name      (channel-subscription-name subscription)
+                       :approves-p      (channel-subscription-approves-p subscription)
+                       :evaluates-p     (channel-subscription-evaluates-p subscription)
+                       :arguments       (channel-subscription-arguments subscription)
                        :after-sequence sequence :cancelled-p #'cancelled-p
                         :event-function (lambda (event) (channel-subscription-receive-event subscription event))))
             (localgroup-error (condition)

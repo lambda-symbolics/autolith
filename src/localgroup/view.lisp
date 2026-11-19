@@ -36,7 +36,7 @@
     :documentation "The function given a side panel's request that a modal reader came upon, or NIL.")
    (service-function
     :initarg :service-function :initform nil :reader pane-terminal-service-function
-    :type (option function)
+    :type          (option function)
     :documentation "Drain the view's pending presentation before polling modal or boot input."))
   (:documentation "The pane of a client's screen that one channel's UI paints.
 
@@ -324,34 +324,42 @@ time avoids retaining a second transcript in the bounded live event queue."
 Stop at the queue budget. Shared or circular objects are charged once; unsupported
 reader objects exceed the budget rather than escaping its bound."
   (let ((pending (list event))
-        (seen (make-hash-table :test #'eq))
-        (bytes 0))
+        (seen    (make-hash-table :test #'eq))
+        (bytes   0))
     (loop while pending
           do (let ((object (pop pending)))
                (unless (gethash object seen)
                  (setf (gethash object seen) t)
                  (incf bytes
                        (typecase object
-                         (string (+ 32 (* 4 (length object))))
-                         (cons 32)
-                         (integer (+ 32 (ceiling (integer-length object) 8)))
-                         (vector (+ 32 (* 8 (length object))))
-                         ((or symbol character float ratio complex) 32)
-                         (t (1+ *channel-view-event-byte-limit*))))
+                         (string
+                          (+ 32 (* 4 (length object))))
+                         (cons
+                          32)
+                         (integer
+                          (+ 32 (ceiling (integer-length object) 8)))
+                         (vector
+                          (+ 32 (* 8 (length object))))
+                         ((or symbol character float ratio complex)
+                          32)
+                         (t
+                          (1+ *channel-view-event-byte-limit*))))
                  (when (> bytes *channel-view-event-byte-limit*)
                    (return))
                  (typecase object
                    (cons
                     (push (first object) pending)
                     (push (rest object) pending))
-                   (string nil)
+                   (string
+                    nil)
                    (ratio
                     (push (numerator object) pending)
                     (push (denominator object) pending))
                    (complex
                     (push (realpart object) pending)
                     (push (imagpart object) pending))
-                   (vector (map nil (lambda (value) (push value pending)) object))))))
+                   (vector
+                    (map nil (lambda (value) (push value pending)) object))))))
     bytes))
 
 (-> channel-view--close-events (channel-view) null)
@@ -365,7 +373,7 @@ reader objects exceed the budget rather than escaping its bound."
 
 (defmethod channel-subscription-receive-event ((view channel-view) event)
   "Queue ordered events for the UI loop, leaving the transport reader free to settle history replies."
-  (let ((bytes (channel-view--event-bytes event))
+  (let ((bytes      (channel-view--event-bytes event))
         (overflow-p nil))
     (with-lock-held ((channel-view-queue-lock view))
       (unless (channel-view-queue-closed-p view)
@@ -379,7 +387,7 @@ reader objects exceed the budget rather than escaping its bound."
     (when overflow-p
       (channel-view--close-events view)
       (channel-view--finish view (list ':attachment-lost :kind ':queue-overflow
-                                      :message "The view fell behind its channel; reconnect to resynchronize."))
+                                      :message                 "The view fell behind its channel; reconnect to resynchronize."))
       (channel-subscription--mark-closed view)
       (let ((connection (channel-subscription-connection view)))
         (when connection (localgroup-client--disconnect connection)))))
@@ -391,13 +399,13 @@ reader objects exceed the budget rather than escaping its bound."
   (unless (eq *channel-view-delivering* view)
     (let ((*channel-view-delivering* view))
       (loop repeat *channel-view-event-count-limit*
-            for entry = (with-lock-held ((channel-view-queue-lock view))
-                          (unless (deque-empty-p (channel-view-events view))
-                            (let ((entry (deque-pop-front (channel-view-events view))))
-                              (decf (channel-view-event-bytes view) (rest entry))
-                              entry)))
-            while entry
-            do (channel-subscription-event view (first entry)))))
+            do (let ((entry (with-lock-held ((channel-view-queue-lock view))
+                              (unless (deque-empty-p (channel-view-events view))
+                                (let ((next (deque-pop-front (channel-view-events view))))
+                                  (decf (channel-view-event-bytes view) (rest next))
+                                  next)))))
+                 (unless entry (return))
+                 (channel-subscription-event view (first entry))))))
   nil)
 
 (defmethod channel-subscription-forget ((view channel-view) &key wire-p)

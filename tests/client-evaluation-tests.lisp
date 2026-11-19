@@ -129,14 +129,17 @@
                 (test-assert (eq (client-evaluator-start owner '(:evaluation :id "two" :forms ("2"))) ':accepted)
                              "The same writer accepts a follow-up.")
                 (ecase action
-                  (:close (client-evaluator-close owner))
-                  (:cancel (client-evaluator-cancel owner "two"))))
+                  (:close
+                   (client-evaluator-close owner))
+                  (:cancel
+                   (client-evaluator-cancel owner "two"))))
            (sb-thread:signal-semaphore gate)
            (test-assert (task-tests--wait-until (lambda () (null *client-evaluator-active*)) 5)
                         "The abandoned handoff releases capacity when the writer returns.")
            (client-evaluator-close owner))
          (test-assert (= calls 1) "Abandoned queued forms were never evaluated.")))))
   nil)
+
 (-> test-client-evaluation-structured-client () null)
 (defun test-client-evaluation-structured-client ()
   "Test a channel evaluates forms in a structured client that says it evaluates, and every way that fails."

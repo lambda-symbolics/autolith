@@ -526,9 +526,9 @@ itself; EVENT-FUNCTION never sees those requests. ARGUMENTS is a plist of
 what else the client states, such as :PRESENTS-P and its pane's size.
 INITIALIZE-FUNCTION, when supplied, receives the connection on the calling
 thread after its greeting and before the reader starts, within the handshake deadline."
-  (let ((record (rest entry))
-        (socket nil)
-        (stream nil)
+  (let ((record     (rest entry))
+        (socket     nil)
+        (stream     nil)
         (connection nil))
     (multiple-value-setq (socket stream)
       (daemon-connect (localgroup--record-port record)))
