@@ -297,8 +297,9 @@ its syntactic sugar or its parser.
 - Test expected failures as well as successful paths.
 - Run focused checks (selected suites or cases, a library's own tests) while
   developing and before each commit. Run the complete repository check once
-  when a batch of related commits is finished, including after documentation
-  and configuration changes, and before pushing.
+  when a batch of related commits is finished, including after configuration
+  changes, and before pushing. A batch that changes only documentation files,
+  such as `docs/` and this file, needs no complete check.
 - Do not invent a test command. When the project gains test and lint entry
   points, document the exact commands here and keep them current.
 - Never commit with known failing relevant checks. If an environmental failure
