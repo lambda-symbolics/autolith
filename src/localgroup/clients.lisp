@@ -108,21 +108,9 @@
                  while (and command (not (channel-client-closed-p client)))
                  do (when (localgroup-message-p command)
                       (application-clients-note-controller application client)
-                      (let ((reply (lambda ()
-                                     (channel-client-enqueue
-                                      client (localgroup--client-reply
-                                              session command
-                                              :attachment (channel-client-attachment client))))))
-                        (cond
-                          ;; Operations may wait for an approval answered on this connection.
-                          ((eq (first command) ':operation)
-                           (make-thread reply :name "Autolith client operation"))
-                          ;; Input may run a command that asks this client a
-                          ;; question, so it runs beside the reader, in order.
-                          ((localgroup--queued-input-p command)
-                           (client-input-queue-push inputs reply))
-                          (t
-                           (funcall reply)))))))
+                      (localgroup--run-client-command session command
+                                                      :client client
+                                                      :inputs inputs))))
       (client-input-queue-close inputs)
       (channel-client-close client)))
   nil)
@@ -209,6 +197,28 @@
     (setf (client-input-queue-closed-p queue) t)
     (deque-clear (client-input-queue-functions queue))
     (condition-notify (client-input-queue-condition-variable queue)))
+  nil)
+
+(-> localgroup--run-client-command
+    (localgroup-session list &key (:client channel-client) (:inputs client-input-queue)) null)
+(defun localgroup--run-client-command (session command &key client inputs)
+  "Run COMMAND for CLIENT and queue its reply: at once, beside the reader, or on a thread of its own.
+
+An operation may wait for an approval answered on this connection, so it gets
+a thread. Input may run a command that asks this client a question, so it
+runs beside the reader through INPUTS, in the order it arrived. Each command
+is this call's own, however many the reader takes meanwhile."
+  (flet ((reply ()
+           (channel-client-enqueue
+            client (localgroup--client-reply session command
+                                             :attachment (channel-client-attachment client)))))
+    (cond
+      ((eq (first command) ':operation)
+       (make-thread #'reply :name "Autolith client operation"))
+      ((localgroup--queued-input-p command)
+       (client-input-queue-push inputs #'reply))
+      (t
+       (reply))))
   nil)
 
 (-> localgroup--client-reply (localgroup-session list &key (:attachment (option image-daemon:attachment))) list)
