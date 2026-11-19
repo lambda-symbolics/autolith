@@ -471,5 +471,32 @@ For a fast delimiter check before loading edited Lisp, use the built-in
 - Do not rewrite, discard, or include unrelated user changes. Inspect the
   worktree and index before committing, and stage only the intended change.
 
-Never use em dashes in source comments, documentation, commit messages, or
+## Prose
+
+These rules apply to docstrings, comments, documentation, commit titles and
 user-facing text.
+
+- Write full sentences with a subject and a verb. Do not write in headline
+  style: keep the small words (that, which, of, by, because), and do not stack
+  nouns where a verb belongs.
+- Put one fact in a sentence. Start from what the reader already knows, and
+  end the sentence on the new part.
+- Start a description with what the thing is, and state each relation with a
+  real verb. Write "A list of all limit constraints associated with their
+  printable names", not "Each limit constraint with the words that describe
+  its bound".
+- Do not put 's on a thing, and do not hang an "-ing" clause after a comma.
+  Write "the configured value of the bound", not "the bound's configured
+  value".
+- A thing does not act like a person. A report contains a position. It does
+  not name, quote, hold or refuse anything. Use the passive when the actor is
+  a thing: "every condition signalled by argo".
+- Use the same plain word for the same thing every time. Leave out decorative
+  adjectives and adverbs.
+- When a text must be short, say fewer things. Do not make it short by
+  dropping small words, verbs or the name of the thing.
+- A docstring states what its own function does, what the function takes and
+  what it returns. When the function is called, in what order and why are
+  facts about the caller, and they belong at the call site.
+- Never use em dashes in source comments, documentation, commit messages, or
+  user-facing text.
