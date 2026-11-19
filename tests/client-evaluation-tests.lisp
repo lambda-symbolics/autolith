@@ -65,10 +65,78 @@
          (localgroup-client--evaluate connection request))
        (test-assert (and (zerop evaluated) (null answers))
                     "Neither an evaluator nor a connection evaluates or answers malformed envelopes."))))
+  (client-evaluation-tests--consecutive-requests)
+  (client-evaluation-tests--abandon-handoff)
   (client-evaluation-tests--lifecycle)
   (client-evaluation-tests--stalled-writer)
   nil)
 
+(-> client-evaluation-tests--consecutive-requests () null)
+(defun client-evaluation-tests--consecutive-requests ()
+  "Submit the next request after the first reply is visible but before its writer returns."
+  (let* ((published (sb-thread:make-semaphore))
+         (release   (sb-thread:make-semaphore))
+         (finished  (sb-thread:make-semaphore))
+         (reply     nil)
+         (owner     (make-instance 'client-evaluator
+                                   :delivery (lambda (packet)
+                                               (cond
+                                                 ((equal (getf (rest packet) :evaluation) "first")
+                                                  (sb-thread:signal-semaphore published)
+                                                  (sb-thread:wait-on-semaphore release :timeout 10))
+                                                 ((equal (getf (rest packet) :evaluation) "second")
+                                                  (setf reply (rest packet))
+                                                  (sb-thread:signal-semaphore finished)))))))
+    (unwind-protect
+         (progn
+           (client-evaluator-start owner '(:evaluation :id "first" :forms ("(+ 1 2)")))
+           (test-assert (sb-thread:wait-on-semaphore published :timeout 5)
+                        "The first answer is visible to the caller.")
+           (client-evaluator-start owner '(:evaluation :id "second" :forms ("(error \"boom\")")))
+           (client-evaluator-cancel owner "first")
+           (test-assert (eq (client-evaluator-start owner '(:evaluation :id "third" :forms ("42"))) ':busy)
+                        "A stalled writer admits at most one successor.")
+           (sb-thread:signal-semaphore release)
+           (test-assert (and (sb-thread:wait-on-semaphore finished :timeout 5)
+                             (not (getf reply :succeeded-p)) (search "boom" (getf reply :text)))
+                        (format nil "The consecutive request must run its own forms; received ~S." reply)))
+      (sb-thread:signal-semaphore release)
+      (client-evaluator-close owner)
+      (test-assert (task-tests--wait-until (lambda () (null *client-evaluator-active*)) 5)
+                   "The final request releases shared capacity.")))
+  nil)
+
+(-> client-evaluation-tests--abandon-handoff () null)
+(defun client-evaluation-tests--abandon-handoff ()
+  "Closing or cancelling a successor before its writer returns discards it without running Lisp."
+  (dolist (action '(:close :cancel))
+    (let* ((gate      (sb-thread:make-semaphore))
+           (published (sb-thread:make-semaphore))
+           (calls     0)
+           (owner     (make-instance 'client-evaluator
+                                     :delivery (lambda (packet)
+                                                 (declare (ignore packet))
+                                                 (sb-thread:signal-semaphore published)
+                                                 (sb-thread:wait-on-semaphore gate :timeout 10)))))
+      (test-call-with-function-replacements
+       (list (list 'self-evaluate-sources
+                   (lambda (&rest arguments) (declare (ignore arguments)) (incf calls) "answer")))
+       (lambda ()
+         (unwind-protect
+              (progn
+                (client-evaluator-start owner '(:evaluation :id "one" :forms ("1")))
+                (test-assert (sb-thread:wait-on-semaphore published :timeout 5) "First answer published.")
+                (test-assert (eq (client-evaluator-start owner '(:evaluation :id "two" :forms ("2"))) ':accepted)
+                             "The same writer accepts a follow-up.")
+                (ecase action
+                  (:close (client-evaluator-close owner))
+                  (:cancel (client-evaluator-cancel owner "two"))))
+           (sb-thread:signal-semaphore gate)
+           (test-assert (task-tests--wait-until (lambda () (null *client-evaluator-active*)) 5)
+                        "The abandoned handoff releases capacity when the writer returns.")
+           (client-evaluator-close owner))
+         (test-assert (= calls 1) "Abandoned queued forms were never evaluated.")))))
+  nil)
 (-> test-client-evaluation-structured-client () null)
 (defun test-client-evaluation-structured-client ()
   "Test a channel evaluates forms in a structured client that says it evaluates, and every way that fails."

@@ -231,8 +231,10 @@ The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
   (:documentation "Attachment-owned evaluation delivery, independent of an uncooperative worker."))
 
 (defclass client-evaluator-work ()
-  ((identifier :initarg :identifier :reader client-evaluator-work-identifier :type string
-               :documentation "The request identifier, retained after abandonment.")
+  ((identifier :initarg :identifier :accessor client-evaluator-work-identifier :type string
+               :documentation "The identifier of the latest request admitted on this token.")
+   (handoff :initform nil :accessor client-evaluator-work-handoff :type (or list (eql :publishing))
+            :documentation "NIL during evaluation, :PUBLISHING while answering, or the one successor request.")
    (owner :initarg :owner :accessor client-evaluator-work-owner :type (option client-evaluator)
           :documentation "The severable delivery owner; NIL means discard any late result."))
   (:documentation "A small token for the one evaluation admitted in this client image."))
@@ -247,8 +249,10 @@ The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
 (defun client-evaluator-close (evaluator)
   "Abandon EVALUATOR without waiting for Lisp code; sever its work and delivery references."
   (with-lock-held (*client-evaluator-lock*)
-    (when (client-evaluator-work evaluator)
-      (setf (client-evaluator-work-owner (client-evaluator-work evaluator)) nil))
+    (let ((work (client-evaluator-work evaluator)))
+      (when work
+        (setf (client-evaluator-work-handoff work) nil
+              (client-evaluator-work-owner work) nil)))
     (setf (client-evaluator-work evaluator) nil
           (client-evaluator-delivery evaluator) nil
           (client-evaluator-closed-p evaluator) t))
@@ -262,6 +266,7 @@ The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
       (when (and (stringp identifier) work
                  (equal identifier (client-evaluator-work-identifier work)))
         (setf (client-evaluator-work-owner work) nil
+              (client-evaluator-work-handoff work) nil
               (client-evaluator-work evaluator) nil))))
   nil)
 
@@ -271,30 +276,45 @@ The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
 
 A closed owner, one without a callback, and one that WORK no longer belongs to get nothing."
   (let ((delivery (with-lock-held (*client-evaluator-lock*)
-                    (and (not (client-evaluator-closed-p evaluator))
-                         (or (null work) (eq evaluator (client-evaluator-work-owner work)))
-                         (client-evaluator-delivery evaluator)))))
+                    (when (and (not (client-evaluator-closed-p evaluator))
+                               (or (null work) (eq evaluator (client-evaluator-work-owner work))))
+                      (when work
+                        (setf (client-evaluator-work-handoff work) ':publishing))
+                      (client-evaluator-delivery evaluator)))))
     (when delivery
       (handler-case (funcall delivery packet)
         (error ()
           (client-evaluator-close evaluator)))))
   nil)
 
+(-> client-evaluator--finish (client-evaluator-work boolean) list)
+(defun client-evaluator--finish (work delivered-p)
+  "Claim WORK's single successor or release admission, atomically with respect to new requests."
+  (with-lock-held (*client-evaluator-lock*)
+    (let ((next  (shiftf (client-evaluator-work-handoff work) nil))
+          (owner (client-evaluator-work-owner work)))
+      (cond
+        ((and delivered-p owner (consp next))
+         next)
+        (t
+         (when owner
+           (setf (client-evaluator-work owner) nil
+                 (client-evaluator-work-owner work) nil))
+         (setf *client-evaluator-active* nil))))))
+
 (-> client-evaluator--run (client-evaluator-work t) null)
 (defun client-evaluator--run (work request)
-  "Run REQUEST with only WORK retained; abandoned tokens hold no owner or connection."
-  (unwind-protect
-       (let* ((packet (cons :evaluated (client-evaluate-request request)))
-              (owner  (with-lock-held (*client-evaluator-lock*)
-                        (client-evaluator-work-owner work))))
-         (when owner (client-evaluator--deliver owner packet work)))
-    (with-lock-held (*client-evaluator-lock*)
-      (let ((owner (client-evaluator-work-owner work)))
-        (when (and owner (eq work (client-evaluator-work owner)))
-          (setf (client-evaluator-work owner) nil)))
-      (setf (client-evaluator-work-owner work) nil)
-      (when (eq *client-evaluator-active* work)
-        (setf *client-evaluator-active* nil))))
+  "Evaluate and deliver serially; an abandoned form holds no delivery owner."
+  (loop while request
+        do (let ((delivered-p nil))
+             (unwind-protect
+                  (let* ((packet (cons :evaluated (client-evaluate-request request)))
+                         (owner  (with-lock-held (*client-evaluator-lock*)
+                                   (client-evaluator-work-owner work))))
+                    (when owner
+                      (client-evaluator--deliver owner packet work)
+                      (setf delivered-p t)))
+               (setf request (client-evaluator--finish work delivered-p)))))
   nil)
 
 (-> client-evaluator--launch (client-evaluator-work t) null)
@@ -316,6 +336,13 @@ A closed owner, one without a callback, and one that WORK no longer belongs to g
             (cond
               ((client-evaluator-closed-p evaluator)
                ':closed)
+              ((and (client-evaluator-work evaluator)
+                    (eq (client-evaluator-work-handoff (client-evaluator-work evaluator)) ':publishing))
+               ;; The peer can see the reply before the writer returns. Let the same worker
+               ;; take its next request after delivery, without starting a second writer.
+               (setf (client-evaluator-work-handoff (client-evaluator-work evaluator)) request
+                     (client-evaluator-work-identifier (client-evaluator-work evaluator)) (getf (rest request) :id))
+               ':accepted)
               (*client-evaluator-active*
                ':busy)
               (t
@@ -324,15 +351,15 @@ A closed owner, one without a callback, and one that WORK no longer belongs to g
                      *client-evaluator-active* work
                      (client-evaluator-work evaluator) work)
                ':accepted))))
-    (case status
-      (:accepted
+    (cond
+      (work
        (handler-case (client-evaluator--launch work request)
          (error (condition)
            (client-evaluator-cancel evaluator (client-evaluator-work-identifier work))
            (with-lock-held (*client-evaluator-lock*)
              (when (eq work *client-evaluator-active*) (setf *client-evaluator-active* nil)))
            (error condition))))
-      (:busy
+      ((eq status ':busy)
        (client-evaluator--deliver
         evaluator (list :evaluated :evaluation (getf (rest request) :id) :succeeded-p nil
                         :text "Client evaluation is busy; abandoned work retains capacity until it exits."))))
