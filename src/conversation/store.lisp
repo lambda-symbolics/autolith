@@ -3774,7 +3774,10 @@ Compaction and context adoption replace the measured history."
          (1
           (member (length sample) '(16 18)))
          (2
-          (and (member (length sample) '(26 28))
+           (and (= (length sample)
+                   (+ 26 (if (getf sample :wire-history-p) 2 0)
+                      (if (conversation--property-present-p sample :header-text) 2 0)))
+                (member (getf sample :wire-history-p) '(nil t))
                (every (lambda (key) (get-properties sample (list key)))
                       '(:format :soft-header :policy :prompt :tool-header
                         :history-count :history-digest :wire-fields :encoder-fields
@@ -3782,11 +3785,10 @@ Compaction and context adoption replace the measured history."
                (every #'conversation--context-fingerprint-p
                       (list (getf sample :policy) (getf sample :prompt)
                             (getf sample :tool-header)))
-               (or (= 26 (length sample))
-                   (and (conversation--property-present-p sample :header-text)
-                        (conversation--context-header-text-p
+                (or (not (conversation--property-present-p sample :header-text))
+                    (conversation--context-header-text-p
                          (getf sample :header-text)
-                         (getf sample :prompt) (getf sample :tool-header)))))))
+                         (getf sample :prompt) (getf sample :tool-header))))))
        (typep (getf sample :temporary-characters 0) '(integer 0))
        (typep (getf sample :tokens) '(integer 1))
        (typep (getf sample :history-count) '(integer 0))

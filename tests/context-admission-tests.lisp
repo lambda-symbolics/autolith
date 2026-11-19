@@ -1318,6 +1318,7 @@
                       "empty prompt text is valid present snapshot evidence"))
        (let ((legacy (copy-tree sample)))
          (remf legacy :header-text)
+          (remf legacy :wire-history-p)
          (conversation-append-record conversation '(:context-usage :sample nil))
          (conversation-append-record conversation (list :context-usage :sample legacy))
          (let ((loaded (conversation-context-usage-sample
@@ -1346,7 +1347,8 @@
            (test-assert (not (nth-value 1 (provider-context--matched-input provider request)))
                         "history is revalidated at admission rather than trusting its captured snapshot")))
        (let ((legacy (copy-tree sample)))
-         (dolist (key '(:policy :prompt :tool-header :encoder-fields :header-text)) (remf legacy key))
+          (dolist (key '(:policy :prompt :tool-header :encoder-fields :header-text :wire-history-p))
+            (remf legacy key))
          (setf (getf legacy :format) 1)
          (test-assert (conversation-context-usage-sample-p legacy) "legacy exact anchors are readable")
          (test-assert (not (provider-context--sample-matches-p
@@ -1479,6 +1481,8 @@
          (let* ((loaded (conversation-load (conversation-pathname conversation)))
                 (*provider-context-request* (provider-context-request-create new-provider loaded #()))
                 (request (provider-request-object new-provider loaded #())))
+           (test-assert (getf (conversation-context-usage-sample loaded) :wire-history-p)
+                        "admission proof survives model change and reload")
            (multiple-value-bind (tokens exact-p)
                (context-estimate-known-tokens after loaded :provider new-provider)
              (test-assert (and (= tokens 1200) (not exact-p))

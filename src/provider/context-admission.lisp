@@ -304,13 +304,36 @@ that prefix. Count every new item and take no credit for removed reasoning."
                     expected-fields)
              t)))))
 
+(-> provider-context--switched-field-charge (model-provider hash-table list) (integer 0))
+(defun provider-context--switched-field-charge (provider request sample)
+  "Charge changed encoded fields that can contribute new context."
+  (let ((body (provider-request-context-body provider request)))
+    (multiple-value-bind (history history-field) (provider-request-history provider body)
+      (declare (ignore history))
+      (loop for name being the hash-keys of (provider-request-body provider body) using (hash-value value)
+            unless (or (equal name history-field)
+                       (member name '("model" "reasoning") :test #'equal)
+                       (equal (provider-cache-prefix--entry value)
+                              (rest (assoc name (getf sample :wire-fields) :test #'equal))))
+              sum (let ((old-prompt (first (getf sample :header-text))))
+                    (if (and (equal name "instructions") (stringp value) old-prompt
+                             (equal (provider-cache-prefix--entry old-prompt)
+                                    (rest (assoc name (getf sample :wire-fields) :test #'equal))))
+                        (provider-context--inserted-bytes old-prompt value)
+                        (length (utf8-string-to-octets (json-encode value)))))))))
+
 (-> provider-context--switched-input (model-provider hash-table &key (:context list) (:sample list))
     (values (integer 0) boolean boolean))
 (defun provider-context--switched-input (provider request &key context sample)
   "Use measured occupancy only if the final request contains the verified history."
   (block nil
     (unless (and (typep provider 'codex-subscription-provider)
-                 (= 2 (getf sample :format 0)))
+                 (conversation-context-usage-sample-p sample)
+                 (= 2 (getf sample :format))
+                 (not (equal (getf sample :policy) (getf context :policy)))
+                 (or (getf sample :wire-history-p)
+                     (and (= (getf sample :wire-count) (getf sample :history-count))
+                          (equal (getf sample :wire-digest) (getf sample :history-digest)))))
       (return (values 0 nil nil)))
     (let* ((conversation (getf context :conversation))
            (history      (provider-history-items provider conversation :include-ephemeral-p nil))
@@ -322,7 +345,8 @@ that prefix. Count every new item and take no credit for removed reasoning."
                                                   (map 'list #'provider-cache-prefix--entry items))
                      (provider-context--current-wire-p context request sample))
           (return (values 0 nil nil)))
-        (values (+ (provider-context--header-charge sample context)
+        (values (+ (max (provider-context--header-charge sample context)
+                        (provider-context--switched-field-charge provider request sample))
                    (provider-context--input-tokens
                     provider sample
                     (concatenate 'vector added (subseq items (length history)))))
@@ -446,6 +470,10 @@ messages that later change fail closed."
                               :tokens         (max (+ input output) (or total 0))
                               :temporary-characters
                               (max 0 (- (getf context :wire-characters) base-characters)))))
+                  (when (and (typep provider 'codex-subscription-provider)
+                             (provider-context--extends-p before (getf (getf context :wire) :items))
+                             (provider-context--extends-p entries (getf wire :items)))
+                    (setf (getf sample :wire-history-p) t))
                  (let ((previous (conversation-context-usage-sample conversation)))
                    (unless (and (conversation-context-usage-sample-p previous)
                                 (getf previous :header-text)
