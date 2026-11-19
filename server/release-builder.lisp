@@ -852,13 +852,28 @@ otherwise be reused for a different release tag."
        (finish-output)
        nil))))
 
+(-> release-builder--floor-filtered-tags (list) list)
+(defun release-builder--floor-filtered-tags (remote-tags)
+  "Drop REMOTE-TAGS below AUTOLITH_RELEASE_FLOOR_TAG, when configured.
+
+The floor keeps the builder from mirroring or rebuilding retired
+releases that were pruned from the public archive."
+  (let ((floor-tag (uiop:getenv "AUTOLITH_RELEASE_FLOOR_TAG")))
+    (if (and floor-tag (plusp (length floor-tag)))
+        (remove-if (lambda (source-tag)
+                     (release-tag< (release-source-tag-name source-tag)
+                                   floor-tag))
+                   remote-tags)
+        remote-tags)))
+
 (-> release-builder-build-pending (release-builder-configuration) list)
 (defun release-builder-build-pending (configuration)
   "Mirror newly tagged and already published GitHub releases."
   (release-host--call-with-lock
    (release-builder-configuration-state-root configuration)
    (lambda ()
-     (let ((remote-tags (release-builder-remote-tags configuration)))
+     (let ((remote-tags (release-builder--floor-filtered-tags
+                         (release-builder-remote-tags configuration))))
        (loop for source-tag in
              (append (release-builder-pending-tags configuration remote-tags)
                      (release-builder--published-source-tags
