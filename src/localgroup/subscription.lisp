@@ -68,6 +68,13 @@
   (declare (ignore subscription wire-p))
   nil)
 
+(defgeneric channel-subscription-arguments (subscription)
+  (:documentation "Return what SUBSCRIPTION states about itself when it attaches, beyond its name, as a plist."))
+
+(defmethod channel-subscription-arguments ((subscription channel-subscription))
+  "Ordinary clients state nothing more."
+  nil)
+
 (defgeneric channel-subscription-present-event (subscription event)
   (:documentation "Synchronously present one admitted event before acknowledging its delivery."))
 
@@ -132,6 +139,7 @@
            :name           (channel-subscription-name subscription)
            :approves-p     (channel-subscription-approves-p subscription)
            :evaluates-p    (channel-subscription-evaluates-p subscription)
+           :arguments      (channel-subscription-arguments subscription)
            :event-function (lambda (event) (channel-subscription-event subscription event)))))
     (setf (channel-subscription-connection subscription) connection)
     (channel-subscription-finish-attachment
@@ -186,6 +194,13 @@
   "Wait for a usable connection, then preserve the transport's outcome."
   (apply #'localgroup-client-call (channel-subscription--await-connection subscription)
          command arguments))
+
+(-> channel-subscription-send (channel-subscription keyword &rest t) null)
+(defun channel-subscription-send (subscription command &rest arguments)
+  "Send COMMAND without waiting for the channel's reply, as for input the channel may answer with a question."
+  (apply #'localgroup-client-send (channel-subscription--await-connection subscription)
+         command arguments)
+  nil)
 
 (-> channel-subscription-submit
     (channel-subscription string &key (:source user-message-submission-source) (:steer-p boolean)
@@ -343,6 +358,7 @@ Explicit rejection, including an expired replay cursor, is terminal."
                        entry :name     (channel-subscription-name subscription)
                        :approves-p     (channel-subscription-approves-p subscription)
                        :evaluates-p    (channel-subscription-evaluates-p subscription)
+                       :arguments      (channel-subscription-arguments subscription)
                        :after-sequence sequence :cancelled-p #'cancelled-p
                        :event-function (lambda (event) (channel-subscription-event subscription event))))
             (localgroup-error (condition)

@@ -929,6 +929,26 @@ The caller must hold CONTROLLER's publication lock."
      (when pending-publication
        (application-input-controller--publish-pending-publication-locked
         controller pending-publication nil))))
+  (application-input-controller--note-turn controller)
+  nil)
+
+(-> application-input-controller-turn-state (application-input-controller) list)
+(defun application-input-controller-turn-state (controller)
+  "Return whether CONTROLLER works, cancels its turn, or holds a recalled follow-up, as :TURN fields.
+
+The slots are read without the controller's lock, so presenting a change
+never waits for work that holds it."
+  (list :active-p     (not (null (application-input-controller-active-p controller)))
+        :cancelling-p (not (null (application-input-controller-turn-cancellation-p controller)))
+        :editing-p    (not (null (application-input-controller-follow-up-edit-index controller)))))
+
+(-> application-input-controller--note-turn (application-input-controller) null)
+(defun application-input-controller--note-turn (controller)
+  "Tell a hosted channel's clients whether CONTROLLER still works, when that changed."
+  (let ((presentation (application-presentation
+                       (application-input-controller-application controller))))
+    (when presentation
+      (channel-presentation-note-turn presentation)))
   nil)
 
 (-> application-input-controller-turn-active-p

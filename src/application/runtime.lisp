@@ -2038,14 +2038,35 @@ state and update the title afterward; later failures do not roll back the runtim
       (application-sync-window-title application)
       directory)))
 
+(-> application--input-history-resident (list (option (integer 1))) list)
+(defun application--input-history-resident (entries character-limit)
+  "Return the newest of ENTRIES that hold CHARACTER-LIMIT characters together, and always the newest one."
+  (if character-limit
+      (let ((characters 0))
+        (last entries
+              (max 1 (loop for entry in (reverse entries)
+                           while (<= (incf characters (length entry)) character-limit)
+                           count t))))
+      entries))
+
+(-> application-input-history-window (terminal-ui conversation) (values list (integer 0) boolean))
+(defun application-input-history-window (ui conversation)
+  "Return the newest inputs UI's editor keeps, the offset of the first, and whether the rest pages in.
+
+The window obeys both of the editor's budgets, so it is also what a client is sent."
+  (let ((editor (terminal-ui-editor ui)))
+    (multiple-value-bind (entries total complete-p)
+        (conversation-input-history-page conversation :limit (line-editor-history-limit editor))
+      (let ((resident (application--input-history-resident
+                       entries (line-editor-history-character-limit editor))))
+        (values resident (- total (length resident)) complete-p)))))
+
 (-> application--load-conversation-input-history (terminal-ui conversation) terminal-ui)
 (defun application--load-conversation-input-history (ui conversation)
   "Install complete indexed paging or an explicitly local recent input window."
-  (multiple-value-bind (entries total complete-p)
-      (conversation-input-history-page
-       conversation :limit (line-editor-history-limit (terminal-ui-editor ui)))
+  (multiple-value-bind (entries offset complete-p) (application-input-history-window ui conversation)
     (terminal-ui-load-history
-     ui entries :offset (- total (length entries))
+     ui entries :offset offset
      :older-function
      (when complete-p
        (lambda (end)
