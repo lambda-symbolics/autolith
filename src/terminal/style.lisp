@@ -21,6 +21,7 @@
       :legend-plain :legend-dim :legend-accent :sidebar-action :sidebar-workspace
       :status-model :status-effort :status-branch :model :effort
       :compaction-label :progress-track :progress-fill
+      :status-progress-track :status-progress-fill
       :syntax-comment :syntax-keyword :syntax-string :syntax-escape
       :syntax-number :syntax-type :syntax-function :syntax-property
       :syntax-parenthesis-1 :syntax-parenthesis-2 :syntax-parenthesis-3
@@ -135,7 +136,6 @@ neutral bright black because basic terminals cannot tint a row."
       (:legend-accent (:foreground :bright-magenta :bold t))
       (:sidebar-action (:foreground :bright-cyan :underline t))
       (:sidebar-workspace (:foreground :bright-blue :bold t))
-      (:compaction-label (:foreground :bright-yellow :bold t))
       (:progress-track (:faint t))
       (:progress-fill (:foreground :bright-yellow :bold t))
       (:syntax-comment (:faint t))
@@ -168,7 +168,10 @@ neutral bright black because basic terminals cannot tint a row."
            (:status-accent :bright-magenta (:bold t))
            (:status-model :bright-cyan (:bold t))
            (:status-effort :bright-red (:bold t))
-           (:status-branch :bright-green (:bold t)))
+           (:status-branch :bright-green (:bold t))
+           (:compaction-label :bright-yellow (:bold t))
+           (:status-progress-track nil (:faint t))
+           (:status-progress-fill :bright-yellow (:bold t)))
          collect (cons name
                        (apply #'make-style
                               :foreground foreground
@@ -258,7 +261,6 @@ quiet text uses soft blue."
         (:legend-accent (:foreground ,accent :bold t))
         (:sidebar-action (:foreground ,secondary :underline t))
         (:sidebar-workspace (:foreground ,accent-soft :bold t))
-        (:compaction-label (:foreground ,accent :bold t))
         (:progress-track (:foreground ,soft))
         (:progress-fill (:foreground ,accent :bold t))
         (:syntax-comment (:foreground ,soft))
@@ -285,7 +287,10 @@ quiet text uses soft blue."
              (:status-accent ,accent (:bold t))
              (:status-model ,secondary (:bold t))
              (:status-effort ,danger (:bold t))
-             (:status-branch ,safe (:bold t)))
+             (:status-branch ,safe (:bold t))
+             (:compaction-label ,accent (:bold t))
+             (:status-progress-track ,soft ())
+             (:status-progress-fill ,accent (:bold t)))
            collect (cons name
                          (apply #'make-style
                                 :foreground foreground
@@ -503,17 +508,19 @@ A span the newline falls in is cut in two, a widget keeping its action in both."
           collect span into head
         finally (return (values head nil))))
 
-(-> terminal--bar-spans ((integer 0) (integer 0) (integer 0)) list)
-(defun terminal--bar-spans (width start end)
+(-> terminal--bar-spans
+    ((integer 0) (integer 0) (integer 0) &key (:track-style terminal-style) (:fill-style terminal-style))
+    list)
+(defun terminal--bar-spans (width start end &key (track-style ':progress-track) (fill-style ':progress-fill))
   "Return a WIDTH-cell progress bar filled from cell START below END."
   (flet ((segment (style character count)
            (when (plusp count)
              (list (terminal-span style (make-string count :initial-element character))))))
     (let* ((end   (min width end))
            (start (min start end)))
-      (append (segment ':progress-track #\─ start)
-              (segment ':progress-fill #\━ (- end start))
-              (segment ':progress-track #\─ (- width end))))))
+      (append (segment track-style #\─ start)
+              (segment fill-style #\━ (- end start))
+              (segment track-style #\─ (- width end))))))
 
 
 ;;;; -- Markdown Heading Styles --

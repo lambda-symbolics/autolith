@@ -1397,12 +1397,10 @@ its parenthesis open, and are dropped once the name closes it itself."
   "Return the viewport rows available to UI's command and child activity strips."
   (let* ((status-p         (terminal-ui--status-label-visible-p ui))
          (local-activity-p (not (null (terminal-ui-local-activity ui))))
-         (compacting-p     (terminal-ui-compacting-p ui))
          (status-row-p     (terminal-ui--status-row-visible-p ui))
          (reserved-rows
            (+ 3
               (if status-row-p 2 0)
-              (if compacting-p 1 0)
               (if local-activity-p 1 0)
               (if status-p 1 0))))
     (max 1
@@ -1918,24 +1916,25 @@ its parenthesis open, and are dropped once the name closes it itself."
 
 (-> terminal-ui--compaction-row-at (terminal-ui real integer) list)
 (defun terminal-ui--compaction-row-at (ui now row-width)
-  "Return UI's clipped indeterminate compaction row at monotonic NOW."
+  "Return UI's clipped indeterminate compaction spans at monotonic NOW."
   (let ((track-width (terminal-ui--compaction-track-width row-width))
         (head-at     (terminal-ui--compaction-phase-at ui now row-width)))
     (terminal--clip-spans
      (cons (terminal-span ':compaction-label "COMPACTING")
            (when (plusp track-width)
-             (cons (terminal-span ':progress-track "  ")
-                   (terminal--bar-spans track-width head-at
-                                        (+ head-at *terminal-ui-compaction-head-cells*)))))
+            (cons (terminal-span ':status-progress-track "  ")
+                  (terminal--bar-spans track-width head-at
+                                       (+ head-at *terminal-ui-compaction-head-cells*)
+                                       :track-style ':status-progress-track
+                                       :fill-style  ':status-progress-fill))))
      row-width)))
 
 (-> terminal-ui--status-sides-at (terminal-ui real integer) (values list list))
 (defun terminal-ui--status-sides-at (ui now row-width)
-  "Return UI's activity spans and its worked time and context spans for ROW-WIDTH cells.
+  "Return UI's activity spans and its worked time and context or compaction spans.
 
-Narrow rows reserve their available cells for the complete used/window count
-before showing activity. Total worked time joins the meter when every segment
-fits."
+Narrow rows reserve cells for the right-hand meter before showing activity.
+Total worked time joins the meter when every segment fits."
   (let* ((animated-p             (terminal-ui--animated-status-row-p ui))
          (activity-content
            (and animated-p
@@ -1965,13 +1964,15 @@ fits."
          (activity-context-budget
            (- row-width minimum-activity-width context-gap))
          (context
-           (and complete-context-width
-                (terminal-ui--context-meter-spans
-                 ui
-                 (if (and content
-                          (>= activity-context-budget complete-context-width))
-                     activity-context-budget
-                     row-width))))
+           (if (terminal-ui-compacting-p ui)
+               (terminal-ui--compaction-row-at ui now row-width)
+               (and complete-context-width
+                    (terminal-ui--context-meter-spans
+                     ui
+                     (if (and content
+                              (>= activity-context-budget complete-context-width))
+                         activity-context-budget
+                         row-width)))))
          (worked                 (and content (terminal-ui--worked-spans-at ui now))))
     (if context
         (let* ((context-width (terminal--spans-width context))
@@ -2007,14 +2008,19 @@ fits."
 
 (-> terminal-ui--status-position-spans (terminal-ui integer) list)
 (defun terminal-ui--status-position-spans (ui row-width)
-  "Return UI's transcript position when ROW-WIDTH also fits activity and context counts."
-  (let ((position (terminal-ui-transcript-position ui)))
+  "Return UI's transcript position when ROW-WIDTH also fits the activity and meter."
+  (let ((position (terminal-ui-transcript-position ui))
+        (meter-width
+          (cond
+            ((terminal-ui-compacting-p ui)
+             (+ (text-cell-width "COMPACTING  ") *terminal-ui-compaction-track-cells*))
+            ((terminal-ui-context-window ui)
+             (text-cell-width (terminal-ui--context-compact-text ui)))
+            (t
+             nil))))
     (when (and position
                (>= (- row-width (text-cell-width position) 2)
-                   (+ *terminal-ui-minimum-activity-cells*
-                      (if (terminal-ui-context-window ui)
-                          (+ 2 (text-cell-width (terminal-ui--context-compact-text ui)))
-                          0))))
+                   (+ *terminal-ui-minimum-activity-cells* (if meter-width (+ 2 meter-width) 0))))
       (list (terminal-span ':status-accent position)))))
 
 (-> terminal-ui--status-row-at (terminal-ui real integer) list)
@@ -2022,7 +2028,7 @@ fits."
   "Return UI's modeline spans across ROW-WIDTH cells.
 
 Activity is on the left. The transcript position, the worked time and the
-context meter are right-aligned, in that order."
+context meter or compaction bar are right-aligned, in that order."
   (let* ((position (terminal-ui--status-position-spans ui row-width))
          (reserved (if position (+ (terminal--spans-width position) 2) 0)))
     (multiple-value-bind (left right)
@@ -2154,10 +2160,7 @@ form keeps every speculative Markdown wrap live until the logical line commits."
       (setf rows
             (append rows
                     (list nil
-                          (terminal-ui--status-row-at ui status-now row-width))
-                    (when (terminal-ui-compacting-p ui)
-                      (list (terminal-ui--compaction-row-at
-                             ui status-now row-width))))))
+                          (terminal-ui--status-row-at ui status-now row-width)))))
     (when (terminal-ui-local-activity ui)
       (setf rows
             (append rows

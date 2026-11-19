@@ -1180,7 +1180,8 @@
                                          (incf clock-calls)
                                          clock))))
     (with-terminal-ui (active-ui ui)
-      (terminal-ui-set-status active-ui "working")
+      (terminal-ui-set-status active-ui "working" :label-p nil)
+      (terminal-ui-set-context-usage active-ui :used 20 :window 100 :compaction-limit 80)
       (recording-terminal-reset terminal)
       (terminal-ui-set-compacting active-ui t)
       (test-assert
@@ -1192,6 +1193,13 @@
       (test-assert
        (= (length (recording-terminal-chunks terminal)) 1)
        "starting compaction repaints")
+      (let ((rows (terminal-ui--prompt-prefix-rows active-ui 0)))
+        (test-assert (and (= 2 (length rows))
+                          (search "COMPACTING  ━━━━━" (terminal--spans-text (second rows))))
+                     "compaction uses the modeline without adding a prompt row"))
+      (test-assert (string= "COMPACT"
+                            (terminal--spans-text (terminal-ui--status-row-at active-ui 0 7)))
+                   "a narrow modeline clips its compaction label to one row")
       (recording-terminal-reset terminal)
       (let ((calls-before-repeat clock-calls))
         (terminal-ui-set-compacting active-ui t)
@@ -1218,6 +1226,9 @@
       (test-assert
        (= (length (recording-terminal-chunks terminal)) 1)
        "clearing compaction repaints")
+      (let ((text (terminal--spans-text (terminal-ui--status-row-at active-ui clock 60))))
+        (test-assert (and (search "20 / 100 used" text) (not (search "COMPACTING" text)))
+                     "clearing compaction restores the context meter"))
       (recording-terminal-reset terminal)
       (let ((calls-before-repeat clock-calls))
         (terminal-ui-set-compacting active-ui nil)
