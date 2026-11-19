@@ -1351,8 +1351,8 @@
     (let* ((server      (fullscreen-test--ui (make-instance 'recording-terminal :columns 170 :rows 12)))
            (client      (fullscreen-test--ui (make-instance 'recording-terminal :columns 67 :rows 12)))
            (application (make-instance 'application :configuration configuration
-                                                     :conversation  (conversation-create configuration)
-                                                     :ui            server))
+                                                     :conversation (conversation-create configuration)
+                                                     :ui           server))
            (record      (list :summary :seq 1 :time 0 :through-seq 0 :summary "older work"
                               :recovery '(:outcome :success :stages ((:tier :metadata)))))
            (wire        (presentation-record->wire (application--record-presentation application record) 170)))

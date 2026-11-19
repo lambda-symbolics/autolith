@@ -681,7 +681,7 @@ A model this launch selected explicitly stays, as it does for any conversation."
      ui (append tasks
                 (remove-if (lambda (activity)
                              (find (getf activity :channel) tasks :test #'equal
-                                   :key (lambda (task) (getf task :channel))))
+                                   :key                                 (lambda (task) (getf task :channel))))
                            (application-world-child-activities application)))))
   nil)
 
