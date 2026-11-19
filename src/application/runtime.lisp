@@ -3808,16 +3808,36 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
     (application integer integer)
     (values list integer hash-table hash-table))
 (defun application--history-page-records (application floor limit)
-  "Return the newest LIMIT raw candidates before FLOOR with bounded outcomes and sources."
-  (multiple-value-bind (records count latest position outcomes sources)
-      (application--select-history-records
-       application
-       (lambda (callback)
-         (conversation-map-records (application-conversation application) callback)
-         0)
-       :before-sequence floor :limit limit)
-    (declare (ignore latest position))
-    (values records count outcomes sources)))
+  "Return the newest LIMIT raw candidates before FLOOR with bounded outcomes and sources.
+
+The second value is larger than LIMIT if earlier candidates exist.
+
+Only the segments that the page comes from are read, starting from the newest
+one. The name of a segment is the first sequence of the segment, so the
+segments are chosen without being read. The first segment after FLOOR is read
+too, because it can contain the outcomes of the last calls of the page."
+  (let* ((identity  (conversation-pathname (application-conversation application)))
+         (pathnames (conversation-storage-pathnames identity))
+         (later     (member-if (lambda (pathname)
+                                 (let ((start (conversation-chunk-start-sequence pathname)))
+                                   (and start (>= start floor))))
+                               pathnames))
+         (earlier   (ldiff pathnames later)))
+    (loop for segment-count = 1 then (* 2 segment-count)
+          do (multiple-value-bind (records candidate-count latest position outcomes sources)
+                 (application--select-history-records
+                  application
+                  (lambda (callback)
+                    (when earlier
+                      (dolist (segment (append (last earlier segment-count)
+                                               (and later (list (first later)))))
+                        (conversation--map-segment-records identity segment callback)))
+                    0)
+                  :before-sequence floor :limit limit)
+               (declare (ignore latest position))
+               (when (or (> candidate-count limit)
+                         (>= segment-count (length earlier)))
+                 (return (values records candidate-count outcomes sources)))))))
 
 (-> application--history-floor-ensure
     (application (integer 1))
