@@ -1344,6 +1344,36 @@
                          "the complete divider fits in one rendered row"))))))
   nil)
 
+(-> test-terminal-client-compaction-reflow () null)
+(defun test-terminal-client-compaction-reflow ()
+  "Lay out a transmitted compaction divider at the client's initial and resized widths."
+  (with-test-configuration (configuration)
+    (let* ((server      (fullscreen-test--ui (make-instance 'recording-terminal :columns 170 :rows 12)))
+           (client      (fullscreen-test--ui (make-instance 'recording-terminal :columns 67 :rows 12)))
+           (application (make-instance 'application :configuration configuration
+                                                     :conversation  (conversation-create configuration)
+                                                     :ui            server))
+           (record      (list :summary :seq 1 :time 0 :through-seq 0 :summary "older work"
+                              :recovery '(:outcome :success :stages ((:tier :metadata)))))
+           (wire        (presentation-record->wire (application--record-presentation application record) 170)))
+      (with-terminal-ui (active client)
+        (presentation-apply active ':records :presentations (list wire))
+        (dolist (columns '(nil 105 49 170))
+          (when columns
+            (terminal-ui-resize active columns :rows 12))
+          (let* ((viewport (fullscreen-terminal-ui-viewport active))
+                 (text     (clinedi:transcript-viewport-chunk-text viewport 0))
+                 (divider  (subseq text 0 (position #\Newline text)))
+                 (width    (clinedi:transcript-viewport-width viewport))
+                 (label    (search " CONTEXT COMPACTED " divider)))
+            (test-assert (and (= (length divider) width)
+                              (eql label (floor (- width (length " CONTEXT COMPACTED ")) 2))
+                              (string= divider (fullscreen-test--row-text active 0)))
+                         "The transmitted divider fills one client row and centers its label.")
+            (test-assert (search "metadata" text :start2 (length divider))
+                         "The recovery notice is presented below the divider."))))))
+  nil)
+
 (-> test-terminal-fullscreen-memory-lookups () null)
 (defun test-terminal-fullscreen-memory-lookups ()
   "Insert complete memory lookups by clicking their rendered tokens after reflow."

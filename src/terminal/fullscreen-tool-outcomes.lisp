@@ -110,8 +110,13 @@
   (let* ((layout      (or (and (getf record :input-expanded-p)
                                (getf record :expanded-entry-layout))
                           (getf record :entry-layout)))
-         (entry       (if entry-p entry
-                          (if layout (funcall layout width) (getf record :entry))))
+         (entry       (cond
+                        ((and layout (or (not entry-p) (eq (getf record :entry-kind) ':summary)))
+                         (funcall layout width))
+                        (entry-p
+                         entry)
+                        (t
+                         (getf record :entry))))
          (body-layout (getf record :body-layout))
          (transform   (getf record :entry-transform))
          (body        (when (and (eq (getf record :kind) ':call) (getf record :retain-output-p))

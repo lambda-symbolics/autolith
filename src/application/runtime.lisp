@@ -2996,24 +2996,13 @@ A channel message shows its sender and channel instead of an operation."
     (otherwise
      nil)))
 
-(defparameter *application-compaction-label* " CONTEXT COMPACTED "
-  "The label centered in the transcript rule marking a context compaction.")
-
 (-> application--compaction-rule (application &key (:recovery list)) terminal-styled-text)
 (defun application--compaction-rule (application &key recovery)
-  "Return a compaction divider spanning the current transcript layout width."
-  (let* ((width (application--transcript-columns application))
-         (label (subseq *application-compaction-label*
-                        0 (min width (length *application-compaction-label*))))
-         (left  (floor (- width (length label)) 2))
-         (right (- width (length label) left)))
-    (append
-     (list (terminal-span ':success (make-string left :initial-element #\━))
-           (terminal-span ':failure label)
-           (terminal-span ':success (make-string right :initial-element #\━)))
-     (when recovery
-       (cons (terminal-span ':plain (string #\Newline))
-             (application-notice-line (compaction-recovery-notice recovery)))))))
+  "Return a compaction divider and its optional recovery notice."
+  (append (terminal-compaction-divider (application--transcript-columns application))
+          (when recovery
+            (cons (terminal-span ':plain (string #\Newline))
+                  (application-notice-line (compaction-recovery-notice recovery))))))
 
 (-> application--command-presentation-entry
     (application-command-invocation list)

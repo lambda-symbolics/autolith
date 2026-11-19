@@ -274,12 +274,25 @@ name in *PRESENTATION-ENTRY-TRANSFORMS*."
                       wire))
               (list identifier (and entry (presentation-entry->wire entry)) wire)))))))
 
+(defparameter *terminal-compaction-label* " CONTEXT COMPACTED "
+  "The label centered in the transcript rule marking a context compaction.")
+
+(-> terminal-compaction-divider ((integer 1)) terminal-styled-text)
+(defun terminal-compaction-divider (columns)
+  "Return a centered compaction divider spanning exactly COLUMNS cells."
+  (let* ((label (subseq *terminal-compaction-label* 0
+                        (min columns (length *terminal-compaction-label*))))
+         (left  (floor (- columns (length label)) 2))
+         (right (- columns (length label) left)))
+    (list (terminal-span ':success (make-string left :initial-element #\━))
+          (terminal-span ':failure label)
+          (terminal-span ':success (make-string right :initial-element #\━)))))
+
 (-> presentation-wire->record (t) (option list))
 (defun presentation-wire->record (wire)
   "Return the (IDENTIFIER ENTRY METADATA) presentation WIRE describes, or NIL when it is none.
 
-The layouts a resident record needs are rebuilt around its data: the expanded
-input, and the row of tool schema names."
+The layouts a resident record needs are rebuilt from its data."
   (when (and (listp wire) (= (length wire) 3) (listp (third wire)))
     (destructuring-bind (identifier entry fields) wire
       (let ((metadata nil))
@@ -318,6 +331,11 @@ input, and the row of tool schema names."
              (setf (getf metadata :tool-entry) description
                    (getf metadata :entry-layout)
                    (lambda (columns) (application--tool-entry-from-description description columns)))))
+          (when (and (eq (getf metadata :entry-kind) ':summary) (consp entry))
+            ;; The rendered first line is width dependent. Keep the styled notice below it.
+            (let ((notice (member (terminal-span ':plain (string #\Newline)) entry :test #'equal)))
+              (setf (getf metadata :entry-layout)
+                    (lambda (columns) (append (terminal-compaction-divider columns) notice)))))
           (list identifier entry metadata))))))
 
 (-> terminal-tool-schema-entry (list (integer 1)) (option list))
