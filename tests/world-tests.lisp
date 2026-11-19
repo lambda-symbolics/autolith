@@ -1038,22 +1038,22 @@
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
       (declare (ignore first-agent second-agent))
-      (let* ((workspace    (world-tests--workspace root "new-channel"))
-             (conversation (conversation-create configuration
-                                                :identifier       "o6E1D2R"
-                                                :origin-directory workspace))
-             (registry     (channel-register-tools (make-instance 'tool-registry)))
-             (agent        (agent-create :configuration configuration
-                                         :conversation  conversation
-                                         :provider      (make-instance 'model-provider)
-                                         :tool-registry registry
-                                         :worker        nil))
-             (context      (make-instance 'tool-context
-                                          :configuration configuration
-                                          :conversation  conversation
-                                          :agent         agent
-                                          :registry      registry
-                                          :worker        nil))
+      (let* ((workspace                             (world-tests--workspace root "new-channel"))
+             (conversation                          (conversation-create configuration
+                                                                         :identifier       "o6E1D2R"
+                                                                         :origin-directory workspace))
+             (registry                              (channel-register-tools (make-instance 'tool-registry)))
+             (agent                                 (agent-create :configuration configuration
+                                                                  :conversation  conversation
+                                                                  :provider      (make-instance 'model-provider)
+                                                                  :tool-registry registry
+                                                                  :worker        nil))
+             (context                               (make-instance 'tool-context
+                                                                   :configuration configuration
+                                                                   :conversation  conversation
+                                                                   :agent         agent
+                                                                   :registry      registry
+                                                                   :worker        nil))
              (*application-local-user-evaluation-p* t))
         (flet ((send (text)
                  "Send TEXT through the registered tool without a channel argument."

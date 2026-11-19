@@ -320,8 +320,8 @@
                  collect (terminal-span ':tool "styled"))))
     (dolist (columns '(80 418))
       (let* ((*channel-presentation-log-character-limit* 1)
-             (ui (channel-presentation-create :rows 127 :columns columns))
-             (identifiers (loop for index below 250 collect (list ':synthetic index)))
+             (ui                                         (channel-presentation-create :rows 127 :columns columns))
+             (identifiers                                (loop for index below 250 collect (list ':synthetic index)))
              (records
                (loop for identifier in identifiers
                      for entry = (layout columns)
@@ -330,10 +330,10 @@
                      collect (list identifier entry
                                    (list :entry-kind ':tool-result :entry-layout #'layout
                                          :origin (list (list ':outer identifier) entry
-                                                       (list :entry-kind ':tool-call
+                                                       (list :entry-kind   ':tool-call
                                                              :entry-layout #'layout
-                                                             :origin origin))))))
-             (delivered nil))
+                                                             :origin       origin))))))
+             (delivered                                  nil))
         (labels ((transport (event)
                    "Convert and frame EVENT exactly as a sequenced publication."
                    (let ((portable (client-portable
@@ -415,10 +415,10 @@
   (dolist (entry (list (loop repeat 40000 collect (terminal-span ':tool "x"))
                       (make-string (1+ image-daemon:*daemon-packet-character-limit*)
                                    :initial-element #\x)))
-    (let* ((ui (channel-presentation-create :rows 127 :columns 418))
+    (let* ((ui     (channel-presentation-create :rows 127 :columns 418))
            (record (list '(:conversation "synthetic" 1) entry
                          (list :entry-kind ':tool-result :kind ':result :state ':done
-                               :call-key '(:call "synthetic" "call")
+                               :call-key     '(:call "synthetic" "call")
                                :entry-layout (lambda (columns)
                                                (if (<= columns 80) "small rendering" entry)))))
            (notice nil))
@@ -429,8 +429,8 @@
                                            (image-daemon:daemon-packet-string portable)
                                            portable))
                                        (channel-presentation-replay ui)))
-                        (event (find ':records events
-                                     :key (lambda (event) (getf (rest event) :operation)))))
+                        (event  (find ':records events
+                                      :key (lambda (event) (getf (rest event) :operation)))))
                    (first (getf (rest event) :presentations)))))
         (test-assert (= 1 (terminal-ui-present-records ui (list record)))
                      "An oversized singleton does not prevent startup.")
@@ -442,7 +442,7 @@
                           (equal (getf (third notice) :call-key) '(:call "synthetic" "call"))
                           (equal (getf (third notice) :body) (second notice))
                           (eq record (first (third (first (deque->list
-                                                         (channel-presentation-transcript-log ui)))))))
+                                                           (channel-presentation-transcript-log ui)))))))
                      "The bounded notice retains identity, outcome semantics and original source.")
         (channel-presentation-set-geometry ui :rows 127 :columns 80)
         (test-assert (equal (second (wire-record)) "small rendering")
@@ -451,10 +451,10 @@
         (test-assert (equal notice (wire-record))
                      "An oversized wider replay uses the same width-independent notice."))))
   (let* ((*channel-presentation-log-character-limit* most-positive-fixnum)
-         (ui (channel-presentation-create :rows 127 :columns 418))
-         (text (make-string (floor image-daemon:*daemon-packet-character-limit* 2)
-                            :initial-element #\x))
-         (records (list (list ':first text nil) (list ':second text nil))))
+         (ui                                         (channel-presentation-create :rows 127 :columns 418))
+         (text                                       (make-string (floor image-daemon:*daemon-packet-character-limit* 2)
+                                                                  :initial-element #\x))
+         (records                                    (list (list ':first text nil) (list ':second text nil))))
     (test-assert (= 2 (terminal-ui-present-records ui records))
                  "A packet-size-only overflow splits the publication without replacing its records.")
     (let ((wires nil))

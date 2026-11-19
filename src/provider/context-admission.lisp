@@ -203,9 +203,9 @@ replaces only the unmatched middle, after common prefix and suffix removal."
 (defun provider-context--switch-source-model (provider sample)
   "Identify the measured model under the same Codex endpoint and provider."
   (let* ((configuration (provider-configuration provider))
-         (registration (model-provider-registration provider))
-         (name         (config :model-provider configuration))
-         (model-digest (rest (assoc "model" (getf sample :encoder-fields) :test #'equal))))
+         (registration  (model-provider-registration provider))
+         (name          (config :model-provider configuration))
+         (model-digest  (rest (assoc "model" (getf sample :encoder-fields) :test #'equal))))
     (when (and registration model-digest)
       (loop for candidate in (provider-registration-models registration)
             for model = (provider-model-name candidate)

@@ -717,8 +717,8 @@ compose."
 (defun channel-presentation--trim-log (ui)
   "Evict oldest logical publications until the budget fits, retaining the newest."
   (when (> (channel-presentation-log-characters ui) *channel-presentation-log-character-limit*)
-    (let* ((log (channel-presentation-transcript-log ui))
-           (cells (deque->list log))
+    (let* ((log          (channel-presentation-transcript-log ui))
+           (cells        (deque->list log))
            (newest-group (and cells (channel-presentation--cell-group (first (last cells))))))
       (loop while (and cells
                        (> (channel-presentation-log-characters ui) *channel-presentation-log-character-limit*)
@@ -762,7 +762,7 @@ PRESENTATIONS are the records a logged :RECORDS operation was made from."
     (channel-presentation--publish-state ui ':turn))
   (let ((event (list* :ui :operation operation fields)))
     (when log-p
-      (channel-presentation--log ui event :presentations presentations
+      (channel-presentation--log ui event :presentations  presentations
                                          :retention-group retention-group))
     (channel-presentation--send ui event))
   nil)
@@ -1100,7 +1100,7 @@ With LAY-OUT-P each record is laid out again for that width."
 (-> presentation--overflow-record (list) list)
 (defun presentation--overflow-record (record)
   "Replace oversized rendered content with a width-independent lifecycle notice."
-  (let* ((notice "[Rendered record exceeds the transport budget. Full content is retained in conversation history.]")
+  (let* ((notice   "[Rendered record exceeds the transport budget. Full content is retained in conversation history.]")
          (metadata (list :body notice :annotations (list (list ':dim notice)))))
     (dolist (key '(:entry-kind :kind :state :call-key :job-key :group :retain-output-p))
       (let ((value (getf (third record) key)))
@@ -1117,9 +1117,9 @@ Check the publisher's cursor fields and the actual packet character limit.
 Split oversized batches; replace an oversized singleton's rendered content
 with a notice. Keep its source presentation for later layout and history."
   (let ((records (getf (channel-presentation--records-fields
-                       ui presentations :lay-out-p lay-out-p)
+                        ui presentations :lay-out-p lay-out-p)
                       :presentations))
-        (group (or retention-group (list nil))))
+        (group   (or retention-group (list nil))))
     (labels ((partition (records presentations)
                "Return bounded cells for matching wire RECORDS and PRESENTATIONS."
                (let* ((event (list :ui :operation ':records :presentations records))
@@ -1128,7 +1128,7 @@ with a notice. Keep its source presentation for later layout and history."
                             (progn
                               (image-daemon:daemon-packet-string
                                (client-portable
-                                (append event (list :sequence most-positive-fixnum
+                                (append event (list :sequence        most-positive-fixnum
                                                     :record-sequence most-positive-fixnum))))
                               nil)
                           (portable-value-error (condition)
@@ -1139,27 +1139,27 @@ with a notice. Keep its source presentation for later layout and history."
                             (if (eq (image-daemon:daemon-error-operation condition) ':write-packet)
                                 t
                                 (error condition))))))
-               (cond
-                 ((and split-p (null (rest records)))
-                  (presentation--validate-transport-shape event)
-                  (let ((notice (presentation--overflow-record (first records))))
-                    (image-daemon:daemon-packet-string
-                     (client-portable (list :ui :operation ':records :presentations (list notice)
-                                            :sequence most-positive-fixnum
-                                            :record-sequence most-positive-fixnum)))
-                    (let ((event (list :ui :operation ':records :presentations (list notice))))
-                      (list (list event (channel-presentation--record-weight event presentations)
-                                  presentations group)))))
-                 (split-p
-                  (let ((middle (floor (length records) 2)))
-                    (nconc (partition (subseq records 0 middle)
-                                      (subseq presentations 0 middle))
-                           (partition (nthcdr middle records)
-                                      (nthcdr middle presentations)))))
-                 (t
-                  (list (list event
-                              (channel-presentation--record-weight event presentations)
-                              presentations group)))))))
+                (cond
+                  ((and split-p (null (rest records)))
+                   (presentation--validate-transport-shape event)
+                   (let ((notice (presentation--overflow-record (first records))))
+                     (image-daemon:daemon-packet-string
+                      (client-portable (list :ui :operation ':records :presentations (list notice)
+                                             :sequence        most-positive-fixnum
+                                             :record-sequence most-positive-fixnum)))
+                     (let ((event (list :ui :operation ':records :presentations (list notice))))
+                       (list (list event (channel-presentation--record-weight event presentations)
+                                   presentations group)))))
+                  (split-p
+                   (let ((middle (floor (length records) 2)))
+                     (nconc (partition (subseq records 0 middle)
+                                       (subseq presentations 0 middle))
+                            (partition (nthcdr middle records)
+                                       (nthcdr middle presentations)))))
+                  (t
+                   (list (list event
+                               (channel-presentation--record-weight event presentations)
+                               presentations group)))))))
       (when records
         (partition records presentations)))))
 
@@ -1172,8 +1172,8 @@ with a notice. Keep its source presentation for later layout and history."
                  append (if (third cell)
                           (channel-presentation--record-cells
                            ui (third cell) :lay-out-p t
-                           :retention-group (channel-presentation--cell-group cell))
-                            (list cell)))))
+                           :retention-group           (channel-presentation--cell-group cell))
+                          (list cell)))))
     (deque-clear log)
     (setf (channel-presentation-log-characters ui) 0)
     (dolist (cell cells)

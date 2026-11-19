@@ -3785,10 +3785,10 @@ Compaction and context adoption replace the measured history."
                (every #'conversation--context-fingerprint-p
                       (list (getf sample :policy) (getf sample :prompt)
                             (getf sample :tool-header)))
-                (or (not (conversation--property-present-p sample :header-text))
-                    (conversation--context-header-text-p
-                         (getf sample :header-text)
-                         (getf sample :prompt) (getf sample :tool-header))))))
+               (or (not (conversation--property-present-p sample :header-text))
+                   (conversation--context-header-text-p
+                        (getf sample :header-text)
+                        (getf sample :prompt) (getf sample :tool-header))))))
        (typep (getf sample :temporary-characters 0) '(integer 0))
        (typep (getf sample :tokens) '(integer 1))
        (typep (getf sample :history-count) '(integer 0))

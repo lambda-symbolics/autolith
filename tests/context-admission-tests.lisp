@@ -1318,7 +1318,7 @@
                       "empty prompt text is valid present snapshot evidence"))
        (let ((legacy (copy-tree sample)))
          (remf legacy :header-text)
-          (remf legacy :wire-history-p)
+         (remf legacy :wire-history-p)
          (conversation-append-record conversation '(:context-usage :sample nil))
          (conversation-append-record conversation (list :context-usage :sample legacy))
          (let ((loaded (conversation-context-usage-sample
@@ -1468,7 +1468,7 @@
          (conversation-set-model-selection conversation "gpt-6.2-astra" "high" :provider "chatgpt")
          (conversation-append-user-message conversation (make-string 160000 :initial-element #\a))
          (let* ((*provider-context-request* (provider-context-request-create old-provider conversation #()))
-                (request (provider-request-object old-provider conversation #())))
+                (request                    (provider-request-object old-provider conversation #())))
            (setf (getf *provider-context-request* :wire) (provider-context--wire-plan old-provider request)
                  (getf *provider-context-request* :wire-characters)
                  (provider-context--request-characters old-provider (provider-request-history old-provider request)))
@@ -1476,11 +1476,11 @@
            (provider-context-note-response
             *provider-context-request*
             (make-instance 'provider-result :output-items (list reasoning)
-                           :usage (json-object "input_tokens" 1000 "output_tokens" 200))))
+                           :usage                         (json-object "input_tokens" 1000 "output_tokens" 200))))
          (conversation-set-model-selection conversation "gpt-6.1-sol" "high" :provider "chatgpt")
-         (let* ((loaded (conversation-load (conversation-pathname conversation)))
+         (let* ((loaded                     (conversation-load (conversation-pathname conversation)))
                 (*provider-context-request* (provider-context-request-create new-provider loaded #()))
-                (request (provider-request-object new-provider loaded #())))
+                (request                    (provider-request-object new-provider loaded #())))
            (test-assert (getf (conversation-context-usage-sample loaded) :wire-history-p)
                         "admission proof survives model change and reload")
            (multiple-value-bind (tokens exact-p)
