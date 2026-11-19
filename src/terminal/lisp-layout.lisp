@@ -281,7 +281,7 @@ The first of the COUNT arguments always stays beside the operator. A COUNT of
 method's qualifiers stay with it. The argument at index ROWS is written one
 element per line."
   (let ((count (if (eq count ':lambda-list)
-                   (1+ (or (position-if-not #'lisp-layout--token (rest elements) :start 1) 1))
+                   (+ 2 (or (position-if-not #'lisp-layout--token (rest (rest elements))) 0))
                    count)))
     (lisp-layout--write-element stream (first elements))
     (loop for (previous element) on elements

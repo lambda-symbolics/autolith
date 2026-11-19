@@ -1833,6 +1833,7 @@
                ("(setf (config :web-search-mode) :live (config :knowledge-mode) :off)"
                 ("(setf (config :web-search-mode) :live"
                  "      (config :knowledge-mode) :off)"))
+               ("(defmethod)" ("(defmethod)"))
                ("(defun square (x) \"Return X squared.\" (* x x))"
                 ("(defun square (x)"
                  "  \"Return X squared.\""
