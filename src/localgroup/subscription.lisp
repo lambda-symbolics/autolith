@@ -128,19 +128,53 @@
       (channel-subscription--drain-events subscription)))
   nil)
 
+(-> channel-subscription--connect (channel-subscription) localgroup-client-connection)
+(defun channel-subscription--connect (subscription)
+  "Find SUBSCRIPTION's channel and connect to it within one handshake deadline.
+
+An endpoint that was replaced while this client connected is discovered again
+and tried once. No channel command has been sent by then."
+  (let ((identifier (channel-subscription-identifier subscription))
+        (deadline   (+ (get-internal-real-time)
+                       (ceiling (* internal-time-units-per-second
+                                   image-daemon:*daemon-connect-timeout-seconds*)))))
+    (flet ((discover ()
+             "Find the channel's endpoint in what is left of the deadline."
+             (handler-case
+                 (sb-sys:with-deadline
+                     (:seconds (max 0 (/ (- deadline (get-internal-real-time))
+                                         internal-time-units-per-second)))
+                   (localgroup--find-record (channel-subscription-configuration subscription)
+                                            identifier))
+               (sb-sys:deadline-timeout (condition)
+                 (error 'localgroup-error
+                        :operation  ':discover
+                        :session-id identifier
+                        :cause      condition
+                        :message    "Channel discovery timed out before attachment."))))
+
+           (connect (entry)
+             "Subscribe to the channel at ENTRY."
+             (localgroup-client-connect
+              entry
+              :name           (channel-subscription-name subscription)
+              :approves-p     (channel-subscription-approves-p subscription)
+              :evaluates-p    (channel-subscription-evaluates-p subscription)
+              :arguments      (channel-subscription-arguments subscription)
+              :event-function (lambda (event) (channel-subscription-event subscription event)))))
+      (let ((entry (discover)))
+        (handler-case (connect entry)
+          (error (condition)
+            (let ((replacement (discover)))
+              (when (or (equal replacement entry) (>= (get-internal-real-time) deadline))
+                (error condition))
+              (connect replacement))))))))
+
 (-> channel-subscription-attach (channel-subscription &key (:replay-p boolean)) null)
 (defun channel-subscription-attach (subscription &key replay-p)
   "Subscribe before preparing history, buffering callbacks until installation finishes."
   (channel-subscription-begin-attachment subscription)
-  (let ((connection
-          (localgroup-client-connect
-           (localgroup--find-record (channel-subscription-configuration subscription)
-                                   (channel-subscription-identifier subscription))
-           :name           (channel-subscription-name subscription)
-           :approves-p     (channel-subscription-approves-p subscription)
-           :evaluates-p    (channel-subscription-evaluates-p subscription)
-           :arguments      (channel-subscription-arguments subscription)
-           :event-function (lambda (event) (channel-subscription-event subscription event)))))
+  (let ((connection (channel-subscription--connect subscription)))
     (setf (channel-subscription-connection subscription) connection)
     (channel-subscription-finish-attachment
      subscription (localgroup-client-connection-attached connection) :replay-p replay-p))
