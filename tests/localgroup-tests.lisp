@@ -284,46 +284,56 @@ Each transcript event takes a line of its own."
         (when application (application-release-conversation-lease application)))))
   nil)
 
+(-> test-localgroup--show-rows
+    (localgroup-screen list
+     &key (:height integer) (:width integer) (:cursor-row integer) (:cursor-column integer)
+          (:cursor-visible-p t) (:whole-screen-p t))
+    null)
+(defun test-localgroup--show-rows
+    (screen rows
+     &key height width (cursor-row 0) (cursor-column 0) (cursor-visible-p t) whole-screen-p)
+  "Show ROWS, a pane's display rows from its top, as SCREEN's frame of HEIGHT by WIDTH."
+  (localgroup-screen-show-frame screen
+                                (clinedi:make-frame-snapshot rows :height height :width width)
+                                :cursor-row       cursor-row
+                                :cursor-column    cursor-column
+                                :cursor-visible-p cursor-visible-p
+                                :whole-screen-p   whole-screen-p))
+
 (-> test-localgroup-screen-paints-frames () null)
 (defun test-localgroup-screen-paints-frames ()
-  "Test a client painting a session's frames on its own terminal."
+  "Test a client painting its pane's frames on its own terminal."
   (let* ((terminal (make-instance 'recording-terminal :columns 40 :rows 8))
          (screen   (localgroup-screen-create :terminal terminal)))
     (flet ((output ()
              "Return everything written to the client terminal so far."
              (apply #'concatenate 'string (reverse (recording-terminal-chunks terminal))))
-           (frame (complete-p rows)
-             "Return a frame packet of ROWS for the test terminal."
-             (list :frame :height 8 :width 40 :complete-p complete-p :rows rows
-                          :cursor-row 3 :cursor-column 1 :cursor-visible-p t)))
-      (test-assert (not (localgroup-screen-handle-packet screen '(:other)))
-                   "packets that are not frames are left to the caller")
-      (test-assert (and (localgroup-screen-handle-packet screen (frame nil '((0 "early"))))
-                        (not (localgroup-screen-active-p screen))
+
+           (show (&rest rows)
+             "Show ROWS as the pane's frame."
+             (test-localgroup--show-rows screen rows :height 8 :width 40
+                                                     :cursor-row 3 :cursor-column 1)))
+      (test-assert (and (not (localgroup-screen-active-p screen))
                         (zerop (length (output))))
-                   "changed rows before any complete frame are dropped")
-      (test-assert (not (localgroup-screen-handle-packet
-                         screen (list :frame :height 0 :width 40 :complete-p t :rows nil
-                                             :cursor-row 0 :cursor-column 0)))
-                   "a malformed frame is not consumed")
-      (localgroup-screen-handle-packet screen (frame t '((0 "hello") (2 "world"))))
+                   "a screen without a frame leaves the terminal alone")
+      (show "hello" "" "world")
       (test-assert (and (localgroup-screen-active-p screen)
                         (search (alternate-screen-enter-sequence) (output))
                         (search "hello" (output))
                         (search "world" (output)))
-                   "the first complete frame takes the screen and paints its rows")
+                   "the first frame takes the screen and paints its rows")
       (setf (recording-terminal-chunks terminal) nil)
-      (localgroup-screen-handle-packet screen (frame nil '((0 "bye"))))
+      (show "bye" "" "world")
       (test-assert (and (search "bye" (output)) (not (search "world" (output))))
-                   "changed rows repaint only themselves")
+                   "a later frame repaints only the rows that changed")
       (setf (recording-terminal-chunks terminal) nil)
       (localgroup-screen-resized screen)
       (test-assert (and (search "bye" (output)) (search "world" (output)))
                    "a resize repaints the whole frame")
-      (localgroup-screen-handle-packet screen '(:screen :leave))
+      (localgroup-screen-close screen)
       (test-assert (and (not (localgroup-screen-active-p screen))
                         (search (alternate-screen-leave-sequence) (output)))
-                   "a leave gives the screen back")
+                   "closing gives the screen back")
       (localgroup-screen-close screen)
       (test-assert (= 1 (count-if (lambda (chunk) (search (alternate-screen-leave-sequence) chunk))
                                   (recording-terminal-chunks terminal)))
@@ -357,11 +367,9 @@ Each transcript event takes a line of its own."
          (let ((failed-p nil))
            (handler-case
                (progn
-                 (localgroup-screen-handle-packet
-                  screen '(:frame :height 8 :width 40 :complete-p t :rows ((0 "hello"))
-                                  :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+                 (test-localgroup--show-rows screen '("hello") :height 8 :width 40)
                  (when (eq failure ':leave)
-                   (localgroup-screen-handle-packet screen '(:screen :leave))))
+                   (localgroup-screen-close screen)))
              (terminal-error (failure) (setf failed-p (eq failure condition))))
            (test-assert failed-p "The injected terminal failure reaches its caller"))
          (when (eq failure ':leave)
@@ -378,21 +386,6 @@ Each transcript event takes a line of its own."
                       "Native fullscreen state is restored once even when physical leave is retried")
          (when (eq failure ':leave)
            (test-assert (= 2 leave-attempts) "The finalizer retries the failed physical leave once"))))))
-  (let* ((terminal (make-instance 'recording-terminal :columns 21 :rows 3))
-         (screen   (localgroup-screen-create :terminal terminal))
-         (text     (copy-seq "owned")))
-    (unwind-protect
-         (progn
-           (localgroup-screen-handle-packet
-            screen (list :frame :height 3 :width 21 :complete-p t :rows (list (list 0 text))
-                         :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
-           (setf (char text 0) #\X
-                 (recording-terminal-chunks terminal) nil)
-           (localgroup-screen-resized screen)
-           (test-assert (some (lambda (chunk) (search "owned" chunk))
-                              (recording-terminal-chunks terminal))
-                        "a forced repaint uses client-owned rows rather than mutated packet strings"))
-      (localgroup-screen-close screen)))
   nil)
 
 (defclass localgroup-tests-panel ()
@@ -443,10 +436,8 @@ Each transcript event takes a line of its own."
            (text     "pending navigation"))
       (unwind-protect
            (progn
-             (localgroup-screen-handle-packet
-              screen (list :frame :height 8 :width columns :complete-p t
-                                  :whole-screen-p t :rows '((0 "previous") (3 "old row"))
-                                  :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+             (test-localgroup--show-rows screen '("previous" "" "" "old row")
+                                         :height 8 :width columns :whole-screen-p t)
              (setf (recording-terminal-chunks terminal) nil)
              (localgroup-screen-show-loading screen text)
              (test-assert (and (localgroup-screen-active-p screen)
@@ -473,20 +464,12 @@ Each transcript event takes a line of its own."
                                       (localgroup-screen--loading-frame screen))))
                           "resizing repaints loading without establishing a channel frame")
              (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
-               (setf (recording-terminal-chunks terminal) nil)
-               (localgroup-screen-handle-packet
-                screen (list :frame :height height :width width :complete-p nil
-                                    :rows '((0 "unbased")) :cursor-row 0 :cursor-column 0))
-               (test-assert (null (recording-terminal-chunks terminal))
-                            "incremental rows cannot use the temporary loading frame as a baseline")
-               (localgroup-screen-handle-packet
-                screen (list :frame :height height :width width :complete-p t
-                                    :rows '((0 "ready")) :cursor-row 0 :cursor-column 0))
-              (test-assert (equalp (clinedi:frame-snapshot-rows (localgroup-screen-frame screen))
-                                   #("ready" "" "" "" "" "" "" ""))
-                           "the new channel replaces loading without rows from the previous channel")
-              (test-assert (null (localgroup-screen-loading screen))
-                           "the destination's complete frame ends loading")))
+               (test-localgroup--show-rows screen '("ready") :height height :width width)
+               (test-assert (equalp (clinedi:frame-snapshot-rows (localgroup-screen-frame screen))
+                                    #("ready" "" "" "" "" "" "" ""))
+                            "the new channel replaces loading without rows from the previous channel")
+               (test-assert (null (localgroup-screen-loading screen))
+                            "the destination's frame ends loading")))
         (localgroup-screen-close screen))))
   (let* ((terminal (make-instance 'recording-terminal))
          (screen   (localgroup-screen-create :terminal terminal)))
@@ -525,16 +508,13 @@ Each transcript event takes a line of its own."
                         (not (localgroup-screen-take-resize screen))
                         (equal (pane) '(6 80)))
                    "a streamed toggle changes neither panel preference nor prompt geometry")
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 80 :complete-p t :rows ((0 "initial fullscreen"))
-                       :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+      (test-localgroup--show-rows screen '("initial fullscreen") :height 6 :width 80)
       (test-assert (and (localgroup-screen-active-p screen)
                         (equal (pane) '(6 69))
                         (localgroup-screen-take-resize screen))
                    "entering fullscreen reserves the sidebar and requests matching session dimensions")
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 69 :complete-p t :rows ((0 "host row") (1 "second"))
-                :cursor-row 1 :cursor-column 2 :cursor-visible-p t))
+      (test-localgroup--show-rows screen '("host row" "second")
+                                  :height 6 :width 69 :cursor-row 1 :cursor-column 2)
       (let ((painted (output)))
         (test-assert (and (search "PANEL-A   │host row" painted)
                           (search "PANEL-B   │second" painted))
@@ -579,38 +559,30 @@ Each transcript event takes a line of its own."
                         (eq (localgroup-screen-filter-event screen '(:control #\s)) ':ignore))
                    "the focus key shows a hidden panel and moves to it")
       (localgroup-screen-take-resize screen)
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 80 :complete-p t :rows ((0 "wide channel"))
-                :cursor-row 1 :cursor-column 2 :cursor-visible-p t))
+      (test-localgroup--show-rows screen '("wide channel")
+                                  :height 6 :width 80 :cursor-row 1 :cursor-column 2)
       (test-assert (equal (localgroup-screen-filter-event screen '(:click 5 2)) '(:click 5 2))
                    "with the panel hidden clicks keep their columns")
       (localgroup-screen-filter-event screen '(:control #\s))
       (localgroup-screen-take-resize screen)
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 69 :complete-p t :rows ((0 "boot screen"))
-                :cursor-row 0 :cursor-column 0 :cursor-visible-p nil :whole-screen-p t))
+      (test-localgroup--show-rows screen '("boot screen")
+                                  :height 6 :width 69 :cursor-visible-p nil :whole-screen-p t)
       (test-assert (and (equal (pane) '(6 80))
                         (localgroup-screen-take-resize screen))
                    "a frame asking for the whole screen hides the panel and resizes the pane")
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 80 :complete-p t :rows ((0 "listener"))
-                :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+      (test-localgroup--show-rows screen '("listener") :height 6 :width 80)
       (test-assert (and (equal (pane) '(6 69))
                         (localgroup-screen-take-resize screen))
                    "the next ordinary frame brings the panel back")
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 69 :complete-p t :rows ((0 "docked channel"))
-                       :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
-      (localgroup-screen-handle-packet screen '(:screen :leave))
+      (test-localgroup--show-rows screen '("docked channel") :height 6 :width 69)
+      (localgroup-screen-close screen)
       (test-assert (and (equal (pane) '(6 80))
                         (localgroup-screen-take-resize screen)
                         (not (localgroup-screen-take-resize screen))
                         (equal (localgroup-screen-filter-event screen '(:control #\s)) '(:control #\s))
                         (equal (localgroup-screen-filter-event screen '(:click 20 2)) '(:click 20 2)))
                    "leaving fullscreen restores full-width streamed input despite the cached painted layout")
-      (localgroup-screen-handle-packet
-       screen '(:frame :height 6 :width 80 :complete-p t :rows ((0 "fullscreen again"))
-                       :cursor-row 0 :cursor-column 0 :cursor-visible-p t))
+      (test-localgroup--show-rows screen '("fullscreen again") :height 6 :width 80)
       (test-assert (and (equal (pane) '(6 69)) (localgroup-screen-take-resize screen))
                    "a later fullscreen attachment restores the saved sidebar preference")
       (terminal-set-dimensions terminal 50 :rows 6)
@@ -627,12 +599,15 @@ Each transcript event takes a line of its own."
     (let* ((terminal (make-instance 'recording-terminal :columns 120 :rows 8))
            (sidebar  (world-sidebar-create configuration))
            (screen   (localgroup-screen-create :terminal terminal :panel sidebar)))
-      (labels ((send-frame (width text &key whole-p (height 8) (complete-p t))
-                 "Receive a server frame with an explicit geometry and whole-screen hint."
-                 (localgroup-screen-handle-packet
-                  screen (list :frame :height height :width width :whole-screen-p whole-p
-                               :complete-p complete-p :rows (list (list 0 text))
-                               :cursor-row 1 :cursor-column 2 :cursor-visible-p (not whole-p))))
+      (labels ((send-frame (width text &key whole-p (height 8))
+                 "Show a frame with an explicit geometry and whole-screen hint."
+                 (test-localgroup--show-rows screen (list text)
+                                             :height           height
+                                             :width            width
+                                             :cursor-row       1
+                                             :cursor-column    2
+                                             :cursor-visible-p (not whole-p)
+                                             :whole-screen-p   whole-p))
 
                (output ()
                  "Return the physical terminal output since its last reset."
@@ -666,9 +641,6 @@ Each transcript event takes a line of its own."
                           (localgroup-screen-take-resize screen)
                           (equal (localgroup-screen-filter-event screen '(:click 50 2)) '(:click 23 2)))
                      "a pending toggle preserves the painted layout and its pointer coordinates")
-        (send-frame 120 "delta without matching baseline" :complete-p nil)
-        (test-assert (zerop (length (output)))
-                     "a width-only delta cannot reuse the narrower frame's baseline")
         (send-frame 120 "full-width channel")
         (test-assert (and (search "full-width channel" (output))
                           (not (search "│" (output)))

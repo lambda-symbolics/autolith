@@ -452,9 +452,9 @@
           (setf (world-sidebar-current sidebar) "bhere1")
           (world-sidebar--take sidebar (list :channels (list (world-sidebar-tests--channel "bhere1" "/w/")
                                                              (world-sidebar-tests--channel "bthere1" "/w/"))))
-          (localgroup-screen-handle-packet
-           screen '(:frame :height 20 :width 80 :complete-p t :rows ((19 "composer draft"))
-                    :cursor-row 19 :cursor-column 14 :cursor-visible-p t))
+          (test-localgroup--show-rows screen
+                                      (append (make-list 19 :initial-element "") '("composer draft"))
+                                      :height 20 :width 80 :cursor-row 19 :cursor-column 14)
           (test-assert (and (eq (localgroup-screen-layout screen) ':session)
                             (equal (multiple-value-list (localgroup-screen-pane-size screen)) '(20 80))
                             (eql (localgroup-screen-filter-event screen #\a) #\a))

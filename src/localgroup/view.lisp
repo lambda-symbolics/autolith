@@ -114,20 +114,15 @@ modal reader so the view can act on it."
      &key (cursor-row 0) (cursor-column 0) (cursor-visible-p t) whole-screen-p)
   "Give the screen ROWS as the pane's complete frame; it paints what changed."
   (declare (ignore painter))
-  (let ((height (max 1 (terminal-rows terminal)))
-        (width  (max 1 (terminal-columns terminal))))
-    (localgroup-screen-handle-packet
-     (pane-terminal-screen terminal)
-     (list :frame
-           :height           height
-           :width            width
-           :complete-p       t
-           :rows             (clinedi:frame-snapshot-delta
-                              (clinedi:make-frame-snapshot rows :height height :width width) nil)
-           :cursor-row       cursor-row
-           :cursor-column    cursor-column
-           :cursor-visible-p (not (null cursor-visible-p))
-           :whole-screen-p   (not (null whole-screen-p)))))
+  (localgroup-screen-show-frame
+   (pane-terminal-screen terminal)
+   (clinedi:make-frame-snapshot rows
+                                :height (max 1 (terminal-rows terminal))
+                                :width  (max 1 (terminal-columns terminal)))
+   :cursor-row       cursor-row
+   :cursor-column    cursor-column
+   :cursor-visible-p cursor-visible-p
+   :whole-screen-p   whole-screen-p)
   nil)
 
 (defmethod terminal-screen-invalidate ((terminal pane-terminal) painter)

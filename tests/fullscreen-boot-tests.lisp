@@ -195,10 +195,10 @@
             (localgroup-screen-resized screen)
             (test-assert (= 72 (clinedi:frame-snapshot-width (localgroup-screen--loading-frame screen)))
                          "the boot panel follows terminal resizes")
-            (localgroup-screen-handle-packet
-             screen (list :frame :height 18 :width (- 72 (screen-panel-width panel 72) 1)
-                                 :complete-p t :rows '((0 "restored"))
-                                 :cursor-row 1 :cursor-column 0 :cursor-visible-p t))
+            (localgroup-screen-show-frame
+             screen (clinedi:make-frame-snapshot
+                     '("restored") :height 18 :width (- 72 (screen-panel-width panel 72) 1))
+             :cursor-row 1)
             (test-assert (and (null (localgroup-screen-loading screen))
                               (null (localgroup-screen-boot-ui screen))
                               (eq (localgroup-screen-painted-layout screen) ':beside)
