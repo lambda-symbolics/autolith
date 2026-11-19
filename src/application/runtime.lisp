@@ -479,21 +479,15 @@ Clicking the rendered call's header inserts it into the composer.")
     (terminal-ui)
     (option (cons (integer 1) (integer 1))))
 (defun application-pending-terminal-size (ui)
-  "Consume one pending resize of UI's terminal and return refreshed rows and columns.
+  "Consume this process's pending terminal resize and return the measured rows and columns, or NIL without one.
 
-A relayed client size takes precedence over local measurement: a
-relayed session cannot measure its terminal, so the packet is the only
-truthful source of dimensions."
-  (let ((relayed (terminal-relayed-resize-consume (terminal-ui-terminal ui))))
-    (cond
-      (relayed
-       (setf *terminal-resize-pending-p* nil)
-       relayed)
-      (*terminal-resize-pending-p*
-       (setf *terminal-resize-pending-p* nil)
-       (multiple-value-bind (rows columns)
-           (terminal-current-size)
-         (cons rows columns))))))
+Only a session on a terminal of its own sees one. A channel's presentation is
+told its client's pane with CHANNEL-PRESENTATION-SET-GEOMETRY."
+  (declare (ignore ui))
+  (when (shiftf *terminal-resize-pending-p* nil)
+    (multiple-value-bind (rows columns)
+        (terminal-current-size)
+      (cons rows columns))))
 
 (defparameter *application-prompt* "❯ "
   "The styled input prompt shown on the live editor row.")

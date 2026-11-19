@@ -420,11 +420,11 @@
 (-> test-onboarding-ui-idle-resize () null)
 (defun test-onboarding-ui-idle-resize ()
   "Shrink and grow the active tour without a keystroke, preserving edited input."
-  (let* ((terminal                    (make-instance 'queued-recording-terminal :columns 80 :rows 24))
-         (waits                       0)
-         (sizes                       nil)
-         (*terminal-resize-pending-p* nil)
-         (paint-function              (symbol-function 'terminal-ui-fullscreen-paint)))
+  (let* ((terminal       (make-instance 'queued-recording-terminal :columns 80 :rows 24))
+         (waits          0)
+         (sizes          nil)
+         (pending        nil)
+         (paint-function (symbol-function 'terminal-ui-fullscreen-paint)))
     (queued-recording-terminal-enqueue terminal '(:paste "free editing"))
     (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
       (test-call-with-function-replacements
@@ -445,16 +445,18 @@
           (eq ':refused
               (terminal-ui-onboard
                ui (list (onboarding-ui-test--page "resize" ':help))
-               :resize-callback #'application-pending-terminal-size
+               :resize-callback (lambda (target)
+                                  (declare (ignore target))
+                                  (shiftf pending nil))
                :wait-function
                (lambda (seconds)
                  (declare (ignore seconds))
                  (case (incf waits)
                    (1
-                    (terminal-relayed-resize-publish terminal 9 28))
+                    (setf pending (cons 9 28)))
                    (2
                     (test-assert (equal (first sizes) '(9 . 28)) "shrink repaint happens before any input")
-                    (terminal-relayed-resize-publish terminal 30 100))
+                    (setf pending (cons 30 100)))
                    (3
                     (test-assert (equal (first sizes) '(30 . 100)) "grow repaint happens before any input")
                     (test-assert (string= "free editing" (line-editor-text (terminal-ui-editor ui)))

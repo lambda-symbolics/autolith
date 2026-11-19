@@ -22,42 +22,8 @@ Older inputs page in from the conversation as history traversal reaches them.")
 ;;;; -- Terminal Objects --
 
 (defclass terminal (clinedi:terminal)
-  ((relayed-resize
-    :initform      nil
-    :accessor      terminal-relayed-resize
-    :type          (option (cons (integer 1) (integer 1)))
-    :documentation "Pending (rows . columns) relayed by a controlling client, or NIL.
-
-A relayed session's process has no controlling terminal, so its own
-kernel size reports only ever see fallback defaults. Controlling
-clients therefore relay exact dimensions, and the interactive reader
-applies them through TERMINAL-UI-RESIZE. All terminal dimension
-mutation passes through TERMINAL-SET-DIMENSIONS. Each terminal keeps
-its own pending size, so several relayed terminals in one process
-never apply each other's resizes.")
-   (relayed-resize-lock
-    :initform      (make-lock "Autolith relayed terminal resize")
-    :reader        terminal-relayed-resize-lock
-    :type          t
-    :documentation "The lock making relayed resize publication and consumption atomic."))
+  ()
   (:documentation "Autolith's terminal transport extension point."))
-
-(-> terminal-relayed-resize-publish (terminal integer integer) null)
-(defun terminal-relayed-resize-publish (terminal rows columns)
-  "Park positive ROWS and COLUMNS as TERMINAL's pending relayed resize."
-  (when (and (plusp rows) (plusp columns))
-    (with-lock-held ((terminal-relayed-resize-lock terminal))
-      (setf (terminal-relayed-resize terminal) (cons rows columns))))
-  nil)
-
-(-> terminal-relayed-resize-consume
-    (terminal)
-    (option (cons (integer 1) (integer 1))))
-(defun terminal-relayed-resize-consume (terminal)
-  "Atomically consume and return TERMINAL's newest relayed size."
-  (with-lock-held ((terminal-relayed-resize-lock terminal))
-    (prog1 (terminal-relayed-resize terminal)
-      (setf (terminal-relayed-resize terminal) nil))))
 
 
 ;;;; -- Whole-Screen Frames --
