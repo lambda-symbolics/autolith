@@ -478,7 +478,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
      :slash-parser      application--memories-slash-arguments)
     (application &optional query)
   (let ((ui (application-ui application)))
-    (if (and ui (terminal-ui-fullscreen-p ui)
+    (if (and ui (terminal-ui-pages-p ui)
              (terminal-interactive-p (terminal-ui-terminal ui)))
         (application-memory-manager application :query query)
         (application-present application (application-memories-entry application :query query))))
@@ -495,7 +495,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
      :callable          t)
     (application &optional identifier)
   (let ((ui (application-ui application)))
-    (if (and ui (terminal-ui-fullscreen-p ui)
+    (if (and ui (terminal-ui-pages-p ui)
              (terminal-interactive-p (terminal-ui-terminal ui)))
         (application-memory-manager application :identifier identifier)
         (application-present

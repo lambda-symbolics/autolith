@@ -80,14 +80,14 @@ another version adds are ignored."
 (defun application-evaluating-attachment (application)
   "Return the attachment of the client that evaluates forms for APPLICATION's channel, or NIL.
 
-The controlling terminal comes first, then the structured client attached last."
-  (let* ((ui         (application-ui application))
-         (controller (and ui (localgroup-terminal-controller (terminal-ui-terminal ui)))))
+The terminal client its user is at comes first, then the client attached last."
+  (let ((controller (application-controlling-client application)))
     (find-if (lambda (attachment)
                (and (attachment-evaluates-p attachment)
                     (not (image-daemon:attachment-closed-p attachment))))
-             (append (and controller (list controller))
-                     (mapcar #'channel-client-attachment (application-clients application))))))
+             (mapcar #'channel-client-attachment
+                     (append (and controller (list controller))
+                             (application-clients application))))))
 
 (-> application-evaluate-on-client
     (application list &key (:restart-name (option string))

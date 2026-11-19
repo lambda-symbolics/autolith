@@ -200,17 +200,6 @@
             "the roleless inbox has a fresh runtime and sole lease after child subtree removal"))))))
   nil)
 
-(-> channel-deletion-tests--attachment (localgroup-terminal string) image-daemon:attachment)
-(defun channel-deletion-tests--attachment (terminal identifier)
-  "Attach a real controlling transport to TERMINAL for channel IDENTIFIER."
-  (let ((attachment (make-instance 'image-daemon:attachment :socket nil
-                                                          :stream   (make-broadcast-stream)
-                                                          :mode     ':control)))
-    (test-assert (image-daemon:relay-attach terminal attachment :rows 24 :columns 80
-                                                             :styled-p nil :session-id identifier)
-                 "the invoking client controls its original channel")
-    attachment))
-
 (-> test-delete-channel-hosted () null)
 (defun test-delete-channel-hosted ()
   "Test hosted cancellation and an ancestor deletion after a real asynchronous terminal handoff."
@@ -224,71 +213,78 @@
      (world-server-open server (list :channel "delete-child" :switch-p t))
      (let* ((host        (world-server--find-host server "delete-child"))
             (application (world-host-application host))
-            (terminal    (terminal-ui-terminal (application-ui application)))
-            (attachment  (channel-deletion-tests--attachment terminal "delete-child"))
             (inbox       (channel-identifier (world-inbox-channel (world-load configuration)))))
-       (unwind-protect
-            (progn
-              (channel-deletion-tests--choose
-               nil
-               (lambda ()
-                 (application-clients-call-as-work
-                  application
-                  (lambda () (application-operation-call application "delete")))))
-              (test-assert (and (eq (image-daemon:relay-controller terminal) attachment)
-                                (world-channel-find (world-load configuration) "delete-child")
-                                (null (world-server--find-host server inbox)))
-                           "hosted cancellation neither opens an inbox nor changes the client's attachment")
-              (let ((cancelled-p nil))
-                (test-call-with-function-replacements
-                 (list (list 'world-server-open
-                             (lambda (candidate request)
-                               (declare (ignore candidate request))
-                               (error 'configuration-error :message "Destination unavailable.")))
-                       (list 'application-input-controller--request-active-turn-cancellation
-                             (lambda (controller &key pause-queued-work-p)
-                               (declare (ignore controller pause-queued-work-p))
-                               (setf cancelled-p t))))
+       (multiple-value-bind (connection seen await)
+           (test-localgroup--present (world-server-tests--session server "delete-child"))
+         (declare (ignore seen))
+         (unwind-protect
+              (let ((client (application-controlling-client application)))
+                (test-assert client "the invoking client controls its original channel")
+                (channel-deletion-tests--choose
+                 nil
                  (lambda ()
-                   (channel-deletion-tests--choose
-                    ':remove
-                    (lambda ()
-                      (test-assert (handler-case (progn (application-operation-call application "delete") nil)
-                                     (configuration-error () t))
-                                   "an unavailable destination prevents deletion")))))
-                (test-assert (and (not cancelled-p) (eq (image-daemon:relay-controller terminal) attachment))
-                             "a failed handoff does not cancel source work or move its terminal"))
-              (channel-deletion-tests--choose
-               ':remove
-               (lambda ()
-                 (application-clients-call-as-work
-                  application
-                  (lambda () (application-operation-call application "delete" "delete-root")))))
-              (test-assert (and (world-channel-find (world-load configuration) "delete-child")
-                                (eq (image-daemon:relay-controller terminal) attachment))
-                           "sending a switch request does not delete a channel before the client leaves")
-              (let ((packets (coerce (structlisp:deque->vector (image-daemon:attachment-queue attachment)) 'list)))
-                (test-assert (some (lambda (packet) (and (search ":SWITCH" (string-upcase packet))
-                                                         (search inbox packet))) packets)
-                             "only the invoking control transport receives the inbox switch"))
-              (image-daemon:relay-detach terminal attachment)
-              (let* ((destination    (world-host-application (world-server--find-host server inbox)))
-                     (inbox-terminal (terminal-ui-terminal (application-ui destination))))
-                (test-assert (image-daemon:relay-attach inbox-terminal attachment :rows 24 :columns 80
-                                                                                :styled-p nil :session-id inbox)
-                             "the client can attach to its usable destination")
-                (test-assert
-                 (task-tests--wait-until
-                  (lambda () (null (world-channel-find (world-load configuration) "delete-root"))) 30)
-                 "destination work deletes the selected ancestor and its formerly displayed child")
-                (test-assert (and (null (world-channel-find (world-load configuration) "delete-child"))
-                                  (null (world-server--find-host server "delete-child"))
-                                  (eq (image-daemon:relay-controller inbox-terminal) attachment)
-                                  (not (application-input-controller-stopping-p
-                                        (application-input-controller destination))))
-                             "the old host releases its lease while the invoking client keeps a live inbox")
-                (image-daemon:relay-detach inbox-terminal attachment)))
-         (image-daemon:relay-detach terminal attachment)))))
+                   (application-clients-call-as-work
+                    application
+                    (lambda () (application-operation-call application "delete")))))
+                (test-assert (and (application-client-attached-p application client)
+                                  (world-channel-find (world-load configuration) "delete-child")
+                                  (null (world-server--find-host server inbox)))
+                             "hosted cancellation neither opens an inbox nor changes the client's attachment")
+                (let ((cancelled-p nil))
+                  (test-call-with-function-replacements
+                   (list (list 'world-server-open
+                               (lambda (candidate request)
+                                 (declare (ignore candidate request))
+                                 (error 'configuration-error :message "Destination unavailable.")))
+                         (list 'application-input-controller--request-active-turn-cancellation
+                               (lambda (controller &key pause-queued-work-p)
+                                 (declare (ignore controller pause-queued-work-p))
+                                 (setf cancelled-p t))))
+                   (lambda ()
+                     (channel-deletion-tests--choose
+                      ':remove
+                      (lambda ()
+                        (test-assert (handler-case
+                                         (progn (application-operation-call application "delete") nil)
+                                       (configuration-error ()
+                                         t))
+                                     "an unavailable destination prevents deletion")))))
+                  (test-assert (and (not cancelled-p)
+                                    (application-client-attached-p application client))
+                               "a failed handoff does not cancel source work or move its terminal"))
+                (channel-deletion-tests--choose
+                 ':remove
+                 (lambda ()
+                   (application-clients-call-as-work
+                    application
+                    (lambda () (application-operation-call application "delete" "delete-root")))))
+                (test-assert (and (world-channel-find (world-load configuration) "delete-child")
+                                  (application-client-attached-p application client))
+                             "sending a switch request does not delete a channel before the client leaves")
+                (test-assert (funcall await ':switch
+                                      (lambda (event)
+                                        (equal (getf (rest event) :session-id) inbox)))
+                             "the invoking client is asked to move to the inbox")
+                (localgroup-client-close connection)
+                (let ((destination (world-host-application (world-server--find-host server inbox)))
+                      (moved       (test-localgroup--present (world-server-tests--session server inbox))))
+                  (unwind-protect
+                       (progn
+                         (test-assert (application-controlling-client destination)
+                                      "the client can attach to its usable destination")
+                         (test-assert
+                          (task-tests--wait-until
+                           (lambda () (null (world-channel-find (world-load configuration) "delete-root"))) 30)
+                          "destination work deletes the selected ancestor and its formerly displayed child")
+                         (test-assert (and (null (world-channel-find (world-load configuration) "delete-child"))
+                                           (null (world-server--find-host server "delete-child"))
+                                           (application-controlling-client destination)
+                                           (not (localgroup-client-connection-closed-p moved))
+                                           (not (application-input-controller-stopping-p
+                                                 (application-input-controller destination))))
+                                      "the old host releases its lease while the invoking client keeps a live inbox"))
+                    (localgroup-client-close moved))))
+           (localgroup-client-close connection))))))
   nil)
 
 (-> test-delete-channel-hosted-refusals () null)
@@ -304,74 +300,85 @@
          (world-server-open server (list :channel identifier :switch-p t))
          (let* ((application (world-host-application (world-server--find-host server identifier)))
                 (controller  (application-input-controller application))
-                (terminal    (terminal-ui-terminal (application-ui application)))
-                (attachment  (channel-deletion-tests--attachment terminal identifier))
-                (observer    (when (eq mode ':observer)
-                               (make-instance 'image-daemon:attachment :socket nil :stream (make-broadcast-stream)
-                                                                      :mode ':read-only)))
+                (session     (world-server-tests--session server identifier))
                 (presented   nil)
                 (refusals    nil)
                 (busy        (fdefinition 'channel--busy))
                 (queued-job  nil)
                 (external-p  nil))
-           (when observer
-             (image-daemon:relay-attach terminal observer :rows 24 :columns 80 :styled-p nil :session-id identifier))
-           (unwind-protect
-                (test-call-with-function-replacements
-                 (list (list 'application-present
-                             (lambda (candidate entry &key identifier)
-                               (declare (ignore candidate identifier))
-                               (when (and (consp entry) (terminal-span-p (first entry))
-                                          (eq (terminal-span-style (first entry)) ':failure))
-                                 (push entry presented))))
-                       (list 'channel--busy
-                             (lambda (channel tool-name &key (state ':leased))
-                               (push (list channel state) refusals)
-                               (funcall busy channel tool-name :state state))))
-                 (lambda ()
-                   (let ((inbox (channel-identifier (world-inbox-channel (world-load configuration)))))
-                     (channel-deletion-tests--choose
-                      ':remove
-                      (lambda ()
-                        (application-clients-call-as-work
-                         application
-                         (lambda () (application-operation-call application "delete")))))
-                     (when (eq mode ':running)
-                       (test-assert (task-tests--wait-until
-                                     (lambda () (not (application-input-controller-busy-p controller))) 5)
-                                    "the initiating command finishes before unrelated work starts")
-                       (application-input-controller-begin-external-work controller)
-                       (setf external-p t))
-                     (when (eq mode ':execution)
-                       (let ((orchestrator (application--task-orchestrator application)))
-                         (setf queued-job
-                               (job-pool-submit (task-orchestrator-execution-pool orchestrator)
-                                                (lambda (job) (declare (ignore job)) nil)
-                                                :inline-only-p t))
-                         (test-assert (and (zerop (task-orchestrator-active-count orchestrator))
-                                           (= 1 (task-orchestrator-session-live-count orchestrator)))
-                                      "a queued execution is live work even without an active child")))
-                     (unless (eq mode ':timeout)
-                       (image-daemon:relay-detach terminal attachment))
-                     (test-assert (task-tests--wait-until (lambda () presented) 15)
-                                  "a failed removal is reported as a failure in the destination")
-                     (test-assert (and (world-channel-find (world-load configuration) identifier)
-                                       (world-host-live-p (world-server--find-host server inbox))
-                                       (null (uiop:directory-files (channel--removal-root configuration) "*.sexp"))
-                                       (or (null observer)
-                                           (member observer (image-daemon:relay-observers terminal))))
-                                  "a refusal preserves the channel, other clients, work and usable inbox")
-                     (test-assert (if (eq mode ':timeout)
-                                      (null refusals)
-                                      (equal (first refusals)
-                                             (list identifier (if observer ':attached ':running))))
-                                  "timeout precedes removal; fresh removal validation refuses the actual busy state"))))
-             (when queued-job
-               (job-cancel queued-job)
-               (job-await queued-job :timeout-seconds 5))
-             (when external-p (application-input-controller-finish-external-work controller))
-             (image-daemon:relay-detach terminal attachment)
-             (when observer (image-daemon:relay-detach terminal observer))))))))
+           ;; The terminal that attached last is the one its user is at.
+           (multiple-value-bind (observer observer-seen)
+               (if (eq mode ':observer)
+                   (test-localgroup--present session)
+                   (values nil nil))
+             (multiple-value-bind (connection seen await) (test-localgroup--present session)
+               (declare (ignore seen))
+               (unwind-protect
+                    (test-call-with-function-replacements
+                     (list (list 'application-present
+                                 (lambda (candidate entry &key identifier)
+                                   (declare (ignore candidate identifier))
+                                   (when (and (consp entry) (terminal-span-p (first entry))
+                                              (eq (terminal-span-style (first entry)) ':failure))
+                                     (push entry presented))))
+                           (list 'channel--busy
+                                 (lambda (channel tool-name &key (state ':leased))
+                                   (push (list channel state) refusals)
+                                   (funcall busy channel tool-name :state state))))
+                     (lambda ()
+                       (let ((inbox (channel-identifier (world-inbox-channel (world-load configuration)))))
+                         (channel-deletion-tests--choose
+                          ':remove
+                          (lambda ()
+                            (application-clients-call-as-work
+                             application
+                             (lambda () (application-operation-call application "delete")))))
+                         (test-assert (and (funcall await ':switch
+                                                    (lambda (event)
+                                                      (equal (getf (rest event) :session-id) inbox)))
+                                           (or (null observer)
+                                               (notany (lambda (event)
+                                                         (and (eq (first event) ':ui)
+                                                              (eq (getf (rest event) :operation) ':switch)))
+                                                       (funcall observer-seen))))
+                                      "only the invoking terminal is asked to move to the inbox")
+                         (when (eq mode ':running)
+                           (test-assert (task-tests--wait-until
+                                         (lambda () (not (application-input-controller-busy-p controller))) 5)
+                                        "the initiating command finishes before unrelated work starts")
+                           (application-input-controller-begin-external-work controller)
+                           (setf external-p t))
+                         (when (eq mode ':execution)
+                           (let ((orchestrator (application--task-orchestrator application)))
+                             (setf queued-job
+                                   (job-pool-submit (task-orchestrator-execution-pool orchestrator)
+                                                    (lambda (job) (declare (ignore job)) nil)
+                                                    :inline-only-p t))
+                             (test-assert (and (zerop (task-orchestrator-active-count orchestrator))
+                                               (= 1 (task-orchestrator-session-live-count orchestrator)))
+                                          "a queued execution is live work even without an active child")))
+                         (unless (eq mode ':timeout)
+                           (localgroup-client-close connection))
+                         (test-assert (task-tests--wait-until (lambda () presented) 15)
+                                      "a failed removal is reported as a failure in the destination")
+                         (test-assert (and (world-channel-find (world-load configuration) identifier)
+                                           (world-host-live-p (world-server--find-host server inbox))
+                                           (null (uiop:directory-files (channel--removal-root configuration) "*.sexp"))
+                                           (or (null observer)
+                                               (and (not (localgroup-client-connection-closed-p observer))
+                                                    (application-clients-presenting-p application))))
+                                      "a refusal preserves the channel, other clients, work and usable inbox")
+                         (test-assert (if (eq mode ':timeout)
+                                          (null refusals)
+                                          (equal (first refusals)
+                                                 (list identifier (if observer ':attached ':running))))
+                                      "timeout precedes removal; fresh removal validation refuses the actual busy state"))))
+                 (when queued-job
+                   (job-cancel queued-job)
+                   (job-await queued-job :timeout-seconds 5))
+                 (when external-p (application-input-controller-finish-external-work controller))
+                 (localgroup-client-close connection)
+                 (when observer (localgroup-client-close observer))))))))))
   nil)
 
 (-> test-delete-channel-standalone-refusals () null)

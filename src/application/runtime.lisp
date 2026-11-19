@@ -521,37 +521,40 @@ exchange without scrolling through reasoning and tool activity.")
     (&key (:relay-presentation list) (:configuration (option configuration)) (:inbox-p boolean))
     terminal-ui)
 (defun application-terminal-ui-create (&key relay-presentation configuration inbox-p)
-  "Create the standard interactive terminal UI at the current terminal size.
+  "Create the UI of a session: a terminal UI at the current terminal size, or a channel's presentation.
 
 INBOX-P gives it the inbox's prompt hint instead of the one inviting a question.
 
-RELAY-PRESENTATION supplies :ROWS, :COLUMNS, :STYLED-P and :BOOT-PRESENTED-P
-for a relay without a direct terminal, whose startup client attaches later.
-CONFIGURATION, when given, lets the composer complete @ participant names
-from its world."
-  (multiple-value-bind (rows columns)
-      (terminal-current-size)
-    (terminal-ui-create
-     :terminal
-     (if relay-presentation
-         (localgroup-terminal-create :rows             (getf relay-presentation :rows)
-                                     :columns          (getf relay-presentation :columns)
-                                     :styled-p         (getf relay-presentation :styled-p)
-                                     :boot-presented-p (not (null (getf relay-presentation :boot-presented-p))))
-         (localgroup-terminal-create
-          :direct-terminal
-          (unless (localgroup-startup-detached-p)
-            (stream-terminal-create
-             :rows                  rows
-             :columns               columns
-             :input-file-descriptor (terminal-standard-input-file-descriptor)))))
-     :prompt                  *application-prompt*
-     :prompt-padding          (if configuration (config :prompt-padding configuration) 1)
-     :message-header-prefixes *application-message-header-prefixes*
-     :placeholder             (if inbox-p *application-inbox-placeholder* *application-placeholder*)
-     :completion-function     #'application-command-completion-entries
-     :mention-function        (and configuration
-                                   (application-world-mention-function configuration)))))
+RELAY-PRESENTATION marks a channel a world server hosts. Such a channel has
+no terminal: its clients render what it publishes, and :ROWS and :COLUMNS say
+how large the client that opened it is. CONFIGURATION, when given, lets a
+terminal's composer complete @ participant names from its world."
+  (let ((placeholder (if inbox-p *application-inbox-placeholder* *application-placeholder*))
+        (padding     (if configuration (config :prompt-padding configuration) 1)))
+    (if relay-presentation
+        (channel-presentation-create :rows           (getf relay-presentation :rows)
+                                     :columns        (getf relay-presentation :columns)
+                                     :prompt         *application-prompt*
+                                     :prompt-padding padding
+                                     :placeholder    placeholder)
+        (multiple-value-bind (rows columns)
+            (terminal-current-size)
+          (terminal-ui-create
+           :terminal
+           (localgroup-terminal-create
+            :direct-terminal
+            (unless (localgroup-startup-detached-p)
+              (stream-terminal-create
+               :rows                  rows
+               :columns               columns
+               :input-file-descriptor (terminal-standard-input-file-descriptor))))
+           :prompt                  *application-prompt*
+           :prompt-padding          padding
+           :message-header-prefixes *application-message-header-prefixes*
+           :placeholder             placeholder
+           :completion-function     #'application-command-completion-entries
+           :mention-function        (and configuration
+                                         (application-world-mention-function configuration)))))))
 
 (-> application--configuration-for-conversation
     (configuration conversation)
@@ -1889,7 +1892,7 @@ retiring the old registry."
                     (application-ui application)))
         (title (application--window-title application)))
     (when (and ui title)
-      (terminal-write-window-title (terminal-ui-terminal ui) title))))
+      (terminal-ui-set-window-title ui title))))
 
 (-> application-set-working-directory
     (application (or pathname string) &key (:on-commit (option function)))

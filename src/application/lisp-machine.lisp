@@ -317,15 +317,18 @@ journaling or provider conversation projection."
 (-> application-lisp--read-restart-value (application) (option string))
 (defun application-lisp--read-restart-value (application)
   "Read one restart argument form while preserving the user's current draft."
-  (let* ((ui     (application-ui application))
-         (editor (terminal-ui-editor ui))
+  (let* ((ui       (application-ui application))
+         (hosted-p (not (null (application-presentation application))))
+         (editor   (terminal-ui-editor ui))
          (saved-input
            (terminal-ui--submission-input ui (line-editor-text editor))))
     (let ((saved-lisp-input-p (terminal-ui-lisp-input-p ui)))
       (unwind-protect
            (progn
              (terminal-ui-set-lisp-input ui t)
-             (terminal-ui-set-input ui "")
+             ;; A hosted channel's client sets its user's draft aside itself.
+             (unless hosted-p
+               (terminal-ui-set-input ui ""))
              (application-present
               application
               (application-hint-line "enter one Lisp form; its multiple values become restart arguments"))
@@ -347,7 +350,8 @@ journaling or provider conversation projection."
                            (return (user-message-input-text payload))))
                       ((:interrupt :end-of-input :escape)
                        (return nil))))))))
-        (terminal-ui-set-input ui saved-input)
+        (unless hosted-p
+          (terminal-ui-set-input ui saved-input))
         (terminal-ui-set-lisp-input ui saved-lisp-input-p)))))
 
 (-> application-lisp--debugger-condition-entry (condition) list)

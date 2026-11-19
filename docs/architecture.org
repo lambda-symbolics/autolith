@@ -160,13 +160,48 @@ references in conversation records; raw output is independent of context storage
 
 * Channel clients
 
-Only the world server runs the agents of world channels. Clients other than
-terminals follow a channel through the structured client protocol:
-=src/localgroup/clients.lisp= serves the =:client= endpoint operation and
-holds the client side of a connection, =src/application/clients.lisp= the
-per-channel membership, event sequencing, replay and portable values, and
-=src/application/approvals.lisp= the approval offered to the terminal and
-every approving client at once. Each client uses an =image-daemon= attachment
+Only the world server runs the agents of world channels, and it has no
+terminal. Every client follows a channel through the structured client
+protocol: =src/localgroup/clients.lisp= serves the =:client= endpoint
+operation and holds the client side of a connection,
+=src/application/clients.lisp= the per-channel membership, event sequencing,
+replay and portable values, and =src/application/approvals.lisp= the approval
+offered to every approving client at once.
+
+The server composes no rows. A hosted channel's UI is a
+=channel-presentation= (=src/terminal/presentation.lisp=): the application
+sets it as it sets any terminal UI, and each change reaches the clients that
+said =:presents-p= as one =(:ui :operation OPERATION ...)= event. Transcript
+entries and records travel as styled spans, streamed Markdown as source,
+and the live state (activity, context, running commands and agents, pending
+inputs, notices) as values with ages in seconds. The presentation keeps a
+bounded log of transcript operations, which a client that attaches later
+replays, laid out again when that client's pane has another width. Clients
+that do not present, such as ACP and GUI clients, receive records, streamed
+text and status instead.
+
+The terminal client is such a presenting client. A =channel-view=
+(=src/localgroup/view.lisp=) applies the events to a terminal UI of its own
+with =presentation-apply=; that UI chooses the colors, wraps, renders
+Markdown again as its source grows, and paints into the pane the client's
+screen leaves beside the side panel. Keys are read where the terminal is:
+=terminal-ui-dispatch-event= (=src/terminal/input-dispatch.lisp=) edits the
+composer locally and hands what an edit asks of the session, such as
+submitting the draft or cancelling the turn, to an input port. A direct
+session's port is its input controller; a view's port sends the channel
+=(:input :action ACTION ...)=. Input runs in the channel in the order it
+arrived, on a thread beside the connection's reader, because a command may
+answer it with a question. A picker a command opens runs in the channel:
+the client shows its candidates and, while it is open, sends its keys with
+=(:event ...)=. The line such a reader edits, as for a restart's argument,
+shows in the client's composer while the user's own draft is set aside.
+
+Two pages still take the whole pane and are laid out where their data is,
+in the channel: the memory manager and the onboarding tour. They paint
+through =terminal-screen-paint=, which for a hosted channel sends the rows as
+a =:page= operation that the client shows in place of the transcript until
+the page closes. A provider's login prints into the transcript and reads
+the client's keys. Each client uses an =image-daemon= attachment
 for its character-bounded output queue and writer, borrowing the transport from
 the serving daemon, which owns final stream closure. The channel's turn observer, presentations,
 record appends and work items publish to the hub. Operations a client asks
@@ -183,8 +218,8 @@ behavior is offered only to a client that asked for it when it attached, as
 
 =src/application/client-evaluation.lisp= sends forms to a client that said on
 attachment that it evaluates Common Lisp, and waits for its answer. It serves
-=self.eval= with the =client= target for both client kinds: a terminal answers
-with an =:evaluated= packet beside its input, a structured client with the
+=self.eval= with the =client= target: the terminal client its user is at is
+asked first, then the client attached last, and each answers with the
 =:evaluated= command. The wait ends on the answer, a cancelled turn, a client
 that left, or a deadline.
 
@@ -556,7 +591,7 @@ merges outcome fields into invocation metadata before rendering.
   the focused panel's keys, clicks and filter. Channel commands from the panel
   reach the session as =(:channel-command NAME [ID])= events
 - Full-screen workspaces such as the memory manager paint through the UI's own
-  frame painter, so a hosted session sends them to clients as frames
+  frame painter; a hosted channel sends their rows to its clients as a page
 - cl-colorist is used for ANSI capability detection
 - Text is sanitized before styles are added
 - =:surface=, =:surface-code=, =:surface-diff-add=, and =:surface-diff-remove= carry

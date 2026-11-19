@@ -64,6 +64,97 @@
                                        (when pid-supplied-p (list :client-pid client-pid)))))
     (values socket stream (test-localgroup--read-packet stream))))
 
+(-> test-localgroup--present
+    ((or localgroup-session cons)
+     &key (:rows integer) (:columns integer) (:styled-p boolean) (:evaluates-p boolean)
+          (:client-pid (option integer)))
+    (values localgroup-client-connection function function))
+(defun test-localgroup--present
+    (endpoint &key (rows 31) (columns 91) (styled-p t) evaluates-p client-pid)
+  "Attach a client that presents to the hosted channel at ENDPOINT, a session or its endpoint entry.
+
+The client states a pane of ROWS by COLUMNS and, when given, the process
+CLIENT-PID, as a terminal client does. It has answered one command when this
+returns, so the channel has finished what it does for a terminal that just
+attached.
+
+Return its connection, a function returning the events it has seen, oldest
+first, and a function that waits for a presentation event. That function
+takes an operation and optionally a test of the event; it returns the first
+(:ui :operation OPERATION ...) event the test accepts, or NIL when none came
+in time. The caller closes the connection with LOCALGROUP-CLIENT-CLOSE."
+  (let* ((lock       (make-lock "presenting test client"))
+         (events     nil)
+         (entry      (if (typep endpoint 'localgroup-session)
+                         (cons (image-daemon:daemon-runtime-registry-pathname endpoint)
+                               (image-daemon:daemon-runtime-record endpoint))
+                         endpoint))
+         (connection (localgroup-client-connect
+                      entry
+                      :name           "terminal"
+                      :evaluates-p    evaluates-p
+                      :arguments      (list :presents-p t
+                                            :rows       rows
+                                            :columns    columns
+                                            :styled-p   styled-p
+                                            :client-pid client-pid)
+                      :event-function (lambda (event)
+                                        (with-lock-held (lock)
+                                          (push event events))))))
+    (flet ((seen ()
+             "Return the events seen so far, oldest first."
+             (with-lock-held (lock)
+               (reverse events))))
+      ;; The channel reads this client's commands only after it settled the attachment.
+      (localgroup-client-call connection ':state)
+      (values connection
+              #'seen
+              (lambda (operation &optional (test (constantly t)))
+                (let ((found nil))
+                  (task-tests--wait-until
+                   (lambda ()
+                     (setf found
+                           (find-if (lambda (event)
+                                      (and (eq (first event) ':ui)
+                                           (eq (getf (rest event) :operation) operation)
+                                           (funcall test event)))
+                                    (seen))))
+                   20)
+                  found))))))
+
+(-> test-localgroup--event-text (list) string)
+(defun test-localgroup--event-text (event)
+  "Return the plain text transcript presentation EVENT shows, or the empty string for any other event.
+
+An :APPEND shows its entry and a :RECORDS each record's entry on a line of its own."
+  (flet ((entry-text (entry)
+           "Return styled wire ENTRY without its styles."
+           (if (stringp entry)
+               entry
+               (format nil "~{~A~}" (mapcar #'second entry)))))
+    (let ((fields (rest event)))
+      (case (and (eq (first event) ':ui) (getf fields :operation))
+        (:append
+         (entry-text (getf fields :entry)))
+        (:records
+         (format nil "~{~A~^~%~}"
+                 (mapcar (lambda (presentation) (entry-text (second presentation)))
+                         (getf fields :presentations))))
+        (otherwise
+         "")))))
+
+(-> test-localgroup--presented-text (application) string)
+(defun test-localgroup--presented-text (application)
+  "Return the transcript text a client attaching to APPLICATION's hosted channel now would be replayed.
+
+Each transcript event takes a line of its own."
+  (let ((presentation (application-presentation application)))
+    (format nil "~{~A~%~}"
+            (remove "" (mapcar #'test-localgroup--event-text
+                               (with-terminal-ui-locked (presentation)
+                                 (channel-presentation-replay presentation)))
+                    :test #'string=))))
+
 (-> test-localgroup-endpoint-failure-isolation () null)
 (defun test-localgroup-endpoint-failure-isolation ()
   "Exercise the installed daemon failure hook, pending storage and hosted-channel isolation."

@@ -262,77 +262,69 @@ Keep the override until the captured thread exits; replacement threads pass thro
   "Exercise repeated, timer and repair failures through normal shutdown and lease release."
   (dolist (mode '(:repeated :timer :repair))
     (with-test-configuration (configuration root)
-      (let ((finished    nil)
-            (timer-calls 0))
+      (let ((timer-calls 0))
         (world-server-tests--call-with-server
          configuration
          (lambda (server)
-           (let* ((runtime     (world-server-runtime server))
-                  (thread      (image-daemon:daemon-runtime-server-thread runtime))
+           (let* ((runtime (world-server-runtime server))
+                  (thread  (image-daemon:daemon-runtime-server-thread runtime))
                   (identifier
                     (getf (rest (world-server-tests--open
                                  (world-client-entry configuration)
                                  (world-tests--workspace root "endpoint-failure"))) :session-id))
-                  (application (world-host-application (world-server--find-host server identifier)))
-                  (attachment  (make-instance 'image-daemon:attachment
-                                              :socket nil :stream (make-broadcast-stream) :mode ':control))
-                  (starts      0)
-                  (done        (sb-thread:make-semaphore)))
-             (image-daemon:relay-attach
-              (terminal-ui-terminal (application-ui application)) attachment
-              :rows 24 :columns 80 :styled-p nil :session-id identifier)
-             (setf (world-endpoint-repair-attempted-p runtime) (eq mode ':repeated))
-             (unwind-protect
-                  (test-call-with-function-replacements
-                   (list (list 'image-daemon:daemon-runtime-start
-                               (lambda (candidate)
-                                 (declare (ignore candidate))
-                                 (incf starts)
-                                 (error "Injected transport repair failure.")))
-                         (list 'image-daemon:attachment-finish
-                               (let ((finish (symbol-function 'image-daemon:attachment-finish)))
-                                 (lambda (candidate packet)
-                                   (push packet finished)
-                                   (funcall finish candidate packet)))))
-                   (lambda ()
-                     (setf (world-server-checkpointing-p server) t)
-                     (if (eq mode ':timer)
-                         (progn
-                           (image-daemon:daemon-runtime-set-timer
-                            runtime
-                            :next-deadline-function (lambda (candidate)
-                                                      (declare (ignore candidate))
-                                                      (get-universal-time))
-                            :wake-function          (lambda (candidate)
-                                                     (declare (ignore candidate))
-                                                     (incf timer-calls)
-                                                     (error 'image-daemon:daemon-error
-                                                            :message   "Injected timer failure."
-                                                            :operation ':timer)))
-                           (test-assert
-                            (task-tests--wait-until (lambda () (not (thread-alive-p thread))) 10)
-                            "a due callback fails on the real endpoint thread"))
-                         (world-server-tests--fail-endpoint
-                          runtime (make-condition 'image-daemon:daemon-error
-                                                  :message   "Injected endpoint failure."
-                                                  :operation ':accept)))
-                     (world-server--enqueue
-                      server (lambda ()
-                               (unwind-protect
-                                    (progn
-                                      (setf (world-server-checkpointing-p server) nil)
-                                      (world-server--recover-endpoint server runtime))
-                                 (sb-thread:signal-semaphore done))))
-                     (test-assert (sb-thread:wait-on-semaphore done :timeout 10)
-                                  "escalation returns through the normal owner job boundary")
-                     (test-assert (and (world-server-stopping-p server)
-                                       (= starts (if (eq mode ':repair) 1 0))
-                                       (= timer-calls (if (eq mode ':timer) 1 0))
-                                       (some (lambda (packet)
-                                               (non-empty-string-p (getf (rest packet) :message)))
-                                             finished))
-                                  "unrepairable failure stops normally and tells attached terminals why")))
-               (setf (world-server-checkpointing-p server) nil)))))
+                  (starts  0)
+                  (done    (sb-thread:make-semaphore)))
+             (multiple-value-bind (connection seen await)
+                 (test-localgroup--present (world-server-tests--session server identifier))
+               (declare (ignore seen))
+               (setf (world-endpoint-repair-attempted-p runtime) (eq mode ':repeated))
+               (unwind-protect
+                    (test-call-with-function-replacements
+                     (list (list 'image-daemon:daemon-runtime-start
+                                 (lambda (candidate)
+                                   (declare (ignore candidate))
+                                   (incf starts)
+                                   (error "Injected transport repair failure."))))
+                     (lambda ()
+                       (setf (world-server-checkpointing-p server) t)
+                       (if (eq mode ':timer)
+                           (progn
+                             (image-daemon:daemon-runtime-set-timer
+                              runtime
+                              :next-deadline-function (lambda (candidate)
+                                                        (declare (ignore candidate))
+                                                        (get-universal-time))
+                              :wake-function          (lambda (candidate)
+                                                       (declare (ignore candidate))
+                                                       (incf timer-calls)
+                                                       (error 'image-daemon:daemon-error
+                                                              :message   "Injected timer failure."
+                                                              :operation ':timer)))
+                             (test-assert
+                              (task-tests--wait-until (lambda () (not (thread-alive-p thread))) 10)
+                              "a due callback fails on the real endpoint thread"))
+                           (world-server-tests--fail-endpoint
+                            runtime (make-condition 'image-daemon:daemon-error
+                                                    :message   "Injected endpoint failure."
+                                                    :operation ':accept)))
+                       (world-server--enqueue
+                        server (lambda ()
+                                 (unwind-protect
+                                      (progn
+                                        (setf (world-server-checkpointing-p server) nil)
+                                        (world-server--recover-endpoint server runtime))
+                                   (sb-thread:signal-semaphore done))))
+                       (test-assert (sb-thread:wait-on-semaphore done :timeout 10)
+                                    "escalation returns through the normal owner job boundary")
+                       (test-assert (and (world-server-stopping-p server)
+                                         (= starts (if (eq mode ':repair) 1 0))
+                                         (= timer-calls (if (eq mode ':timer) 1 0))
+                                         (funcall await ':exit
+                                                  (lambda (event)
+                                                    (non-empty-string-p (getf (rest event) :message)))))
+                                    "unrepairable failure stops normally and tells attached terminals why")))
+                 (setf (world-server-checkpointing-p server) nil)
+                 (localgroup-client-close connection))))))
         (test-assert (and (not (world-server-running-p configuration))
                           (null (world-client-entry configuration)))
                      "normal final shutdown releases the lease and unpublishes discovery"))))
@@ -398,17 +390,15 @@ Keep the override until the captured thread exits; replacement threads pass thro
          (let* ((host        (visit))
                 (application (world-host-application host))
                 (controller  (application-input-controller application))
-                (terminal    (terminal-ui-terminal (application-ui application)))
-                (attachment  (make-instance 'image-daemon:attachment :socket nil
-                                                                    :stream (make-broadcast-stream) :mode ':control)))
-           (image-daemon:relay-attach terminal attachment :rows 24 :columns 80 :styled-p nil
-                                                         :session-id "bmaintkid")
+                (connection  (test-localgroup--present (world-server-tests--session server "bmaintkid"))))
            (unwind-protect
                 (test-assert
                  (handler-case (progn (channel-remove configuration '("bmaintkid")) nil)
                    (task-error (condition) (search "terminal" (autolith-error-message condition))))
                  "removing an attached child refuses with an attachment-specific reason")
-             (image-daemon:relay-detach terminal attachment))
+             (localgroup-client-close connection))
+           (test-assert (task-tests--wait-until (lambda () (not (world-host-attached-p host))) 10)
+                        "the terminal that left no longer shows the child")
            (with-lock-held ((application-input-controller-lock controller))
              (setf (application-input-controller-active-p controller) t))
            (unwind-protect
@@ -473,120 +463,165 @@ run once the wake has."
 (-> test-world-server-stop-reason () null)
 (defun test-world-server-stop-reason ()
   "Test stopping the server tells each attached terminal why before it lets go."
-  (with-test-configuration (configuration root)
-    (let ((finished nil))
-      (world-server-tests--call-with-server
-       configuration
-       (lambda (server)
-         (let* ((entry       (world-client-entry configuration))
-                (identifier  (getf (rest (world-server-tests--open entry (world-tests--workspace root "stop")))
-                                   :session-id))
-                (application (world-host-application (world-server--find-host server identifier)))
-                (attachment  (make-instance 'image-daemon:attachment
-                                            :socket nil
-                                            :stream (make-broadcast-stream)
-                                            :mode   ':control)))
-           (image-daemon:relay-attach (terminal-ui-terminal (application-ui application)) attachment
-                                      :rows 24 :columns 80 :styled-p nil :session-id identifier)
-           (test-call-with-function-replacements
-            (list (list 'image-daemon:attachment-finish
-                        (let ((finish (symbol-function 'image-daemon:attachment-finish)))
-                          (lambda (candidate packet)
-                            (push packet finished)
-                            (funcall finish candidate packet)))))
-            (lambda ()
-              (test-assert (application-operation-find application 'stop-server)
-                           "the server stop command is a callable operation")
-              (test-assert (find "(stop-server)" (application-operation-completion-entries application)
-                                 :key (lambda (entry) (getf entry :name)) :test #'string=)
-                           "the stop operation participates in command completion")
-              (application-operation-call application 'stop-server)
-              (test-assert (world-server-stopping-p server)
-                           "the interactive stop operation uses the established server shutdown")
-              (test-assert (some (lambda (packet)
-                                   (search "world server stopped by autolith stop"
-                                           (princ-to-string packet)))
-                                 finished)
-                           "the attached terminal is told the server was stopped by autolith stop")))))))
-    nil))
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry       (world-client-entry configuration))
+            (identifier  (getf (rest (world-server-tests--open entry (world-tests--workspace root "stop")))
+                               :session-id))
+            (application (world-host-application (world-server--find-host server identifier))))
+       (multiple-value-bind (connection seen await)
+           (test-localgroup--present (world-server-tests--session server identifier))
+         (declare (ignore seen))
+         (unwind-protect
+              (progn
+                (test-assert (application-operation-find application 'stop-server)
+                             "the server stop command is a callable operation")
+                (test-assert (find "(stop-server)" (application-operation-completion-entries application)
+                                   :key (lambda (entry) (getf entry :name)) :test #'string=)
+                             "the stop operation participates in command completion")
+                (application-operation-call application 'stop-server)
+                (test-assert (world-server-stopping-p server)
+                             "the interactive stop operation uses the established server shutdown")
+                (test-assert (funcall await ':exit
+                                      (lambda (event)
+                                        (let ((message (getf (rest event) :message)))
+                                          (and (stringp message)
+                                               (search "world server stopped by autolith stop"
+                                                       message)))))
+                             "the attached terminal is told the server was stopped by autolith stop"))
+           (localgroup-client-close connection))))))
+  nil)
+
+(-> world-server-tests--call-with-terminal-client (configuration string function) null)
+(defun world-server-tests--call-with-terminal-client (configuration identifier function)
+  "Run a terminal client's view of hosted channel IDENTIFIER on a thread while FUNCTION drives it.
+
+FUNCTION is called once the channel accepted the view, with a function that
+types one terminal event at the client, a function that waits for the view
+to end, and the view. The waiting function returns why the view ended, which
+is NIL after a detach, and as a second value whether it ended in time. The
+keys come from a test terminal. Everything else is the real view: it
+attaches as a client that presents, applies what the channel publishes, and
+acts on the keys."
+  (let* ((terminal (make-instance 'queued-recording-terminal :rows 31 :columns 91))
+         (screen   (localgroup-screen-create :terminal terminal))
+         (view     (channel-view-create configuration identifier screen))
+         (attached (sb-thread:make-semaphore))
+         (exit     nil)
+         (ended-p  nil)
+         (thread   nil))
+    (test-call-with-function-replacements
+     (list (list 'terminal--terminal-mode-or-nil
+                 (lambda (candidate)
+                   (declare (ignore candidate))
+                   t))
+           (list 'platform-watch-terminal-resize
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   nil)))
+     (lambda ()
+       (setf thread
+             (make-thread
+              (lambda ()
+                (setf exit
+                      (handler-case
+                          (channel-view-run view
+                                            :attached-function
+                                            (lambda ()
+                                              (sb-thread:signal-semaphore attached)))
+                        (error (condition)
+                          (sb-thread:signal-semaphore attached)
+                          (list ':failed :message (princ-to-string condition))))
+                      ended-p t))
+              :name "Autolith test terminal client"))
+       (unwind-protect
+            (progn
+              (test-assert (and (sb-thread:wait-on-semaphore attached :timeout 20)
+                                (not ended-p))
+                           "the terminal client attaches to its channel")
+              (funcall function
+                       (lambda (event)
+                         (queued-recording-terminal-enqueue terminal event))
+                       (lambda ()
+                         (sb-thread:join-thread thread :default nil :timeout 10)
+                         (values exit ended-p))
+                       view))
+         ;; A view that still runs ends at the detach key.
+         (queued-recording-terminal-enqueue terminal ':detach)
+         (sb-thread:join-thread thread :default nil :timeout 10)
+         (localgroup-client-screen-release screen)))))
+  nil)
 
 (-> test-world-server-control-z-detach () null)
 (defun test-world-server-control-z-detach ()
-  "Detach a controlling client through Ctrl-Z while its channel's work completes."
+  "Detach a terminal client through Ctrl-Z while its channel's work completes."
   (world-server-tests--call
    (lambda (server configuration root)
-     ;; Startup animation and lingering tips precede the host work loop.
-     (setf (config :boot-screen-p configuration) nil
-           (config :boot-screen-linger-p configuration) nil)
-     (dolist (fullscreen-p '(nil t))
-       (let* ((entry       (world-client-entry configuration))
-              (identifier  (getf (rest (world-server-tests--open
-                                        entry (world-tests--workspace root
-                                                                      (if fullscreen-p "detach-fullscreen" "detach-repl"))
-                                        :fullscreen-p fullscreen-p))
-                                 :session-id))
-              (host        (world-server--find-host server identifier))
-              (application (world-host-application host))
-              (controller  (application-input-controller application))
-              (ui          (application-ui application)))
-         (test-assert (eq (typep ui 'fullscreen-terminal-ui) fullscreen-p)
-                      "the requested REPL or fullscreen view is constructed before attachment")
-         (dolist (text (list (string (code-char 26))
-                             (format nil "~C[122;5u" #\Escape)
-                             (format nil "~C[90;5u" #\Escape)))
-           (multiple-value-bind (socket stream response)
-               (test-localgroup--attach (application-localgroup-session application) ':control)
-              (let ((gate      (sb-thread:make-semaphore :count 0))
-                    (started   (sb-thread:make-semaphore :count 0))
-                    (completed (sb-thread:make-semaphore :count 0))
-                    (runner    nil)
-                    (run-input (symbol-function 'application-run-lisp-input))
-                    (source    "(world-server-detach-test-work)"))
-                (unwind-protect
-                     (test-call-with-function-replacements
-                      (list
-                       (list 'application-run-lisp-input
-                             (lambda (candidate input &rest arguments)
-                               (if (and (eq candidate application) (string= input source))
-                                   (progn
-                                     (setf runner sb-thread:*current-thread*)
-                                     (sb-thread:signal-semaphore started)
-                                     (sb-thread:wait-on-semaphore gate)
-                                     (conversation-append-user-message
-                                      (application-conversation application) "completed after detach")
-                                     (sb-thread:signal-semaphore completed)
-                                     :continue)
-                                   (apply run-input candidate input arguments)))))
-                      (lambda ()
-                        (test-assert (eq (first response) ':attached) "the controlling client attaches")
-                        ;; Compile cold native highlighting before timing the detach event.
-                        (application-input-controller--handle-submission controller "(values)" :steer-p nil)
-                        (test-assert (task-tests--wait-until
-                                      (lambda () (not (application-input-controller-busy-p controller))) 60)
-                                     "the host completes its initial Lisp presentation before timed input")
-                        (application-input-controller--handle-submission controller source :steer-p nil)
-                        (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
-                                     "the host runner starts the queued work")
-                        (daemon-write-packet
-                         stream (list :event (terminal--decode-editing-event
-                                              (make-string-input-stream text))))
-                        (test-assert (task-tests--wait-until
-                                      (lambda () (not (world-host-attached-p host))) 5)
-                                     "Ctrl-Z releases its client in REPL and fullscreen")
-                        (test-assert (and runner (thread-alive-p runner)
-                                          (application-input-controller-busy-p controller)
-                                          (not (world-server-stopping-p server))
-                                          (eq host (world-server--find-host server identifier)))
-                                     "detachment does not cancel ongoing work or close its channel")
-                        (sb-thread:signal-semaphore gate)
-                        (test-assert (sb-thread:wait-on-semaphore completed :timeout 5)
-                                     "the same work completes after its client detached")
-                        (test-assert (task-tests--wait-until
-                                      (lambda () (not (application-input-controller-busy-p controller))) 5)
-                                     "the host runner returns to idle after completing its work")))
-                  (sb-thread:signal-semaphore gate)
-                  (close stream)
-                  (sb-bsd-sockets:socket-close socket)))))))))
+     (let* ((entry       (world-client-entry configuration))
+            (identifier  (getf (rest (world-server-tests--open
+                                      entry (world-tests--workspace root "detach")))
+                               :session-id))
+            (host        (world-server--find-host server identifier))
+            (application (world-host-application host))
+            (controller  (application-input-controller application)))
+       (dolist (text (list (string (code-char 26))
+                           (format nil "~C[122;5u" #\Escape)
+                           (format nil "~C[90;5u" #\Escape)))
+         (let ((gate      (sb-thread:make-semaphore :count 0))
+               (started   (sb-thread:make-semaphore :count 0))
+               (completed (sb-thread:make-semaphore :count 0))
+               (runner    nil)
+               (run-input (symbol-function 'application-run-lisp-input))
+               (source    "(world-server-detach-test-work)"))
+           (unwind-protect
+                (test-call-with-function-replacements
+                 (list
+                  (list 'application-run-lisp-input
+                        (lambda (candidate input &rest arguments)
+                          (if (and (eq candidate application) (string= input source))
+                              (progn
+                                (setf runner sb-thread:*current-thread*)
+                                (sb-thread:signal-semaphore started)
+                                (sb-thread:wait-on-semaphore gate)
+                                (conversation-append-user-message
+                                 (application-conversation application) "completed after detach")
+                                (sb-thread:signal-semaphore completed)
+                                :continue)
+                              (apply run-input candidate input arguments)))))
+                 (lambda ()
+                   (world-server-tests--call-with-terminal-client
+                    configuration identifier
+                    (lambda (type await-exit view)
+                      (declare (ignore view))
+                      (test-assert (world-host-attached-p host)
+                                   "the terminal client shows the channel")
+                      ;; Compile cold native highlighting before timing the detach event.
+                      (application-input-controller--handle-submission controller "(values)" :steer-p nil)
+                      (test-assert (task-tests--wait-until
+                                    (lambda () (not (application-input-controller-busy-p controller))) 60)
+                                   "the host completes its initial Lisp presentation before timed input")
+                      (application-input-controller--handle-submission controller source :steer-p nil)
+                      (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
+                                   "the host runner starts the queued work")
+                      (funcall type (terminal--decode-editing-event (make-string-input-stream text)))
+                      (test-assert (multiple-value-bind (exit ended-p) (funcall await-exit)
+                                     (and ended-p (null exit)))
+                                   "Ctrl-Z ends the terminal client's view as a detach")
+                      (test-assert (task-tests--wait-until
+                                    (lambda () (not (world-host-attached-p host))) 5)
+                                   "Ctrl-Z releases its client")
+                      (test-assert (and runner (thread-alive-p runner)
+                                        (application-input-controller-busy-p controller)
+                                        (not (world-server-stopping-p server))
+                                        (eq host (world-server--find-host server identifier)))
+                                   "detachment does not cancel ongoing work or close its channel")
+                      (sb-thread:signal-semaphore gate)
+                      (test-assert (sb-thread:wait-on-semaphore completed :timeout 5)
+                                   "the same work completes after its client detached")
+                      (test-assert (task-tests--wait-until
+                                    (lambda () (not (application-input-controller-busy-p controller))) 5)
+                                   "the host runner returns to idle after completing its work")))))
+             (sb-thread:signal-semaphore gate)))))))
   nil)
 
 (-> test-world-server-status-line () null)
@@ -762,7 +797,7 @@ run once the wake has."
 
 (-> test-world-server-new-channel () null)
 (defun test-world-server-new-channel ()
-  "Test (new) inherits presentation before attachment and renders its first attached frame."
+  "Test (new) lays the new channel out for the current terminal and shows it what was presented before it attached."
   (dolist (presentation '((nil nil 30 90) (t nil 31 97) (t t 37 109)))
     (destructuring-bind (attached-p styled-p rows columns) presentation
       (world-server-tests--call
@@ -773,76 +808,59 @@ run once the wake has."
                                   :session-id))
                 (application (world-host-application (world-server--find-host server first-id)))
                 (ui          (application-ui application))
-                (terminal    (terminal-ui-terminal ui))
-                (attachment  (when attached-p
-                               (make-instance 'image-daemon:attachment
-                                              :socket nil
-                                              :stream (make-broadcast-stream)
-                                              :mode   ':control))))
-           (when attachment
-             (image-daemon:relay-attach terminal attachment
-                                        :rows rows :columns columns :styled-p styled-p
-                                        :session-id first-id)
-             (test-assert
-              (task-tests--wait-until
-               (lambda ()
-                 (with-terminal-ui-locked (ui)
-                   (and (= rows (terminal-rows terminal))
-                        (= columns (terminal-columns terminal)))))
-               30)
-              "the current channel applies its controlling terminal's dimensions"))
-           (application--builtin-new-command application)
-           (let* ((hosts  (mapcar #'world-host-channel (world-server--hosts server)))
-                  (second (find-if-not (lambda (identifier) (string= identifier first-id)) hosts)))
-             (test-assert (and (= (length hosts) 2)
-                               (string= (conversation-identifier (application-conversation application))
-                                        first-id))
-                          "the old channel keeps its conversation while the new channel runs beside it")
-             (when attachment
-               (let ((packets (coerce (structlisp:deque->vector
-                                       (image-daemon:attachment-queue attachment))
-                                     'list)))
-                 (test-assert (and second
-                                   (some (lambda (packet)
-                                           (and (search ":SWITCH" (string-upcase packet))
-                                                (search second packet)))
-                                         packets))
-                              "the terminal is sent to the new channel")))
-             (let* ((next-application (world-host-application (world-server--find-host server second)))
-                    (next-ui          (application-ui next-application))
-                    (next-terminal    (terminal-ui-terminal next-ui))
-                    (next-attachment  (make-instance 'image-daemon:attachment
-                                                     :socket nil
-                                                     :stream (make-broadcast-stream)
-                                                     :mode   ':control)))
-               (with-terminal-ui-locked (next-ui)
-                 (test-assert (and (= rows (terminal-rows next-terminal))
-                                   (= columns (terminal-columns next-terminal)))
-                              "the new relay inherits the current channel's dimensions before attachment")
-                 (test-assert (eql styled-p (terminal-styled-p next-terminal))
-                              "the new relay inherits the current channel's styling before attachment"))
-               (application-present next-application
-                                    (list (terminal-span ':brand "new-channel presentation")))
-               (image-daemon:relay-attach next-terminal next-attachment
-                                          :rows rows :columns columns :styled-p styled-p
-                                          :session-id second)
-               (test-assert
-                (task-tests--wait-until
-                 (lambda () (localgroup-terminal-screen-frame next-terminal)) 30)
-                "the new channel prepares its first full frame when a terminal attaches")
-               (with-terminal-ui-locked (next-ui)
-                 (let ((frame (localgroup-terminal-screen-frame next-terminal)))
-                   (test-assert (and frame
-                                     (= rows (clinedi:frame-snapshot-height frame))
-                                     (= columns (clinedi:frame-snapshot-width frame)))
-                                "the initial frame uses the current channel's dimensions")
-                   (test-assert
-                    (and frame
-                         (eql styled-p
-                              (not (null (some (lambda (line)
-                                                 (search (terminal-style-sequence ':brand) line))
-                                               (clinedi:frame-snapshot-rows frame))))))
-                    "the initial frame preserves styling of output prepared before attachment"))))))))))
+                (terminal    (terminal-ui-terminal ui)))
+           (multiple-value-bind (connection seen await)
+               (if attached-p
+                   (test-localgroup--present (world-server-tests--session server first-id)
+                                             :rows rows :columns columns :styled-p styled-p)
+                   (values nil nil nil))
+             (declare (ignore seen))
+             (unwind-protect
+                  (progn
+                    (when attached-p
+                      (with-terminal-ui-locked (ui)
+                        (test-assert (and (= rows (terminal-rows terminal))
+                                          (= columns (terminal-columns terminal))
+                                          (eq styled-p (not (null (terminal-styled-p terminal)))))
+                                     "the current channel is laid out for the terminal client that presents it")))
+                    (application--builtin-new-command application)
+                    (let* ((hosts  (mapcar #'world-host-channel (world-server--hosts server)))
+                           (second (find-if-not (lambda (identifier) (string= identifier first-id)) hosts)))
+                      (test-assert (and (= (length hosts) 2)
+                                        (string= (conversation-identifier (application-conversation application))
+                                                 first-id))
+                                   "the old channel keeps its conversation while the new channel runs beside it")
+                      (when attached-p
+                        (test-assert (and second
+                                          (funcall await ':switch
+                                                   (lambda (event)
+                                                     (equal (getf (rest event) :session-id) second))))
+                                     "the terminal is sent to the new channel"))
+                      (let* ((next-application (world-host-application (world-server--find-host server second)))
+                             (next-ui          (application-ui next-application))
+                             (next-terminal    (terminal-ui-terminal next-ui)))
+                        (with-terminal-ui-locked (next-ui)
+                          (test-assert (and (= rows (terminal-rows next-terminal))
+                                            (= columns (terminal-columns next-terminal)))
+                                       "the new channel is laid out at the current channel's dimensions before a terminal attaches"))
+                        (application-present next-application
+                                             (list (terminal-span ':brand "new-channel presentation")))
+                        (multiple-value-bind (next-connection next-seen next-await)
+                            (test-localgroup--present (world-server-tests--session server second)
+                                                      :rows rows :columns columns :styled-p styled-p)
+                          (declare (ignore next-seen))
+                          (unwind-protect
+                               (test-assert
+                                (funcall next-await ':append
+                                         (lambda (event)
+                                           (let ((entry (getf (rest event) :entry)))
+                                             (and (listp entry)
+                                                  (find '(:brand "new-channel presentation") entry
+                                                        :test #'equal)))))
+                                "the terminal that attaches is shown what the new channel presented before, with its style")
+                            (localgroup-client-close next-connection))))))
+               (when connection
+                 (localgroup-client-close connection)))))))))
   nil)
 
 (-> test-world-server-tell () null)
@@ -974,13 +992,28 @@ run once the wake has."
        (multiple-value-bind (socket stream response)
            (test-localgroup--attach (world-server-tests--session server first-id) ':control)
          (unwind-protect
+              (test-assert (and (eq (first response) ':error)
+                                (not (world-host-attached-p (world-server--find-host server first-id))))
+                           "a hosted channel has no terminal relay and refuses a relay attachment")
+           (close stream)
+           (sb-bsd-sockets:socket-close socket)))
+       (multiple-value-bind (connection seen await)
+           (test-localgroup--present (world-server-tests--session server first-id) :client-pid 424242)
+         (declare (ignore seen))
+         (unwind-protect
               (let* ((host       (world-server--find-host server first-id))
                      (other      (world-server-tests--open entry workspace))
                      (other-id   (getf (rest other) :session-id))
                      (other-host (world-server--find-host server other-id)))
-                (test-assert (and (eq (first response) ':attached)
+                (test-assert (and (eq (first (localgroup-client-connection-attached connection))
+                                      ':attached)
+                                  (funcall await ':reset)
                                   (world-host-attached-p host))
-                             "a terminal attaches to the hosted channel")
+                             "a terminal attaches to the hosted channel as a client that presents it")
+                (let ((status (rest (getf (localgroup-client-call connection ':state) :state))))
+                  (test-assert (and (getf status :terminal-attached-p)
+                                    (eql (getf status :terminal-client-pid) 424242))
+                               "the channel's status says a terminal shows it and names its process"))
                 (test-assert (and (getf (rest other) :started-p)
                                   (not (string= other-id first-id))
                                   other-host
@@ -999,8 +1032,7 @@ run once the wake has."
                 (test-assert (and (null (world-server--find-host server other-id))
                                   (null (localgroup--find-record-or-nil configuration other-id)))
                              "a closed channel unpublishes its endpoint"))
-           (close stream)
-           (sb-bsd-sockets:socket-close socket)))
+           (localgroup-client-close connection)))
        (test-assert (task-tests--wait-until
                      (lambda ()
                        (not (world-host-attached-p (world-server--find-host server first-id))))
@@ -1015,21 +1047,38 @@ run once the wake has."
                     "closing the last channel leaves the server running without channels")
        (test-assert (getf (rest (localgroup-query-record entry ':status)) :status)
                     "the server answers with no channels open")
-       (let* ((resumed (world-server-tests--open entry workspace))
-              (ui      (application-ui
-                        (world-host-application (world-server--find-host server first-id))))
-              (editor  (terminal-ui-editor ui)))
+       (let ((resumed (world-server-tests--open entry workspace)))
          (test-assert (and (getf (rest resumed) :started-p)
                            (string= (getf (rest resumed) :session-id) first-id))
                       "opening the directory again resumes its latest channel")
-         (line-editor-set-text editor "draft" :cursor 2)
-         (terminal-ui-process-event ui ':history-previous)
-         (test-assert (string= "keep this channel" (line-editor-text editor))
-                      "a reopened channel immediately recalls its durable input")
-         (terminal-ui-process-event ui ':history-next)
-         (test-assert (and (string= "draft" (line-editor-text editor))
-                           (= 2 (line-editor-cursor editor)))
-                      "the reopened channel restores its draft after recall"))
+         ;; The composer is the terminal client's, so the client's view recalls the input.
+         (world-server-tests--call-with-terminal-client
+          configuration first-id
+          (lambda (type await-exit view)
+            (declare (ignore await-exit))
+            (let* ((ui     (channel-view-ui view))
+                   (editor (terminal-ui-editor ui)))
+              (flet ((composer-p (text)
+                       "Wait until the terminal's composer holds TEXT and return whether it does."
+                       (task-tests--wait-until
+                        (lambda () (string= text (line-editor-text editor))) 10)))
+                (let ((given-p (task-tests--wait-until
+                                (lambda ()
+                                  (find "keep this channel" (line-editor-history editor)
+                                        :test #'equal))
+                                10)))
+                  (test-assert given-p
+                               "the terminal that attaches to a reopened channel is given its durable input")
+                  (when given-p
+                    (with-terminal-ui-locked (ui)
+                      (line-editor-set-text editor "draft" :cursor 2))
+                    (funcall type ':history-previous)
+                    (test-assert (composer-p "keep this channel")
+                                 "a reopened channel immediately recalls its durable input")
+                    (funcall type ':history-next)
+                    (test-assert (and (composer-p "draft")
+                                      (= 2 (line-editor-cursor editor)))
+                                 "the reopened channel restores its draft after recall"))))))))
        (localgroup-query-record entry ':close (list :channel first-id))
        (test-assert (task-tests--wait-until
                      (lambda () (null (world-server--hosts server)))
@@ -1069,11 +1118,6 @@ run once the wake has."
             (id-a        (getf (rest (world-server-tests--open entry workspace-a)) :session-id))
             (id-b        (getf (rest (world-server-tests--open entry workspace-b)) :session-id))
             (application (world-host-application (world-server--find-host server id-a)))
-            (terminal    (terminal-ui-terminal (application-ui application)))
-            (attachment  (make-instance 'image-daemon:attachment
-                                        :socket nil
-                                        :stream (make-broadcast-stream)
-                                        :mode   ':control))
             (presented   nil))
        (test-call-with-function-replacements
         (list (list 'application-present
@@ -1087,23 +1131,22 @@ run once the wake has."
           (application--builtin-open-command application (conversation-identifier-display id-b))
           (test-assert (search "no terminal controls" (terminal--spans-text (first presented)))
                        "without a controller there is no terminal to move")
-          (setf presented nil)
-          (multiple-value-bind (attached-p released-p)
-              (image-daemon:relay-attach terminal attachment :rows 24 :columns 80
-                                                             :styled-p nil :session-id id-a)
-            (declare (ignore released-p))
-            (test-assert attached-p "the switch test attaches a controller"))
-          (application--builtin-open-command application (conversation-identifier-display id-b))
-          (test-assert (null presented)
-                       "a controlled channel switches without a line about it")
-          (let ((packets (coerce (structlisp:deque->vector
-                                  (image-daemon:attachment-queue attachment))
-                                 'list)))
-            (test-assert (some (lambda (packet)
-                                 (and (search ":SWITCH" (string-upcase packet))
-                                      (search id-b packet)))
-                               packets)
-                         "the controller is sent the switch request naming the channel"))
+          (multiple-value-bind (connection seen await)
+              (test-localgroup--present (world-server-tests--session server id-a))
+            (declare (ignore seen))
+            (unwind-protect
+                 (progn
+                   (test-assert (application-controlling-client application)
+                                "the terminal client that attached controls the channel")
+                   (setf presented nil)
+                   (application--builtin-open-command application (conversation-identifier-display id-b))
+                   (test-assert (null presented)
+                                "a controlled channel switches without a line about it")
+                   (test-assert (funcall await ':switch
+                                         (lambda (event)
+                                           (equal (getf (rest event) :session-id) id-b)))
+                                "the controller is sent the switch request naming the channel"))
+              (localgroup-client-close connection)))
           (test-assert (and (eq (application--builtin-open-command application "zzzzzzz") ':continue)
                             (search "no channel matches" (terminal--spans-text (first presented))))
                        "an unknown channel is said in a line, not signaled"))))))
@@ -1423,15 +1466,13 @@ run once the wake has."
               (multiple-value-bind (identifier started-p) (open-latest)
                 (test-assert (and (string= identifier "blater1") (not started-p))
                              "the next open reuses the loaded newest channel"))
-              (multiple-value-bind (socket stream response)
-                  (test-localgroup--attach (world-server-tests--session server "blater1") ':control)
-                (declare (ignore response))
+              (let ((connection (test-localgroup--present
+                                 (world-server-tests--session server "blater1"))))
                 (unwind-protect
                      (multiple-value-bind (identifier started-p) (open-latest)
                        (test-assert (and (string= identifier hosted) (not started-p))
                                     "the attached newest channel is skipped for the next unattended host"))
-                  (close stream)
-                  (sb-bsd-sockets:socket-close socket))))))))))
+                  (localgroup-client-close connection))))))))))
   nil)
 
 (-> test-world-server-generation-warning-once () null)
@@ -1622,53 +1663,48 @@ run once the wake has."
               (host-a      (world-server--find-host server id-a))
               (host-b      (world-server--find-host server id-b))
               (application (world-host-application host-a))
-              (terminal-a  (terminal-ui-terminal (application-ui application)))
-              (terminal-b  (terminal-ui-terminal (application-ui (world-host-application host-b))))
+              (other       (world-host-application host-b))
               (session-a   (world-server-tests--session server id-a))
-              (attachment  (make-instance 'image-daemon:attachment
-                                          :socket nil
-                                          :stream (make-broadcast-stream)
-                                          :mode   ':control))
-              (finished    nil)
               (observed    nil))
-         (image-daemon:relay-attach terminal-a attachment :rows 24 :columns 80 :styled-p nil
-                                                          :session-id id-a)
-         ;; A job run in B leaves its pool's reusable workers waiting.
-         (test-assert (eql 42 (world-server-tests--run-job (world-host-application host-b)))
-                      "a job runs in the other channel before the checkpoint")
-         (test-call-with-function-replacements
-          (list (list 'image-daemon:attachment-finish
-                      (let ((finish (symbol-function 'image-daemon:attachment-finish)))
-                        (lambda (candidate packet)
-                          (push packet finished)
-                          (funcall finish candidate packet)))))
-          (lambda ()
-            (setf observed
-                  (world-server-call-quiesced
-                   server application
-                   (lambda ()
-                     (funcall *checkpoint-thread-quiescer*
-                              (lambda ()
-                                (list (eq *active-application* application)
-                                      (remove-if-not #'thread-alive-p
-                                                     (set-difference (sb-thread:list-all-threads)
-                                                                     baseline))
-                                      (world-server-runtime server)
-                                      (application-localgroup-session application)
-                                      (world-host-paused-p host-a)
-                                      (world-host-paused-p host-b)
-                                      (sb-thread:thread-name (current-thread))))))))))
-         (destructuring-bind (active-p threads runtime session paused-a paused-b name) observed
-           (test-assert (and active-p (null runtime) (null session) paused-a paused-b
-                             (string= name "Autolith world server test main"))
-                        "inside the fork boundary every channel is paused and the endpoints are stopped")
-           (test-assert (and (= (length threads) 1)
-                             (string= (sb-thread:thread-name (first threads))
-                                      "Autolith world server test main"))
-                        (format nil "only the server's own thread outlives the pause: ~S"
-                                (mapcar #'sb-thread:thread-name threads))))
-         (test-assert (some (lambda (packet) (eq (first packet) ':checkpoint-reconnect)) finished)
-                      "an attached terminal is told to reconnect")
+         (multiple-value-bind (connection seen) (test-localgroup--present session-a)
+           (unwind-protect
+                (progn
+                  ;; A job run in B leaves its pool's reusable workers waiting.
+                  (test-assert (eql 42 (world-server-tests--run-job other))
+                               "a job runs in the other channel before the checkpoint")
+                  (setf observed
+                        (world-server-call-quiesced
+                         server application
+                         (lambda ()
+                           (funcall *checkpoint-thread-quiescer*
+                                    (lambda ()
+                                      ;; The test's own terminal client reads until the pause closes its connection.
+                                      (task-tests--wait-until
+                                       (lambda ()
+                                         (not (thread-alive-p
+                                               (localgroup-client-connection-reader-thread connection))))
+                                       10)
+                                      (list (eq *active-application* application)
+                                            (remove-if-not #'thread-alive-p
+                                                           (set-difference (sb-thread:list-all-threads)
+                                                                           baseline))
+                                            (world-server-runtime server)
+                                            (application-localgroup-session application)
+                                            (world-host-paused-p host-a)
+                                            (world-host-paused-p host-b)
+                                            (sb-thread:thread-name (current-thread))))))))
+                  (destructuring-bind (active-p threads runtime session paused-a paused-b name) observed
+                    (test-assert (and active-p (null runtime) (null session) paused-a paused-b
+                                      (string= name "Autolith world server test main"))
+                                 "inside the fork boundary every channel is paused and the endpoints are stopped")
+                    (test-assert (and (= (length threads) 1)
+                                      (string= (sb-thread:thread-name (first threads))
+                                               "Autolith world server test main"))
+                                 (format nil "only the server's own thread outlives the pause: ~S"
+                                         (mapcar #'sb-thread:thread-name threads))))
+                  (test-assert (find ':checkpoint-reconnect (funcall seen) :key #'first)
+                               "an attached terminal is told to reconnect"))
+             (localgroup-client-close connection)))
          (test-assert (task-tests--wait-until
                        (lambda () (and (world-host-live-p host-a) (world-host-live-p host-b))) 30)
                       "both channels are served again")
@@ -1683,9 +1719,9 @@ run once the wake has."
                                       (image-daemon:daemon-runtime-token session-a))
                              (localgroup-session-linger-p restarted-a))
                         "every endpoint restarts under its token and keeps lingering"))
-         (test-assert (eql 42 (world-server-tests--run-job (world-host-application host-b)))
+         (test-assert (eql 42 (world-server-tests--run-job other))
                       "the other channel's jobs run again after the checkpoint")
-         (let* ((controller (application-input-controller (world-host-application host-b)))
+         (let* ((controller (application-input-controller other))
                 (outcome    nil)
                 (thread     nil))
            (application-input-controller-begin-external-work controller)
@@ -1747,23 +1783,22 @@ run once the wake has."
                                :pathname nil))))
           (lambda ()
             (application-checkpoint application)
-            (test-assert (search "checkpoint scheduled"
-                                 (image-daemon:relay-history-text terminal-a))
+            (test-assert (search "checkpoint scheduled" (test-localgroup--presented-text application))
                          "the channel is told its checkpoint is scheduled")
             (test-assert (task-tests--wait-until
                           (lambda ()
                             (and (search "! checkpoint failed: synthetic fork failure"
-                                         (image-daemon:relay-history-text terminal-a))
+                                         (test-localgroup--presented-text application))
                                  (search "! world server checkpoint failed"
-                                         (image-daemon:relay-history-text terminal-b))))
+                                         (test-localgroup--presented-text other))))
                           30)
                          "each channel learns the outcome once it is served again")
             (test-assert (task-tests--wait-until
                           (lambda () (and (world-host-live-p host-a) (world-host-live-p host-b)))
                           30)
                         "both channels serve again after a failed checkpoint")
-           (dolist (terminal (list terminal-a terminal-b))
-             (let ((text (image-daemon:relay-history-text terminal)))
+           (dolist (hosted (list application other))
+             (let ((text (test-localgroup--presented-text hosted)))
                (test-assert
                 (= 1 (loop for start = 0 then (+ position (length "failed: synthetic fork failure"))
                            for position = (search "failed: synthetic fork failure" text :start2 start)
@@ -1798,19 +1833,16 @@ run once the wake has."
             (host-b     (world-server--find-host server id-b))
             (session-a  (world-server-tests--session server id-a))
             (session-b  (world-server-tests--session server id-b))
-            (terminal-a (terminal-ui-terminal (application-ui (world-host-application host-a))))
-            (attachment (make-instance 'image-daemon:attachment
-                                       :socket nil
-                                       :stream (make-broadcast-stream)
-                                       :mode   ':control)))
-       (image-daemon:relay-attach terminal-a attachment :rows 24 :columns 80 :styled-p nil
-                                                        :session-id id-a)
-       (let ((answer (localgroup-query-record entry ':close
-                                              (list :channel id-a :unattached-only-p t))))
-         (test-assert (and (null (getf (rest answer) :closed-p))
-                           (world-host-live-p host-a)
-                           (localgroup-session-admits-attachment-p session-a))
-                      "a channel another terminal controls survives a close meant for an idle one"))
+            (connection (test-localgroup--present session-a)))
+       (unwind-protect
+            (let ((answer (localgroup-query-record entry ':close
+                                                   (list :channel id-a :unattached-only-p t))))
+              (test-assert (and (null (getf (rest answer) :closed-p))
+                                (world-host-live-p host-a)
+                                (localgroup-session-admits-attachment-p session-a)
+                                (not (localgroup-client-connection-closed-p connection)))
+                           "a channel another terminal controls survives a close meant for an idle one"))
+         (localgroup-client-close connection))
        (let ((answer (localgroup-query-record entry ':close
                                               (list :channel id-b :unattached-only-p t))))
          (test-assert (and (getf (rest answer) :closed-p)
@@ -2256,38 +2288,28 @@ run once the wake has."
                             (lambda (candidate &rest arguments)
                               (declare (ignore candidate arguments))
                               (values "bfirst1" nil)))
-                      (list 'localgroup--find-record
-                            (lambda (candidate session-id)
-                              (declare (ignore candidate))
-                              (list session-id)))
-                      (list 'localgroup-attach-record
-                            (lambda
-                                (candidate record mode
-                                 &key panel screen notice client-version
-                                 attached-function deadline)
-                              (declare
-                               (ignore candidate mode panel screen deadline))
-                              (push (first record) attaches)
-                              (push client-version client-versions)
-                              (when notice (push notice notices))
-                              (cond
-                               ((= (incf calls) 1)
-                                (progn
-                                 (when attached-function
-                                   (funcall attached-function))
-                                 (list ':switch :session-id "bsecnd2")))
-                               ((and rejects-p
-                                     (equal (first record) "bsecnd2"))
-                                (error 'localgroup-error :message
-                                       "Another terminal controls b-secnd2."
-                                       :operation ':attach))
-                               (t
-                                (progn
-                                 (when attached-function
-                                   (funcall attached-function))
-                                 (when quit-p
-                                   (list :status 77 :message
-                                         "Channel closed.")))))))
+                      (list 'channel-view-run
+                            (lambda (view &key attached-function notice client-version boot-p)
+                              (declare (ignore boot-p))
+                              (let ((identifier (channel-subscription-identifier view)))
+                                (push identifier attaches)
+                                (push client-version client-versions)
+                                (when notice (push notice notices))
+                                (cond
+                                  ((= (incf calls) 1)
+                                   (when attached-function
+                                     (funcall attached-function))
+                                   (list ':switch :session-id "bsecnd2"))
+                                  ((and rejects-p (equal identifier "bsecnd2"))
+                                   (error 'localgroup-client-rejected
+                                          :message   "Channel b-secnd2 is closing."
+                                          :operation ':client))
+                                  (t
+                                   (when attached-function
+                                     (funcall attached-function))
+                                   ;; A channel that exited returns its fields; a detach returns nothing.
+                                   (when quit-p
+                                     (list :status 77 :message "Channel closed.")))))))
                       (list 'world-sidebar-start
                             (lambda (panel)
                               (declare (ignore panel))
@@ -2372,7 +2394,7 @@ run once the wake has."
        (run "bfirst1")
        (test-assert
         (and (equal (reverse attaches) '("bfirst1" "bsecnd2" "bfirst1"))
-             (search "Another terminal controls" (first notices)))
+             (search "is closing" (first notices)))
         "An attachment refusal returns the terminal to its current channel with a notice")
        (setf quit-p t)
        (test-assert (eql (run "bfirst1") 77)
@@ -2386,124 +2408,121 @@ run once the wake has."
 (defun test-world-client-switch-failures ()
   "Exercise discovery and pre-acknowledgment failures, source loss, and guarded unattached cleanup."
   (with-test-configuration (configuration)
-   (dolist (failure '(:discover :target-dies :source-dies :transport-error))
-     (let ((attaches nil)
-           (reported nil)
-           (current  nil)
-           (closed   nil)
-           (left-p   nil)
-           (release  (symbol-function 'localgroup-client-screen-release)))
-       (test-call-with-function-replacements
-        (list
-         (list 'main--open-world-channel
-               (lambda (&rest arguments)
-                 (declare (ignore arguments))
-                 (values "bfirst1" nil)))
-         (list 'world-client-open
-               (lambda (&rest arguments)
-                 (declare (ignore arguments))
-                 (values "bsecnd2" (eq failure ':source-dies))))
-         (list 'world-client-entry
-               (lambda (&rest arguments)
-                 (declare (ignore arguments))
-                 '("world")))
-         (list 'localgroup-query-record
-               (lambda (entry operation arguments)
-                 (declare (ignore entry))
-                 (push (list operation arguments) closed)
-                 '(:ok)))
-         (list 'world-sidebar-start (lambda (panel) (declare (ignore panel))))
-         (list 'world-sidebar-stop
-               (lambda (panel) (setf current (world-sidebar-current panel))))
-         (list 'localgroup-client-screen-release
-               (lambda (screen) (funcall release screen)))
-         (list 'localgroup--find-record
-               (lambda (candidate identifier)
-                 (declare (ignore candidate))
-                 (when
-                     (or
-                      (and left-p (string= identifier "bfirst1")
-                           (eq failure ':source-dies))
-                      (and (string= identifier "bsecnd2")
-                           (member failure '(:discover :source-dies))))
-                   (error 'localgroup-error :operation ':discover :message
-                          "Endpoint disappeared."))
-                 (list identifier)))
-         (list 'localgroup-attach-record
-               (lambda
-                   (candidate record mode
-                    &key panel screen notice client-version attached-function
-                    deadline)
-                 (declare (ignore candidate mode screen client-version))
-                 (test-assert
-                  (and deadline (> deadline (get-internal-real-time)))
-                  "attachment shares a bounded discovery deadline")
-                 (push (first record) attaches)
-                 (when (string= (first record) "bsecnd2")
-                   (test-assert
-                    (string= (world-sidebar-current panel) "bfirst1")
-                    "the navigator commits no unacknowledged target")
-                   (if (eq failure ':transport-error)
-                       (error "Injected transport failure.")
-                       (error 'localgroup-error :operation ':connect :message
-                              "Target died before acknowledgment.")))
-                 (funcall attached-function)
-                 (if left-p
-                     (progn
-                      (test-assert notice
-                       "the restored source receives the switch failure")
-                      nil)
-                     (progn
-                      (setf left-p t)
-                      '(:switch :session-id "bsecnd2")))))
-         (list 'localgroup-relay-exit
-               (lambda (candidate exit mode &key session-id)
-                 (declare (ignore candidate mode))
-                 (setf reported (list session-id exit)))))
-        (lambda ()
-          (let ((*error-output* (make-broadcast-stream)))
-            (main--run-world-client configuration))))
-       (if (eq failure ':source-dies)
-           (test-assert
-            (and (null current) (null (first reported))
-                 (= (getf (second reported) :status) 1)
-                 (search "Disconnected" (getf (second reported) :message))
-                 (equal closed
-                        '((:close (:channel "bsecnd2" :unattached-only-p t)))))
-            "a vanished source clears navigation, reports disconnected, and cleans only the newly started unattached target")
-           (test-assert
-            (and (equal current "bfirst1") (equal reported '("bfirst1" nil))
-                 (null closed) (= (count "bfirst1" attaches :test #'equal) 2))
-            "every pre-acknowledgment failure restores the live source without closing an existing target"))))
-   (let ((discoveries 0) (attempts nil) (acknowledgments 0) (deadlines nil))
-     (test-call-with-function-replacements
-      (list
-       (list 'localgroup--find-record
-             (lambda (candidate identifier)
-               (declare (ignore candidate identifier))
-               (list (incf discoveries))))
-       (list 'localgroup-attach-record
-             (lambda
-                 (candidate entry mode
-                  &key panel screen notice client-version attached-function
-                  deadline)
-               (declare
-                (ignore candidate mode panel screen notice client-version))
-               (push entry attempts)
-               (push deadline deadlines)
-               (when (= (first entry) 1)
-                 (error 'localgroup-error :operation ':connect :message
-                        "Endpoint was replaced."))
-               (funcall attached-function)
-               nil)))
-      (lambda ()
-        (main--attach-world-channel configuration "bsecnd2" ':control
-         :attached-function (lambda () (incf acknowledgments)))))
-     (test-assert
-      (and (= discoveries 2) (equal (reverse attempts) '((1) (2)))
-           (= acknowledgments 1) (apply #'= deadlines))
-      "one changed endpoint is retried before acknowledgment within the original deadline")))
-  nil)(-> test-conversation-maintenance-admission-probe () null)
+    (dolist (failure '(:discover :target-dies :source-dies :transport-error))
+      (let ((attaches nil)
+            (reported nil)
+            (current  nil)
+            (closed   nil)
+            (left-p   nil)
+            (release  (symbol-function 'localgroup-client-screen-release)))
+        (test-call-with-function-replacements
+         (list
+          (list 'main--open-world-channel
+                (lambda (&rest arguments)
+                  (declare (ignore arguments))
+                  (values "bfirst1" nil)))
+          (list 'world-client-open
+                (lambda (&rest arguments)
+                  (declare (ignore arguments))
+                  (values "bsecnd2" (eq failure ':source-dies))))
+          (list 'world-client-entry
+                (lambda (&rest arguments)
+                  (declare (ignore arguments))
+                  '("world")))
+          (list 'localgroup-query-record
+                (lambda (entry operation arguments)
+                  (declare (ignore entry))
+                  (push (list operation arguments) closed)
+                  '(:ok)))
+          (list 'world-sidebar-start (lambda (panel) (declare (ignore panel))))
+          (list 'world-sidebar-stop
+                (lambda (panel) (setf current (world-sidebar-current panel))))
+          (list 'localgroup-client-screen-release
+                (lambda (screen) (funcall release screen)))
+          (list 'channel-view-run
+                (lambda (view &key attached-function notice client-version boot-p)
+                  (declare (ignore client-version boot-p))
+                  (let ((identifier (channel-subscription-identifier view))
+                        (panel      (localgroup-screen-panel (channel-view-screen view))))
+                    (push identifier attaches)
+                    ;; A view discovers its channel's endpoint before it connects.
+                    (when (or (and left-p (string= identifier "bfirst1")
+                                   (eq failure ':source-dies))
+                              (and (string= identifier "bsecnd2")
+                                   (member failure '(:discover :source-dies))))
+                      (error 'localgroup-error :operation ':discover
+                                              :message    "Endpoint disappeared."))
+                    (when (string= identifier "bsecnd2")
+                      (test-assert (string= (world-sidebar-current panel) "bfirst1")
+                                   "the navigator commits no unacknowledged target")
+                      (if (eq failure ':transport-error)
+                          (error "Injected transport failure.")
+                          (error 'localgroup-error :operation ':connect
+                                                  :message    "Target died before acknowledgment.")))
+                    (funcall attached-function)
+                    (cond
+                      (left-p
+                       (test-assert notice "the restored source receives the switch failure")
+                       nil)
+                      (t
+                       (setf left-p t)
+                       (list ':switch :session-id "bsecnd2"))))))
+          (list 'localgroup-relay-exit
+                (lambda (candidate exit mode &key session-id)
+                  (declare (ignore candidate mode))
+                  (setf reported (list session-id exit)))))
+         (lambda ()
+           (let ((*error-output* (make-broadcast-stream)))
+             (main--run-world-client configuration))))
+        (if (eq failure ':source-dies)
+            (test-assert
+             (and (null current) (null (first reported))
+                  (= (getf (second reported) :status) 1)
+                  (search "Disconnected" (getf (second reported) :message))
+                  (equal closed
+                         '((:close (:channel "bsecnd2" :unattached-only-p t)))))
+             "a vanished source clears navigation, reports disconnected, and cleans only the newly started unattached target")
+            (test-assert
+             (and (equal current "bfirst1") (equal reported '("bfirst1" nil))
+                  (null closed) (= (count "bfirst1" attaches :test #'equal) 2))
+             "every pre-acknowledgment failure restores the live source without closing an existing target"))))
+    (let ((discoveries 0)
+          (attempts    nil)
+          (screen      (localgroup-screen-create
+                        :terminal (make-instance 'recording-terminal :columns 80))))
+      (unwind-protect
+           (test-call-with-function-replacements
+            (list
+             (list 'terminal--terminal-mode-or-nil
+                   (lambda (terminal)
+                     (declare (ignore terminal))
+                     t))
+             (list 'localgroup--find-record
+                   (lambda (candidate identifier)
+                     (declare (ignore candidate identifier))
+                     (list (incf discoveries))))
+             (list 'localgroup-client-connect
+                   (lambda (entry &rest arguments)
+                     (declare (ignore arguments))
+                     (push entry attempts)
+                     (error 'localgroup-error
+                            :operation ':connect
+                            :message   (if (= (first entry) 1)
+                                           "Endpoint was replaced."
+                                           "The replacement endpoint was reached.")))))
+            (lambda ()
+              ;; Neither endpoint accepts the client; only the attempts matter here.
+              (handler-case
+                  (main--attach-world-channel configuration "bsecnd2" ':control :screen screen)
+                (localgroup-error ()
+                  nil))))
+        (localgroup-client-screen-release screen))
+      (test-assert
+       (and (= discoveries 2) (equal (reverse attempts) '((1) (2))))
+       "one changed endpoint is discovered again and tried once before acknowledgment")))
+  nil)
+
+(-> test-conversation-maintenance-admission-probe () null)
 (defun test-conversation-maintenance-admission-probe ()
   "Admit only persisted conversations with actual projection repair pending."
   (with-test-configuration (configuration)
@@ -3485,88 +3504,96 @@ run once the wake has."
             (app-b        (world-host-application (world-server--find-host server id-b)))
             (conversation (application-conversation app-a))
             (controller   (application-input-controller app-a))
-            (terminal     (terminal-ui-terminal (application-ui app-a)))
-            (attachment   (make-instance 'image-daemon:attachment
-                                         :socket nil :stream (make-broadcast-stream) :mode ':control))
             (picks        nil))
        (conversation-append-user-message (application-conversation app-a) "working in a")
        (conversation-append-user-message (application-conversation app-b) "working in b")
-       (let* ((world (values (world-reconcile-sessions configuration)))
-              (agent (find ':agent (world-channel-residents world id-b) :key #'participant-kind))
-              (name  (participant-name agent)))
-         (image-daemon:relay-attach terminal attachment :rows 24 :columns 100
-                                                       :styled-p nil :session-id id-a)
-         (application-input-controller-begin-external-work controller)
-         (unwind-protect
-              (test-call-with-function-replacements
-               (list (list 'world-server-wake-channel
-                           (lambda (candidate identifier)
-                             (declare (ignore candidate identifier))
-                             nil))
-                     (list 'application--pick-channel
-                           (lambda (application)
-                             (declare (ignore application))
-                             (push ':switch picks)
-                             id-b))
-                     (list 'application--pick-agent
-                           (lambda (application &key title usage)
-                             (declare (ignore application title usage))
-                             (push ':agent picks)
-                             name))
-                     (list 'application--pick-identifier
-                           (lambda (application &key title items hint initial-value search-p usage empty-notice)
-                             (declare (ignore application title hint initial-value search-p usage empty-notice))
-                             (push ':channel picks)
-                             (test-assert (find id-b items :key (lambda (item) (getf item :value)) :test #'equal)
-                                          "the picker can select channel B")
-                             id-b)))
-               (lambda ()
-                 (labels ((submit (source)
-                            "Submit SOURCE through the live busy controller and check it never queues."
-                            (application-input-controller--handle-submission controller source)
-                            (test-assert (and (application-input-controller-turn-active-p controller)
-                                              (deque-empty-p (application-input-controller-work-items controller))
-                                              (deque-empty-p (application-input-controller-pending-apply-items controller))
-                                              (eq (application-conversation app-a) conversation))
-                                         (format nil "~A executes while A keeps working" source))))
-                   (dolist (syntax '(:lisp :slash))
-                     (let ((before (length (world-server--hosts server))))
-                       (submit (if (eq syntax ':lisp) "(new)" "/new"))
-                       (test-assert (= (length (world-server--hosts server)) (1+ before))
-                                    "new opens another hosted channel before A finishes"))
-                     (submit (if (eq syntax ':lisp) (format nil "(open ~S)" id-b)
-                                 (format nil "/open ~A" id-b)))
-                     (test-assert (some (lambda (packet)
-                                          (and (search ":SWITCH" (string-upcase packet)) (search id-b packet)))
-                                        (coerce (structlisp:deque->vector (image-daemon:attachment-queue attachment)) 'list))
-                                  "typed switch sends the client's attachment request while A works")
-                     (submit (if (eq syntax ':lisp) (format nil "(dismiss ~S)" name)
-                                 (format nil "/dismiss ~A" name)))
-                     (test-assert (null (participant-residence
-                                         (world-participant-find (world-load configuration) (participant-identifier agent))))
-                                  "dismiss parks B's agent before A finishes")
-                     (submit (if (eq syntax ':lisp) (format nil "(tell ~S ~S)" id-b "busy message")
-                                 (format nil "/tell ~A ~S" id-b "busy message")))
-                     (test-assert (some (lambda (delivery) (string= (world-delivery-text delivery) "busy message"))
-                                        (world-inbox-deliveries configuration id-b))
-                                  "tell reaches B's durable inbox before A finishes")
-                     (submit (if (eq syntax ':lisp) (format nil "(move ~S ~S)" name id-b)
-                                 (format nil "/move ~A ~A" name id-b)))
+       (multiple-value-bind (connection seen await)
+           (test-localgroup--present (world-server-tests--session server id-a) :columns 100)
+         (let* ((world (values (world-reconcile-sessions configuration)))
+                (agent (find ':agent (world-channel-residents world id-b) :key #'participant-kind))
+                (name  (participant-name agent)))
+           (application-input-controller-begin-external-work controller)
+           (unwind-protect
+                (test-call-with-function-replacements
+                 (list (list 'world-server-wake-channel
+                             (lambda (candidate identifier)
+                               (declare (ignore candidate identifier))
+                               nil))
+                       (list 'application--pick-channel
+                             (lambda (application)
+                               (declare (ignore application))
+                               (push ':switch picks)
+                               id-b))
+                       (list 'application--pick-agent
+                             (lambda (application &key title usage)
+                               (declare (ignore application title usage))
+                               (push ':agent picks)
+                               name))
+                       (list 'application--pick-identifier
+                             (lambda (application &key title items hint initial-value search-p usage empty-notice)
+                               (declare (ignore application title hint initial-value search-p usage empty-notice))
+                               (push ':channel picks)
+                               (test-assert (find id-b items :key (lambda (item) (getf item :value)) :test #'equal)
+                                            "the picker can select channel B")
+                               id-b)))
+                 (lambda ()
+                   (labels ((submit (source)
+                              "Submit SOURCE through the live busy controller and check it never queues."
+                              (application-input-controller--handle-submission controller source)
+                              (test-assert (and (application-input-controller-turn-active-p controller)
+                                                (deque-empty-p (application-input-controller-work-items controller))
+                                                (deque-empty-p (application-input-controller-pending-apply-items controller))
+                                                (eq (application-conversation app-a) conversation))
+                                           (format nil "~A executes while A keeps working" source)))
+
+                            (switches ()
+                              "Return how often the terminal client was asked to move to channel B."
+                              (count-if (lambda (event)
+                                          (and (eq (first event) ':ui)
+                                               (eq (getf (rest event) :operation) ':switch)
+                                               (equal (getf (rest event) :session-id) id-b)))
+                                        (funcall seen))))
+                     (dolist (syntax '(:lisp :slash))
+                       (let ((before (length (world-server--hosts server))))
+                         (submit (if (eq syntax ':lisp) "(new)" "/new"))
+                         (test-assert (= (length (world-server--hosts server)) (1+ before))
+                                      "new opens another hosted channel before A finishes"))
+                       (let ((before (switches)))
+                         (submit (if (eq syntax ':lisp) (format nil "(open ~S)" id-b)
+                                     (format nil "/open ~A" id-b)))
+                         (test-assert (task-tests--wait-until (lambda () (= (switches) (1+ before))) 10)
+                                      "typed switch asks the terminal client to move while A works"))
+                       (submit (if (eq syntax ':lisp) (format nil "(dismiss ~S)" name)
+                                   (format nil "/dismiss ~A" name)))
+                       (test-assert (null (participant-residence
+                                           (world-participant-find (world-load configuration) (participant-identifier agent))))
+                                    "dismiss parks B's agent before A finishes")
+                       (submit (if (eq syntax ':lisp) (format nil "(tell ~S ~S)" id-b "busy message")
+                                   (format nil "/tell ~A ~S" id-b "busy message")))
+                       (test-assert (some (lambda (delivery) (string= (world-delivery-text delivery) "busy message"))
+                                          (world-inbox-deliveries configuration id-b))
+                                    "tell reaches B's durable inbox before A finishes")
+                       (submit (if (eq syntax ':lisp) (format nil "(move ~S ~S)" name id-b)
+                                   (format nil "/move ~A ~A" name id-b)))
+                       (test-assert (equal id-b (participant-residence
+                                                 (world-participant-find (world-load configuration) (participant-identifier agent))))
+                                    "move places B's agent before A finishes"))
+                     (submit "(open)")
+                     (submit "(tell)")
+                     (test-assert (funcall await ':input
+                                           (lambda (event)
+                                             (let ((text (getf (rest event) :text)))
+                                               (and (stringp text) (search id-b text)))))
+                                  "tell's picker prefills the terminal client's composer during inference")
+                     (submit "(dismiss)")
+                     (submit "(move)")
+                     (test-assert (and (member ':switch picks) (member ':channel picks) (member ':agent picks))
+                                  "argument-free channel commands reach their pickers while A works")
                      (test-assert (equal id-b (participant-residence
                                                (world-participant-find (world-load configuration) (participant-identifier agent))))
-                                  "move places B's agent before A finishes"))
-                   (submit "(open)")
-                   (submit "(tell)")
-                   (test-assert (search id-b (line-editor-text (terminal-ui-editor (application-ui app-a))))
-                                "tell's picker prefills the composer during inference")
-                   (submit "(dismiss)")
-                   (submit "(move)")
-                   (test-assert (and (member ':switch picks) (member ':channel picks) (member ':agent picks))
-                                "argument-free channel commands reach their pickers while A works")
-                   (test-assert (equal id-b (participant-residence
-                                             (world-participant-find (world-load configuration) (participant-identifier agent))))
-                                "picker-driven move executes while A works"))))
-           (application-input-controller-finish-external-work controller))))))
+                                  "picker-driven move executes while A works"))))
+             (application-input-controller-finish-external-work controller)
+             (localgroup-client-close connection)))))))
   nil)
 
 (-> test-world-execution-owner-claims () null)

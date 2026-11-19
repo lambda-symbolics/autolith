@@ -340,8 +340,9 @@ presents the warning in the first channel it opens only."
   "Return whether APPLICATION has no direct terminal and clients report its exit."
   (let* ((ui       (and (slot-boundp application 'ui) (application-ui application)))
          (terminal (and ui (terminal-ui-terminal ui))))
-    (and (typep terminal 'image-daemon:relay)
-         (null (image-daemon:relay-direct-terminal terminal)))))
+    (or (not (null (application-presentation application)))
+        (and (typep terminal 'image-daemon:relay)
+             (null (image-daemon:relay-direct-terminal terminal))))))
 
 (-> application--present-open-instruction (application) boolean)
 (defun application--present-open-instruction (application)
@@ -1234,36 +1235,26 @@ request it conflicts with from one that says nothing."
                          :description (channel-loading-progress-description progress)))))
     (funcall function)))
 
-(-> main--attach-world-channel (configuration string keyword &key (:panel t) (:screen localgroup-screen) (:notice (option string)) (:client-version (option string)) (:attached-function function)) (option list))
-(defun main--attach-world-channel (configuration identifier mode &key panel screen notice client-version attached-function)
-  "Discover and attach within one handshake deadline, refreshing a changed endpoint once before acknowledgment."
-  (let ((deadline       (+ (get-internal-real-time)
-                           (ceiling (* internal-time-units-per-second image-daemon:*daemon-connect-timeout-seconds*))))
-        (acknowledged-p nil))
-    (labels ((discover ()
-               "Resolve the endpoint within the remaining transaction deadline."
-               (handler-case
-                   (sb-sys:with-deadline (:seconds (max 0 (/ (- deadline (get-internal-real-time)) internal-time-units-per-second)))
-                     (localgroup--find-record configuration identifier))
-                 (sb-sys:deadline-timeout (condition)
-                   (error 'localgroup-error :operation ':discover :session-id identifier :cause condition
-                          :message "Channel discovery timed out before attachment."))))
+(-> main--attach-world-channel
+    (configuration string keyword
+     &key (:screen localgroup-screen) (:notice (option string)) (:client-version (option string))
+          (:attached-function (option function)))
+    list)
+(defun main--attach-world-channel
+    (configuration identifier mode &key screen notice client-version attached-function)
+  "Show channel IDENTIFIER on SCREEN until this terminal leaves it, and return why it left.
 
-             (attach (entry)
-               "Commit navigation only after the endpoint accepts this terminal."
-               (localgroup-attach-record configuration entry mode :panel panel :screen screen
-                                        :notice notice :client-version client-version :deadline deadline
-                                        :attached-function (lambda ()
-                                                             (setf acknowledged-p t)
-                                                             (funcall attached-function)))))
-      (let ((entry (discover)))
-        (handler-case (attach entry)
-          (error (condition)
-            (when acknowledged-p (error condition))
-            (let ((replacement (discover)))
-              (when (or (equal replacement entry) (>= (get-internal-real-time) deadline))
-                (error condition))
-              (attach replacement))))))))
+The terminal follows the channel as a client that renders it: a view applies
+what the channel presents and sends it the user's input. MODE :READ-ONLY
+watches without sending any. NOTICE is shown in the transcript once attached,
+and so is a note when CLIENT-VERSION differs from the server's. A screen that
+still shows the boot panel keeps it until the user starts the session."
+  (channel-view-run (channel-view-create configuration identifier screen
+                                         :read-only-p (eq mode ':read-only))
+                    :notice            notice
+                    :client-version    client-version
+                    :boot-p            (not (null (localgroup-screen-boot-ui screen)))
+                    :attached-function attached-function))
 
 (-> main--attachment-choice (localgroup-screen string list) (option list))
 (defun main--attachment-choice (screen identifier termination)
@@ -1383,7 +1374,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                  do (let ((exit
                            (handler-case
                             (main--attach-world-channel configuration session-id attachment-mode
-                                                        :panel panel :screen screen :notice
+                                                        :screen screen :notice
                                                         (shiftf notice nil) :client-version
                                                         (shiftf client-version nil)
                                                         :attached-function

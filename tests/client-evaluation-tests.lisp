@@ -176,97 +176,56 @@
 
 (-> test-client-evaluation-terminal-client () null)
 (defun test-client-evaluation-terminal-client ()
-  "Test a channel evaluates forms in the controlling terminal client that says it evaluates."
+  "Test a channel evaluates forms in the terminal client its user is at, before any other client that evaluates."
   (client-protocol-tests--call
    (lambda (application record)
-     (multiple-value-bind (socket stream)
-         (daemon-connect (localgroup--record-port (rest record)))
-       (let ((answerer nil))
-         (unwind-protect
-              (progn
-                (daemon-write-packet
-                 stream
-                 (list :localgroup-request
-                       :version   *daemon-protocol-version*
-                       :token     (localgroup--record-token (rest record))
-                       :operation ':attach
-                       :arguments (list :mode ':control :rows 31 :columns 91 :styled-p nil
-                                        :evaluates-p t)))
-                (test-assert (eq (first (test-localgroup--read-packet stream)) ':attached)
-                             "the terminal client attaches")
-                (setf answerer
-                      (make-thread
-                       (lambda ()
-                         (loop for packet = (handler-case (daemon-read-packet stream)
-                                              (error ()
-                                                nil))
-                               while packet
-                               do (when (eq (first packet) ':evaluation)
-                                    (daemon-write-packet
-                                     stream (cons :evaluated (client-evaluate-request packet))))))
-                       :name "client evaluation terminal"))
-                (test-assert (task-tests--wait-until
-                              (lambda () (application-evaluating-attachment application))
-                              10)
-                             "the controlling terminal is the client that evaluates")
-                (test-assert (search "\"client\""
-                                     (application-evaluate-on-client
-                                      application '("(string-downcase \"CLIENT\")")))
-                             "the terminal client's rendered result comes back")
-                (test-assert (eq (client-evaluation-tests--failure
-                                  (lambda ()
-                                    (application-evaluate-on-client application '("(error \"boom\")"))))
-                                 ':failed)
-                             "forms that fail in the terminal client fail the evaluation")
-                (let* ((hub        (application-client-hub application))
-                       (attachment (application-evaluating-attachment application))
-                       (other      (localgroup-attachment-create nil (make-string-output-stream) ':read-only))
-                       (pending    (make-instance 'client-evaluation :attachment attachment))
-                       (packet     (list :evaluated :evaluation (client-evaluation-identifier pending)
-                                         :succeeded-p t :text "terminal result")))
-                  (unwind-protect
-                       (progn
-                         (with-lock-held ((client-hub-lock hub))
-                           (push pending (client-hub-evaluations hub)))
-                         (test-assert (and (not (localgroup--accept-client-packet application packet :attachment other))
-                                           (not (localgroup--accept-client-packet application packet)))
-                                      "An unrelated or unidentified terminal attachment cannot answer an evaluation.")
-                         (test-assert
-                          (not (application-answer-evaluation application (client-evaluation-identifier pending)
-                                                              :attachment attachment :text "missing status"))
-                          "The answer boundary also rejects an omitted boolean status.")
-                         (dolist (status '(:omitted :yes))
-                           (let ((malformed (list :evaluated :evaluation (client-evaluation-identifier pending)
-                                                  :text      "invalid")))
-                             (unless (eq status ':omitted)
-                               (setf malformed (append malformed (list :succeeded-p status))))
-                             (test-assert (not (localgroup--accept-client-packet application malformed
-                                                                               :attachment attachment))
-                                          "Terminal replies require an explicit boolean status.")))
-                         (test-assert (and (null (client-evaluation-answer pending))
-                                           (localgroup--accept-client-packet application packet :attachment attachment)
-                                           (not (localgroup--accept-client-packet application packet :attachment attachment)))
-                                      "The originating terminal attachment can answer exactly once."))
-                    (with-lock-held ((client-hub-lock hub))
-                      (setf (client-hub-evaluations hub) (remove pending (client-hub-evaluations hub))))))
-                (test-assert (notany (lambda (packet)
-                                       (localgroup--accept-client-packet application packet))
-                                     '((:evaluated :evaluation 3)
-                                       (:evaluated :evaluation "none" :succeeded-p t :text "stray")
-                                       (:evaluated :evaluation "none" :text)
-                                       (:evaluated . 3)
-                                       (:other)))
-                             "malformed and stray answers are taken by nobody")
-                (test-assert (client-evaluation-reply-p
-                              '(:evaluated :evaluation "e" :text "ok" :succeeded-p t :elapsed 3))
-                             "an answer with a field this version does not know is still an answer"))
-           ;; Shutting the socket down wakes the answerer's blocked read; closing alone does not.
-           ; mallet:suppress no-ignore-errors -- the endpoint may have closed the socket already
-           (ignore-errors (sb-bsd-sockets:socket-shutdown socket :direction ':io))
-           (when answerer
-             (join-thread answerer))
-           ; mallet:suppress no-ignore-errors -- the endpoint may have closed the socket already
-           (ignore-errors (sb-bsd-sockets:socket-close socket)))))))
+     (let ((terminal (test-localgroup--present record :evaluates-p t))
+           (other    (localgroup-client-connect record :name "lisp" :evaluates-p t)))
+       (unwind-protect
+            (let ((controller (application-controlling-client application)))
+              (test-assert (and controller
+                                (channel-client-presents-p controller)
+                                (eq (application-evaluating-attachment application)
+                                    (channel-client-attachment controller)))
+                           "the terminal client evaluates, though another client that evaluates attached after it")
+              (test-assert (search "\"client\""
+                                   (application-evaluate-on-client
+                                    application '("(string-downcase \"CLIENT\")")))
+                           "the terminal client's rendered result comes back")
+              (test-assert (eq (client-evaluation-tests--failure
+                                (lambda ()
+                                  (application-evaluate-on-client application '("(error \"boom\")"))))
+                               ':failed)
+                           "forms that fail in the terminal client fail the evaluation")
+              (dolist (answer '((:evaluation 3)
+                                (:evaluation "none" :succeeded-p t :text "stray")
+                                (:evaluation "none")))
+                (test-assert (null (getf (apply #'localgroup-client-call terminal ':evaluated answer)
+                                         :accepted-p))
+                             (format nil "the answer ~S is taken by nobody" answer)))
+              (test-assert (notany (lambda (packet)
+                                     (localgroup--accept-client-packet application packet))
+                                   '((:evaluated :evaluation 3)
+                                     (:evaluated :evaluation "none" :succeeded-p t :text "stray")
+                                     (:evaluated :evaluation "none" :text)
+                                     (:evaluated . 3)
+                                     (:other)))
+                           "malformed and stray answer packets are taken by nobody")
+              (test-assert (client-evaluation-reply-p
+                            '(:evaluated :evaluation "e" :text "ok" :succeeded-p t :elapsed 3))
+                           "an answer with a field this version does not know is still an answer")
+              (localgroup-client-close terminal)
+              (test-assert (task-tests--wait-until
+                            (lambda ()
+                              (let ((attachment (application-evaluating-attachment application)))
+                                (and attachment
+                                     (null (application-controlling-client application))
+                                     (search "3" (application-evaluate-on-client
+                                                  application '("(+ 1 2)"))))))
+                            10)
+                           "once the terminal left, the client attached last evaluates"))
+         (localgroup-client-close terminal)
+         (localgroup-client-close other)))))
   nil)
 
 (-> test-self-eval-client-target () null)

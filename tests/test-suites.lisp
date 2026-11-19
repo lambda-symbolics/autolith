@@ -811,7 +811,8 @@
   test-presentation-wire-forms
   test-presentation-model-publishes
   test-presentation-applies
-  test-presentation-pages-and-readers)
+  test-presentation-pages-and-readers
+  test-presentation-client)
 
 (define-test-suite client-protocol
   test-client-protocol-channel

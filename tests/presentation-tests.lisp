@@ -179,6 +179,80 @@
                      "a second replay clears first, so nothing shows twice"))))
   nil)
 
+(-> test-presentation-client () null)
+(defun test-presentation-client ()
+  "Test a client that presents follows a hosted channel and drives it with input."
+  (client-protocol-tests--call
+   (lambda (application record)
+     (test-assert (and (application-presentation application)
+                       (not (terminal-interactive-p
+                             (terminal-ui-terminal (application-ui application)))))
+                  "a hosted channel has a presentation that nobody shows yet")
+     (multiple-value-bind (connection seen await)
+         (test-localgroup--present record :rows 30 :columns 90)
+       (unwind-protect
+            (progn
+              (test-assert (and (funcall await ':reset) (funcall await ':turn) (funcall await ':modal))
+                           "a client that presents is first told what the channel shows")
+              (test-assert (and (terminal-interactive-p
+                                 (terminal-ui-terminal (application-ui application)))
+                                (= 90 (terminal-columns
+                                       (terminal-ui-terminal (application-ui application)))))
+                           "the channel is laid out for its client and somebody can answer it")
+              (localgroup-client-send connection ':input :action ':submit :text "/status")
+              (test-assert (funcall await ':append
+                                    (lambda (event)
+                                      (search "status" (test-localgroup--event-text event))))
+                           "a submitted command's output is presented")
+              (test-assert (null (getf (localgroup-client-call connection ':input :action ':interrupt)
+                                       :handled-p))
+                           "an interrupt with nothing running is the client's to handle")
+              (localgroup-client-send connection ':input :action ':action-of-tomorrow)
+              (test-assert (eq (first (getf (localgroup-client-call connection ':state) :state))
+                               ':localgroup-status)
+                           "an input action this version does not know leaves the connection working")
+              (let* ((choice nil)
+                     (asker  (make-thread
+                              (lambda ()
+                                (setf choice
+                                      (terminal-ui-select
+                                       (application-ui application)
+                                       :title "pick"
+                                       :items (list (list :name "one" :description "the first")
+                                                    (list :name "two" :description "the second")))))
+                              :name "presentation picker")))
+                (test-assert (and (funcall await ':modal (lambda (event) (getf (rest event) :open-p)))
+                                  (funcall await ':selector
+                                           (lambda (event)
+                                             (equal (mapcar (lambda (item) (getf item :name))
+                                                            (getf (rest event) :items))
+                                                    '("one" "two")))))
+                             "a picker the channel opens shows on the client")
+                (localgroup-client-call connection ':event :event ':down)
+                (test-assert (funcall await ':selector
+                                      (lambda (event) (eql (getf (rest event) :selection) 1)))
+                             "the client's keys move the channel's picker")
+                (localgroup-client-call connection ':event :event ':enter)
+                (join-thread asker)
+                (test-assert (and (equal choice "two")
+                                  (funcall await ':selector
+                                           (lambda (event)
+                                             (and (null (getf (rest event) :open-p))
+                                                  (member event
+                                                          (member (funcall await ':selector)
+                                                                  (funcall seen))))))
+                                  (null (getf (localgroup-client-call connection ':event :event ':enter)
+                                              :accepted-p)))
+                             "the picker returns the choice, closes, and takes no further keys")))
+         (localgroup-client-close connection)))
+     (test-assert (task-tests--wait-until
+                   (lambda ()
+                     (not (terminal-interactive-p
+                           (terminal-ui-terminal (application-ui application)))))
+                   10)
+                  "once the client left, nobody shows the channel")))
+  nil)
+
 (-> test-presentation-pages-and-readers () null)
 (defun test-presentation-pages-and-readers ()
   "Test printed text, a whole-pane page and a modal reader's line reach the clients, and end with their owner."

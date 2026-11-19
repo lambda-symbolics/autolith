@@ -350,24 +350,18 @@
                 (error "Attachment recovery must not open or rerun a channel.")))
         (list 'world-sidebar-start (lambda (panel) (declare (ignore panel))))
         (list 'world-sidebar-stop (lambda (panel) (declare (ignore panel))))
-        (list 'localgroup--find-record
-              (lambda (candidate identifier)
-                (declare (ignore candidate))
-                (list identifier)))
-        (list 'localgroup-attach-record
-              (lambda (candidate record mode
-                       &key panel screen notice client-version attached-function deadline)
-                (declare (ignore candidate mode panel screen notice client-version))
-                (test-assert (and deadline (> deadline (get-internal-real-time)))
-                             "each manual reattachment has its own bounded handshake")
-                (push (first record) attaches)
+        (list 'channel-view-run
+              (lambda (view &key attached-function notice client-version boot-p)
+                (declare (ignore notice client-version boot-p))
+                (push (channel-subscription-identifier view) attaches)
                 (incf attach-count)
                 (case attach-count
                   (1
                    (funcall attached-function)
-                   '(:attachment-lost :kind :unexpected-eof :message "Connection lost."))
+                   (list ':attachment-lost :kind    ':transport-failure
+                                           :message "The channel's connection closed."))
                   (2
-                   (error 'localgroup-error :operation ':attach :message "Endpoint not ready."))
+                   (error 'localgroup-error :operation ':client :message "Endpoint not ready."))
                   (otherwise
                    (funcall attached-function)
                    nil))))

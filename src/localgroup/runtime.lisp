@@ -188,7 +188,10 @@ conversation transaction can roll back before releasing either lease."
          (configuration     (application-configuration application))
          (conversation      (application-conversation application))
          (terminal          (terminal-ui-terminal (application-ui application)))
-         (client-pids       (multiple-value-list (localgroup-terminal-client-pids terminal)))
+         (client-pids       (multiple-value-list
+                             (if (application-presentation application)
+                                 (application-presenting-client-pids application)
+                                 (localgroup-terminal-client-pids terminal))))
          (controller        (application-input-controller application))
          (paused-p          (application-localgroup-paused-p application))
          (active-p          nil)
@@ -271,16 +274,20 @@ conversation transaction can roll back before releasing either lease."
             (application-terminal-attached-p application)
             :terminal-attachment
             (let ((terminal (terminal-ui-terminal (application-ui application))))
-              (if (typep terminal 'localgroup-terminal)
-                  (image-daemon:relay-attachment-kind terminal)
-                  (if (terminal-interactive-p terminal)
-                      ':foreground
-                      ':detached)))
+              (cond
+                ((typep terminal 'localgroup-terminal)
+                 (image-daemon:relay-attachment-kind terminal))
+                ((application-presentation application)
+                 (if (terminal-interactive-p terminal) ':remote ':detached))
+                ((terminal-interactive-p terminal)
+                 ':foreground)
+                (t
+                 ':detached)))
             :observer-count
             (let ((terminal (terminal-ui-terminal (application-ui application))))
               (if (typep terminal 'localgroup-terminal)
                   (image-daemon:relay-observer-count terminal)
-                  0))
+                  (length (second client-pids))))
             :created-at         (image-daemon:daemon-runtime-created-at session)))))
 
 ;;;; -- Localgroup Terminal Ownership --
@@ -631,7 +638,10 @@ operation. Drain through the sole attachment writer outside endpoint locks."
 (defun localgroup--detach-terminal (session)
   "Release SESSION's current controlling terminal."
   (let* ((application (localgroup-session-application session))
-         (terminal    (localgroup--terminal session)))
+         (terminal    (if (application-presentation application)
+                          (return-from localgroup--detach-terminal
+                            (localgroup--detach-client session))
+                          (localgroup--terminal session))))
     (when (eq (image-daemon:relay-attachment-kind terminal) ':foreground)
       (error 'localgroup-error
              :message    "This foreground process cannot detach. Open a supervised session first."
@@ -640,6 +650,19 @@ operation. Drain through the sole attachment writer outside endpoint locks."
     (localgroup--mark-explicit-detach session)
     (image-daemon:relay-release-control terminal)
     (localgroup--detach-live-region application)
+    (list :ok :operation :detach :scheduled-p nil :session-id
+          (image-daemon:daemon-runtime-identifier session))))
+
+(-> localgroup--detach-client (localgroup-session) list)
+(defun localgroup--detach-client (session)
+  "Tell the terminal client at SESSION's hosted channel to leave it running."
+  (let ((application (localgroup-session-application session)))
+    (unless (application-client-tell application ':detach)
+      (error 'localgroup-error
+             :message    "No terminal shows this channel."
+             :operation  ':detach
+             :session-id (image-daemon:daemon-runtime-identifier session)))
+    (localgroup--mark-explicit-detach session)
     (list :ok :operation :detach :scheduled-p nil :session-id
           (image-daemon:daemon-runtime-identifier session))))
 
@@ -655,8 +678,14 @@ terminal must exit with it instead for the outer launcher to update, roll back,
 or recover. DETAILS carries what that launcher needs besides the status, such
 as the session's crash capsule. Return true when APPLICATION's terminal is a
 relay; a terminal that already disconnected costs nothing."
-  (let* ((ui       (and application (application-ui application)))
-         (terminal (and ui (terminal-ui-terminal ui))))
+  (let* ((ui           (and application (application-ui application)))
+         (terminal     (and ui (terminal-ui-terminal ui)))
+         (presentation (and application (application-presentation application))))
+    (when presentation
+      ;; A hosted channel's terminal clients learn of its exit as they learn of everything else.
+      (application-clients-publish
+       application (list :ui :operation ':exit :status status :message message :details details))
+      (return-from localgroup-finish-attachments t))
     (when (typep terminal 'localgroup-terminal)
       (handler-case
           (image-daemon:relay-finish terminal :status  status
