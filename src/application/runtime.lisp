@@ -4892,18 +4892,18 @@ replaces only that name, once, and a process stops asking after
              (handler-case
                  (let ((agent (application--agent-awaiting-name application)))
                    (when (or title-p agent)
+                     ;; Charge the attempt even if inference or durable publication fails.
+                     (when agent
+                       (incf (application-agent-name-attempts application)))
                      (multiple-value-bind (title name)
                          (application--conversation-title-generate application)
-                       (when agent
-                         (if name
-                             (progn
-                               (world-participant-rename
-                                configuration (participant-identifier agent) name
-                                :source             ':generated
-                                :expected-residence (conversation-identifier conversation))
-                               (setf (application-agent-name-attempts application)
-                                     *application-agent-name-attempt-limit*))
-                             (incf (application-agent-name-attempts application))))
+                       (when (and agent name)
+                         (world-participant-rename
+                          configuration (participant-identifier agent) name
+                          :source             ':generated
+                          :expected-residence (conversation-identifier conversation))
+                         (setf (application-agent-name-attempts application)
+                               *application-agent-name-attempt-limit*))
                        (when (and title-p title)
                          (conversation-set-title conversation title :source ':generated))
                        (when (or title name)
