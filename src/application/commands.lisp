@@ -1979,44 +1979,6 @@ searches every task directory."
    provider-name
    :reasoning-summaries-p (application-reasoning-traces-p application)))
 
-(defclass application-authentication-output-stream
-    (trivial-gray-streams:fundamental-character-output-stream)
-  ((terminal
-    :initarg       :terminal
-    :reader        application-authentication-output-stream-terminal
-    :type          terminal
-    :documentation "The terminal receiving authentication output."))
-  (:documentation "A character stream routing authentication output through a terminal."))
-
-(defmethod trivial-gray-streams:stream-write-char
-    ((stream application-authentication-output-stream) character)
-  "Write CHARACTER through STREAM's terminal."
-  (terminal--write
-   (application-authentication-output-stream-terminal stream)
-   (string character))
-  character)
-
-(defmethod trivial-gray-streams:stream-write-string
-    ((stream application-authentication-output-stream) string
-     &optional (start 0) end)
-  "Write STRING's selected range through STREAM's terminal."
-  (terminal--write
-   (application-authentication-output-stream-terminal stream)
-   (subseq string start end))
-  string)
-
-(defmethod trivial-gray-streams:stream-force-output
-    ((stream application-authentication-output-stream))
-  "Flush STREAM's terminal output."
-  (terminal-flush
-   (application-authentication-output-stream-terminal stream)))
-
-(defmethod trivial-gray-streams:stream-finish-output
-    ((stream application-authentication-output-stream))
-  "Finish STREAM's terminal output."
-  (terminal-flush
-   (application-authentication-output-stream-terminal stream)))
-
 (defclass application-authentication-input-stream
     (trivial-gray-streams:fundamental-character-input-stream)
   ((terminal
@@ -2035,17 +1997,6 @@ searches every task directory."
     :type          (integer 0)
     :documentation "The next character index in PENDING."))
   (:documentation "A hidden line stream consuming the events of one terminal's client."))
-
-(-> application-authentication-input-stream--controller-p
-    (application-authentication-input-stream)
-    boolean)
-(defun application-authentication-input-stream--controller-p (stream)
-  "Return true while a client is at STREAM's terminal: a relay's controller, or a channel's presenting client."
-  (let ((terminal (application-authentication-input-stream-terminal stream)))
-    (if (typep terminal 'localgroup-terminal)
-        (with-lock-held ((image-daemon:relay-lock terminal))
-          (not (null (image-daemon:relay-controller terminal))))
-        (not (null (terminal-interactive-p terminal))))))
 
 (-> application-authentication-input-stream--fill
     (application-authentication-input-stream)
@@ -2089,7 +2040,8 @@ searches every task directory."
           ((member event '(:interrupt :escape :stream-end) :test #'eq)
            (return nil))
           ((eq event ':end-of-input)
-           (unless (application-authentication-input-stream--controller-p stream)
+           ;; Nobody is left at the channel's clients to type the rest.
+           (unless (terminal-interactive-p terminal)
              (return nil))
            (sleep 0.01)))))))
 
@@ -2206,15 +2158,6 @@ searches every task directory."
           (stream-terminal-output-stream terminal)
           t nil
           (stream-terminal-input-file-descriptor terminal)))
-
-(defmethod terminal-authentication-streams ((terminal localgroup-terminal))
-  "Adapt LOCALGROUP-TERMINAL events and output to authentication streams."
-  (values
-   (make-instance 'application-authentication-input-stream
-                  :terminal terminal)
-   (make-instance 'application-authentication-output-stream
-                  :terminal terminal)
-   nil t nil))
 
 (defmethod terminal-authentication-streams ((terminal presentation-terminal))
   "Read a hosted channel's client events as hidden input and show output in its transcript."

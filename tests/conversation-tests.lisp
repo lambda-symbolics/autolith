@@ -2015,7 +2015,7 @@ process without releasing the lease, exercising kernel cleanup."
       (test-conversation--worker-eval
        configuration
        (format nil
-               "(progn (defparameter *test-lease-owner* (let* ((c ~A) (conversation (conversation-create c :identifier ~S)) (ui (terminal-ui-create :terminal (localgroup-terminal-create))) (app (make-instance 'application :configuration c :conversation conversation :ui ui))) (setf (application-input-controller app) (make-instance 'application-input-controller :application app :main-thread (current-thread)) (application-conversation-lease app) (conversation-lease-acquire c ~S)) (conversation-append-user-message conversation ~S) (localgroup-start app :token ~S) app)) (current-process-id))"
+               "(progn (defparameter *test-lease-owner* (let* ((c ~A) (conversation (conversation-create c :identifier ~S)) (ui (application-terminal-ui-create :client-pane '(:rows 24 :columns 80))) (app (make-instance 'application :configuration c :conversation conversation :ui ui))) (setf (application-input-controller app) (make-instance 'application-input-controller :application app :main-thread (current-thread)) (application-conversation-lease app) (conversation-lease-acquire c ~S)) (conversation-append-user-message conversation ~S) (localgroup-start app :token ~S) app)) (current-process-id))"
                (test-conversation--child-configuration-form configuration)
                identifier identifier "Owned contention diagnostic." "owned-diagnostic-token"))
     (unwind-protect

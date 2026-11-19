@@ -1,95 +1,107 @@
 (in-package #:autolith)
 
-(-> test-localgroup-client-termination () null)
-(defun test-localgroup-client-termination ()
-  "Keep transport and rendering failures distinct from intentional terminal departure."
-  (let* ((terminal (make-instance 'scripted-terminal :columns 80))
-         (screen   (localgroup-screen-create :terminal terminal)))
-    (test-call-with-function-replacements
-     (list (list 'image-daemon:daemon-attach-client-run
-                 (lambda (stream &rest options)
-                   (declare (ignore stream))
-                   (let ((receive (getf options :packet-function)))
-                     (test-assert (null (funcall receive '(:evaluation :id "pump" :forms ("(values)"))))
-                                  "evaluation leaves the terminal packet loop running")
-                     (test-assert (funcall receive '(:switch :session-id "next"))
-                                  "the following switch ends the terminal packet loop"))
-                   (values nil '(:kind :detached)))))
-     (lambda ()
-       (test-assert (equal '(:switch :session-id "next")
-                           (localgroup--attach-terminal-loop
-                            (make-string-input-stream "") terminal ':control :screen screen))
-                    "the terminal returns the switch received after evaluation")))
-    (dolist (kind '(:detached :revoked :application-exit :unexpected-eof
-                    :decoding-failure :callback-failure :transport-failure
-                    :remote-failure :queue-overflow))
-      (test-call-with-function-replacements
-       (list (list 'image-daemon:daemon-attach-client-run
-                   (lambda (&rest arguments)
-                     (declare (ignore arguments))
-                     (values nil (list :kind kind :message "attachment ended")))))
-       (lambda ()
-         (let ((result (localgroup--attach-terminal-loop
-                        (make-string-input-stream "") terminal ':control :screen screen)))
-           (test-assert
-            (if (member kind '(:detached :revoked :application-exit))
-                (null result)
-                (and (eq (first result) ':attachment-lost)
-                     (eq (getf (rest result) :kind) kind)))
-            (format nil "~A has an explicit local client outcome" kind)))))))
+(-> client-recovery-tests--call-with-session (function) null)
+(defun client-recovery-tests--call-with-session (function)
+  "Call FUNCTION with a configuration, a lingering application without a terminal of its own, and its session."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (application controller)
+        (test-localgroup--application configuration :presented-p t)
+      (unwind-protect
+           (progn
+             (configuration-ensure-directories configuration)
+             (terminal-ui-start (application-ui application))
+             (funcall function configuration application
+                      (localgroup-start application :linger-p t)))
+        (localgroup-stop application)
+        (application-input-controller-stop controller)
+        (terminal-ui-stop (application-ui application))
+        (application-release-conversation-lease application))))
   nil)
 
 (-> test-localgroup-client-checkpoint-recovery () null)
 (defun test-localgroup-client-checkpoint-recovery ()
-  "Recover from checkpoint wait and replacement failures without converting initial refusal."
-  (dolist (phase '(:wait :reattach :initial))
-    (let* ((entry (cons #p"checkpoint-registry" '(:endpoint :session-id "channel")))
-           (cause (make-condition 'localgroup-error :operation ':attach
-                                  :message                     "private checkpoint failure"))
-           (prior '((:stage "stream" :condition-type "STREAM-ERROR")))
-           (calls 0)
-           (waits 0))
-      (test-call-with-function-replacements
-       (list
-        (list 'localgroup--attach-record-once
-              (lambda (configuration candidate mode &key history-position deadline
-                                                           &allow-other-keys)
-                (declare (ignore configuration mode))
-                (incf calls)
-                (test-assert (eq candidate entry) "checkpoint recovery retains its endpoint identity")
-                (when (eq phase ':initial) (error cause))
-                (when (> calls 1)
-                  (test-assert (and (= history-position 5) (null deadline))
-                               "replacement attachment retains history and gets its own deadline")
-                  (error cause))
-                (values '(:checkpoint-reconnect :id "transition" :history-position 5)
-                        (list :cleanup-failures prior))))
-        (list 'localgroup--wait-for-checkpoint-entry
-              (lambda (candidate transition &key configuration)
-                (declare (ignore configuration))
-                (incf waits)
-                (test-assert (and (eq candidate entry) (string= transition "transition"))
-                             "only the explicit checkpoint transition is rediscovered")
-                (when (eq phase ':wait) (error cause))
-                entry)))
-       (lambda ()
-         (if (eq phase ':initial)
-             (test-assert
-              (and (eq (handler-case (localgroup-attach-record nil entry ':control)
-                         (error (condition) condition)) cause)
-                   (= calls 1) (zerop waits))
-              "initial refusal preserves its exact condition without checkpoint recovery")
-             (multiple-value-bind (result metadata)
-                 (localgroup-attach-record nil entry ':control)
-               (test-assert
-                (and (eq (first result) ':attachment-lost)
-                     (eq (getf (rest result) :kind) ':transport-failure)
-                     (equal (getf (rest result) :stage) "checkpoint-reconnect")
-                     (equal (getf (rest result) :cleanup-failures) prior)
-                     (equal (getf metadata :cleanup-failures) prior)
-                     (= waits 1) (= calls (if (eq phase ':wait) 1 2))
-                     (not (search "private" (write-to-string (list result metadata)))))
-                "post-ACK checkpoint failures retain recovery and prior cleanup metadata")))))))
+  "End a view as a lost attachment when its checkpoint reconnect fails, and signal an initial refusal as itself."
+  (dolist (phase '(:wait :reattach))
+    (client-recovery-tests--call-with-session
+     (lambda (configuration application session)
+       (declare (ignore application))
+       (let ((entry (cons (image-daemon:daemon-runtime-registry-pathname session)
+                          (localgroup--registry-record session)))
+             (cause (make-condition (if (eq phase ':wait) 'localgroup-error 'localgroup-client-rejected)
+                                    :operation ':attach
+                                    :message   "Injected checkpoint failure."))
+             (waits nil)
+             (calls nil))
+         (world-server-tests--call-with-terminal-client
+          configuration (image-daemon:daemon-runtime-identifier session)
+          (lambda (type await-exit view)
+            (declare (ignore type))
+            ;; The reconnect runs on a thread of its own, so what it asks is checked afterwards.
+            (test-call-with-function-replacements
+             (list
+              (list 'localgroup--wait-for-checkpoint-entry
+                    (lambda (candidate transition &key &allow-other-keys)
+                      (push (list (first candidate) transition) waits)
+                      (when (eq phase ':wait)
+                        (error cause))
+                      entry))
+              (list 'localgroup-client-connect
+                    (lambda (candidate &key after-sequence &allow-other-keys)
+                      (push (list (first candidate) (integerp after-sequence)) calls)
+                      (error cause))))
+             (lambda ()
+               (channel-subscription-event view (list :checkpoint-reconnect :id "transition"))
+               (localgroup-client-close (channel-subscription-connection view))
+               (multiple-value-bind (exit ended-p) (funcall await-exit)
+                 (test-assert
+                  (and ended-p
+                       (eq (first exit) ':attachment-lost)
+                       (eq (getf (rest exit) :kind) ':transport-failure)
+                       (search "Injected checkpoint failure." (getf (rest exit) :message)))
+                  (format nil "a checkpoint reconnect that fails in its ~(~A~) ends the view as a lost attachment naming the failure"
+                          phase)))
+               (test-assert (equal waits (list (list (first entry) "transition")))
+                            "only the announced checkpoint transition is rediscovered, once")
+               (test-assert (equal calls (unless (eq phase ':wait)
+                                           (list (list (first entry) t))))
+                            "a replacement attachment keeps its endpoint and resumes from its cursor")))))))))
+  (client-recovery-tests--call-with-session
+   (lambda (configuration application session)
+     (declare (ignore application))
+     (let* ((screen (localgroup-screen-create
+                     :terminal (make-instance 'queued-recording-terminal :rows 31 :columns 91)))
+            (view   (channel-view-create
+                     configuration (image-daemon:daemon-runtime-identifier session) screen))
+            (cause  (make-condition 'localgroup-client-rejected
+                                    :operation ':client
+                                    :message   "Injected initial refusal."))
+            (calls  0)
+            (waits  0))
+       (test-call-with-function-replacements
+        (list (list 'terminal--terminal-mode-or-nil
+                    (lambda (candidate)
+                      (declare (ignore candidate))
+                      t))
+              (list 'localgroup-client-connect
+                    (lambda (&rest arguments)
+                      (declare (ignore arguments))
+                      (incf calls)
+                      (error cause)))
+              (list 'localgroup--wait-for-checkpoint-entry
+                    (lambda (&rest arguments)
+                      (declare (ignore arguments))
+                      (incf waits)
+                      (error "An initial refusal must not wait for a checkpoint."))))
+        (lambda ()
+          (test-assert
+           (and (eq (handler-case (channel-view-run view)
+                      (error (condition)
+                        condition))
+                    cause)
+                (= calls 1)
+                (zerop waits))
+           "an initial refusal is signalled as itself, without checkpoint recovery")))
+       (localgroup-screen-close screen))))
   nil)
 
 (-> test-main-world-client-cleanup-cause nil null)
@@ -209,123 +221,76 @@
             "a rendering failure leaves explicit attachment recovery choices"))))))
   nil)
 
-(-> test-localgroup-client-cleanup-cause () null)
-(defun test-localgroup-client-cleanup-cause ()
-  "Retain intentional exits and original loss despite independent screen/mode cleanup errors."
-  (dolist (kind '(:detached :application-exit :unexpected-eof))
-    (let* ((terminal (make-instance 'scripted-terminal :columns 80))
-           (screen   (localgroup-screen-create :terminal terminal))
-           (exit     (when (eq kind ':application-exit) '(:status 7 :message "finished")))
-           (attempts nil))
-      (test-call-with-function-replacements
-       (list (list 'localgroup-screen-create
-                   (lambda (&rest arguments) (declare (ignore arguments)) screen))
-             (list 'image-daemon:daemon-attach-client-run
-                   (lambda (&rest arguments)
-                     (declare (ignore arguments))
-                     (values exit (list :kind kind :message "original loss"))))
-             (list 'localgroup-screen-close
-                   (lambda (candidate) (declare (ignore candidate))
-                     (push "screen" attempts) (error "private screen payload")))
-             (list 'mode-tracking-output-stream-restore
-                   (lambda (output) (declare (ignore output))
-                     (push "terminal-mode" attempts) (error "private mode payload"))))
-       (lambda ()
-         (multiple-value-bind (result metadata)
-             (localgroup--attach-terminal-loop (make-string-input-stream "") terminal ':control)
-           (test-assert
-            (and (equal (reverse attempts) '("screen" "terminal-mode"))
-                 (= (length (getf metadata :cleanup-failures)) 2)
-                 (if (eq kind ':unexpected-eof)
-                     (and (eq (first result) ':attachment-lost)
-                          (eq (getf (rest result) :kind) kind)
-                          (equal (getf (rest result) :message) "original loss"))
-                     (equal result exit))
-                 (not (search "private" (write-to-string (list result metadata)))))
-            "cleanup attempts every stage, retains the original outcome, and reports class-only metadata"))))))
-  nil)
-
-(defclass client-cleanup-failing-stream (trivial-gray-streams:fundamental-character-input-stream)
-  ((condition :initarg :condition :reader client-cleanup-failing-stream-condition
-              :documentation "The injected stream cleanup condition."))
-  (:documentation "A transport fixture whose close fails without owning a native descriptor."))
-
-(defmethod close ((stream client-cleanup-failing-stream) &key abort)
-  "Inject the independently reported stream cleanup failure."
-  (declare (ignore abort))
-  (error (client-cleanup-failing-stream-condition stream)))
-
 (-> test-localgroup-client-accepted-setup-failure () null)
 (defun test-localgroup-client-accepted-setup-failure ()
-  "Recover after acknowledgment while preserving refusal causes and independent cleanup diagnostics."
-  (with-test-configuration (configuration)
-    (dolist (stage '(:refusal :attached-callback :terminal-start :resize-watch :receive))
-      (let* ((terminal      (make-instance 'scripted-terminal :columns 80))
-             (screen        (localgroup-screen-create :terminal terminal))
-             (cause         (make-condition 'localgroup-error :operation ':attach :message "private original payload"))
-             (cleanup-cause (make-condition 'simple-error :format-control "private cleanup payload"))
-             (stream        (make-instance 'client-cleanup-failing-stream :condition cleanup-cause))
-             (socket        (make-instance 'sb-bsd-sockets:inet-socket :type ':stream :protocol ':tcp))
-             (close-socket  (symbol-function 'sb-bsd-sockets:socket-close))
-             (entry         (cons #P"/unused/attachment.sexp"
-                                  '(:localgroup-session :session-id "bfirst1" :port 1 :token "fixture"))))
-        (unwind-protect
-             (test-call-with-function-replacements
-              (list
-               (list 'localgroup-client-screen-create
-                     (lambda (&rest arguments) (declare (ignore arguments)) screen))
-               (list 'terminal--terminal-mode-or-nil
-                     (lambda (candidate) (declare (ignore candidate)) t))
-               (list 'localgroup-screen-pane-size
-                     (lambda (candidate) (declare (ignore candidate)) (values 24 80)))
-               (list 'localgroup-screen-active-p
-                     (lambda (candidate) (declare (ignore candidate)) t))
-               (list 'daemon-connect
-                     (lambda (port) (declare (ignore port)) (values socket stream)))
-               (list 'daemon-write-packet
-                     (lambda (&rest arguments) (declare (ignore arguments)) nil))
-               (list 'daemon-read-response
-                     (lambda (&rest arguments)
-                       (declare (ignore arguments))
-                       (if (eq stage ':refusal) (error cause) '(:attached :history ""))))
-               (list 'terminal-start
-                     (lambda (candidate) (declare (ignore candidate))
-                       (when (eq stage ':terminal-start) (error cause))))
-               (list 'platform-watch-terminal-resize
-                     (lambda (&rest arguments)
-                       (declare (ignore arguments))
-                       (if (eq stage ':resize-watch) (error cause) ':watch)))
-               (list 'platform-unwatch-terminal-resize
-                     (lambda (&rest arguments) (declare (ignore arguments)) (error cleanup-cause)))
-               (list 'localgroup-client-screen-release
-                     (lambda (candidate) (declare (ignore candidate)) (error cleanup-cause)))
-               (list 'sb-bsd-sockets:socket-close
-                     (lambda (&rest arguments) (declare (ignore arguments)) (error cleanup-cause)))
-               (list 'localgroup--attach-terminal-loop
-                     (lambda (&rest arguments)
-                       (declare (ignore arguments))
-                       (values '(:attachment-lost :kind :unexpected-eof :message "original loss")
-                               '(:kind :unexpected-eof)))))
-              (lambda ()
-                (multiple-value-bind (result metadata)
-                    (handler-case
-                        (localgroup--attach-record-once
-                         configuration entry ':control
-                         :attached-function (lambda ()
-                                              (when (eq stage ':attached-callback) (error cause))))
-                      (error (condition) condition))
-                  (if (eq stage ':refusal)
-                      (test-assert (eq result cause)
-                                   "independent teardown failures never replace the original refusal")
-                      (test-assert
-                       (and (eq (first result) ':attachment-lost)
-                            (eq (getf (rest result) :kind)
-                                (if (eq stage ':receive) ':unexpected-eof ':callback-failure))
-                            (= (length (getf metadata :cleanup-failures))
-                               (if (eq stage ':receive) 4 3))
-                            (not (search "private" (write-to-string (list result metadata)))))
-                       "post-ack setup failures become loss while independent cleanup remains secondary")))))
-          (funcall close-socket socket :abort t)))))
+  "Signal a view's setup failure after its channel accepted it as itself, and release the channel, whatever cleanup fails."
+  (client-recovery-tests--call-with-session
+   (lambda (configuration application session)
+     (dolist (stage '(:terminal-start :resize-watch :attached-callback))
+       (let* ((terminal       (make-instance 'queued-recording-terminal :rows 31 :columns 91))
+              (screen         (localgroup-screen-create :terminal terminal))
+              (view           (channel-view-create
+                               configuration (image-daemon:daemon-runtime-identifier session) screen))
+              (cause          (make-condition 'localgroup-error :operation ':attach
+                                                                :message   "Injected setup failure."))
+              (cleanup-cause  (make-condition 'simple-error :format-control "Injected cleanup failure."))
+              (start-terminal (symbol-function 'terminal-start))
+              (stop-ui        (symbol-function 'terminal-ui-stop))
+              (accepted-p     nil)
+              (cleanups       nil))
+         (test-call-with-function-replacements
+          (list
+           (list 'terminal--terminal-mode-or-nil
+                 (lambda (candidate)
+                   (declare (ignore candidate))
+                   t))
+           (list 'terminal-start
+                 (lambda (candidate)
+                   (when (eq candidate terminal)
+                     (setf accepted-p (application-clients-controlled-p application))
+                     (when (eq stage ':terminal-start)
+                       (error cause)))
+                   (funcall start-terminal candidate)))
+           (list 'platform-watch-terminal-resize
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   (if (eq stage ':resize-watch)
+                       (error cause)
+                       ':watch)))
+           (list 'platform-unwatch-terminal-resize
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   (push ':resize-watch cleanups)
+                   (error cleanup-cause)))
+           (list 'terminal-ui-stop
+                 (lambda (candidate)
+                   (cond
+                     ((eq candidate (channel-view-ui view))
+                      (push ':ui cleanups)
+                      (error cleanup-cause))
+                     (t
+                      (funcall stop-ui candidate))))))
+          (lambda ()
+            (test-assert
+             (eq (handler-case
+                     (channel-view-run view
+                                       :attached-function
+                                       (lambda ()
+                                         (when (eq stage ':attached-callback)
+                                           (error cause))))
+                   (error (condition)
+                     condition))
+                 cause)
+             (format nil "a failure of the ~(~A~) after acceptance is signalled as itself" stage))))
+         (test-assert (and accepted-p
+                           (member ':ui cleanups)
+                           (eq (not (null (member ':resize-watch cleanups)))
+                               (eq stage ':attached-callback)))
+                      "the channel had accepted the view, and every cleanup the view owes is attempted")
+         (test-assert (and (test-localgroup--await-served session)
+                           (not (application-clients-attached-p application)))
+                      "the failed view releases its channel")
+         (localgroup-screen-close screen)))))
   nil)
 
 (-> test-world-client-attachment-recovery () null)

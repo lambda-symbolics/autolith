@@ -518,36 +518,34 @@ exchange without scrolling through reasoning and tool activity.")
   "The dim hint shown on the inbox's prompt row while input is empty.")
 
 (-> application-terminal-ui-create
-    (&key (:relay-presentation list) (:configuration (option configuration)) (:inbox-p boolean))
+    (&key (:client-pane list) (:configuration (option configuration)) (:inbox-p boolean))
     terminal-ui)
-(defun application-terminal-ui-create (&key relay-presentation configuration inbox-p)
-  "Create the UI of a session: a terminal UI at the current terminal size, or a channel's presentation.
+(defun application-terminal-ui-create (&key client-pane configuration inbox-p)
+  "Create the UI of a session: a terminal UI on this process's terminal, or a presentation.
 
 INBOX-P gives it the inbox's prompt hint instead of the one inviting a question.
 
-RELAY-PRESENTATION marks a channel a world server hosts. Such a channel has
-no terminal: its clients render what it publishes, and :ROWS and :COLUMNS say
-how large the client that opened it is. CONFIGURATION, when given, lets a
-terminal's composer complete @ participant names from its world."
+A session without a terminal of its own has a presentation, which its clients
+render. CLIENT-PANE marks a channel a world server hosts and states the :ROWS
+and :COLUMNS of the client that opened it; a detached session takes them from
+its startup record. CONFIGURATION, when given, lets a terminal's composer
+complete @ participant names from its world."
   (let ((placeholder (if inbox-p *application-inbox-placeholder* *application-placeholder*))
-        (padding     (if configuration (config :prompt-padding configuration) 1)))
-    (if relay-presentation
-        (channel-presentation-create :rows           (getf relay-presentation :rows)
-                                     :columns        (getf relay-presentation :columns)
+        (padding     (if configuration (config :prompt-padding configuration) 1))
+        (pane        (or client-pane (rest *localgroup-startup-record*))))
+    (if pane
+        (channel-presentation-create :rows           (getf pane :rows)
+                                     :columns        (getf pane :columns)
                                      :prompt         *application-prompt*
                                      :prompt-padding padding
                                      :placeholder    placeholder)
         (multiple-value-bind (rows columns)
             (terminal-current-size)
           (terminal-ui-create
-           :terminal
-           (localgroup-terminal-create
-            :direct-terminal
-            (unless (localgroup-startup-detached-p)
-              (stream-terminal-create
-               :rows                  rows
-               :columns               columns
-               :input-file-descriptor (terminal-standard-input-file-descriptor))))
+           :terminal                (stream-terminal-create
+                                     :rows                  rows
+                                     :columns               columns
+                                     :input-file-descriptor (terminal-standard-input-file-descriptor))
            :prompt                  *application-prompt*
            :prompt-padding          padding
            :message-header-prefixes *application-message-header-prefixes*
@@ -1253,12 +1251,12 @@ Validate PREVIOUS-PROVIDER against the effective registrations before replacing 
           (:permission-mode (member :ask :auto :sandboxed :full-access))
           (:pristine-p boolean) (:installation-provenance installation-provenance)
           (:update-availability (option update-availability))
-          (:recovering-p boolean) (:relay-presentation list) (:hurry-up-p boolean))
+          (:recovering-p boolean) (:client-pane list) (:hurry-up-p boolean))
     application)
 (defun application--make-connected-application
     (&key configuration conversation conversation-lease provider tool-registry worker
           permission-state (permission-mode ':ask) pristine-p installation-provenance
-          update-availability recovering-p relay-presentation hurry-up-p)
+          update-availability recovering-p client-pane hurry-up-p)
   "Construct an application around caller-owned resources without initializing history.
 The caller must retain the result before fallible connection initialization."
   (let* ((agent (agent-create :configuration configuration
@@ -1268,9 +1266,9 @@ The caller must retain the result before fallible connection initialization."
                               :hurry-up-p    hurry-up-p
                               :worker        worker))
          (ui    (application-terminal-ui-create
-                 :relay-presentation relay-presentation
-                 :configuration      configuration
-                 :inbox-p            (conversation-inbox-p conversation))))
+                 :client-pane   client-pane
+                 :configuration configuration
+                 :inbox-p       (conversation-inbox-p conversation))))
     (make-instance 'application
                    :configuration           configuration
                    :conversation            conversation
@@ -1319,20 +1317,20 @@ The caller owns APPLICATION and its resources if any initialization step fails."
                         (:pristine-p boolean)
                         (:recovery-p boolean)
                         (:mutation-replay-failures list)
-                        (:relay-presentation list)
+                        (:client-pane list)
                         (:tool-registry-function (option function)))
     application)
 (defun application--build
     (configuration &key conversation-id (permission-mode ':ask) pristine-p
-                        recovery-p mutation-replay-failures relay-presentation
+                        recovery-p mutation-replay-failures client-pane
                         tool-registry-function)
   "Build one connected application on bootstrapped CONFIGURATION.
 
 Load CONVERSATION-ID if supplied; otherwise try automatic recovery when
 RECOVERY-P is true, falling back to a fresh conversation.
 MUTATION-REPLAY-FAILURES are the private image replay diagnostics to report.
-RELAY-PRESENTATION is a plist of :ROWS, :COLUMNS and :STYLED-P for a relay
-terminal awaiting a client. Without it, use this process's terminal setup.
+CLIENT-PANE is a plist of the :ROWS and :COLUMNS of the client a hosted
+channel opens for. Without it, use this process's terminal setup.
 TOOL-REGISTRY-FUNCTION, called with the conversation's configuration, builds
 the tool registry instead of the ordinary one, as for an editor's own MCP
 servers. Release acquired resources if construction fails."
@@ -1393,7 +1391,7 @@ servers. Release acquired resources if construction fails."
                       :installation-provenance provenance
                       :update-availability     update
                       :recovering-p            (not (null recovering-conversation-p))
-                      :relay-presentation      relay-presentation)
+                      :client-pane             client-pane)
                      (application-mutation-replay-failures application)
                      mutation-replay-failures)
                (application--initialize-connection

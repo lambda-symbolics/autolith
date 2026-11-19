@@ -19,8 +19,8 @@
   "Copy TEXT for UI's user and report how, returning whether any route accepted it.
 
 The host clipboard and the terminal's OSC 52 route both receive TEXT, since
-only the terminal reaches the user's own machine over SSH or a localgroup
-relay. A notice names the route that worked, or the host failure."
+only the terminal reaches the user's own machine over SSH. A notice names
+the route that worked, or the host failure."
   (let ((lines (1+ (count #\Newline (string-right-trim '(#\Newline) text)))))
     (multiple-value-bind (host-p terminal-p host-condition)
         (clipboard-copy-text text :terminal-writer (terminal-ui-clipboard-writer ui))

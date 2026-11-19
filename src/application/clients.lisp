@@ -46,6 +46,12 @@
     :reader        channel-client-presents-p
     :type          boolean
     :documentation "Whether the client renders the channel's presentation, as a terminal client does.")
+   (watches-p
+    :initarg       :watches-p
+    :initform      nil
+    :reader        channel-client-watches-p
+    :type          boolean
+    :documentation "Whether a client that presents only watches: the channel takes no input from it and is not laid out for it.")
    (pid
     :initarg       :pid
     :initform      nil
@@ -172,15 +178,26 @@ streamed text and status, which it presents its own way."
   (eq (eq (first event) ':ui)
       (channel-client-presents-p client)))
 
-(-> application-clients-presenting-p (application) boolean)
-(defun application-clients-presenting-p (application)
-  "Return true while a client that renders the channel's presentation follows APPLICATION's channel."
-  (not (null (some #'channel-client-presents-p (application-clients application)))))
+(-> channel-client-controls-p (channel-client) boolean)
+(defun channel-client-controls-p (client)
+  "Return true when CLIENT presents the channel to someone who can answer it, not only watch it."
+  (and (channel-client-presents-p client)
+       (not (channel-client-watches-p client))))
+
+(-> application-clients-controlled-p (application &key (:except (option channel-client))) boolean)
+(defun application-clients-controlled-p (application &key except)
+  "Return true while a client whose user can answer the channel presents APPLICATION's channel.
+
+EXCEPT, a client that is leaving, does not count."
+  (not (null (some (lambda (client)
+                     (and (not (eq client except))
+                          (channel-client-controls-p client)))
+                   (application-clients application)))))
 
 (-> application-clients-note-controller (application channel-client) null)
 (defun application-clients-note-controller (application client)
-  "Remember presenting CLIENT as the one its user is at: questions and channel switches go to it."
-  (when (channel-client-presents-p client)
+  "Remember CLIENT as the one its user is at, when it controls: questions and channel switches go to it."
+  (when (channel-client-controls-p client)
     (let ((hub (application-client-hub application)))
       (with-lock-held ((client-hub-lock hub))
         (setf (client-hub-controller hub) client))))
@@ -188,16 +205,17 @@ streamed text and status, which it presents its own way."
 
 (-> application-controlling-client (application) (option channel-client))
 (defun application-controlling-client (application)
-  "Return the presenting client APPLICATION's user is at, or NIL when none presents the channel.
+  "Return the client APPLICATION's user is at, or NIL when none controls the channel.
 
-That is the one that attached or sent a command last, while it stays attached,
-and otherwise the presenting client that attached last."
+That is the controlling client that attached or sent a command last, while it
+stays attached, and otherwise the one that attached last. A client that only
+watches is never it."
   (let ((hub (application-client-hub application)))
     (with-lock-held ((client-hub-lock hub))
       (let ((controller (client-hub-controller hub)))
         (if (and controller (member controller (client-hub-clients hub)))
             controller
-            (find-if #'channel-client-presents-p (client-hub-clients hub)))))))
+            (find-if #'channel-client-controls-p (client-hub-clients hub)))))))
 
 (-> channel-client-tell (channel-client keyword &rest t) boolean)
 (defun channel-client-tell (client operation &rest fields)
@@ -274,7 +292,7 @@ it, so the word reaches a client that reads before the endpoint closes."
 
 (-> application-presentation-connect (application) null)
 (defun application-presentation-connect (application)
-  "Send what APPLICATION's presentation publishes to its clients, and let it ask whether one presents."
+  "Send what APPLICATION's presentation publishes to its clients, and let it ask whether someone can answer it."
   (let ((presentation (application-presentation application)))
     (when presentation
       (setf (channel-presentation-publish-function presentation)
@@ -291,7 +309,7 @@ it, so the word reaches a client that reads before the endpoint closes."
                   (values nil 0 nil)))
             (presentation-terminal-interactive-function (terminal-ui-terminal presentation))
             (lambda ()
-              (application-clients-presenting-p application)))))
+              (application-clients-controlled-p application)))))
   nil)
 
 (-> application-clients-add
@@ -472,16 +490,17 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
 (-> channel-client-create
     (&key (:socket t) (:stream stream) (:transport-lock t) (:name string) (:approves-p boolean)
           (:evaluates-p boolean) (:cancels-evaluation-p boolean) (:presents-p boolean)
-          (:pid (option (integer 1))))
+          (:watches-p boolean) (:pid (option (integer 1))))
     channel-client)
 (defun channel-client-create
     (&key socket stream transport-lock (name "client") (approves-p t) evaluates-p cancels-evaluation-p
-          presents-p pid)
+          presents-p watches-p pid)
   "Create a structured client and its deferred output attachment."
   (let ((client (make-instance 'channel-client :name name :approves-p approves-p
                                                :evaluates-p          evaluates-p
                                                :cancels-evaluation-p cancels-evaluation-p
                                                :presents-p           presents-p
+                                               :watches-p            watches-p
                                                :pid                  pid)))
     (setf (channel-client-attachment client)
           (make-instance 'channel-client-transport

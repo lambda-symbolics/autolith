@@ -66,8 +66,8 @@ never apply each other's resizes.")
   (:documentation "Take TERMINAL's whole screen for painted frames and return a restoration token.
 
 A terminal written directly enters the alternate buffer with keyboard and
-mouse reporting; a relayed terminal leaves that to its clients, which take
-their screens with the first frame."))
+mouse reporting. A channel's presentation and a client's pane have no screen
+of their own: the client's screen takes its terminal with the first frame."))
 
 (defgeneric terminal-screen-leave (terminal token)
   (:documentation "Give TERMINAL's screen back, restoring the native mode TOKEN captured on entry."))
@@ -76,10 +76,10 @@ their screens with the first frame."))
     (terminal painter rows &key cursor-row cursor-column cursor-visible-p whole-screen-p)
   (:documentation "Show display ROWS as TERMINAL's whole screen with the cursor at CURSOR-ROW and CURSOR-COLUMN.
 
-PAINTER rewrites only the rows that changed on a terminal written directly;
-a relayed terminal sends its clients the rows that changed since the frame
-each of them holds. WHOLE-SCREEN-P asks those clients to hide their side
-panels while such frames show, as during the boot screen."))
+PAINTER rewrites only the rows that changed on a terminal written directly.
+A channel's presentation sends ROWS to its clients as a page, and a client's
+pane hands them to the client's screen. WHOLE-SCREEN-P asks that screen to
+hide its side panel while such frames show, as during the boot screen."))
 
 (defgeneric terminal-screen-invalidate (terminal painter)
   (:documentation "Forget what TERMINAL's screen shows, so the next paint rewrites it completely."))

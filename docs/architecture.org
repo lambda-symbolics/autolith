@@ -141,7 +141,7 @@ a partially live identity set, or resumes cleanup for a published deletion.
 | argo | JSON value model, strict RFC 8259 decoding, validated encoding and limits | Provider wire items, tool arguments and conversation replay |
 | sexp-store | Validated transactions, segmented logs and sidecars | Record schemas, scope, lifecycle and corruption policy |
 | clinker-transcript | Ordered projection and reconciliation | Conversation meaning and durable repair decisions |
-| image-daemon/runtime | Service registry, relays, attachment queues and shutdown | Conversation leases, steering, handoff and input-reader coordination |
+| image-daemon/runtime | Service registry, attachment queues and shutdown | Conversation leases, steering, handoff and input-reader coordination |
 | clinedi | Modal sessions, editor/history state and terminal transports | Completion, submission, paste and interruption policy |
 | sito | Fuzzy scores, match positions and ranking of short strings | The sidebar's channel filter and @mention completion |
 | prezdivka | Readable two-word names, random or fixed by a key, and a free one among taken names | The handle a new agent starts with |
@@ -168,10 +168,11 @@ operation and holds the client side of a connection,
 replay and portable values, and =src/application/approvals.lisp= the approval
 offered to every approving client at once.
 
-The server composes no rows. A hosted channel's UI is a
-=channel-presentation= (=src/terminal/presentation.lisp=): the application
-sets it as it sets any terminal UI, and each change reaches the clients that
-said =:presents-p= as one =(:ui :operation OPERATION ...)= event. Transcript
+The server composes no rows. A session without a terminal of its own, which
+is every hosted channel and a detached rescue session, has a
+=channel-presentation= (=src/terminal/presentation.lisp=) as its UI: the
+application sets it as it sets any terminal UI, and each change reaches the
+clients that said =:presents-p= as one =(:ui :operation OPERATION ...)= event. Transcript
 entries and records travel as styled spans, streamed Markdown as source,
 and the live state (activity, context, running commands and agents, pending
 inputs, notices) as values with ages in seconds. The presentation keeps a
@@ -195,6 +196,14 @@ answer it with a question. A picker a command opens runs in the channel:
 the client shows its candidates and, while it is open, sends its keys with
 =(:event ...)=. The line such a reader edits, as for a restart's argument,
 shows in the client's composer while the user's own draft is set aside.
+
+A view opened read-only also says =:watches-p=. The channel is not laid out
+for its pane, asks it nothing and refuses its input, so it never disturbs the
+terminal that controls the channel. A view that leaves on purpose, by a
+detach or a switch to another channel, says =(:detach)= first. Hosted
+channels outlive their clients either way; a session that serves one
+terminal, such as a detached rescue session, ends when its last controlling
+client is lost without that word.
 
 Two pages still take the whole pane and are laid out where their data is,
 in the channel: the memory manager and the onboarding tour. They paint

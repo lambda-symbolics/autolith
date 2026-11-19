@@ -366,7 +366,7 @@
                                            (null (uiop:directory-files (channel--removal-root configuration) "*.sexp"))
                                            (or (null observer)
                                                (and (not (localgroup-client-connection-closed-p observer))
-                                                    (application-clients-presenting-p application))))
+                                                    (application-clients-controlled-p application))))
                                       "a refusal preserves the channel, other clients, work and usable inbox")
                          (test-assert (if (eq mode ':timeout)
                                           (null refusals)

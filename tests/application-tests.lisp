@@ -344,13 +344,6 @@
   (:documentation
    "A recording terminal accepting deterministic events from other threads."))
 
-(defclass relay-recording-terminal (queued-recording-terminal stream-terminal)
-  ()
-  (:default-initargs                       :input-stream          (make-string-input-stream "")
-                    :output-stream         (make-broadcast-stream)
-                    :input-file-descriptor -1)
-  (:documentation "A queued recording terminal using the real direct-stream relay adapter."))
-
 (defmethod terminal-input-ready-p ((terminal queued-recording-terminal))
   "Return true when TERMINAL has a thread-safely queued event."
   (with-lock-held ((queued-recording-terminal-event-lock terminal))
@@ -1129,15 +1122,9 @@
 (defun test-interrupt-open-instruction ()
   "Test direct quit, interrupt and EOF present one reopen command for durable conversations."
   (with-test-configuration (configuration)
-    (labels ((exit-output (conversation events wrapped-p &key reason)
+    (labels ((exit-output (conversation events &key reason)
                "Run CONVERSATION through EVENTS and verify its actual exit REASON."
-               (let* ((terminal (make-instance (if wrapped-p
-                                                   'relay-recording-terminal
-                                                   'queued-recording-terminal)
-                                               :columns 80))
-                      (served   (if wrapped-p
-                                    (localgroup-terminal-create :direct-terminal terminal)
-                                    terminal))
+               (let* ((terminal    (make-instance 'queued-recording-terminal :columns 80))
                       (application
                         (make-instance 'application :configuration configuration
                                                     :conversation  conversation
@@ -1145,18 +1132,18 @@
                                                     :tool-registry (make-instance 'tool-registry)
                                                     :worker        nil
                                                     :agent         nil
-                                                    :ui            (terminal-ui-create :terminal served))))
+                                                    :ui            (terminal-ui-create :terminal terminal))))
                  (setf (queued-recording-terminal-events terminal) events)
-                 (when (and wrapped-p (equal events '(:interrupt)) (conversation-persisted-p conversation))
+                 (when (and (equal events '(:interrupt)) (conversation-persisted-p conversation))
                    (test-assert
                     (search (application--open-command application)
                             (application-input-controller--forced-exit-message
                              (make-instance 'application-input-controller :application application
                                                                           :main-thread (current-thread))
                              ':turn-cancellation))
-                    "A directly wrapped terminal includes reopen advice in its forced-exit notice"))
+                    "A session on its own terminal includes reopen advice in its forced-exit notice"))
                  (test-assert (eq (application-serve application) reason)
-                              (format nil "The direct terminal exits through ~S, wrapped: ~S" reason wrapped-p))
+                              (format nil "The direct terminal exits through ~S" reason))
                  (recording-terminal-output terminal)))
 
              (occurrences (text substring)
@@ -1164,23 +1151,20 @@
                (loop for start = 0 then (+ position (length substring))
                      for position = (search substring text :start2 start)
                      while position count position)))
-      (dolist (case '((:interrupt (:interrupt) nil)
-                      (:quit ((:insert "(close)") :submit) nil)
-                      (:end-of-input (:end-of-input) nil)
-                      (:interrupt (:interrupt) t)
-                      (:quit ((:insert "(close)") :submit) t)
-                      (:end-of-input (:end-of-input) t)))
-        (destructuring-bind (reason events wrapped-p) case
+      (dolist (case '((:interrupt (:interrupt))
+                      (:quit ((:insert "(close)") :submit))
+                      (:end-of-input (:end-of-input))))
+        (destructuring-bind (reason events) case
           (let* ((durable (conversation-create configuration
-                                               :identifier (format nil "resume-~(~A~)-~:[bare~;wrapped~]" reason wrapped-p)))
+                                               :identifier (format nil "resume-~(~A~)" reason)))
                  (empty   (conversation-create configuration
-                                               :identifier (format nil "discard-~(~A~)-~:[bare~;wrapped~]" reason wrapped-p)))
+                                               :identifier (format nil "discard-~(~A~)" reason)))
                  (command (channel-open-command (conversation-identifier durable))))
             (conversation-append-user-message durable "keep this conversation")
-            (let ((output (exit-output durable (copy-tree events) wrapped-p :reason reason)))
+            (let ((output (exit-output durable (copy-tree events) :reason reason)))
               (test-assert (= 1 (occurrences output command))
                            (format nil "Direct ~S prints the exact reopen command once" reason)))
-            (let ((output (exit-output empty (copy-tree events) wrapped-p :reason reason)))
+            (let ((output (exit-output empty (copy-tree events) :reason reason)))
               (test-assert (not (search "autolith open" output))
                            (format nil "Direct ~S gives no reopen command for an empty channel" reason))
               (test-assert (not (conversation-storage-occupied-p (conversation-pathname empty)))
@@ -3862,8 +3846,8 @@
                        (declare (ignore arguments))
                        configuration))
                (list 'application-terminal-ui-create
-                     (lambda (&key relay-presentation configuration inbox-p)
-                       (declare (ignore relay-presentation configuration inbox-p))
+                     (lambda (&key client-pane configuration inbox-p)
+                       (declare (ignore client-pane configuration inbox-p))
                        (terminal-ui-create
                         :terminal
                         (make-instance 'recording-terminal :columns 80)))))
@@ -8597,8 +8581,8 @@
                    (lambda (previous immutable-p)
                      (configuration-copy previous :immutable-p immutable-p)))
              (list 'application-terminal-ui-create
-                   (lambda (&key relay-presentation configuration inbox-p)
-                     (declare (ignore relay-presentation configuration inbox-p))
+                   (lambda (&key client-pane configuration inbox-p)
+                     (declare (ignore client-pane configuration inbox-p))
                      (terminal-ui-create
                       :terminal (make-instance 'recording-terminal :columns 72))))
              (list 'application--create-tool-registry
@@ -8968,8 +8952,8 @@
                           :immutable-p       immutable-p)))
                       (list
                        'application-terminal-ui-create
-                       (lambda (&key relay-presentation configuration inbox-p)
-                         (declare (ignore relay-presentation configuration inbox-p))
+                       (lambda (&key client-pane configuration inbox-p)
+                         (declare (ignore client-pane configuration inbox-p))
                          (terminal-ui-create
                           :terminal
                           (make-instance

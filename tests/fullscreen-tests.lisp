@@ -526,8 +526,8 @@
     (declare (ignore root))
     (setf (config :prompt-padding configuration) 0)
     (let ((ui (application-terminal-ui-create
-               :configuration      configuration
-               :relay-presentation '(:rows 18 :columns 60 :styled-p nil))))
+               :configuration configuration
+               :client-pane   '(:rows 18 :columns 60))))
       (test-assert (zerop (terminal-ui-prompt-padding ui))
                    "startup installs padding from the session configuration")))
   nil)
@@ -588,7 +588,7 @@
 
 (-> test-terminal-theme-defaults () null)
 (defun test-terminal-theme-defaults ()
-  "Acquire and restore theme defaults across startup, attachment and styled-output boundaries."
+  "Acquire and restore theme defaults across startup, a released screen and styled-output boundaries."
   (let ((*terminal-theme*       *terminal-theme*)
         (*terminal-style-table* *terminal-style-table*))
     (terminal-theme-install ':almighty)
@@ -601,19 +601,18 @@
           (with-terminal-ui (active ui)
             (test-assert (eql styled-p (not (null (search enter (recording-terminal-output terminal)))))
                          "only styled terminals impose the startup theme's default colors")
-            (setf (recording-terminal-chunks terminal) nil
-                  (terminal-interactive-p terminal) nil)
-            (terminal-ui-detach active)
-            (test-assert (eql styled-p (not (null (search leave (recording-terminal-output terminal)))))
-                         "detachment restores only the defaults the UI owns")
-            (setf (recording-terminal-chunks terminal) nil
-                  (terminal-interactive-p terminal) t)
-            (terminal-ui-resize active 50 :rows 14)
-            (test-assert (eql styled-p (not (null (search enter (recording-terminal-output terminal)))))
-                         "attachment repaint reacquires the selected defaults")
+            (when fullscreen-p
+              (setf (recording-terminal-chunks terminal) nil)
+              (terminal-ui-fullscreen-leave active)
+              (test-assert (eql styled-p (not (null (search leave (recording-terminal-output terminal)))))
+                           "releasing the screen restores only the defaults the UI owns")
+              (setf (recording-terminal-chunks terminal) nil)
+              (terminal-ui-resize active 50 :rows 14)
+              (test-assert (eql styled-p (not (null (search enter (recording-terminal-output terminal)))))
+                           "the repaint that takes the screen again reacquires the selected defaults"))
             (setf (recording-terminal-chunks terminal) nil))
           (test-assert (eql styled-p (not (null (search leave (recording-terminal-output terminal)))))
-                       "stopping restores owned defaults after attachment")))))
+                       "stopping restores owned defaults")))))
   nil)
 
 (-> test-terminal-theme-write-failure () null)
@@ -727,54 +726,46 @@
   (let* ((terminal (make-instance 'recording-terminal :columns 30 :rows 10))
          (ui       (fullscreen-test--ui terminal)))
     (with-terminal-ui (active ui)
-      (terminal-ui-append-finalized active ':before "before detach")
+      (terminal-ui-append-finalized active ':before "before release")
       (setf (terminal-interactive-p terminal) nil)
-      (terminal-ui-detach active)
-      (terminal-ui-append-finalized active ':detached "while detached")
-      (test-assert (not (fullscreen-terminal-ui-active-p active)) "detached output does not reenter")
+      (terminal-ui-fullscreen-leave active)
+      (terminal-ui-append-finalized active ':released "while released")
+      (test-assert (not (fullscreen-terminal-ui-active-p active))
+                   "output for a terminal nobody is at does not reenter")
       (setf (terminal-interactive-p terminal) t)
       (terminal-ui-resize active 40 :rows 12)
-      (test-assert (fullscreen-terminal-ui-active-p active) "attachment resize reenters fullscreen")
-      (test-assert (= 2 (fullscreen-test--chunk-count active)) "reattach retains transcript"))
+      (test-assert (fullscreen-terminal-ui-active-p active) "a resize of an interactive terminal reenters fullscreen")
+      (test-assert (= 2 (fullscreen-test--chunk-count active)) "reentering retains the transcript"))
     (let ((output (recording-terminal-output terminal)))
       (dolist (sequence (list (terminal-keyboard-enhancement-enable-sequence)
                              (terminal-keyboard-enhancement-disable-sequence)))
         (test-assert (= 2 (terminal-tests--substring-count sequence output))
-                     "detach and reattach balance alternate keyboard modes"))))
+                     "releasing and reentering balance alternate keyboard modes"))))
   nil)
 
 (-> test-terminal-fullscreen-relayed-wheel () null)
 (defun test-terminal-fullscreen-relayed-wheel ()
-  "Decode framed remote wheel packets and scroll the viewport across reattachment."
-  (let* ((terminal   (localgroup-terminal-create))
-         (packets    (with-output-to-string (stream)
-                       (dolist (event '((:scroll 0) (:scroll "up") (:scroll -1 :extra)
-                                        (:scroll -1) (:scroll 1)))
-                         (daemon-write-packet stream (list :event event)))))
-         (output     (make-string-output-stream))
-         (attachment (make-instance 'image-daemon:attachment :socket nil :mode ':control
-                                    :stream (make-two-way-stream (make-string-input-stream packets) output)))
-         (ui         (fullscreen-test--ui terminal)))
-    (image-daemon:relay-attach terminal attachment :rows 12 :columns 40 :styled-p nil :session-id "wheel-test")
-    (unwind-protect
-         (with-terminal-ui (active ui)
-           (terminal-ui-set-input active "draft")
-           (terminal-ui-append-finalized-batch
-            active (loop for index below 30 collect (list index (format nil "row ~D" index))))
-           (image-daemon:relay-read-attachment terminal attachment :event-validator #'localgroup--terminal-event-p)
-           (test-assert (terminal-input-ready-p terminal) "valid wheel packets reach the relay queue")
-           (terminal-ui-process-event active (terminal-read-event terminal))
-           (test-assert (= (- (clinedi:transcript-viewport-maximum-top
-                               (fullscreen-terminal-ui-viewport active))
-                              3)
-                           (fullscreen-test--top active))
-                        "remote wheel-up scrolls three rows")
-           (terminal-ui-process-event active (terminal-read-event terminal))
-           (test-assert (null (fullscreen-test--top active)) "remote wheel-down returns to the tail")
-           (test-assert (not (terminal-input-ready-p terminal)) "malformed wheel packets were rejected")
-           (test-assert (string= "draft" (line-editor-text (terminal-ui-editor active))) "wheel input preserves the draft"))
-      (image-daemon:relay-detach terminal attachment)
-      (terminal-ui-stop ui)))
+  "Take only well-formed wheel events from a client and scroll the viewport with them."
+  (let ((terminal (make-instance 'recording-terminal :columns 40 :rows 12))
+        (events   (remove-if-not #'localgroup--terminal-event-p
+                                 '((:scroll 0) (:scroll "up") (:scroll -1 :extra)
+                                   (:scroll -1) (:scroll 1)))))
+    (test-assert (equal events '((:scroll -1) (:scroll 1)))
+                 "malformed wheel events are rejected")
+    (with-terminal-ui (active (fullscreen-test--ui terminal))
+      (terminal-ui-set-input active "draft")
+      (terminal-ui-append-finalized-batch
+       active (loop for index below 30 collect (list index (format nil "row ~D" index))))
+      (terminal-ui-process-event active (first events))
+      (test-assert (= (- (clinedi:transcript-viewport-maximum-top
+                          (fullscreen-terminal-ui-viewport active))
+                         3)
+                      (fullscreen-test--top active))
+                   "a wheel-up event scrolls three rows")
+      (terminal-ui-process-event active (second events))
+      (test-assert (null (fullscreen-test--top active)) "a wheel-down event returns to the tail")
+      (test-assert (string= "draft" (line-editor-text (terminal-ui-editor active)))
+                   "wheel input preserves the draft")))
   (let ((terminal (make-instance 'recording-terminal :columns 40 :rows 12)))
     (with-terminal-ui (ui (fullscreen-test--ui terminal))
       (terminal-ui-fullscreen-leave ui)
@@ -786,48 +777,15 @@
                    "prompt reopening restores mouse reporting")))
   nil)
 
-(-> test-terminal-fullscreen-relay-startup-output () null)
-(defun test-terminal-fullscreen-relay-startup-output ()
-  "Test a detached fullscreen relay keeps transcript text out of its retained output."
-  (let* ((terminal   (localgroup-terminal-create))
-         (output     (make-string-output-stream))
-         (attachment (make-instance 'image-daemon:attachment
-                                    :socket nil :mode ':control
-                                    :stream (make-two-way-stream
-                                             (make-string-input-stream "") output)))
-         (ui         (fullscreen-test--ui terminal)))
-    (unwind-protect
-         (with-terminal-ui (active ui)
-           (terminal-ui-append-finalized-batch
-            active (loop for index below 30 collect (list index (format nil "row ~D" index))))
-           (test-assert (not (search "row 29" (image-daemon:relay-history-text terminal)))
-                        "a transcript appended before any client attaches is not retained as text")
-           (image-daemon:relay-attach terminal attachment
-                                      :rows 12 :columns 40 :styled-p nil
-                                      :session-id "startup-test")
-           (terminal-ui-open-prompt-block active)
-           (let ((history (image-daemon:relay-history-text terminal))
-                 (frames  (localgroup-tests--frames attachment)))
-             (test-assert (and (not (search (alternate-screen-enter-sequence) history))
-                               (not (search "row 29" history)))
-                          "an attached client receives no painted output as text")
-             (test-assert (and frames
-                               (getf (rest (first frames)) :complete-p)
-                               (some (lambda (frame) (localgroup-tests--frame-text-p frame "row 29"))
-                                     frames))
-                          "the attached client sees the transcript in a complete frame")))
-      (ignore-errors (image-daemon:relay-detach terminal attachment))
-      (terminal-ui-stop ui)))
-  nil)
-
 (-> test-detached-fullscreen-streaming () null)
 (defun test-detached-fullscreen-streaming ()
-  "Present a completed streamed answer exactly once after a late relay attach."
+  "Present a completed streamed answer exactly once to a client that attaches late."
   (dolist (initially-attached-p '(nil t))
     (with-test-configuration (configuration)
       (let* ((conversation (conversation-create configuration))
-             (terminal     (localgroup-terminal-create))
-             (ui           (fullscreen-test--ui terminal))
+             (ui           (application-terminal-ui-create
+                            :client-pane   '(:rows 36 :columns 67)
+                            :configuration configuration))
              (application  (make-instance 'application
                                           :configuration configuration
                                           :conversation  conversation
@@ -837,38 +795,43 @@
              (send-status  (callback-agent-observer-status-callback observer))
              (question     "May I proceed with the startup wrapper?")
              (answer       (format nil "The patch is verified.~%~A" question))
-             (attachment   nil))
-        (labels ((attach ()
-                   "Attach a fresh terminal client and apply its repaint dimensions."
-                   (setf attachment
-                         (make-instance 'image-daemon:attachment
-                                        :socket nil :mode ':control
-                                        :stream (make-two-way-stream
-                                                 (make-string-input-stream "")
-                                                 (make-string-output-stream))))
-                   (image-daemon:relay-attach terminal attachment
-                                              :rows 36 :columns 67 :styled-p nil
-                                              :session-id "detached-stream-test")
-                   (terminal-ui-resize ui 67 :rows 36))
+             (client       nil))
+        (labels ((present (event)
+                   "Apply one presentation EVENT to the attached client's UI as it arrives over the wire."
+                   (let ((event (client-portable event)))
+                     (apply #'presentation-apply client (getf (rest event) :operation) (rest event))))
 
-                 (transcript ()
-                   "Return the fullscreen transcript's plain committed rows."
-                   (let ((viewport (fullscreen-terminal-ui-viewport ui)))
-                     (format nil "~{~A~^~%~}"
-                             (loop for index below
-                                   (clinedi:transcript-viewport-row-count viewport)
-                                   collect (fullscreen-test--row-text ui index))))))
+                 (attach ()
+                   "Attach a fresh client, which is replayed what the channel shows and then follows it."
+                   (with-terminal-ui-locked (ui)
+                     (setf client (fullscreen-test--ui
+                                   (make-instance 'recording-terminal :columns 67 :rows 36)))
+                     (terminal-ui-start client)
+                     (mapc #'present (channel-presentation-replay ui))))
+
+                 (detach ()
+                   "Let the attached client leave."
+                   (with-terminal-ui-locked (ui)
+                     (terminal-ui-stop (shiftf client nil))))
+
+                 (shown ()
+                   "Return how many rows of the attached client's frame show the question."
+                   (count-if (lambda (row) (search question (clinedi:ansi-strip row)))
+                             (terminal-ui-fullscreen--frame client nil))))
+          (setf (channel-presentation-publish-function ui)
+                (lambda (event)
+                  (when client
+                    (present event))))
           (unwind-protect
-               (with-terminal-ui (active ui)
+               (progn
+                 (terminal-ui-start ui)
                  (application-render-records application)
                  (when initially-attached-p
                    (attach))
                  (funcall send-status :provider-request-started nil)
                  (funcall send-text (format nil "The patch is verified.~%"))
                  (when initially-attached-p
-                   (image-daemon:relay-detach terminal attachment)
-                   (setf attachment nil)
-                   (terminal-ui-detach active))
+                   (detach))
                  (funcall send-text question)
                  (conversation-append-provider-item
                   conversation
@@ -881,26 +844,21 @@
                                                        "text" answer))))
                  (funcall send-status :provider-request-completed nil)
                  (application-render-records application)
-                 (test-assert
-                  (= 1 (terminal-tests--substring-count question (transcript)))
-                  "Durable reconciliation retains the detached final answer once")
-                 (test-assert
-                  (not (search question (image-daemon:relay-history-text terminal)))
-                  "Detached fullscreen streaming does not spill into normal-screen relay text")
                  (attach)
-                 (let ((frame (clinedi:frame-snapshot-rows (localgroup-terminal-screen-frame terminal))))
-                   (test-assert
-                    (= 1 (count-if (lambda (row)
-                                     (search question (clinedi:ansi-strip row)))
-                                   frame))
-                    "A late client receives the final permission question in its fullscreen frame"))
+                 (test-assert (= 1 (shown))
+                              "A late client is shown the final permission question once")
                  (application-render-records application)
-                 (terminal-ui-resize active 50 :rows 20)
-                 (test-assert
-                  (= 1 (terminal-tests--substring-count question (transcript)))
-                  "Reconciliation and reflow present the completed answer without duplication"))
-            (when attachment
-              (ignore-errors (image-daemon:relay-detach terminal attachment))))))))
+                 (channel-presentation-set-geometry ui :rows 20 :columns 50)
+                 (terminal-ui-resize client 50 :rows 20)
+                 (test-assert (= 1 (shown))
+                              "Reconciliation and reflow present the completed answer without duplication")
+                 (detach)
+                 (attach)
+                 (test-assert (= 1 (shown))
+                              "A client that attaches after the reflow is shown the answer once"))
+            (when client
+              (terminal-ui-stop client))
+            (terminal-ui-stop ui))))))
   nil)
 
 

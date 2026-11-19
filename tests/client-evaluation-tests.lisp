@@ -203,17 +203,16 @@
                 (test-assert (null (getf (apply #'localgroup-client-call terminal ':evaluated answer)
                                          :accepted-p))
                              (format nil "the answer ~S is taken by nobody" answer)))
-              (test-assert (notany (lambda (packet)
-                                     (localgroup--accept-client-packet application packet))
-                                   '((:evaluated :evaluation 3)
-                                     (:evaluated :evaluation "none" :succeeded-p t :text "stray")
-                                     (:evaluated :evaluation "none" :text)
-                                     (:evaluated . 3)
-                                     (:other)))
-                           "malformed and stray answer packets are taken by nobody")
-              (test-assert (client-evaluation-reply-p
-                            '(:evaluated :evaluation "e" :text "ok" :succeeded-p t :elapsed 3))
-                           "an answer with a field this version does not know is still an answer")
+              (test-call-with-function-replacements
+               (list (list 'client-evaluate-request
+                           (lambda (request)
+                             (list :evaluation  (getf (rest request) :id)
+                                   :succeeded-p t
+                                   :text        "ok"
+                                   :elapsed     3))))
+               (lambda ()
+                 (test-assert (search "ok" (application-evaluate-on-client application '("(+ 1 2)")))
+                              "an answer with a field this version does not know is still an answer")))
               (localgroup-client-close terminal)
               (test-assert (task-tests--wait-until
                             (lambda ()

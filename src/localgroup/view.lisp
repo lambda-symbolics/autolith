@@ -15,6 +15,10 @@
 (defparameter *channel-view-geometry-seconds* 0.15
   "How long a view's pane keeps one size before the channel is told of it.")
 
+(defparameter *channel-view-read-only-notice*
+  "read-only: this terminal only watches the channel"
+  "What a view that only watches tells its user when they submit input.")
+
 
 ;;;; -- Pane Terminals --
 
@@ -204,13 +208,14 @@ modal reader so the view can act on it."
     :accessor      channel-view-pane-changed-at
     :type          (option real)
     :documentation "When the pane last changed size, until the channel is told."))
-  (:default-initargs :name "terminal" :approves-p t :evaluates-p t)
+  (:default-initargs :name "terminal")
   (:documentation "One channel as a terminal client shows it and drives it."))
 
 (defmethod channel-subscription-arguments ((view channel-view))
-  "Say that this client presents, and how large and how styled its pane is."
+  "Say that this client presents, whether it only watches, and how large and how styled its pane is."
   (multiple-value-bind (rows columns) (localgroup-screen-pane-size (channel-view-screen view))
     (list :presents-p t
+          :watches-p  (channel-view-read-only-p view)
           :rows       rows
           :columns    columns
           :styled-p   (terminal-styled-p (localgroup-screen-terminal (channel-view-screen view)))
@@ -234,7 +239,9 @@ With READ-ONLY-P it watches the channel and sends it no input."
                                   :identifier    identifier
                                   :configuration configuration
                                   :screen        screen
-                                  :read-only-p   read-only-p))
+                                  :read-only-p   read-only-p
+                                  :approves-p    (not read-only-p)
+                                  :evaluates-p   (not read-only-p)))
          (terminal (pane-terminal-create
                     screen :request-function (lambda (request)
                                                (channel-view--finish view request))))
@@ -443,7 +450,8 @@ A command the channel refused is shown as a failure line."
 Detaching leaves the channel alone. An interrupt or Escape is the channel's
 only while it works; the reply says whether it took it. Every other action
 is sent without waiting, since the channel may answer it by asking this
-terminal a question."
+terminal a question. A view that only watches sends none and says so when
+its user submits."
   (case action
     (:detach
      (channel-view--finish view (list ':detached))
@@ -463,8 +471,13 @@ terminal a question."
             (autolith-error ()
               nil))))
     (t
-     (unless (channel-view-read-only-p view)
-       (channel-view--send-input view action payload)))))
+     (cond
+       ((not (channel-view-read-only-p view))
+        (channel-view--send-input view action payload))
+       ((member action '(:submit :queue :command))
+        (terminal-ui-set-notice (channel-view-ui view) *channel-view-read-only-notice*
+                                :duration-seconds 4)
+        t)))))
 
 (-> channel-view--send-input (channel-view keyword t) boolean)
 (defun channel-view--send-input (view action payload)
@@ -611,6 +624,17 @@ leaves the channel running and gives the terminal back."
       (channel-view--paint-page view)))
   nil)
 
+(-> channel-view--leave (channel-view) null)
+(defun channel-view--leave (view)
+  "Tell the channel that this terminal leaves it on purpose, so a channel that serves one terminal keeps running."
+  (let ((connection (channel-subscription-connection view)))
+    (when (and connection (not (channel-view-read-only-p view)))
+      (handler-case (localgroup-client-send connection ':detach)
+        ;; A channel that is already gone needs no word.
+        (error ()
+          nil))))
+  nil)
+
 (-> channel-view-run
     (channel-view &key (:attached-function (option function)) (:notice (option string))
                   (:client-version (option string)) (:boot-p boolean))
@@ -657,6 +681,8 @@ starts the session."
                          (channel-view-exit view))
                  do (channel-view--step view))
            (let ((exit (channel-view-exit view)))
+             (when (member (first exit) '(:detached :switch))
+               (channel-view--leave view))
              (case (first exit)
                (:detached
                 nil)

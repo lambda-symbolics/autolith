@@ -2,38 +2,21 @@
 
 ;;;; -- Localgroup Process Handoff Tests --
 
-(-> test-localgroup--relay-application
-    (configuration &key (:persisted-p boolean) (:main-thread sb-thread:thread))
-    (values application application-input-controller localgroup-terminal conversation))
-(defun test-localgroup--relay-application
-    (configuration &key persisted-p (main-thread (current-thread)))
-  "Return a leased application and terminal relay owned by MAIN-THREAD."
-  (let* ((direct
-           (stream-terminal-create
-            :input-stream          (make-string-input-stream "")
-            :output-stream         (make-broadcast-stream)
-            :input-file-descriptor 0
-            :rows                  24
-            :columns               80))
-         (relay        (localgroup-terminal-create :direct-terminal direct))
-         (conversation (conversation-create configuration))
-         (ui           (terminal-ui-create :terminal relay))
-         (application
-           (make-instance 'application
-                          :configuration configuration
-                          :conversation  conversation
-                          :ui            ui))
-         (controller
-           (make-instance 'application-input-controller
-                          :application application
-                          :main-thread main-thread)))
-    (when persisted-p
-      (conversation-append-user-message conversation "persisted"))
-    (setf (application-input-controller application) controller
-          (application-conversation-lease application)
-          (conversation-lease-acquire
-           configuration (conversation-identifier conversation)))
-    (values application controller relay conversation)))
+(-> test-localgroup--leased-application (configuration &key (:persisted-p boolean))
+    (values application application-input-controller conversation))
+(defun test-localgroup--leased-application (configuration &key persisted-p)
+  "Return a leased application without a terminal of its own, its controller and its conversation.
+
+With PERSISTED-P its conversation holds a message."
+  (multiple-value-bind (application controller)
+      (test-localgroup--application configuration :presented-p t)
+    (let ((conversation (application-conversation application)))
+      (when persisted-p
+        (conversation-append-user-message conversation "persisted"))
+      (setf (application-conversation-lease application)
+            (conversation-lease-acquire
+             configuration (conversation-identifier conversation)))
+      (values application controller conversation))))
 
 (-> test-localgroup-handoff-site-arguments () null)
 (defun test-localgroup-handoff-site-arguments ()
@@ -91,16 +74,14 @@
 
 (-> test-localgroup--abandonment-fixture
     (configuration &key (:persisted-p boolean) (:linger-p boolean))
-    (values application application-input-controller localgroup-terminal
-            localgroup-session))
+    (values application application-input-controller localgroup-session))
 (defun test-localgroup--abandonment-fixture (configuration &key persisted-p linger-p)
-  "Return a started relay APPLICATION whose foreground terminal was released."
+  "Return a started application without a terminal of its own, its controller and its session."
   (configuration-ensure-directories configuration)
-  (multiple-value-bind (application controller relay)
-      (test-localgroup--relay-application configuration :persisted-p persisted-p)
-    (let ((session (localgroup-start application :linger-p linger-p)))
-      (image-daemon:relay-release-direct relay)
-      (values application controller relay session))))
+  (multiple-value-bind (application controller)
+      (test-localgroup--leased-application configuration :persisted-p persisted-p)
+    (terminal-ui-start (application-ui application))
+    (values application controller (localgroup-start application :linger-p linger-p))))
 
 (-> test-localgroup-lingering-session () null)
 (defun test-localgroup-lingering-session ()
@@ -110,15 +91,15 @@
          (application   nil)
          (controller    nil))
     (unwind-protect
-        (multiple-value-bind (fixture-application fixture-controller relay session)
+        (multiple-value-bind (fixture-application fixture-controller session)
             (test-localgroup--abandonment-fixture configuration :persisted-p t :linger-p t)
-          (declare (ignore relay))
           (setf application fixture-application
                 controller fixture-controller)
           (application-input-controller--enqueue controller ':message "queued input")
-          (localgroup--note-controller-attached session)
+          (localgroup-client-close (test-localgroup--present session))
           (test-assert
-           (and (not (localgroup--controller-lost session))
+           (and (test-localgroup--await-served session)
+                (not (localgroup--controller-lost session))
                 (null (application-input-controller-exit-reason controller)))
            "a lingering session outlives a client that vanished without detaching")
           (application-call-with-localgroup-quiesced application (lambda () nil))
@@ -137,84 +118,113 @@
     ((option application) (option application-input-controller) pathname)
     null)
 (defun test-localgroup--abandonment-cleanup (application controller root)
-  "Stop APPLICATION's endpoint and CONTROLLER, then delete ROOT."
+  "Stop APPLICATION's endpoint, UI and CONTROLLER, then delete ROOT."
   (when application
     (localgroup-stop application)
     (application-release-conversation-lease application))
   (when controller
     (application-input-controller-stop controller))
+  (when application
+    (terminal-ui-stop (application-ui application)))
   (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)
   nil)
 
 (-> test-localgroup-abandoned-session-exit () null)
 (defun test-localgroup-abandoned-session-exit ()
-  "Test sessions exiting when their client vanishes without an explicit detach."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (application   nil)
-         (controller    nil))
-    (unwind-protect
-        (multiple-value-bind (fixture-application fixture-controller relay session)
-            (test-localgroup--abandonment-fixture configuration :persisted-p t)
-          (declare (ignore relay))
-          (setf application fixture-application
-                controller fixture-controller)
-          (setf (application-goal application)
-                (list :objective "keep working" :status ':active :continuations 0))
-          (application-input-controller--enqueue controller ':message "queued input")
-          (test-assert
-           (and (localgroup--controller-lost session)
-                (eq (application-input-controller-exit-reason controller)
-                    ':localgroup-abandoned))
-           "losing the client without a detach exits a persisted busy session"))
-      (test-localgroup--abandonment-cleanup application controller root)))
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (application   nil)
-         (controller    nil)
-         (socket        nil)
-         (attachment    nil))
-    (unwind-protect
-        (multiple-value-bind (fixture-application fixture-controller relay session)
-            (test-localgroup--abandonment-fixture configuration)
-          (setf application fixture-application
-                controller fixture-controller
-                socket
-                  (make-instance 'sb-bsd-sockets:inet-socket :type ':stream :protocol
-                                 ':tcp)
-                attachment
-                  (make-instance 'image-daemon:attachment :socket socket :stream
-                                 (make-string-output-stream) :mode ':control))
-          (test-assert
-           (and
-            (image-daemon:relay-attach relay attachment :rows 24 :columns 80 :styled-p
-             nil :session-id "ABANDON")
-            (eq (image-daemon:relay-attachment-kind relay) ':remote))
-           "a controlling attachment owns the released relay")
-          (localgroup--note-controller-attached session)
-          (localgroup--mark-explicit-detach session)
-          (image-daemon:relay-release-control relay)
-          (test-assert
-           (and
-            (with-lock-held ((image-daemon:daemon-runtime-lock session))
-              (localgroup-session-detached-explicitly-p session))
-            (eq (image-daemon:relay-attachment-kind relay) ':detached)
-            (not (localgroup--controller-lost session))
-            (null (application-input-controller-exit-reason controller)))
-           "an explicit detach lets a client-less session linger")
-          (localgroup--note-controller-attached session)
-          (test-assert
-           (and
-            (not
-             (with-lock-held ((image-daemon:daemon-runtime-lock session))
-               (localgroup-session-detached-explicitly-p session)))
-            (localgroup--controller-lost session)
-            (eq (application-input-controller-exit-reason controller)
-                ':localgroup-abandoned))
-           "a later client consumes the detach so its loss exits the session"))
-      (when attachment (image-daemon:attachment-close attachment))
-      (when socket (ignore-errors (sb-bsd-sockets:socket-close socket)))
-      (test-localgroup--abandonment-cleanup application controller root)))
+  "Test sessions exiting when their last controlling client vanishes without an explicit detach."
+  (flet ((call-with-fixture (function &rest arguments)
+           "Call FUNCTION with a started application without a terminal, its controller and its session."
+           (let* ((configuration (test-configuration))
+                  (root          (test-configuration-root configuration))
+                  (application   nil)
+                  (controller    nil))
+             (unwind-protect
+                  (multiple-value-bind (fixture-application fixture-controller session)
+                      (apply #'test-localgroup--abandonment-fixture configuration arguments)
+                    (setf application fixture-application
+                          controller  fixture-controller)
+                    (funcall function application controller session))
+               (test-localgroup--abandonment-cleanup application controller root))))
+
+         (abandoned-p (controller)
+           "Wait for CONTROLLER to be asked to exit as abandoned and return whether it was."
+           (task-tests--wait-until
+            (lambda ()
+              (eq (application-input-controller-exit-reason controller) ':localgroup-abandoned))
+            10))
+
+         (detached-explicitly-p (session)
+           "Return whether SESSION's controlling terminal left on purpose."
+           (with-lock-held ((image-daemon:daemon-runtime-lock session))
+             (localgroup-session-detached-explicitly-p session))))
+    (call-with-fixture
+     (lambda (application controller session)
+       (setf (application-goal application)
+             (list :objective "keep working" :status ':active :continuations 0))
+       (application-input-controller--enqueue controller ':message "queued input")
+       (let ((watcher (test-localgroup--present session :watches-p t))
+             (earlier (test-localgroup--present session))
+             (later   (test-localgroup--present session)))
+         (unwind-protect
+              (progn
+                (localgroup-client-close earlier)
+                (test-assert (and (test-localgroup--await-served session 2)
+                                  (= 2 (length (application-clients application)))
+                                  (null (application-input-controller-exit-reason controller)))
+                             "a session another controlling client still shows keeps running")
+                (localgroup-client-close later)
+                (test-assert (and (abandoned-p controller)
+                                  (not (localgroup-client-connection-closed-p watcher)))
+                             "losing the last controlling client without a detach exits a persisted busy session, whoever still watches it"))
+           (localgroup-client-close watcher))))
+     :persisted-p t)
+    (call-with-fixture
+     (lambda (application controller session)
+       (let ((watcher (test-localgroup--present session :watches-p t)))
+         (localgroup-client-close watcher)
+         (test-assert (and (test-localgroup--await-served session)
+                           (null (application-input-controller-exit-reason controller)))
+                      "a client that only watched is no lost terminal"))
+       (let ((connection (test-localgroup--present session)))
+         (test-assert (and (application-terminal-attached-p application)
+                           (eq (getf (rest (localgroup-status-snapshot session)) :terminal-attachment)
+                               ':remote))
+                      "a controlling client shows the session")
+         (localgroup-client-call connection ':detach)
+         (localgroup-client-close connection))
+       (test-assert
+        (and (test-localgroup--await-served session)
+             (detached-explicitly-p session)
+             (eq (getf (rest (localgroup-status-snapshot session)) :terminal-attachment) ':detached)
+             (null (application-input-controller-exit-reason controller)))
+        "an explicit detach lets a client-less session linger")
+       (let ((connection (test-localgroup--present session)))
+         (test-assert (not (detached-explicitly-p session))
+                      "a later controlling client consumes the detach")
+         (localgroup-client-close connection))
+       (test-assert (abandoned-p controller)
+                    "the loss of a later client exits the session")))
+    (call-with-fixture
+     (lambda (application controller session)
+       (dolist (leaving '(:detach :switch))
+         (world-server-tests--call-with-terminal-client
+          (application-configuration application) (image-daemon:daemon-runtime-identifier session)
+          (lambda (type await-exit view)
+            (declare (ignore view))
+            (if (eq leaving ':detach)
+                (funcall type ':detach)
+                (application-client-tell application ':switch :session-id "bnext1"))
+            (test-assert (equal (multiple-value-list (funcall await-exit))
+                                (list (when (eq leaving ':switch)
+                                        '(:switch :session-id "bnext1"))
+                                      t))
+                         (format nil "a terminal client ends its view of the session by ~(~A~)" leaving))))
+         (test-assert
+          (and (test-localgroup--await-served session)
+               (detached-explicitly-p session)
+               (null (application-input-controller-exit-reason controller)))
+          (format nil "a terminal client that leaves by ~(~A~) says so, and the session keeps running"
+                  leaving))))))
   (test-assert
    (and (localgroup--initially-detached-p '(:mode :detach))
         (not (localgroup--initially-detached-p '(:mode :detach :attach-expected-p t)))
@@ -229,9 +239,8 @@
          (application   nil)
          (controller    nil))
     (unwind-protect
-        (multiple-value-bind (fixture-application fixture-controller relay session)
+        (multiple-value-bind (fixture-application fixture-controller session)
             (test-localgroup--abandonment-fixture configuration)
-          (declare (ignore relay))
           (setf application fixture-application
                 controller fixture-controller)
           (let ((*localgroup-first-attach-timeout-seconds* 0))
@@ -246,12 +255,17 @@
          (application   nil)
          (controller    nil))
     (unwind-protect
-        (multiple-value-bind (fixture-application fixture-controller relay session)
-            (test-localgroup--abandonment-fixture configuration)
-          (declare (ignore relay))
+        (multiple-value-bind (fixture-application fixture-controller session)
+            (test-localgroup--abandonment-fixture configuration :linger-p t)
           (setf application fixture-application
                 controller fixture-controller)
-          (localgroup--note-controller-attached session)
+          (localgroup-client-close (test-localgroup--present session :watches-p t))
+          (test-assert (and (test-localgroup--await-served session)
+                            (localgroup--first-attach-overdue-p session))
+                       "a client that only watched is not the client a launch waits for")
+          (localgroup-client-close (test-localgroup--present session))
+          (test-assert (test-localgroup--await-served session)
+                       "the session finishes serving its first controlling client")
           (let ((*localgroup-first-attach-timeout-seconds* 0))
             (localgroup--attach-watchdog session))
           (test-assert (null (application-input-controller-exit-reason controller))
@@ -333,12 +347,19 @@
            (let* ((*localgroup-startup-record*
                     '(:localgroup-handoff
                       :rows 41 :columns 93 :styled-p t))
-                  (terminal (localgroup-terminal-create)))
+                  (ui       (application-terminal-ui-create :configuration configuration))
+                  (terminal (terminal-ui-terminal ui)))
              (test-assert
-              (and (= (terminal-rows terminal) 41)
+              (and (typep ui 'channel-presentation)
+                   (= (terminal-rows terminal) 41)
                    (= (terminal-columns terminal) 93)
-                   (terminal-styled-p terminal))
-              "a detached startup inherits dimensions and styling before attachment"))
+                   (terminal-styled-p terminal)
+                   (not (terminal-interactive-p terminal)))
+              "a detached start gets a presentation laid out for the pane its startup record states"))
+           (test-assert
+            (not (typep (application-terminal-ui-create :configuration configuration)
+                        'channel-presentation))
+            "a start without a startup record shows on its own terminal")
            (let ((*localgroup-fresh-launch-function*
                    (lambda (&rest arguments)
                      (declare (ignore arguments))))
@@ -367,11 +388,11 @@
 (defun test-localgroup-conversation-identity ()
   "Test active IDs through resume selection, new, fork, reconnect and conflicts."
   (with-test-configuration (configuration)
-   (let ((application nil) (controller nil) (relay nil) (stream nil) (session nil))
+   (let ((application nil) (controller nil) (connection nil) (await nil) (session nil))
      (unwind-protect
          (progn
-          (multiple-value-setq (application controller relay)
-            (test-localgroup--relay-application configuration))
+          (multiple-value-setq (application controller)
+            (test-localgroup--leased-application configuration))
           (let* ((first    (application-conversation application))
                  (provider (provider-create configuration))
                  (registry (make-instance 'tool-registry))
@@ -383,7 +404,7 @@
                   (agent-create :configuration configuration :provider provider
                                 :conversation first :tool-registry registry :worker
                                 nil))
-            (terminal-start relay)
+            (terminal-ui-start (application-ui application))
             (setf session (localgroup-start application))
             (labels ((assert-identity (conversation)
                        (let* ((identifier (conversation-identifier conversation))
@@ -420,12 +441,13 @@
                                                                session)
                                                               (sb-posix:getpid))))
                  "readiness rejects another capability and the launching process"))
-              (multiple-value-bind (socket new-stream response)
-                  (test-localgroup--attach session ':read-only)
-                (declare (ignore socket))
-                (setf stream new-stream)
-                (test-assert (eq (first response) ':attached)
-                 "the initial picker conversation accepts a relay attachment"))
+              (multiple-value-bind (client seen client-await)
+                  (test-localgroup--present session :watches-p t)
+                (declare (ignore seen))
+                (setf connection client
+                      await      client-await)
+                (test-assert (eq (first (localgroup-client-connection-attached client)) ':attached)
+                 "the initial picker conversation accepts a client"))
               (conversation-append-user-message first "source")
               (conversation-append-user-message saved "saved")
               (let ((port       (image-daemon:daemon-runtime-port session))
@@ -448,13 +470,14 @@
                       (= port (image-daemon:daemon-runtime-port session))
                       (string= token (image-daemon:daemon-runtime-token session)))
                  "conversation changes preserve the endpoint transport")
-                (terminal--write relay "conversation switched")
+                (terminal-ui-append-finalized (application-ui application) ':conversation-switched
+                                              "conversation switched")
                 (test-assert
-                 (loop repeat 30
-                       thereis (let ((packet (test-localgroup--read-packet stream)))
-                                 (and (eq (first packet) ':output)
-                                      (search "conversation switched" (second packet)))))
-                 "an attached terminal receives output after conversation changes"))
+                 (and (funcall await ':append
+                               (lambda (event)
+                                 (search "conversation switched" (test-localgroup--event-text event))))
+                      (not (localgroup-client-connection-closed-p connection)))
+                 "an attached client receives output after conversation changes"))
               (let* ((before     (application-conversation application))
                      (blocked    (conversation-create configuration))
                      (identifier (conversation-identifier blocked))
@@ -518,8 +541,7 @@
               (application-resume-conversation application
                                                (conversation-identifier saved))
               (assert-identity saved)
-              (close stream)
-              (setf stream nil)
+              (localgroup-client-close (shiftf connection nil))
               (let ((old-record (localgroup--registry-record session))
                     (pathname   (image-daemon:daemon-runtime-registry-pathname session)))
                 (localgroup-stop application)
@@ -529,7 +551,7 @@
               (application-call-with-localgroup-quiesced application (lambda () t))
               (setf session (application-localgroup-session application))
               (assert-identity saved))))
-       (when stream (ignore-errors (close stream)))
+       (when connection (localgroup-client-close connection))
        (when application
          (localgroup-stop application)
          (application-release-conversation-lease application)
@@ -537,7 +559,7 @@
          (when (slot-boundp application 'tool-registry)
            (tool-registry-close-runtime-state (application-tool-registry application))))
        (when controller (application-input-controller-stop controller))
-       (when relay (terminal-stop relay)))))
+       (when application (terminal-ui-stop (application-ui application))))))
   nil)
 
 (-> test-localgroup-world-spawn () null)

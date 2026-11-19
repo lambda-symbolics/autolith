@@ -2954,18 +2954,6 @@ logical theme installed and the physical frame invalid for the next repaint."
       (terminal-ui--paint-live ui)))
   ui)
 
-(-> terminal-ui-detach (terminal-ui) terminal-ui)
-(defun terminal-ui-detach (ui)
-  "Retract UI's live region after its terminal loses interactive ownership."
-  (with-terminal-ui-locked (ui)
-    (when (terminal-ui-started-p ui)
-      (if (terminal-ui-fullscreen-p ui)
-          (terminal-ui-fullscreen-leave ui)
-          (progn
-            (live-region-suspend (terminal-ui-live-region ui))
-            (terminal-ui--leave-theme ui)))))
-  ui)
-
 (-> terminal-ui-stop (terminal-ui) terminal-ui)
 (defun terminal-ui-stop (ui)
   "Erase UI's unfinished rows and restore its terminal even after partial startup."

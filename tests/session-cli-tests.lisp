@@ -154,10 +154,10 @@
                     (declare (ignore entry arguments))
                     (push operation operations)
                     (list :ok :status (status))))
-            (list 'localgroup-attach-record
-                  (lambda (configuration entry mode &key panel)
-                    (declare (ignore configuration entry panel))
-                    (push (list identifier mode) attached)
+            (list 'channel-view-run
+                  (lambda (view &rest arguments)
+                    (declare (ignore arguments))
+                    (push (channel-subscription-identifier view) attached)
                     nil))
             (list 'localgroup-relay-exit
                   (lambda (&rest arguments) (declare (ignore arguments))))

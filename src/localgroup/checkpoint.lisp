@@ -22,32 +22,12 @@
 
 (-> localgroup--finish-checkpoint-attachments (localgroup-session string) null)
 (defun localgroup--finish-checkpoint-attachments (session reconnect-id)
-  "Deliver a checkpoint transition after queued output to every attached client."
-  (let ((terminal         (terminal-ui-terminal (application-ui (localgroup-session-application session))))
-        (attachments      nil)
-        (history-position 0))
-    (localgroup--finish-checkpoint-clients (localgroup-session-application session) reconnect-id)
-    (unless (typep terminal 'localgroup-terminal)
-      (return-from localgroup--finish-checkpoint-attachments nil))
-    (with-lock-held ((image-daemon:daemon-runtime-lock session))
-      (setf (image-daemon:daemon-runtime-stopping-p session) t))
-    (with-lock-held ((image-daemon:relay-lock terminal))
-      (setf attachments
-            (remove-duplicates
-             (append (when (image-daemon:relay-controller terminal)
-                       (list (image-daemon:relay-controller terminal)))
-                     (image-daemon:relay-observers terminal))
-             :test #'eq)
-            history-position (image-daemon:relay-history-position terminal)
-            (image-daemon:relay-controller terminal) nil
-            (image-daemon:relay-observers terminal) nil))
-    (unwind-protect
-         (dolist (attachment attachments)
-           (image-daemon:attachment-finish
-            attachment (list :checkpoint-reconnect :id reconnect-id
-                             :history-position     history-position)))
-      (dolist (attachment attachments)
-        (image-daemon:attachment-close attachment))))
+  "Send SESSION's clients to the endpoint that follows the checkpoint named RECONNECT-ID.
+
+The session is stopping from here on, so a client that leaves is not a lost terminal."
+  (with-lock-held ((image-daemon:daemon-runtime-lock session))
+    (setf (image-daemon:daemon-runtime-stopping-p session) t))
+  (localgroup--finish-checkpoint-clients (localgroup-session-application session) reconnect-id)
   nil)
 
 (-> application-call-with-localgroup-quiesced (application function) t)

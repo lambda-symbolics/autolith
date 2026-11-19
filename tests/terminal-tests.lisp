@@ -390,16 +390,14 @@
 (defun test-terminal-relayed-resize ()
   "Test relayed client resizes reflowing geometry with composition."
   (let* ((*terminal-resize-pending-p* nil)
-         (terminal                    (make-instance 'localgroup-terminal :columns 60 :rows 20))
-         (other                       (make-instance 'localgroup-terminal :columns 50 :rows 10))
+         (terminal                    (make-instance 'recording-terminal :columns 60 :rows 20))
+         (other                       (make-instance 'recording-terminal :columns 50 :rows 10))
          (ui                          (terminal-ui-create :terminal terminal)))
-    (localgroup-terminal-resize terminal :rows     24
-                                         :columns  120
-                                         :styled-p t)
+    (terminal-relayed-resize-publish terminal 24 120)
     (test-assert (= (terminal-columns terminal) 60)
-                 "a relayed resize packet does not poke dimension slots")
+                 "a relayed resize does not poke dimension slots")
     (test-assert (equal (terminal-relayed-resize terminal) '(24 . 120))
-                 "a relayed resize packet parks the exact client size")
+                 "a relayed resize parks the exact client size")
     (test-assert (null (terminal-relayed-resize other))
                  "a relayed resize stays with the terminal that received it")
     (setf *terminal-resize-pending-p* t)

@@ -35,6 +35,10 @@
 ;;;   (:event :id N :event EVENT), a key for the channel's open picker
 ;;;   (:geometry :id N :rows ROWS :columns COLUMNS)
 ;;;   (:input-history :id N :start START :limit LIMIT)
+;;;   (:detach :id N), before it leaves a channel that is to keep running
+;;;
+;;; One that also says :watches-p only watches: the channel is not laid out
+;;; for its pane, asks it nothing, and refuses its input.
 ;;;
 ;;; and the server answers each with (:reply :id N :ok T ...) or
 ;;; (:reply :id N :error MESSAGE), in order with the events. An operation
@@ -71,6 +75,7 @@
                        :evaluates-p          (not (null (getf arguments :evaluates-p)))
                        :cancels-evaluation-p (eq (getf arguments :cancels-evaluation-p) t)
                        :presents-p           (not (null (getf arguments :presents-p)))
+                       :watches-p            (not (null (getf arguments :watches-p)))
                        :pid                  (let ((pid (getf arguments :client-pid)))
                                                (and (typep pid '(integer 1)) pid))
                        :stream               stream
@@ -79,7 +84,7 @@
          (inputs      (make-instance 'client-input-queue)))
     (unwind-protect
          (progn
-           (when (channel-client-presents-p client)
+           (when (channel-client-controls-p client)
              (localgroup--client-geometry application arguments))
            (handler-case
                (application-clients-add
@@ -95,7 +100,7 @@
                                                :retry-p (localgroup-error-retry-p condition)))
               (return-from localgroup--serve-client nil)))
            (application-clients-note-controller application client)
-           (when (channel-client-presents-p client)
+           (when (channel-client-controls-p client)
              ;; A terminal shows the channel from now on.
              (localgroup--note-controller-attached session)
              (application-sync-window-title application)
@@ -112,7 +117,11 @@
                                                       :client client
                                                       :inputs inputs))))
       (client-input-queue-close inputs)
-      (channel-client-close client)))
+      (channel-client-close client)
+      ;; A session that serves one terminal ends when nobody is left at it.
+      (when (and (channel-client-controls-p client)
+                 (not (application-clients-controlled-p application :except client)))
+        (localgroup--controller-lost session))))
   nil)
 
 (-> localgroup--queued-input-p (list) boolean)
@@ -199,6 +208,9 @@
     (condition-notify (client-input-queue-condition-variable queue)))
   nil)
 
+(defparameter *localgroup-watching-client-commands* '(:state :input-history)
+  "The commands a client that only watches a channel may send: those that change nothing.")
+
 (-> localgroup--run-client-command
     (localgroup-session list &key (:client channel-client) (:inputs client-input-queue)) null)
 (defun localgroup--run-client-command (session command &key client inputs)
@@ -211,7 +223,8 @@ is this call's own, however many the reader takes meanwhile."
   (flet ((reply ()
            (channel-client-enqueue
             client (localgroup--client-reply session command
-                                             :attachment (channel-client-attachment client)))))
+                                             :attachment (channel-client-attachment client)
+                                             :watching-p (channel-client-watches-p client)))))
     (cond
       ((eq (first command) ':operation)
        (make-thread #'reply :name "Autolith client operation"))
@@ -221,14 +234,29 @@ is this call's own, however many the reader takes meanwhile."
        (reply))))
   nil)
 
-(-> localgroup--client-reply (localgroup-session list &key (:attachment (option image-daemon:attachment))) list)
-(defun localgroup--client-reply (session packet &key attachment)
-  "Run the client command PACKET in SESSION's channel and return its reply."
+(-> localgroup--client-reply
+    (localgroup-session list
+     &key (:attachment (option image-daemon:attachment)) (:watching-p boolean))
+    list)
+(defun localgroup--client-reply (session packet &key attachment watching-p)
+  "Run the client command PACKET in SESSION's channel and return its reply.
+
+ATTACHMENT is the one the command came over, which an evaluation's answer is
+checked against. A client that only watches, as WATCHING-P says, is refused
+whatever would change the channel."
   (let ((identifier (getf (rest packet) :id)))
     (handler-case
-        (client-portable
-         (list* :reply :id identifier :ok t
-                 (localgroup--client-command session (first packet) (rest packet) :attachment attachment)))
+        (progn
+          (when (and watching-p
+                     (not (member (first packet) *localgroup-watching-client-commands*)))
+            (error 'localgroup-error
+                   :message    "A client that only watches a channel sends it nothing."
+                   :operation  ':client
+                   :session-id (image-daemon:daemon-runtime-identifier session)))
+          (client-portable
+           (list* :reply :id identifier :ok t
+                  (localgroup--client-command session (first packet) (rest packet)
+                                              :attachment attachment))))
       (error (condition)
         (list :reply        :id identifier
                      :error (bounded-string (princ-to-string condition) :limit 1000))))))
@@ -315,6 +343,9 @@ is this call's own, however many the reader takes meanwhile."
                                 text))))))))
         (:geometry
          (localgroup--client-geometry application arguments)
+         nil)
+        (:detach
+         (localgroup--mark-explicit-detach session)
          nil)
         (:event
          (let ((event        (getf arguments :event))

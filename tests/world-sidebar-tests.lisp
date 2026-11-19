@@ -482,42 +482,43 @@
 
 (-> test-world-sidebar-command-events () null)
 (defun test-world-sidebar-command-events ()
-  "Relay framed sidebar commands into the receiving controller's submission path."
-  (with-test-configuration (configuration)
-    (let* ((terminal    (localgroup-terminal-create))
-           (ui          (terminal-ui-create :terminal terminal))
-           (application (make-instance 'application :ui ui :configuration configuration))
-           (controller  (application-input-controller-create application :start-reader-p nil))
-           (packets     (with-output-to-string (stream)
-                          (dolist (event '((:channel-command :quit)
-                                           (:application-command "(new)")
-                                           (:channel-command :new)
-                                           (:channel-command :delete "b6uouHJ")))
-                            (daemon-write-packet stream (list :event event)))))
-           (attachment  (make-instance 'image-daemon:attachment :socket nil :mode ':control
-                                       :stream (make-two-way-stream
-                                                (make-string-input-stream packets)
-                                                (make-string-output-stream))))
-           (submitted   nil))
-      (image-daemon:relay-attach terminal attachment :rows 24 :columns 80 :styled-p nil
-                                :session-id "sidebar-commands")
-      (unwind-protect
-           (test-call-with-function-replacements
-            (list (list 'application-input-controller--handle-submission
-                        (lambda (candidate text &key steer-p)
-                          (test-assert (and (eq candidate controller) (not steer-p))
-                                       "footer submission uses this terminal client's controller")
-                          (push text submitted))))
-            (lambda ()
-              (image-daemon:relay-read-attachment terminal attachment
-                                                :event-validator #'localgroup--terminal-event-p)
-              (loop while (terminal-input-ready-p terminal)
-                    do (application-input-controller--process-event controller
-                                                                   (terminal-read-event terminal)))
-              (test-assert (equal (reverse submitted) '("(new)" "(delete \"b6uouHJ\")"))
-                           "only the sidebar's channel commands cross the relay into application submission")))
-        (application-input-controller-stop controller)
-        (image-daemon:relay-detach terminal attachment))))
+  "Send the side panel's channel commands from a terminal client into its channel's submission path."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((identifier (getf (rest (world-server-tests--open
+                                     (world-client-entry configuration)
+                                     (world-tests--workspace root "sidebar-commands")))
+                              :session-id))
+            (controller (application-input-controller
+                         (world-host-application (world-server--find-host server identifier))))
+            (handle     (symbol-function 'application-input-controller--handle-submission))
+            (lock       (make-lock "sidebar command test"))
+            (submitted  nil))
+       (flet ((submissions ()
+                "Return what the channel's controller was asked to submit, oldest first."
+                (with-lock-held (lock)
+                  (reverse submitted))))
+         (test-call-with-function-replacements
+          (list (list 'application-input-controller--handle-submission
+                      (lambda (candidate text &key steer-p)
+                        (if (eq candidate controller)
+                            (with-lock-held (lock)
+                              (push (list text steer-p) submitted))
+                            (funcall handle candidate text :steer-p steer-p)))))
+          (lambda ()
+            (world-server-tests--call-with-terminal-client
+             configuration identifier
+             (lambda (type await-exit view)
+               (declare (ignore await-exit view))
+               (dolist (event '((:channel-command :quit)
+                                (:application-command "(new)")
+                                (:channel-command :new)
+                                (:channel-command :delete "b6uouHJ")))
+                 (funcall type event))
+               (test-assert (task-tests--wait-until (lambda () (= 2 (length (submissions)))) 10)
+                            "the side panel's commands reach the channel this terminal client shows")
+               (test-assert (equal (submissions) '(("(new)" nil) ("(delete \"b6uouHJ\")" nil)))
+                            "only the side panel's channel commands become submissions, in order and without steering")))))))))
   nil)
 
 (-> test-world-sidebar-unread () null)

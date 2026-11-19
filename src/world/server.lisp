@@ -1044,14 +1044,8 @@ started must not end one another terminal attached to since."
 
 (-> world-host-attached-p (world-host) boolean)
 (defun world-host-attached-p (host)
-  "Return true while a controlling or observing terminal or structured client follows HOST."
-  (let* ((application (world-host-application host))
-         (ui          (application-ui application))
-         (terminal    (and ui (terminal-ui-terminal ui))))
-    (or (and (typep terminal 'localgroup-terminal)
-             (or (image-daemon:relay-attached-p terminal)
-                 (plusp (image-daemon:relay-observer-count terminal))))
-        (application-clients-attached-p application))))
+  "Return true while a client follows HOST: a terminal that controls or watches it, or another structured client."
+  (application-clients-attached-p (world-host-application host)))
 
 (-> world-host-health (world-host) keyword)
 (defun world-host-health (host)
@@ -1578,12 +1572,9 @@ forgotten again when no thread could start."
                                                                     :permission-mode)))
                               :mutation-replay-failures
                               (world-server-mutation-replay-failures server)
-                              :relay-presentation
-                              (list :rows (getf arguments :rows) :columns
-                                    (getf arguments :columns) :styled-p
-                                    (getf arguments :styled-p)
-                                    :boot-presented-p
-                                    (getf arguments :boot-presented-p))
+                              :client-pane
+                              (list :rows    (getf arguments :rows)
+                                    :columns (getf arguments :columns))
                               :tool-registry-function
                               (let ((servers (getf arguments :mcp-servers)))
                                 (when servers

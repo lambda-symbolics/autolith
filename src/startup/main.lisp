@@ -337,12 +337,8 @@ presents the warning in the first channel it opens only."
 
 (-> application--client-reports-exit-p (application) boolean)
 (defun application--client-reports-exit-p (application)
-  "Return whether APPLICATION has no direct terminal and clients report its exit."
-  (let* ((ui       (and (slot-boundp application 'ui) (application-ui application)))
-         (terminal (and ui (terminal-ui-terminal ui))))
-    (or (not (null (application-presentation application)))
-        (and (typep terminal 'image-daemon:relay)
-             (null (image-daemon:relay-direct-terminal terminal))))))
+  "Return whether APPLICATION has no terminal of its own and its clients report its exit."
+  (not (null (application-presentation application))))
 
 (-> application--present-open-instruction (application) boolean)
 (defun application--present-open-instruction (application)
@@ -1126,7 +1122,7 @@ state, including an empty list after successful or pristine startup."
 (defun main--client-session-p (&key handoff-record pristine-p simulate-crash-p)
   "Return true when this start should open a channel in the world server and attach.
 
-A client-first start keeps this terminal a thin relay whose detach is
+A client-first start keeps this terminal a client whose detach is
 immediate and never interrupts session work, so resumes, crash recovery,
 startup images, the session after authentication and input piped from
 another program take it too. Replacements, crash simulation, hosts without
@@ -1151,11 +1147,11 @@ detached sessions, and a booted generation's resume, under
                         (:recovery-diagnosis (option string))
                         (:launch list)
                         (:new-p boolean)
-                        (:images list) (:boot-presented-p boolean))
+                        (:images list))
     (values string boolean))
 (defun main--open-world-channel
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        pick-channel-p recovery-diagnosis launch new-p images boot-presented-p)
+                        pick-channel-p recovery-diagnosis launch new-p images)
   "Open this terminal's channel in the world server and return its session identifier.
 
 CONVERSATION-ID opens that channel; otherwise the launch directory selects
@@ -1174,8 +1170,7 @@ the reason; no session runs in this terminal's own process instead."
                          :recovery-diagnosis recovery-diagnosis
                          :launch             launch
                          :new-p              new-p
-                         :images             images
-                         :boot-presented-p   boot-presented-p)
+                         :images             images)
     (error (condition)
       (when (main--world-refusal-p condition)
         (error condition))
@@ -1353,11 +1348,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                                           :recovery-diagnosis
                                                                           recovery-diagnosis
                                                                           :launch launch :images
-                                                                          images :boot-presented-p
-                                                                          (not
-                                                                           (null
-                                                                            (localgroup-screen-boot-ui
-                                                                             screen)))))
+                                                                          images))
                                               :start-p
                                               (and (config :fullscreen-p configuration)
                                                    (not

@@ -492,9 +492,12 @@ run once the wake has."
            (localgroup-client-close connection))))))
   nil)
 
-(-> world-server-tests--call-with-terminal-client (configuration string function) null)
-(defun world-server-tests--call-with-terminal-client (configuration identifier function)
-  "Run a terminal client's view of hosted channel IDENTIFIER on a thread while FUNCTION drives it.
+(-> world-server-tests--call-with-terminal-client
+    (configuration string function &key (:read-only-p boolean) (:client-version (option string)))
+    null)
+(defun world-server-tests--call-with-terminal-client
+    (configuration identifier function &key read-only-p client-version)
+  "Run a terminal client's view of channel IDENTIFIER on a thread while FUNCTION drives it.
 
 FUNCTION is called once the channel accepted the view, with a function that
 types one terminal event at the client, a function that waits for the view
@@ -502,10 +505,11 @@ to end, and the view. The waiting function returns why the view ended, which
 is NIL after a detach, and as a second value whether it ended in time. The
 keys come from a test terminal. Everything else is the real view: it
 attaches as a client that presents, applies what the channel publishes, and
-acts on the keys."
+acts on the keys. With READ-ONLY-P the view only watches. CLIENT-VERSION is
+the version the client says it is, when it says one."
   (let* ((terminal (make-instance 'queued-recording-terminal :rows 31 :columns 91))
          (screen   (localgroup-screen-create :terminal terminal))
-         (view     (channel-view-create configuration identifier screen))
+         (view     (channel-view-create configuration identifier screen :read-only-p read-only-p))
          (attached (sb-thread:make-semaphore))
          (exit     nil)
          (ended-p  nil)
@@ -526,9 +530,9 @@ acts on the keys."
                 (setf exit
                       (handler-case
                           (channel-view-run view
-                                            :attached-function
-                                            (lambda ()
-                                              (sb-thread:signal-semaphore attached)))
+                                            :client-version    client-version
+                                            :attached-function (lambda ()
+                                                                 (sb-thread:signal-semaphore attached)))
                         (error (condition)
                           (sb-thread:signal-semaphore attached)
                           (list ':failed :message (princ-to-string condition))))
@@ -989,14 +993,14 @@ acts on the keys."
          (test-assert (and (string= (getf (rest joined) :session-id) first-id)
                            (not (getf (rest joined) :started-p)))
                       "a second open of the directory joins the uncontrolled channel"))
-       (multiple-value-bind (socket stream response)
-           (test-localgroup--attach (world-server-tests--session server first-id) ':control)
-         (unwind-protect
-              (test-assert (and (eq (first response) ':error)
-                                (not (world-host-attached-p (world-server--find-host server first-id))))
-                           "a hosted channel has no terminal relay and refuses a relay attachment")
-           (close stream)
-           (sb-bsd-sockets:socket-close socket)))
+       (let ((session (world-server-tests--session server first-id)))
+         (test-assert (and (eq (first (daemon-call (image-daemon:daemon-runtime-port session)
+                                                   (image-daemon:daemon-runtime-token session)
+                                                   ':attach
+                                                   :arguments (list :mode ':control :rows 31 :columns 91)))
+                               ':error)
+                           (not (world-host-attached-p (world-server--find-host server first-id))))
+                      "a hosted channel answers the attach operation of an older terminal client with an error"))
        (multiple-value-bind (connection seen await)
            (test-localgroup--present (world-server-tests--session server first-id) :client-pid 424242)
          (declare (ignore seen))

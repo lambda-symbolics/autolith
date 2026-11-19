@@ -5,11 +5,6 @@
 (defvar *localgroup-startup-record* nil
   "The validated detached-process handoff record active during startup.")
 
-(-> localgroup-startup-detached-p () boolean)
-(defun localgroup-startup-detached-p ()
-  "Return true while startup is reconstructing a detached localgroup process."
-  (not (null *localgroup-startup-record*)))
-
 (define-condition localgroup-error (image-daemon:daemon-error autolith-error)
   ((retry-p
     :initarg       :retry-p
