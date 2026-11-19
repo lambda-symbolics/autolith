@@ -726,6 +726,7 @@
   test-world-delivery-codec
   test-world-message-outbox
   test-world-channel-tools
+  test-world-channel-tools-first-send
   test-world-message-presentation
   test-world-child-participants
   test-world-child-sync

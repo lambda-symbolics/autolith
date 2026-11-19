@@ -64,6 +64,31 @@
                                configuration
                                (tool-argument arguments "channel" :required t)))))
 
+(-> channel-tool--current-channel (tool-context participant) string)
+(defun channel-tool--current-channel (context sender)
+  "Register a new current channel for its first send and return its identifier."
+  (let* ((configuration (tool-context-configuration context))
+         (conversation  (tool-context-conversation context))
+         (identifier    (conversation-identifier conversation)))
+    (unless (conversation-persisted-p conversation)
+      (world--transact
+       configuration
+       (lambda (world)
+         (unless (world-channel-find world identifier)
+           (world--require-participant world (participant-identifier sender) ':create-channel)
+           (let ((channel
+                   (world--new-channel
+                    configuration world
+                    :home      (list :id        identifier
+                                     :workspace (conversation-origin-directory conversation)
+                                     :title     (conversation-title conversation)
+                                     :parent    (conversation-parent-identifier conversation))
+                    :owner     (participant-identifier sender)
+                    :now       (conversation-created-at conversation)
+                    :operation ':create-channel)))
+             (values (list (world--channel-record channel)) channel))))))
+    identifier))
+
 (-> channel-tool--send-text (configuration list) string)
 (defun channel-tool--send-text (configuration result)
   "Return what the send RESULT of `world-message-send' did, as the sender reads it."
@@ -95,7 +120,7 @@
                            tool-name)
                           (if (and (eq operation ':send)
                                    (null (tool-argument arguments "channel")))
-                              (conversation-identifier (tool-context-conversation context))
+                              (channel-tool--current-channel context sender)
                               (channel-tool--channel context arguments))))
          (display       (conversation-identifier-display channel)))
     (case operation

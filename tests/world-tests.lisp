@@ -1030,6 +1030,65 @@
                          "the subscription is removed"))))))
   nil)
 
+(-> test-world-channel-tools-first-send () null)
+(defun test-world-channel-tools-first-send ()
+  "Test an omitted channel sends to the current conversation before its first record."
+  (with-test-configuration (configuration root)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (declare (ignore first-agent second-agent))
+      (let* ((workspace    (world-tests--workspace root "new-channel"))
+             (conversation (conversation-create configuration
+                                                :identifier       "o6E1D2R"
+                                                :origin-directory workspace))
+             (registry     (channel-register-tools (make-instance 'tool-registry)))
+             (agent        (agent-create :configuration configuration
+                                         :conversation  conversation
+                                         :provider      (make-instance 'model-provider)
+                                         :tool-registry registry
+                                         :worker        nil))
+             (context      (make-instance 'tool-context
+                                          :configuration configuration
+                                          :conversation  conversation
+                                          :agent         agent
+                                          :registry      registry
+                                          :worker        nil))
+             (*application-local-user-evaluation-p* t))
+        (flet ((send (text)
+                 "Send TEXT through the registered tool without a channel argument."
+                 (tool-registry-execute-call
+                  registry
+                  (agent-test-call :namespace "channel" :name "send"
+                                   :arguments (json-encode (json-object "text" text)))
+                  context)))
+          (test-assert (and (not (conversation-persisted-p conversation))
+                            (null (world-channel-find (world-load configuration) "o6E1D2R")))
+                       "the new current conversation has no durable message or world channel")
+          (test-assert (tool-result-success-p (send "Hi"))
+                       "the first local channel.send resolves the omitted channel")
+          (let ((channel  (world-channel-find (world-load configuration) "o6E1D2R"))
+                (delivery (first (world-inbox-deliveries configuration "o6E1D2R"))))
+            (test-assert (and channel
+                              (string= (channel-workspace channel) workspace)
+                              delivery
+                              (string= (world-delivery-sender delivery) (participant-identifier human))
+                              (string= (world-delivery-text delivery) "Hi"))
+                         "the person's first message reaches the new current channel in its workspace"))
+          (conversation-append-user-operation
+           conversation :kind ':lisp :source "(channel.send :text \"Hi\")"
+                        :status ':ok :result "sent")
+          (test-assert (tool-result-success-p (send "Again"))
+                       "the next send resolves the same channel after local input retention")
+          (conversation-append-user-message conversation "Continue")
+          (test-assert (and (world-session-participant configuration conversation)
+                            (equal (sort (mapcar #'world-delivery-text
+                                                 (world-inbox-deliveries configuration "o6E1D2R"))
+                                         #'string<)
+                                   '("Again" "Hi")))
+                       "session reconciliation adopts the channel and keeps both messages")))))
+  nil)
+
 (-> test-world-handles () null)
 (defun test-world-handles ()
   "Test initial handles, duplicate repair, and checked explicit renaming."
