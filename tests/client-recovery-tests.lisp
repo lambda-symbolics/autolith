@@ -5,6 +5,21 @@
   "Keep transport and rendering failures distinct from intentional terminal departure."
   (let* ((terminal (make-instance 'scripted-terminal :columns 80))
          (screen   (localgroup-screen-create :terminal terminal)))
+    (test-call-with-function-replacements
+     (list (list 'image-daemon:daemon-attach-client-run
+                 (lambda (stream &rest options)
+                   (declare (ignore stream))
+                   (let ((receive (getf options :packet-function)))
+                     (test-assert (null (funcall receive '(:evaluation :id "pump" :forms ("(values)"))))
+                                  "evaluation leaves the terminal packet loop running")
+                     (test-assert (funcall receive '(:switch :session-id "next"))
+                                  "the following switch ends the terminal packet loop"))
+                   (values nil '(:kind :detached)))))
+     (lambda ()
+       (test-assert (equal '(:switch :session-id "next")
+                           (localgroup--attach-terminal-loop
+                            (make-string-input-stream "") terminal ':control :screen screen))
+                    "the terminal returns the switch received after evaluation")))
     (dolist (kind '(:detached :revoked :application-exit :unexpected-eof
                     :decoding-failure :callback-failure :transport-failure
                     :remote-failure :queue-overflow))

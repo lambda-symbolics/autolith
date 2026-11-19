@@ -69,6 +69,14 @@ Each side reads only the fields it knows, so a peer of another version may add s
   (declare (ignore attachment))
   nil)
 
+(defgeneric attachment-cancels-evaluation-p (attachment)
+  (:documentation "Return true when ATTACHMENT explicitly supports best-effort evaluation cancellation."))
+
+(defmethod attachment-cancels-evaluation-p ((attachment image-daemon:attachment))
+  "Preserve old peers by sending cancellation only to attachments that advertise it."
+  (declare (ignore attachment))
+  nil)
+
 
 ;;;; -- image-daemon Host Wiring --
 

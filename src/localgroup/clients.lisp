@@ -56,12 +56,13 @@
          (arguments   (localgroup--request-field request :arguments))
          (name        (getf arguments :name))
          (client      (channel-client-create
-                       :name           (if (non-empty-string-p name) name "client")
-                       :approves-p     (getf arguments :approves-p t)
-                       :evaluates-p    (not (null (getf arguments :evaluates-p)))
-                       :stream         stream
-                       :socket         socket
-                       :transport-lock (image-daemon:daemon-runtime-lock session))))
+                       :name                 (if (non-empty-string-p name) name "client")
+                       :approves-p           (getf arguments :approves-p t)
+                       :evaluates-p          (not (null (getf arguments :evaluates-p)))
+                       :cancels-evaluation-p (eq (getf arguments :cancels-evaluation-p) t)
+                       :stream               stream
+                       :socket               socket
+                       :transport-lock       (image-daemon:daemon-runtime-lock session))))
     (unwind-protect
          (progn
            (handler-case
@@ -212,6 +213,15 @@
     :initform      (make-lock "Autolith client writes")
     :reader        localgroup-client-connection-write-lock
     :documentation "The lock serializing socket writes without blocking reply delivery or closure.")
+   (write-failed-p
+    :initform      nil
+    :accessor      localgroup-client-connection-write-failed-p
+    :type          boolean
+    :documentation "Writer-lock guarded retirement flag set before releasing an interrupted frame.")
+   (evaluator
+    :initform      (make-instance 'client-evaluator)
+    :reader        localgroup-client-connection-evaluator
+    :documentation "Attachment-owned evaluation state, severed on disconnect.")
    (condition-variable
     :initform      (make-condition-variable :name "Autolith client connection")
     :reader        localgroup-client-connection-condition-variable
@@ -293,8 +303,9 @@ itself; EVENT-FUNCTION never sees those requests."
                                      :token     (localgroup--record-token record)
                                      :operation ':client
                                      :arguments (list :name name :approves-p approves-p
-                                                      :evaluates-p    evaluates-p
-                                                      :after-sequence after-sequence)))
+                                                      :evaluates-p     evaluates-p
+                                                 :cancels-evaluation-p evaluates-p
+                                                      :after-sequence  after-sequence)))
           (let ((greeting (localgroup-client--read-greeting stream cancelled-p)))
             (unless (eq (first greeting) ':attached)
               (error 'localgroup-client-rejected
@@ -319,6 +330,24 @@ itself; EVENT-FUNCTION never sees those requests."
         (ignore-errors (sb-bsd-sockets:socket-close socket))
         (error condition)))))
 
+(-> localgroup-client--write-frame (localgroup-client-connection string) null)
+(defun localgroup-client--write-frame (connection frame)
+  "Serialize FRAME and retire an interrupted stream before another writer can enter."
+  (with-lock-held ((localgroup-client-connection-write-lock connection))
+    (when (or (localgroup-client-connection-write-failed-p connection)
+              (with-lock-held ((localgroup-client-connection-lock connection))
+                (localgroup-client-connection-closed-p connection)))
+      (error 'localgroup-error :message "The client transport is closed." :operation ':client))
+    (let ((finished-p nil))
+      (unwind-protect
+           (progn
+             (write-string frame (localgroup-client-connection-stream connection))
+             (finish-output (localgroup-client-connection-stream connection))
+             (setf finished-p t))
+        (unless finished-p
+          (setf (localgroup-client-connection-write-failed-p connection) t)))))
+  nil)
+
 (-> localgroup-client-call (localgroup-client-connection keyword &rest t) list)
 (defun localgroup-client-call (connection command &rest arguments)
   "Send COMMAND with ARGUMENTS and return its reply's fields, or signal its error.
@@ -338,9 +367,7 @@ writes are serialized separately so blocked I/O cannot prevent teardown."
          (progn
            (let ((frame (image-daemon:daemon-packet-string (list* command :id identifier arguments))))
              (handler-case
-                 (with-lock-held ((localgroup-client-connection-write-lock connection))
-                   (write-string frame (localgroup-client-connection-stream connection))
-                   (finish-output (localgroup-client-connection-stream connection)))
+                  (localgroup-client--write-frame connection frame)
                (error (condition)
                  (localgroup-client--disconnect connection)
                 (error 'localgroup-request-interrupted
@@ -376,18 +403,37 @@ writes are serialized separately so blocked I/O cannot prevent teardown."
       (join-thread thread)))
   nil)
 
+(defparameter *localgroup-client-evaluation-write-seconds* 1
+  "Maximum time an evaluation answer may spend waiting for a write lock and transport.")
+
+(-> localgroup-client--evaluation-answer (localgroup-client-connection list) null)
+(defun localgroup-client--evaluation-answer (connection packet)
+  "Write PACKET with bounded transport time and no retained acknowledgement entry."
+  (handler-case
+      (sb-sys:with-deadline (:seconds *localgroup-client-evaluation-write-seconds*)
+        (let* ((identifier
+                 (with-lock-held ((localgroup-client-connection-lock connection))
+                   (when (localgroup-client-connection-closed-p connection)
+                     (return-from localgroup-client--evaluation-answer nil))
+                   (incf (localgroup-client-connection-next-identifier connection))))
+               (frame (image-daemon:daemon-packet-string
+                       (list* (first packet) :id identifier (rest packet)))))
+          (localgroup-client--write-frame connection frame)))
+    (sb-sys:deadline-timeout ()
+      (localgroup-client--disconnect connection))
+    (error ()
+      (localgroup-client--disconnect connection)))
+  nil)
+
 (-> localgroup-client--evaluate (localgroup-client-connection t) null)
 (defun localgroup-client--evaluate (connection request)
-  "Evaluate a valid channel REQUEST on a thread and send CONNECTION's answer; ignore malformed envelopes."
-  (when (client-evaluation-request-p request)
-    (make-thread (lambda ()
-                   (handler-case
-                       (apply #'localgroup-client-call connection :evaluated
-                              (client-evaluate-request request))
-                     ;; The connection ended while the forms ran; nobody waits for the answer.
-                     (localgroup-error ()
-                       nil)))
-                 :name "Autolith client evaluation"))
+  "Admit REQUEST through the image's shared bounded evaluator."
+  (let ((evaluator (localgroup-client-connection-evaluator connection)))
+    (with-lock-held (*client-evaluator-lock*)
+      (unless (client-evaluator-closed-p evaluator)
+        (setf (client-evaluator-delivery evaluator)
+              (lambda (packet) (localgroup-client--evaluation-answer connection packet)))))
+    (client-evaluator-start evaluator request))
   nil)
 
 (-> localgroup-client--read
@@ -418,6 +464,9 @@ is skipped and a malformed one dropped."
                           (localgroup-client-connection-condition-variable connection))))))
                   ((and evaluates-p (eq (first packet) ':evaluation))
                    (localgroup-client--evaluate connection packet))
+                  ((and evaluates-p (eq (first packet) ':cancel-evaluation))
+                   (client-evaluator-cancel (localgroup-client-connection-evaluator connection)
+                                            (getf (rest packet) :id)))
                   (t
                    (when (eq (first packet) ':checkpoint-reconnect)
                      (with-lock-held ((localgroup-client-connection-lock connection))
@@ -438,6 +487,7 @@ is skipped and a malformed one dropped."
 
 The reader owns final socket closure. Hold the state lock through shutdown
 so it cannot race that closure; never close a stream under this lock."
+  (client-evaluator-close (localgroup-client-connection-evaluator connection))
   (with-lock-held ((localgroup-client-connection-lock connection))
     (unless (localgroup-client-connection-closed-p connection)
       (setf (localgroup-client-connection-closed-p connection) t)

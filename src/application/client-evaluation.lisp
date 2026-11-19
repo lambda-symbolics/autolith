@@ -106,6 +106,9 @@ the forms fail there, and when the client leaves, the turn is cancelled, or
                           "No attached client evaluates Lisp. Use target server.")))
          (evaluation (make-instance 'client-evaluation :attachment attachment)))
     (with-lock-held ((client-hub-lock hub))
+      (when (find attachment (client-hub-evaluations hub)
+                  :key #'client-evaluation-attachment :test #'eq)
+        (client-evaluation--fail ':busy "The attachment already has a pending evaluation."))
       (push evaluation (client-hub-evaluations hub)))
     (unwind-protect
          (progn
@@ -122,8 +125,16 @@ the forms fail there, and when the client leaves, the turn is cancelled, or
              (if succeeded-p
                  text
                  (client-evaluation--fail ':failed text))))
-      (with-lock-held ((client-hub-lock hub))
-        (setf (client-hub-evaluations hub) (remove evaluation (client-hub-evaluations hub)))))))
+      (let ((abandoned-p nil))
+        (with-lock-held ((client-hub-lock hub))
+          (setf abandoned-p (null (client-evaluation-answer evaluation))
+                (client-hub-evaluations hub) (remove evaluation (client-hub-evaluations hub))))
+        (when (and abandoned-p (attachment-cancels-evaluation-p attachment))
+          ;; Cancellation never waits for peer cooperation or sends unknown packets to old peers.
+          (handler-case
+              (image-daemon:attachment-try-send
+               attachment (list :cancel-evaluation :id (client-evaluation-identifier evaluation)))
+            (error () nil)))))))
 
 (-> application--await-evaluation (application client-evaluation) list)
 (defun application--await-evaluation (application evaluation)
@@ -203,34 +214,151 @@ The fields are :EVALUATION with the request's identifier, :SUCCEEDED-P, and
                        :restart-name         (getf arguments :restart)
                        :restart-value-source (getf arguments :restart-value)))
           (error (condition)
-            (values nil (princ-to-string condition))))
-      (list :evaluation (getf arguments :id) :succeeded-p succeeded-p :text text))))
+            (let ((stream (bounded-output-stream-create *self-evaluation-character-limit*)))
+              (princ condition stream)
+              (values nil (bounded-output-stream-text stream)))))
+      (list :evaluation (getf arguments :id) :succeeded-p succeeded-p
+            :text (bounded-string text :limit *self-evaluation-character-limit*)))))
 
 (defclass client-evaluator ()
-  ((lock
-    :initform      (make-lock "Autolith client evaluator")
-    :reader        client-evaluator-lock
-    :documentation "The lock guarding the finished answers.")
-   (answers
-    :initform      nil
-    :accessor      client-evaluator-answers
-    :type          list
-    :documentation "The answer packets finished and not yet taken, newest first."))
-  (:documentation "The evaluations a terminal client runs for its channel, each on a thread of its own."))
+  ((answers :initform nil :accessor client-evaluator-answers :type list
+            :documentation "Bounded finished packets awaiting terminal output, newest first.")
+   (work :initform nil :accessor client-evaluator-work
+         :documentation "This owner's current work token, or NIL after abandonment.")
+   (closed-p :initform nil :accessor client-evaluator-closed-p :type boolean
+             :documentation "Whether this attachment stopped accepting evaluation work and replies.")
+   (delivery :initarg :delivery :initform nil :accessor client-evaluator-delivery
+             :type          (option function)
+             :documentation "A bounded structured transport delivery callback, or NIL for terminal polling."))
+  (:documentation "Attachment-owned evaluation delivery, independent of an uncooperative worker."))
 
-(-> client-evaluator-start (client-evaluator t) null)
-(defun client-evaluator-start (evaluator request)
-  "Evaluate a valid REQUEST on a thread and retain its answer; ignore malformed envelopes."
-  (when (client-evaluation-request-p request)
-    (make-thread (lambda ()
-                   (let ((answer (cons :evaluated (client-evaluate-request request))))
-                     (with-lock-held ((client-evaluator-lock evaluator))
-                       (push answer (client-evaluator-answers evaluator)))))
-                 :name "Autolith client evaluation"))
+(defclass client-evaluator-work ()
+  ((identifier :initarg :identifier :reader client-evaluator-work-identifier :type string
+               :documentation "The request identifier, retained after abandonment.")
+   (owner :initarg :owner :accessor client-evaluator-work-owner :type (option client-evaluator)
+          :documentation "The severable delivery owner; NIL means discard any late result."))
+  (:documentation "A small token for the one evaluation admitted in this client image."))
+
+(defvar *client-evaluator-lock* (make-lock "Autolith client evaluation admission")
+  "Guard shared admission and owner state, never user code or transport writes.")
+
+(defvar *client-evaluator-active* nil
+  "The admitted work token, held until its worker really exits, including abandoned work.")
+
+(defparameter *client-evaluator-answer-limit* 8
+  "Maximum bounded terminal answer packets retained by one attached evaluator.")
+
+(-> client-evaluator-close (client-evaluator) null)
+(defun client-evaluator-close (evaluator)
+  "Abandon EVALUATOR without waiting for Lisp code; sever its work and delivery references."
+  (with-lock-held (*client-evaluator-lock*)
+    (when (client-evaluator-work evaluator)
+      (setf (client-evaluator-work-owner (client-evaluator-work evaluator)) nil))
+    (setf (client-evaluator-work evaluator) nil
+          (client-evaluator-delivery evaluator) nil
+          (client-evaluator-answers evaluator) nil
+          (client-evaluator-closed-p evaluator) t))
   nil)
+
+(-> client-evaluator-cancel (client-evaluator t) null)
+(defun client-evaluator-cancel (evaluator identifier)
+  "Discard IDENTIFIER's reply and abandon its work without releasing occupied image capacity."
+  (with-lock-held (*client-evaluator-lock*)
+    (let ((work (client-evaluator-work evaluator)))
+      (when (and (stringp identifier) work
+                 (equal identifier (client-evaluator-work-identifier work)))
+        (setf (client-evaluator-work-owner work) nil
+              (client-evaluator-work evaluator) nil)))
+    (setf (client-evaluator-answers evaluator)
+          (remove identifier (client-evaluator-answers evaluator)
+                  :key (lambda (packet) (getf (rest packet) :evaluation)) :test #'equal)))
+  nil)
+
+(-> client-evaluator--deliver (client-evaluator list &optional (option client-evaluator-work)) null)
+(defun client-evaluator--deliver (evaluator packet &optional work)
+  "Deliver a bounded PACKET outside the admission lock, or queue it with finite backpressure."
+  (let ((delivery   nil)
+        (overflow-p nil))
+    (with-lock-held (*client-evaluator-lock*)
+      (when (and (not (client-evaluator-closed-p evaluator))
+                 (or (null work) (eq evaluator (client-evaluator-work-owner work))))
+        (cond
+          ((client-evaluator-delivery evaluator)
+           (setf delivery (client-evaluator-delivery evaluator)))
+          ((< (length (client-evaluator-answers evaluator)) *client-evaluator-answer-limit*)
+           (push packet (client-evaluator-answers evaluator)))
+          (t
+           (setf overflow-p t)))))
+    (cond
+      (delivery
+       (handler-case (funcall delivery packet)
+         (error () (client-evaluator-close evaluator))))
+      (overflow-p
+       (client-evaluator-close evaluator))))
+  nil)
+
+(-> client-evaluator--run (client-evaluator-work t) null)
+(defun client-evaluator--run (work request)
+  "Run REQUEST with only WORK retained; abandoned tokens hold no owner or connection."
+  (unwind-protect
+       (let* ((packet (cons :evaluated (client-evaluate-request request)))
+              (owner  (with-lock-held (*client-evaluator-lock*)
+                        (client-evaluator-work-owner work))))
+         (when owner (client-evaluator--deliver owner packet work)))
+    (with-lock-held (*client-evaluator-lock*)
+      (let ((owner (client-evaluator-work-owner work)))
+        (when (and owner (eq work (client-evaluator-work owner)))
+          (setf (client-evaluator-work owner) nil)))
+      (setf (client-evaluator-work-owner work) nil)
+      (when (eq *client-evaluator-active* work)
+        (setf *client-evaluator-active* nil))))
+  nil)
+
+(-> client-evaluator--launch (client-evaluator-work t) null)
+(defun client-evaluator--launch (work request)
+  "Start a worker from a scope that cannot capture its attachment owner."
+  (make-thread (lambda () (client-evaluator--run work request))
+               :name "Autolith client evaluation")
+  nil)
+
+(-> client-evaluator-start (client-evaluator t) keyword)
+(defun client-evaluator-start (evaluator request)
+  "Admit one shared image worker or answer busy; a hung abandoned worker keeps its slot."
+  (unless (client-evaluation-request-p request)
+    (return-from client-evaluator-start ':invalid))
+  (let ((work   nil)
+        (status nil))
+    (with-lock-held (*client-evaluator-lock*)
+      (setf status
+            (cond
+              ((client-evaluator-closed-p evaluator)
+               ':closed)
+              (*client-evaluator-active*
+               ':busy)
+              (t
+               (setf work (make-instance 'client-evaluator-work
+                                         :identifier (getf (rest request) :id) :owner evaluator)
+                     *client-evaluator-active* work
+                     (client-evaluator-work evaluator) work)
+               ':accepted))))
+    (case status
+      (:accepted
+       (handler-case (client-evaluator--launch work request)
+         (error (condition)
+           (client-evaluator-cancel evaluator (client-evaluator-work-identifier work))
+           (with-lock-held (*client-evaluator-lock*)
+             (when (eq work *client-evaluator-active*) (setf *client-evaluator-active* nil)))
+           (error condition))))
+      (:busy
+       (client-evaluator--deliver
+        evaluator (list :evaluated :evaluation (getf (rest request) :id) :succeeded-p nil
+                        :text "Client evaluation is busy; abandoned work retains capacity until it exits."))))
+    status))
 
 (-> client-evaluator-take (client-evaluator) list)
 (defun client-evaluator-take (evaluator)
-  "Return the answer packets finished since the last call, oldest first, and forget them."
-  (with-lock-held ((client-evaluator-lock evaluator))
+  "Drain bounded terminal replies; refuse a closed or overflowed evaluation owner."
+  (with-lock-held (*client-evaluator-lock*)
+    (when (client-evaluator-closed-p evaluator)
+      (client-evaluation--fail ':closed "Client evaluation delivery closed or exceeded its bounded queue."))
     (nreverse (shiftf (client-evaluator-answers evaluator) nil))))

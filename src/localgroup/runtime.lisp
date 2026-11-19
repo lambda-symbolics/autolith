@@ -552,7 +552,9 @@ operation. Drain through the sole attachment writer outside endpoint locks."
                      attachment
                        (localgroup-attachment-create socket stream mode
                                                      :client-pid  (getf arguments :client-pid)
-                                                     :evaluates-p (getf arguments :evaluates-p))
+                                                     :evaluates-p (getf arguments :evaluates-p)
+                                                     :cancels-evaluation-p
+                                                     (getf arguments :cancels-evaluation-p))
                      stage "admission")
                (unless
                    (if (eq mode ':read-only)

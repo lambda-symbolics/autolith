@@ -64,6 +64,8 @@
          (localgroup-client--evaluate connection request))
        (test-assert (and (zerop evaluated) (null (client-evaluator-take evaluator)))
                     "Neither client route evaluates or answers malformed envelopes."))))
+  (client-evaluation-tests--lifecycle)
+  (client-evaluation-tests--stalled-writer)
   nil)
 
 (-> test-client-evaluation-structured-client () null)
@@ -79,6 +81,7 @@
                (lambda () (application-evaluate-on-client application forms)))))
        (test-assert (eq (code "(+ 1 2)") ':no-client)
                     "a channel without clients has nobody to evaluate")
+       (client-evaluation-tests--peer-cancellation application record)
        (let ((plain (localgroup-client-connect record :name "plain")))
          (unwind-protect
               (test-assert (eq (code "(+ 1 2)") ':no-client)
@@ -133,27 +136,40 @@
                    (let ((*client-evaluation-seconds* 0.5))
                      (test-assert (eq (code "(+ 1 2)") ':timeout)
                                   "a client that stays silent is given up on"))
-                   (let ((controller (application-input-controller application)))
-                     (setf (application-input-controller-turn-cancellation-p controller) t)
-                     (unwind-protect
-                          (test-assert (eq (code "(+ 1 2)") ':cancelled)
-                                       "a cancelled turn stops waiting for the client")
-                       (setf (application-input-controller-turn-cancellation-p controller) nil)))
-                   (let* ((failure nil)
-                          (asker   (make-thread
-                                    (lambda () (setf failure (code "(+ 1 2)")))
-                                    :name "client evaluation asker")))
-                     (test-assert (task-tests--wait-until
-                                   (lambda ()
-                                     (client-hub-evaluations (application-client-hub application)))
-                                   10)
-                                  "the channel waits for the client's answer")
-                     (localgroup-client-close connection)
-                     (join-thread asker)
-                     (test-assert (eq failure ':client-left)
-                                  "a client that leaves ends the wait")))))
+                  (test-assert (task-tests--wait-until
+                                (lambda ()
+                                  (null (client-evaluator-work
+                                         (localgroup-client-connection-evaluator connection)))) 5)
+                               "A negotiated cancellation detaches the timed-out work owner.")
+                  (multiple-value-bind (failure message) (code "(+ 1 2)")
+                    (test-assert (and (eq failure ':failed) (search "busy" message))
+                                 "An abandoned worker refuses new work explicitly."))
+                  (let ((controller (application-input-controller application)))
+                    (setf (application-input-controller-turn-cancellation-p controller) t)
+                    (unwind-protect
+                         (test-assert (eq (code "(+ 1 2)") ':cancelled)
+                                      "a cancelled turn stops waiting for the client")
+                      (setf (application-input-controller-turn-cancellation-p controller) nil)))
+                  (sb-thread:signal-semaphore gate)
+                  (test-assert (task-tests--wait-until (lambda () (null *client-evaluator-active*)) 5)
+                               "The abandoned worker exits before the next independent request.")
+                  (let* ((failure nil)
+                         (asker   (make-thread
+                                   (lambda () (setf failure (code "(+ 1 2)")))
+                                   :name "client evaluation asker")))
+                    (test-assert (task-tests--wait-until
+                                  (lambda ()
+                                    (client-hub-evaluations (application-client-hub application)))
+                                  10)
+                                 "the channel waits for the client's answer")
+                    (localgroup-client-close connection)
+                    (join-thread asker)
+                    (test-assert (eq failure ':client-left)
+                                 "a client that leaves ends the wait")))))
            (sb-thread:signal-semaphore gate 8)
-           (localgroup-client-close connection)))
+           (localgroup-client-close connection)
+           (test-assert (task-tests--wait-until (lambda () (null *client-evaluator-active*)) 5)
+                        "Structured teardown leaves no cooperative worker running.")))
        (test-assert (null (client-hub-evaluations (application-client-hub application)))
                     "no finished or abandoned evaluation stays with the channel"))))
   nil)
@@ -315,4 +331,191 @@ from the client")))
                             (search "No attached client evaluates Lisp"
                                     (tool-result-content result)))
                        "without a presenting observer there is no client to ask")))))
+  nil)
+
+(-> client-evaluation-tests--abandoned-owner (keyword) list)
+(defun client-evaluation-tests--abandoned-owner (route)
+  "Start gated work through ROUTE and return weak owner references after attachment teardown."
+  (let* ((connection (and (eq route ':structured)
+                          (make-instance 'localgroup-client-connection :socket nil
+                                         :stream                               (make-string-output-stream))))
+         (owner      (if connection (localgroup-client-connection-evaluator connection)
+                         (make-instance 'client-evaluator)))
+         (other      (make-instance 'client-evaluator))
+         (request    '(:evaluation :id "abandoned" :forms ("(values)"))))
+    (if connection (localgroup-client--evaluate connection request)
+        (client-evaluator-start owner request))
+    (client-evaluator-cancel other "abandoned")
+    (test-assert (eq owner (client-evaluator-work-owner *client-evaluator-active*))
+                 "Cancellation from another attachment cannot abandon this owner.")
+    (client-evaluator-cancel owner "abandoned")
+    (if connection (localgroup-client-close connection) (client-evaluator-close owner))
+    (list (sb-ext:make-weak-pointer owner)
+          (sb-ext:make-weak-pointer connection))))
+
+(-> client-evaluation-tests--lifecycle () null)
+(defun client-evaluation-tests--lifecycle ()
+  "Check global admission, abandoned-owner collection, bounded replies and eventual slot release."
+  (dolist (route '(:terminal :structured))
+    (let ((gate    (sb-thread:make-semaphore))
+          (started (sb-thread:make-semaphore))
+          (calls   0))
+      (test-call-with-function-replacements
+       (list (list 'self-evaluate-sources
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     (incf calls)
+                     (sb-thread:signal-semaphore started)
+                     (sb-thread:wait-on-semaphore gate :timeout 10)
+                     (make-string (* 2 *self-evaluation-character-limit*) :initial-element #\x))))
+       (lambda ()
+         (unwind-protect
+             (let* ((weak         nil)
+                    (control      (make-instance 'client-evaluator))
+                    (control-weak (sb-ext:make-weak-pointer control))
+                    (other        (make-instance 'client-evaluator)))
+               (join-thread
+                (make-thread (lambda ()
+                               (setf weak (client-evaluation-tests--abandoned-owner route))
+                               nil)
+                             :name "evaluation owner producer"))
+               (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
+                            "The original image worker is running after its attachment leaves.")
+               (test-assert (and *client-evaluator-active*
+                                 (null (client-evaluator-work-owner *client-evaluator-active*)))
+                            "Abandoned work holds capacity without a delivery owner.")
+               (sb-ext:gc :full t)
+               (test-assert (eq control (sb-ext:weak-pointer-value control-weak))
+                            "The positive control deliberately retains its owner across collection.")
+               (test-assert (every (lambda (pointer) (null (sb-ext:weak-pointer-value pointer))) weak)
+                            "A blocked worker retains neither its owner nor its connection.")
+               (dotimes (index (1+ *client-evaluator-answer-limit*))
+                 (test-assert
+                  (eq (client-evaluator-start
+                       other (list :evaluation :id (format nil "busy-~D" index) :forms '("(values)")))
+                      ':busy)
+                  "New requests receive bounded busy replies instead of starting more workers."))
+               (test-assert (and (= calls 1) (client-evaluator-closed-p other)
+                                 (null (client-evaluator-answers other))
+                                 (eq (client-evaluation-tests--failure
+                                      (lambda () (client-evaluator-take other))) ':closed))
+                            "Overflow disconnects evaluation delivery explicitly and drops queued replies."))
+           (sb-thread:signal-semaphore gate)
+           (test-assert (task-tests--wait-until (lambda () (null *client-evaluator-active*)) 5)
+                        "Only actual worker exit releases shared capacity."))))))
+  nil)
+
+(defclass client-evaluation-tests-output (trivial-gray-streams:fundamental-character-output-stream)
+  ((gate :initarg :gate :reader client-evaluation-tests-output-gate
+         :documentation "A gate that models stalled output after a partial frame.")
+   (started :initarg :started :reader client-evaluation-tests-output-started
+            :documentation "Notifies the test that a frame write began.")
+   (writes :initform 0 :accessor client-evaluation-tests-output-writes
+           :documentation "Number of characters accepted before interruption."))
+  (:documentation "A deadline-aware partial writer for transport retirement tests."))
+
+(defmethod trivial-gray-streams:stream-write-char ((stream client-evaluation-tests-output) character)
+  "Accept the first character and block until the deadline or test cleanup."
+  (incf (client-evaluation-tests-output-writes stream))
+  (sb-thread:signal-semaphore (client-evaluation-tests-output-started stream))
+  (sb-thread:wait-on-semaphore (client-evaluation-tests-output-gate stream) :timeout 10)
+  character)
+
+(-> client-evaluation-tests--stalled-writer () null)
+(defun client-evaluation-tests--stalled-writer ()
+  "Exercise a partial-frame timeout, queued writers and another connection's reader and close."
+  (let* ((gate            (sb-thread:make-semaphore))
+         (started         (sb-thread:make-semaphore))
+         (stream          (make-instance 'client-evaluation-tests-output :gate gate :started started))
+         (connection      (make-instance 'localgroup-client-connection :socket nil :stream stream))
+         (other           (make-instance 'localgroup-client-connection :socket nil
+                                        :stream                                (make-string-input-stream
+                                                                                (image-daemon:daemon-packet-string '(:reply :id 7 :ok t)))))
+         (writer          nil)
+         (queued          nil)
+         (queued-failed-p nil))
+    (setf (gethash 7 (localgroup-client-connection-replies other)) nil)
+    (unwind-protect
+         (progn
+           (setf writer
+                 (make-thread
+                  (lambda ()
+                    (let ((*localgroup-client-evaluation-write-seconds* 0.25))
+                      (localgroup-client--evaluation-answer
+                       connection '(:evaluated :evaluation "write" :succeeded-p t :text "answer"))))
+                  :name "evaluation partial writer"))
+           (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
+                        "The evaluation answer stalled after beginning its frame.")
+           (setf queued
+                 (make-thread
+                  (lambda ()
+                    (handler-case (localgroup-client--write-frame connection "second-frame")
+                      (localgroup-error () (setf queued-failed-p t))))
+                  :name "evaluation queued writer"))
+           (sb-sys:with-deadline (:seconds 2)
+             (client-evaluator-close (make-instance 'client-evaluator))
+             (localgroup-client--read other nil)
+             (localgroup-client-close other))
+           (test-assert (and (localgroup-client-connection-closed-p other)
+                             (gethash 7 (localgroup-client-connection-replies other)))
+                        "A stalled writer holds neither shared admission nor another reader's close path.")
+           (join-thread writer)
+           (join-thread queued)
+           (test-assert (and queued-failed-p (= 1 (client-evaluation-tests-output-writes stream))
+                             (localgroup-client-connection-write-failed-p connection)
+                             (localgroup-client-connection-closed-p connection)
+                             (client-evaluator-closed-p (localgroup-client-connection-evaluator connection))
+                             (zerop (hash-table-count (localgroup-client-connection-replies connection))))
+                        "The interrupted frame retires before any queued writer, without an ACK entry."))
+      (sb-thread:signal-semaphore gate 100)
+      (when writer (join-thread writer))
+      (when queued (join-thread queued))
+      (localgroup-client-close connection)
+      (localgroup-client-close other)))
+  nil)
+
+(-> client-evaluation-tests--peer-cancellation (application cons) null)
+(defun client-evaluation-tests--peer-cancellation (application record)
+  "Timeout old and new structured peers and verify cancellation is explicitly negotiated."
+  (dolist (supports-p '(nil t))
+    (multiple-value-bind (socket stream) (daemon-connect (localgroup--record-port (rest record)))
+      (unwind-protect
+           (progn
+             (daemon-write-packet
+              stream (list :localgroup-request :version *daemon-protocol-version*
+                           :token (localgroup--record-token (rest record)) :operation ':client
+                           :arguments          (append (list :name "compatibility" :evaluates-p t)
+                                                       (when supports-p (list :cancels-evaluation-p t)))))
+             (test-assert (eq (first (daemon-read-response stream ':client)) ':attached)
+                          "An evaluation-only old peer and a cancellation-aware peer both attach.")
+             (test-assert (task-tests--wait-until
+                           (lambda () (application-evaluating-attachment application)) 5)
+                          "The peer's evaluation capability is admitted.")
+             (test-assert (eq (attachment-cancels-evaluation-p
+                               (application-evaluating-attachment application)) supports-p)
+                          "Cancellation support belongs to the exact advertised attachment.")
+             (let ((*client-evaluation-seconds*      0.05)
+                   (*client-evaluation-poll-seconds* 0.01))
+               (test-assert (eq (client-evaluation-tests--failure
+                                 (lambda () (application-evaluate-on-client application '("(values)"))))
+                               ':timeout)
+                            "A peer that never answers releases its server evaluation state on timeout."))
+             (test-assert (null (client-hub-evaluations (application-client-hub application)))
+                          "Timeout removes server pending state for both protocol generations.")
+             (sb-sys:with-deadline (:seconds 2)
+               (let ((request (daemon-read-packet stream)))
+                 (test-assert (eq (first request) ':evaluation) "The peer receives its evaluation request.")
+                 (if supports-p
+                     (test-assert (equal (daemon-read-packet stream)
+                                         (list :cancel-evaluation :id (getf (rest request) :id)))
+                                  "New peers receive best-effort cancellation for that request alone.")
+                     (progn
+                       (sleep 0.05)
+                       (test-assert (not (listen stream))
+                                    "Old peers receive no cancellation packet or unknown event."))))))
+        (sb-bsd-sockets:socket-shutdown socket :direction ':io)
+        (sb-bsd-sockets:socket-close socket)
+        (test-assert (task-tests--wait-until
+                      (lambda () (null (application-evaluating-attachment application))) 5)
+                     "The compatibility peer leaves before admitting the next peer."))))
   nil)

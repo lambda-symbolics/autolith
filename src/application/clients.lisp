@@ -32,6 +32,12 @@
     :reader        channel-client-evaluates-p
     :type          boolean
     :documentation "Whether the client evaluates Common Lisp forms, as one written in Lisp may.")
+   (cancels-evaluation-p
+    :initarg       :cancels-evaluation-p
+    :initform      nil
+    :reader        channel-client-cancels-evaluation-p
+    :type          boolean
+    :documentation "Whether this client explicitly supports evaluation cancellation.")
    (attachment
     :accessor      channel-client-attachment
     :type          image-daemon:attachment
@@ -316,13 +322,14 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
 
 (-> channel-client-create
     (&key (:socket t) (:stream stream) (:transport-lock t) (:name string) (:approves-p boolean)
-          (:evaluates-p boolean))
+          (:evaluates-p boolean) (:cancels-evaluation-p boolean))
     channel-client)
 (defun channel-client-create
-    (&key socket stream transport-lock (name "client") (approves-p t) evaluates-p)
+    (&key socket stream transport-lock (name "client") (approves-p t) evaluates-p cancels-evaluation-p)
   "Create a structured client and its deferred output attachment."
   (let ((client (make-instance 'channel-client :name name :approves-p approves-p
-                                               :evaluates-p evaluates-p)))
+                                               :evaluates-p          evaluates-p
+                                               :cancels-evaluation-p cancels-evaluation-p)))
     (setf (channel-client-attachment client)
           (make-instance 'channel-client-transport
                          :client client :socket socket :stream stream :mode ':read-only
@@ -354,6 +361,10 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
 (defmethod attachment-evaluates-p ((transport channel-client-transport))
   "Return whether TRANSPORT's structured client said it evaluates Common Lisp forms."
   (channel-client-evaluates-p (channel-client-transport-client transport)))
+
+(defmethod attachment-cancels-evaluation-p ((transport channel-client-transport))
+  "Return the cancellation support advertised by TRANSPORT's structured client."
+  (channel-client-cancels-evaluation-p (channel-client-transport-client transport)))
 
 (defmethod image-daemon:attachment-release-transport ((transport channel-client-transport))
   "Shut down TRANSPORT, unregister its client and wake approvals; the daemon closes it."

@@ -611,7 +611,11 @@ checkpoint transition, a switch request, or (:ATTACHMENT-LOST . DETAILS)."
                                                             nil)
                                                            ((eq (first packet) ':evaluation)
                                                             (client-evaluator-start evaluator
-                                                                                    packet))
+                                                                                    packet)
+                                                            nil)
+                                                           ((eq (first packet) ':cancel-evaluation)
+                                                            (client-evaluator-cancel evaluator
+                                                                                     (getf (rest packet) :id)))
                                                            ((or
                                                              (and
                                                               (eq (first packet)
@@ -669,6 +673,7 @@ checkpoint transition, a switch request, or (:ATTACHMENT-LOST . DETAILS)."
                 termination)))
            (error (condition)
                   (setf result (localgroup--client-attachment-failure condition "receive"))))
+        (cleanup "evaluation" (lambda () (client-evaluator-close evaluator)))
         (cleanup "screen" (lambda () (when owned-p (localgroup-screen-close screen))))
         (cleanup "terminal-mode" (lambda () (mode-tracking-output-stream-restore output))))
       (localgroup--client-cleanup-result result metadata (nreverse cleanup-failures)))))
@@ -871,7 +876,7 @@ SCREEN the caller lends stays the caller's to release."
                                                  (list :mode mode :rows rows :columns columns
                                                        :client-pid (current-process-id) :styled-p
                                                        (terminal-environment-styling-p)
-                                                       :evaluates-p t)
+                                                       :evaluates-p t :cancels-evaluation-p t)
                                                  (when client-version
                                                    (list :client-version client-version))
                                                  (when notice (list :notice notice))))))

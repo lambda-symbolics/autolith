@@ -14,13 +14,19 @@
     :initform      nil
     :reader        attachment-evaluates-p
     :type          boolean
-    :documentation "Whether the terminal client said it evaluates Common Lisp forms."))
+    :documentation "Whether the terminal client said it evaluates Common Lisp forms.")
+   (cancels-evaluation-p
+    :initarg       :cancels-evaluation-p
+    :initform      nil
+    :reader        attachment-cancels-evaluation-p
+    :type          boolean
+    :documentation "Whether this terminal understands evaluation cancellation packets."))
   (:documentation "A terminal attachment with Autolith's client process identity."))
 
 (-> localgroup-attachment-create
-    (t stream keyword &key (:client-pid t) (:evaluates-p t))
+    (t stream keyword &key (:client-pid t) (:evaluates-p t) (:cancels-evaluation-p t))
     localgroup-attachment)
-(defun localgroup-attachment-create (socket stream mode &key client-pid evaluates-p)
+(defun localgroup-attachment-create (socket stream mode &key client-pid evaluates-p cancels-evaluation-p)
   "Validate CLIENT-PID and start a terminal attachment over SOCKET and STREAM.
 
 An omitted PID supports clients that predate terminal process reporting.
@@ -30,8 +36,9 @@ EVALUATES-P records that the client evaluates the forms it is sent."
                             :operation ':attach))
   (image-daemon:attachment-start
    (make-instance 'localgroup-attachment :socket socket :stream stream :mode mode
-                                        :client-pid  client-pid
-                                        :evaluates-p (not (null evaluates-p)))))
+                                        :client-pid            client-pid
+                                         :evaluates-p          (not (null evaluates-p))
+                                         :cancels-evaluation-p (not (null cancels-evaluation-p)))))
 
 (defclass localgroup-terminal (terminal image-daemon:relay)
   ((screen-active-p
