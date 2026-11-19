@@ -447,15 +447,12 @@
                                 entries)))
              (test-assert (functionp provider)
                           "applications install a dynamic operation completion provider")
-             (test-assert (member "/help" entry-names :test #'string=)
-                          "slash compatibility completion retains canonical commands")
+             (test-assert (and (find "(help" entry-names :test #'string=)
+                               (notany (lambda (name) (uiop:string-prefix-p "/" name)) entry-names))
+                          "the prompt catalog only offers native operations")
              (test-assert (and (member "(close)" entry-names :test #'string=)
                                (null (application-command-find "/quit")))
                           "completion offers the renamed no-argument Lisp command")
-             (test-assert
-              (and (member "/ste on" entry-names :test #'string=)
-                   (member "/ste off" entry-names :test #'string=))
-              "slash completion offers every finite command option")
              (test-assert
               (and (member "(ste t)" entry-names :test #'string=)
                    (member "(ste nil)" entry-names :test #'string=))
@@ -467,15 +464,14 @@
                                   :test #'string=)
                             :primary)))
                (test-assert
-                (and (equal (primary-of "/ste on") "/ste")
-                     (equal (primary-of "(ste nil)") "(ste")
-                     (null (primary-of "/ste"))
+                 (and (equal (primary-of "(ste nil)") "(ste")
+                      (null (primary-of "(ste"))
                      (null (primary-of "(domestic)")))
                 "finite option entries stay behind their canonical command rows")
                (test-assert
-                 (and (equal (primary-of "/exit") "/close")
-                      (equal (primary-of "/usage") "/status")
-                      (null (primary-of "/close")))
+                  (and (equal (primary-of "(exit)") "(close)")
+                       (equal (primary-of "(usage)") "(status)")
+                       (null (primary-of "(close)")))
                 "alias entries stay behind their canonical command rows"))
              (test-assert
               (and resource-entry
@@ -490,9 +486,6 @@
                    (search ":|odd key)| VALUE"
                            (or (getf test-entry :argument) "")))
               "completion escapes punctuation and whitespace in property names")
-             (test-assert
-              (not (member "/resource.read" entry-names :test #'string=))
-              "slash compatibility does not invent tool spellings")
              (test-assert
               (not (find-if (lambda (name)
                               (uiop:string-prefix-p "(yield.submit" name))
@@ -655,23 +648,6 @@
                   (search "(resource.read" output)
                   (search "(close)" output))
               "nested help can present the full registered operation reference"))
-           (recording-terminal-reset terminal)
-           (test-assert (eq (application--run-command-input application "/help")
-                            ':continue)
-                        "slash compatibility still executes the command backend")
-           (test-assert
-            (search "prefer (help)" (recording-terminal-output terminal))
-            "the first slash spelling shows its canonical Lisp form")
-           (recording-terminal-reset terminal)
-           (application--run-command-input application "/help")
-           (test-assert
-            (not (search "prefer (help)" (recording-terminal-output terminal)))
-            "a command's preferred Lisp spelling appears only once per session")
-           (recording-terminal-reset terminal)
-           (test-assert
-            (and (eq (application--run-command-input application "/exit") ':quit)
-                 (search "prefer (close)" (recording-terminal-output terminal)))
-            "slash aliases hint the canonical command operation name")
            (let ((evaluation
                    (application-lisp-evaluate "(close)" :application application)))
              (test-assert
@@ -714,15 +690,7 @@
                     nil)
                 (update-requested (condition)
                   (string= (update-requested-tag condition) "v99.0.0")))
-              "a canonical update operation requests the packaged launcher handoff")
-             (test-assert
-              (handler-case
-                  (progn
-                    (application--run-command-input application "/update")
-                    nil)
-                (update-requested (condition)
-                  (string= (update-requested-tag condition) "v99.0.0")))
-              "the slash update spelling requests the same launcher handoff"))
+              "a canonical update operation requests the packaged launcher handoff"))
            (let ((evaluation
                    (application-lisp-evaluate
                     "(test-operation.echo :text)"
@@ -810,7 +778,7 @@
 
 (-> test-fix-skipped-definitions-operation () null)
 (defun test-fix-skipped-definitions-operation ()
-  "Test optional user direction reaches the queued repair request through both syntaxes."
+  "Test optional native direction reaches the queued repair request."
   (let ((provider (make-instance 'scripted-provider :results nil)))
     (application-operation-tests--call-with-compaction-provider
      provider
@@ -834,8 +802,10 @@
                                       :message            "skipped")))))
          (test-assert
           (handler-case
-              (progn (application-command application "/fix-skipped-definitions")
-                     nil)
+               (progn (application-operation-invoke
+                       (application-operation-find application 'fix-skipped-definitions)
+                       application nil)
+                      nil)
             (configuration-error ()
               t))
           "queueing the repair turn without an interactive controller is a configuration failure")
@@ -845,31 +815,25 @@
                 (comment    (format nil "Drop these experiments, including \"quoted\" names.~%Keep ~A literal."
                                     "~%")))
            (setf (application-input-controller application) controller)
-           (dolist (case (list (list ':lisp "(fix-skipped-definitions)" "")
-                              (list ':lisp "(fix-skipped-definitions \"\")" "")
-                              (list ':lisp (format nil "(fix-skipped-definitions ~S)" comment)
-                                    comment)
-                              (list ':slash "/fix-skipped-definitions" "")
-                              (list ':slash (concatenate 'string "/fix-skipped-definitions " comment)
-                                    comment)))
-             (destructuring-bind (syntax input direction) case
+           (dolist (case (list (list "(fix-skipped-definitions)" "")
+                              (list "(fix-skipped-definitions \"\")" "")
+                              (list (format nil "(fix-skipped-definitions ~S)" comment) comment)))
+             (destructuring-bind (input direction) case
                (test-assert
-                (if (eq syntax ':lisp)
-                    (eq (application-lisp-evaluation-status
-                         (application-lisp-evaluate input :application application))
-                        ':ok)
-                    (eq (application-command application input) ':continue))
+                (eq (application-lisp-evaluation-status
+                     (application-lisp-evaluate input :application application))
+                    ':ok)
                 "the command accepts an omitted, empty, or complete direction string")
-               (let* ((work    (deque-pop-front work-items))
-                      (text    (getf (second work) :text))
-                      (request (getf (second work) :request)))
-                 (test-assert
-                  (and (eq (first work) ':operation-request)
-                       (string= (getf request :operation) "fix-skipped-definitions")
-                       (search "(defun test-self-target () 7)" text)
-                       (or (zerop (length direction)) (search direction text))
-                       (deque-empty-p work-items))
-                  "one repair request contains the skipped source and the user's exact direction"))))
+              (let* ((work    (deque-pop-front work-items))
+                     (text    (getf (second work) :text))
+                     (request (getf (second work) :request)))
+                (test-assert
+                 (and (eq (first work) ':operation-request)
+                      (string= (getf request :operation) "fix-skipped-definitions")
+                      (search "(defun test-self-target () 7)" text)
+                      (or (zerop (length direction)) (search direction text))
+                      (deque-empty-p work-items))
+                 "one repair request contains the skipped source and the user's exact direction"))))
            (dolist (input '("(fix-skipped-definitions 7)"
                             "(fix-skipped-definitions nil)"))
              (test-assert
@@ -881,8 +845,10 @@
            (setf (application-input-controller-stopping-p controller) t)
            (test-assert
             (handler-case
-                (progn (application-command application "/fix-skipped-definitions Drop all experiments.")
-                       nil)
+                 (progn (application-operation-invoke
+                         (application-operation-find application 'fix-skipped-definitions)
+                         application '("Drop all experiments."))
+                        nil)
               (configuration-error ()
                 (deque-empty-p work-items)))
             "a stopping session rejects the directed repair request"))
@@ -912,7 +878,9 @@
          (conversation-append-user-message conversation "Needs a connected agent.")
          (test-assert
           (handler-case
-              (progn (application-command application "/compact") nil)
+               (progn (application-operation-invoke
+                       (application-operation-find application 'compact) application nil)
+                      nil)
             (configuration-error ()
               t))
           "nonempty compaction without an agent reports a configuration failure")))))
@@ -940,7 +908,9 @@
                                     (coerce (conversation-input-items conversation) 'vector)))
                    (failure
                      (handler-case
-                         (progn (application-command application "/compact") nil)
+                          (progn (application-operation-invoke
+                                  (application-operation-find application 'compact) application nil)
+                                 nil)
                        (provider-error (condition)
                          condition))))
               (test-assert failure "compaction failures use the existing typed provider boundary")

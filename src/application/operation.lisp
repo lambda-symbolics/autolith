@@ -404,10 +404,7 @@ local-user override."
 (-> application-operation-completion-entries (application) list)
 (defun application-operation-completion-entries (application)
   "Return command, Lisp, option, and help-subject completions for APPLICATION."
-  (append (application-command-completion-entries)
-          (application-command-alias-completion-entries)
-          (application-command-option-completion-entries)
-          (mapcar #'application-operation-completion-entry
+  (append (mapcar #'application-operation-completion-entry
                   (application-operation-list application :include-aliases-p t))
           (application-operation--command-option-completion-entries)
           (application-help-completion-entries application)))
@@ -509,10 +506,15 @@ never returned. Refresh an unchanged query after two seconds without blocking in
   (let ((ui (and (slot-boundp application 'ui)
                  (application-ui application))))
     (when (typep ui 'terminal-ui)
-      (setf (terminal-ui-completion-function ui)
-            (lambda ()
-              (application-operation-completion-entries application))
-            (terminal-ui-path-search-function ui)
+      (let ((entries nil))
+        (setf (terminal-ui-completion-function ui)
+              (lambda ()
+                ;; Painting holds the UI lock. A registry writer may need that UI,
+                ;; so keep the last complete catalog and retry on the next paint.
+                (sb-thread:with-recursive-lock (*extension-registry-transaction-lock* :wait-p nil)
+                  (setf entries (application-operation-completion-entries application)))
+                entries)))
+      (setf (terminal-ui-path-search-function ui)
             (application-path--completion-provider
              (lambda (query) (application-path-search-files application query))
              :on-ready (lambda ()
@@ -531,39 +533,6 @@ never returned. Refresh an unchanged query after two seconds without blocking in
   (application-presentation-connect application)
   (application-connect-transcript-actions application)
   (application-connect-program-status application))
-
-(-> application-operation-command-hint-form (application-command-invocation) string)
-(defun application-operation-command-hint-form (invocation)
-  "Return INVOCATION's preferred canonical Lisp spelling."
-  (let* ((command   (application-command-invocation-command invocation))
-         (name      (application-operation--command-name command))
-         (arguments (application-command-invocation-arguments invocation))
-         (remainder (application-command-invocation-remainder invocation)))
-    (if (application-command-callable-p command)
-        (format nil "(~A~{ ~S~})" name arguments)
-        (if (non-empty-string-p remainder)
-            (format nil "(~A ~S)" name remainder)
-            (format nil "(~A)" name)))))
-
-(-> application-operation-present-command-hint
-    (application application-command-invocation) null)
-(defun application-operation-present-command-hint (application invocation)
-  "Present INVOCATION's canonical Lisp spelling once per command and session."
-  (let ((command (application-command-invocation-command invocation)))
-    (when command
-      (let ((name (application-operation--command-name command)))
-        (with-recursive-lock-held ((application-render-lock application))
-          (unless (member name
-                          (application-lisp-hinted-command-names application)
-                          :test #'string=)
-            (push name (application-lisp-hinted-command-names application))
-            (application-present
-             application
-             (list (terminal-span ':hint "· prefer ")
-                   (terminal-span
-                    ':code
-                    (application-operation-command-hint-form invocation)))))))))
-  nil)
 
 
 ;;;; -- Lisp Argument Boundary --

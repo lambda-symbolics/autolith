@@ -1352,8 +1352,6 @@
            #:application-command-busy-action
            #:application-command-busy-behavior
            #:application-command-callable-p
-           #:application-command-completion-entries
-           #:application-command-completion-entry
            #:application-command-create
            #:application-command-definition-name
            #:application-command-description
@@ -1366,7 +1364,6 @@
            #:application-command-invocation-command
            #:application-command-invocation-input
            #:application-command-invocation-name
-           #:application-command-invocation-parse
            #:application-command-invocation-supplied-argument-count
            #:application-command-invocation-remainder
            #:application-command-lambda-list

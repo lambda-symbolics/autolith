@@ -361,10 +361,8 @@ Attached clients report their own channel after releasing their shared screen."
   "Return ordered controller work for command-line and recovery startup behavior."
   (cond
     (initial-command
-     (list (list (if (input-lisp-p initial-command)
-                     ':lisp
-                     ':command)
-                 initial-command)))
+     (let ((work (input-work-from-input initial-command)))
+       (when work (list work))))
     (recovery-diagnosis
      (list (list ':recovery-diagnosis recovery-diagnosis)))
     (adaptation-offer-p
@@ -546,6 +544,8 @@ controller's exit reason."
                     (setf (application-recovery-startup-p application) nil)
                     (when initial-input
                       (terminal-ui-set-input ui initial-input))
+                    (when (and initial-command (input-leading-slash-p initial-command))
+                      (application--reject-slash-input application))
                     (setf input-controller
                           (application-input-controller-create
                            application

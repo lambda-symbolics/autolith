@@ -980,12 +980,12 @@ a user-local init.lisp change, or a private image commit.
   ColorLisp draft highlighting, multiline reading, printed output, multiple
   values, conditions, and a styled selector for live restarts. Commands and tools
   project through one canonical Lisp operation surface with restricted completion
-  and slash compatibility hints; startup tips render canonical Lisp calls.
-  Callable commands declare ordinary Common Lisp lambda lists and explicit slash
-  argument mappings. Noninteractive calls preserve ordinary arity errors, while
-  interactive calls can supply replacement arguments through the restart
-  debugger or abort safely to the prompt. Provider calls show parenthesized tool
-  names above aligned keyword-labeled argument tables, followed directly by
+  in direct and hosted terminals; startup tips render canonical Lisp calls.
+  Callable commands declare ordinary Common Lisp lambda lists and may decode
+  argument text for structured clients. Noninteractive calls preserve ordinary
+  arity errors. Interactive calls can supply replacement arguments through the
+  restart debugger or abort safely to the prompt. Provider calls show
+  parenthesized tool names above aligned keyword-labeled argument tables, followed directly by
   highlighted source rails. File changes number removed and added rows whenever
   exact original and resulting coordinates are known.
 

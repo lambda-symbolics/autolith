@@ -74,15 +74,11 @@
           (handler-case (progn (application-operation-call application "mission-wakeup" ticket) nil)
             (mission-error () t))
           "a consumed native ticket cannot replay")
-         (application-command application
-                              (format nil "/mission-wakeup ~S"
-                                      (mission-schedule-tests--ticket (second wakeups))))
-         (test-assert (= 2 (length (funcall executions))) "slash ticket keeps ordinary execution semantics")
-         (dolist (text '("/mission-wakeup #.(error \"evaluated\")"
-                          "/mission-wakeup (:id (1) :token 1) nil"))
-           (test-assert (handler-case (progn (application-command application text) nil)
-                          (mission-error () t))
-                        "slash wakeup rejects read-time evaluation and trailing forms")))))))
+         (let ((source (format nil "(mission-wakeup '~S)" (mission-schedule-tests--ticket (second wakeups)))))
+           (test-assert (eq ':ok (application-lisp-evaluation-status
+                                  (application-lisp-evaluate source :application application)))
+                        "the next scheduler ticket is callable from the Lisp prompt"))
+         (test-assert (= 2 (length (funcall executions))) "the second ticket also executes once"))))))
 
 (-> test-mission-schedule-version-and-cancel () null)
 (defun test-mission-schedule-version-and-cancel ()

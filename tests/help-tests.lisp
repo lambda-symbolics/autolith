@@ -130,7 +130,7 @@
       (test-assert (equal (application-operation-help application " OpEn ")
                           (application-operation-help application 'open))
                    "command subjects accept strings and ignore case and outer whitespace")
-      (test-assert (equal (application-operation-help application "/usage")
+      (test-assert (equal (application-operation-help application 'usage)
                           (application-operation-help application 'status))
                    "help can resolve an existing command alias")
       (let* ((runtime (application-operation-help application ':runtime))
@@ -183,7 +183,7 @@
              (let* ((ui     (application-ui application))
                     (editor (terminal-ui-editor ui)))
                (test-assert
-                (= 1 (count "/help commands"
+                 (= 1 (count "(help \"commands\")"
                             (application-operation-completion-entries application)
                             :test #'string= :key (lambda (entry) (getf entry :name))))
                 "a topic and command collision produces one ergonomic completion")
@@ -212,11 +212,11 @@
 
 (-> test-help-public-invocation () null)
 (defun test-help-public-invocation ()
-  "Test Lisp and ergonomic command invocation, readable errors, and provider isolation."
+  "Test native help invocation, readable errors, and provider isolation."
   (with-help-tests-application (application terminal)
     (let* ((conversation (application-conversation application))
            (before       (conversation-next-sequence conversation)))
-      (dolist (source '("(help)" "(help :workspace)" "(help 'open)"
+      (dolist (source '("(help)" "(help :workspace)" "(help :resume)" "(help 'open)"
                         "(help \"test-operation.echo\")" "(help 42)"
                         "(help \"definitely-unknown\")"))
         (recording-terminal-reset terminal)
@@ -225,9 +225,6 @@
                        "help subjects and invalid-subject guidance finish without a debugger")
           (test-assert (plusp (length (recording-terminal-output terminal)))
                        "help presents its result in the terminal")))
-      (dolist (input '("/help workspace" "/help resume" "/help definitely-unknown"))
-        (test-assert (eq (application--run-command-input application input) ':continue)
-                     "ergonomic help syntax accepts topics and unknown-subject guidance"))
       (test-assert (= before (conversation-next-sequence conversation))
                    "help output does not append provider conversation records")
       (test-assert (zerop (application-operation-test-tool-calls

@@ -1859,6 +1859,7 @@
   test-goal-explicit-resume-yields-to-input
   test-responsive-model-input
   test-responsive-goal-inspection
+  test-leading-slash-ingress
   test-responsive-command-scheduling
   test-recovery-diagnosis-tool-surface
   test-input-reader-quiescence

@@ -118,8 +118,8 @@
     (refinement-error (condition) (refinement-error-code condition))))
 
 (-> refinement-tests--user-assess (tool-context list &optional boolean) list)
-(defun refinement-tests--user-assess (context proposal &optional slash-p)
-  "Assess through the public user API, retaining typed failure and slash coverage."
+(defun refinement-tests--user-assess (context proposal &optional prompt-p)
+  "Assess from the Lisp prompt or typed user API, which propagates conditions."
   (let* ((configuration (tool-context-configuration context))
          (terminal      (make-instance 'recording-terminal :columns 100))
          (ui            (terminal-ui-create :terminal terminal))
@@ -146,17 +146,15 @@
               (eq ':invalid (refinement-tests--error-code
                              (lambda () (apply #'application-operation-call application "refine" arguments))))
               "malformed native assessment is a typed rejection"))
-           (dolist (text '("/refine #.(error \"evaluated\")"
-                            "/refine (:assess \"id\" 1 :passed \"evidence\") nil"))
-             (test-assert
-              (eq ':invalid (refinement-tests--error-code
-                             (lambda () (application-command application text))))
-              "slash refinement rejects read-time evaluation and trailing data"))
            (test-assert (equal proposal (refinement-find configuration identifier))
                         "rejected assessments leave the proposal unchanged")
-           (if slash-p
-               (application-command application
-                                    (format nil "/refine ~S" (list ':assess identifier revision ':passed evidence)))
+           (if prompt-p
+               (test-assert (eq ':ok (application-lisp-evaluation-status
+                                      (application-lisp-evaluate
+                                       (format nil "(refine :assess ~S :revision ~D :verdict :passed :evidence ~S)"
+                                               identifier revision evidence)
+                                       :application application)))
+                            "refinement assessment runs from the Lisp prompt")
                (application-operation-call application "refine" ':assess identifier
                                            :revision revision :verdict ':passed :evidence evidence))
            (let ((assessed (refinement-find configuration identifier)))

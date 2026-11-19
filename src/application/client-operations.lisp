@@ -45,13 +45,21 @@
 (-> application-client-command-invocation
     (application-command string) application-command-invocation)
 (defun application-client-command-invocation (command input)
-  "Parse client INPUT through COMMAND's registered slash parser."
-  (application-operation--command-invocation
-   command
-   (application-command-invocation-parse
-    (if (zerop (length input))
-        (application-command-name command)
-        (format nil "~A ~A" (application-command-name command) input)))))
+  "Decode structured client INPUT as argument text for the selected COMMAND."
+  (let* ((name      (application-command-name command))
+         (remainder (string-trim *application-command-whitespace* input))
+         (tokens    (unless (application-command-slash-parser command)
+                      (application-command--tokens remainder)))
+         (arguments (application-command--slash-arguments command tokens remainder))
+         (argument  (first (if (application-command-callable-p command) arguments tokens))))
+    (make-instance 'application-command-invocation
+                   :input                   (application-command--display-name command)
+                   :name                    name
+                   :remainder               remainder
+                   :argument                (and (stringp argument) argument)
+                   :arguments               arguments
+                   :supplied-argument-count (length arguments)
+                   :command                 command)))
 
 (-> application-client-operation--invoke-presented
     (application-operation application t &key (:context (option tool-context))) t)
@@ -101,13 +109,13 @@ policy, including safe-boundary scheduling. A scheduled reply is acceptance only
             (values (format nil "~{~A~^~%~}" (nreverse *application-command-presentation-text*))
                     "scheduled")))
          (:apply
-          (let ((*application-command-presentation-capture-p* t)
-                (*application-command-presentation-text*      nil))
-            (application-input-controller--schedule-apply
-             controller
-             (application-command-invocation-input
-              (application-operation--command-invocation
-               (application-operation-backend operation) arguments)))
+           (let ((invocation
+                   (application-operation--command-invocation
+                    (application-operation-backend operation) arguments))
+                 (*application-command-presentation-capture-p* t)
+                 (*application-command-presentation-text*      nil))
+             (application-input-controller--schedule-apply
+              controller (application-command-invocation-input invocation) invocation)
             (values (format nil "~{~A~^~%~}" (nreverse *application-command-presentation-text*))
                     "scheduled")))
          (otherwise

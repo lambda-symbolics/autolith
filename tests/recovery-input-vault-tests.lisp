@@ -430,7 +430,7 @@
                     :work               '((:command "/status")))))
             :mode #o600)
            (recording-terminal-reset terminal)
-           (application-command application "/vault")
+           (application-operation-call application 'vault)
            (let ((output (recording-terminal-output terminal)))
              (test-assert
               (and (search "recovery input vault" output)
@@ -446,7 +446,7 @@
            (test-assert
             (application-input-controller--recall-follow-up controller)
             "restore test holds one newer recalled follow-up")
-           (application-command application "/vault-restore")
+           (application-operation-call application 'vault-restore)
            (test-assert
             (and (not (probe-file vault-pathname))
                  (= (application-input-controller-steering-promotion-prefix-count
@@ -889,7 +889,7 @@
                   :pathname  current-vault
                   :operation ':read-vault))
            (recording-terminal-reset terminal)
-           (application-command application "/vault-discard")
+           (application-operation-call application 'vault-discard)
            (test-assert
             (and (search "discarded" (recording-terminal-output terminal))
                  (not (probe-file current-vault))
@@ -936,7 +936,7 @@
            (recording-terminal-reset terminal)
            (application-input-controller--handle-submission
             controller "ordinary message")
-           (application-input-controller--handle-submission controller "/status")
+           (application-input-controller--handle-submission controller "(status)")
            (test-assert
             (and (null (application-input-controller--state controller :work-items))
                  (null (application-input-controller--state
@@ -949,12 +949,12 @@
              (lambda (command)
                (application-input-controller--submission-storage-ready-p
                 controller command))
-             '("/vault" "/vault-restore" "/vault-discard"))
+             '("(vault)" "(vault-restore)" "(vault-discard)" "(vault-store)"))
             "disabled recovery storage admits every exact vault control")
-           (application-input-controller--handle-submission controller "/vault")
+           (application-input-controller--handle-submission controller "(vault)")
            (test-assert
             (equal (application-input-controller--state controller :work-items)
-                   '((:command "/vault")))
+                   '((:lisp "(vault)")))
             "an admitted vault control reaches normal command scheduling"))
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
@@ -1275,6 +1275,7 @@
          (ingress-blocked-p         nil)
          (vault-inspect-executed-p  nil)
          (observed-failure          nil)
+         (observed-restore-error    nil)
          (bytes-preserved-p         nil)
          (vault-controls-admitted-p nil))
     (unwind-protect
@@ -1307,6 +1308,12 @@
                  (recovery-input-vault-tests--octets vault-pathname))
            (test-call-with-function-replacements
             (list
+             ;; Abort the expected Lisp debugger interaction so discard can follow.
+             (list 'application-lisp--select-restart
+                   (lambda (run-application condition restarts)
+                     (declare (ignore run-application))
+                     (setf observed-restore-error condition)
+                     (find 'abort-user-operation restarts :key #'restart-name)))
              (list 'application-recovery-input-vault-present
                    (lambda (run-application)
                      (setf vault-inspect-executed-p t)
@@ -1341,14 +1348,14 @@
                            (application-input-controller--process-event
                             controller ':submit)))
                   (submit "blocked after recovery failure")
-                  (submit "/status")
+                  (submit "(status)")
                   (setf ingress-blocked-p
                         (and
                          (null (application-input-controller--state
                                 controller :work-items))
                          (null (application-input-controller--state
                                 controller :steering-items))))
-                  (submit "/vault")
+                  (submit "(vault)")
                   (setf observed-failure
                         (application-recovery-input-vault-failure application))
                   (setf bytes-preserved-p
@@ -1361,8 +1368,8 @@
                                      (recovery-input-vault-tests--octets
                                       vault-pathname))
                              t))
-                  (submit "/vault-restore")
-                  (submit "/vault-discard")
+                  (submit "(vault-restore)")
+                  (submit "(vault-discard)")
                   (setf vault-controls-admitted-p
                         (and (null (application-input-controller--state
                                     controller :work-items))
@@ -1396,6 +1403,9 @@
                  vault-inspect-executed-p
                  vault-controls-admitted-p)
             "corrupt recovery blocks ordinary terminal submissions and admits vault controls")
+           (test-assert
+            (typep observed-restore-error 'recovery-input-vault-error)
+            "restoring corrupt input reports a recoverable error")
            (test-assert
             (and (equal observed-first-work
                         '(:recovery-diagnosis "diagnose corrupt recovery"))
@@ -1782,8 +1792,6 @@
                      (declare (ignore application)) (push entry entries) nil)))
        (lambda ()
          (application-operation-call application 'vault)
-         (application-command application "/vault")
-         (test-assert (equal (first entries) (second entries)) "native and slash vault views agree")
          (let ((entry (first entries)))
            (test-assert (terminal-styled-text-p entry) "ordinary vault view is structured")
            (test-assert (command-view-tests--role-p entry ':plain "queued 猫") "input previews retain prose styling")
@@ -1794,7 +1802,7 @@
          (test-assert (command-view-tests--role-p (first entries) ':failure "unreadable fixture")
                       "known storage failures have failure severity")
          (setf read-failure-p t)
-         (application-command application "/vault")
+         (application-operation-call application 'vault)
          (test-assert (command-view-tests--role-p (first entries) ':failure "unreadable fixture")
                       "read failures retain their severity")
          (test-assert (command-view-tests--role-p (first entries) ':code "(vault-discard)")
@@ -1802,7 +1810,7 @@
          (application-operation-call application 'vault-restore)
          (test-assert (find ':success (first entries) :key #'terminal-span-style)
                       "successful restoration has success severity")
-         (application-command application "/vault-discard")
+         (application-operation-call application 'vault-discard)
          (test-assert (find ':success (first entries) :key #'terminal-span-style)
                       "successful discard has success severity")))))
   nil)

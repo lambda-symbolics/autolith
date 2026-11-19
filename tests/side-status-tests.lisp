@@ -84,7 +84,7 @@
 
 (-> test-side-status-history-and-context () null)
 (defun test-side-status-history-and-context ()
-  "Keep Lisp and slash status output in replay, outside every rebuilt context."
+  "Keep native status output in replay, outside every rebuilt context."
   (multiple-value-bind (application root)
       (lisp-machine-tests--application)
     (let* ((ui            (application-ui application))
@@ -96,18 +96,15 @@
              (application-run-lisp-input application "(list 1 2)" :interactive-p nil)
              (let ((operations (conversation-user-operation-snapshot conversation))
                    (evidence   (side-status-tests--evidence configuration conversation))
-                   (items      (copy-tree (conversation-input-items conversation))))
-               (dolist (source '("/btw" "/side eta"))
-                 (test-assert (eq (application-command application source) ':continue)
-                              "slash status executes locally"))
-               (dolist (source '("(btw)" "(side :focus)"))
+                   (items      (mapcar #'json-encode (conversation-input-items conversation))))
+                (dolist (source '("(btw)" "(side :eta)" "(btw :focus)" "(side :queue)"))
                  (test-assert
                   (eq (application-run-lisp-input application source :interactive-p nil)
                       ':continue)
                   "Lisp status executes locally"))
                (let ((records (side-status-tests--records conversation)))
                  (test-assert (= (length records) 4)
-                              "each Lisp or slash call stores exactly one status output")
+                              "each status call stores exactly one display record")
                  (test-assert
                   (every (lambda (record)
                            (let ((spans (conversation-record-entry application record)))
@@ -121,33 +118,28 @@
                   "durable status output retains semantic colors"))
                (application-run-lisp-input application "(btw :invalid)" :interactive-p nil)
                (application-run-lisp-input application "(side :invalid)")
-               (application--run-command-input application "/btw invalid" :interactive-p nil)
-               (application--run-command-input application "/side invalid")
-               (dolist (source '("/btw" "/side"))
-                 (let ((invocation (application-command-invocation-parse source)))
-                   (dolist (action '(:aborted :failed))
-                     (application-user-operation-record-command-outcome
-                      application invocation :action action :condition "test outcome"))))
                (test-assert
                 (and (= (length operations) 1)
                      (equal operations (conversation-user-operation-snapshot conversation))
                      (equal evidence (side-status-tests--evidence configuration conversation))
-                     (equal items (conversation-input-items conversation)))
+                     (equal items (mapcar #'json-encode (conversation-input-items conversation))))
                 "success, failure, and abort never enter operation or provider context")
                (let ((loaded (conversation-load (conversation-pathname conversation))))
-                 (test-assert
-                  (and (equal operations (conversation-user-operation-snapshot loaded))
-                       (equal evidence (side-status-tests--evidence configuration loaded))
-                       (equal items (conversation-input-items loaded))
-                       (= (length (side-status-tests--records loaded)) 6))
-                  "resuming restores display history without rebuilding status into context")
-                 (let* ((record    (first (side-status-tests--records loaded)))
-                        (projected (conversation-replay-project-record record)))
-                   (test-assert
-                    (equal (getf (rest projected) :content)
-                           (terminal--spans-text
-                            (conversation-record-entry application record)))
-                    "CLI replay and terminal replay share the durable status output")))))
+                 (test-assert (equal (side-status-tests--records conversation)
+                                     (side-status-tests--records loaded))
+                              "reload preserves each recorded status display and error")
+                (test-assert
+                 (and (equal operations (conversation-user-operation-snapshot loaded))
+                      (equal evidence (side-status-tests--evidence configuration loaded))
+                      (equal items (mapcar #'json-encode (conversation-input-items loaded))))
+                 "reloading status displays does not rebuild them into context")
+                (let* ((record    (first (side-status-tests--records loaded)))
+                       (projected (conversation-replay-project-record record)))
+                  (test-assert
+                   (equal (getf (rest projected) :content)
+                          (terminal--spans-text
+                           (conversation-record-entry application record)))
+                   "CLI replay and terminal replay share the durable status output")))))
         (terminal-ui-stop ui)
         (platform-delete-directory-tree *platform* root :validate t
                                         :if-does-not-exist        ':ignore))))
@@ -197,14 +189,6 @@
       (lisp-machine-tests--application)
     (unwind-protect
          (progn
-           (dolist (source '("/btw" "/side" "/btw eta" "/side step"))
-             (let* ((invocation (application-command-invocation-parse source))
-                    (command    (application-command-invocation-command invocation)))
-               (test-assert
-                (and (application-side-status-command-p command)
-                     (eq (application-command-busy-action command invocation) ':execute)
-                     (not (application-command-terminal-owner-p command invocation)))
-                "status aliases execute beside active work without terminal ownership")))
            (dolist (source '("(btw)" "(side :eta)" "(btw :queue)"))
              (test-assert
               (and (application-side-status-source-p application source)
@@ -234,7 +218,7 @@
     (unwind-protect
          (progn
            (setf (application-ui application) nil)
-           (application-command application "/btw")
+           (application-run-lisp-input application "(btw)" :interactive-p nil)
            (let* ((loaded   (conversation-load
                              (conversation-pathname (application-conversation application))))
                   (entry    (conversation-record-entry

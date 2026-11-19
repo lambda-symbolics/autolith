@@ -260,12 +260,10 @@
 
 (-> test-application-command-debugger () null)
 (defun test-application-command-debugger ()
-  "Test command debugger ownership for missing arguments and typed failures."
-  (let ((snapshot           (application-command--registry-snapshot))
-        (observed-value     nil)
-        (selector-calls     0)
-        (expected-condition nil)
-        (fatal-condition    nil))
+  "Test missing argument recovery and abort at both native prompt boundaries."
+  (let ((snapshot       (application-command--registry-snapshot))
+        (observed-value nil)
+        (selector-calls 0))
     (unwind-protect
          (progn
            (register-application-command
@@ -287,93 +285,47 @@
            (multiple-value-bind (application root)
                (lisp-machine-tests--application)
              (unwind-protect
-                  (let* ((ui         (application-ui application))
-                         (controller (lisp-machine-tests--controller application))
-                         (command    (application-command-find "/debug-required"))
-                         (invocation (application-command-invocation-parse
-                                      "/debug-required")))
+                   (let* ((ui         (application-ui application))
+                          (controller (lisp-machine-tests--controller application)))
                     (terminal-ui-start ui)
                     (test-call-with-function-replacements
-                     (list
-                      (list 'application-lisp--select-restart
-                            (lambda (application condition restarts)
-                              (declare (ignore application condition))
-                              (incf selector-calls)
-                              (values (find 'supply-arguments restarts
-                                            :key #'restart-name)
-                                      "\"recovered\""))))
-                     (lambda ()
-                       (test-assert
-                        (eq (application--run-command-input
-                             application "/debug-required") ':continue)
-                        "normal command recovery reaches its semantic handler")
-                       (setf observed-value nil)
-                       (test-assert
-                        (eq (application-input-controller--run-responsive-command
-                             controller command invocation)
-                            ':continue)
-                        "responsive command recovery reaches its semantic handler")))
-                    (test-assert (and (string= observed-value "recovered")
-                                      (= selector-calls 2))
-                                 "both command paths supply required arguments")
-                    (setf observed-value nil)
-                    (test-call-with-function-replacements
-                     (list
-                      (list 'application-lisp--select-restart
-                            (lambda (&rest ignored)
-                              (declare (ignore ignored))
-                              (values nil nil))))
-                     (lambda ()
-                       (test-assert
-                        (eq (application--run-command-input
-                             application "/debug-required") ':aborted)
-                        "normal command cancellation returns to the prompt")
-                       (test-assert
-                        (eq (application-input-controller--run-responsive-command
-                             controller command invocation)
-                            ':aborted)
-                        "responsive command cancellation returns to the prompt")))
-                    (test-assert (null observed-value)
-                                 "cancelled commands do not call their handler")
-                    (setf selector-calls 0)
-                    (test-call-with-function-replacements
-                     (list
-                      (list 'application-lisp--select-restart
-                            (lambda (&rest ignored)
-                              (declare (ignore ignored))
-                              (incf selector-calls)
-                              (values nil nil)))
-                      (list 'application-raise-fatal
-                            (lambda (application condition backtrace)
-                              (declare (ignore application backtrace))
-                              (setf fatal-condition condition)
-                              ':fatal)))
-                     (lambda ()
-                       (test-assert
-                        (eq (application--call-with-command-debugger
-                             application
-                             (lambda ()
-                               (error 'configuration-error :message "expected"))
-                             :expected-error-function
-                             (lambda (application condition)
-                               (declare (ignore application))
-                               (setf expected-condition condition)))
-                            ':failed)
-                        "expected command errors use the semantic error path")
-                       (test-assert
-                        (eq (application--call-with-command-debugger
-                             application
-                             (lambda ()
-                               (error 'active-image-corruption
-                                      :message               "corruption"
-                                      :original-condition    (make-condition 'simple-error)
-                                      :restoration-condition (make-condition 'simple-error))))
-                            ':fatal)
-                        "active-image corruption uses fatal command handling")))
-                    (test-assert (and (zerop selector-calls)
-                                      (typep expected-condition 'configuration-error)
-                                      (typep fatal-condition 'active-image-corruption))
-                                 "expected and fatal errors bypass restart selection"))
+                       (list (list 'application-input-controller--call-with-responsive-prompt-block
+                                   (lambda (controller function)
+                                     (declare (ignore controller))
+                                     (funcall function))))
+                       (lambda ()
+                         (flet ((run (responsive-p)
+                                  "Evaluate the native command on the selected prompt path."
+                                  (if responsive-p
+                                      (application-input-controller--run-responsive-lisp
+                                       controller "(debug-required)")
+                                      (application-run-lisp-input application "(debug-required)"))))
+                           (dolist (responsive-p '(nil t))
+                             (setf observed-value nil)
+                             (test-call-with-function-replacements
+                              (list (list 'application-lisp--select-restart
+                                          (lambda (application condition restarts)
+                                            (declare (ignore application condition))
+                                            (incf selector-calls)
+                                            (values (find 'supply-arguments restarts :key #'restart-name)
+                                                    "\"recovered\""))))
+                              (lambda ()
+                                (test-assert (eq (run responsive-p) ':continue)
+                                             "native command recovery reaches its semantic handler")))
+                             (test-assert (equal observed-value "recovered")
+                                          "the selected restart supplies the omitted argument")
+                             (setf observed-value nil)
+                             (test-call-with-function-replacements
+                              (list (list 'application-lisp--select-restart
+                                          (lambda (&rest ignored)
+                                            (declare (ignore ignored))
+                                            (values nil nil))))
+                              (lambda ()
+                                (test-assert (eq (run responsive-p) ':aborted)
+                                             "native command cancellation returns to the prompt")))
+                             (test-assert (null observed-value)
+                                          "a cancelled command does not call the handler")))))
+                    (test-assert (= selector-calls 2) "each prompt path selects one restart"))
                (ignore-errors (terminal-ui-stop (application-ui application)))
                (ignore-errors
                  (tool-registry-close-runtime-state

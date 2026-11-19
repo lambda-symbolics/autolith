@@ -494,40 +494,32 @@
                   ':failed)
                  "unrecoverable local Lisp retains its error outcome")))
              (test-assert
-              (eq (application-command application "/help") ':continue)
-              "ordinary slash execution records a successful command")
+              (eq (application-run-lisp-input application "(help)") ':continue)
+              "idle native commands retain their source and outcome")
              (let* ((controller (lisp-machine-tests--controller application))
-                    (invocation
-                      (application-command-invocation-parse "/help"))
-                    (command
-                      (application-command-invocation-command invocation)))
-               (test-call-with-function-replacements
+                    (operation  (application-operation-find application 'help)))
+              (test-call-with-function-replacements
+               (list
                 (list
-                 (list
-                  'application-input-controller--call-with-responsive-prompt-block
-                  (lambda (observed-controller function)
-                    (declare (ignore observed-controller))
-                    (funcall function))))
-                (lambda ()
-                  (test-assert
-                   (eq
-                    (application-input-controller--run-responsive-command
-                     controller command invocation)
-                    ':continue)
-                   "responsive active-turn commands share durable capture")))
-               (let ((count-before
-                       (length
-                        (conversation-user-operation-snapshot conversation))))
+                 'application-input-controller--call-with-responsive-prompt-block
+                 (lambda (observed-controller function)
+                   (declare (ignore observed-controller))
+                   (funcall function))))
+               (lambda ()
                  (test-assert
                   (eq
-                   (application-command-execute command application invocation)
-                   ':continue)
-                  "noninteractive command execution still succeeds")
-                 (test-assert
-                  (= (length
-                      (conversation-user-operation-snapshot conversation))
-                     count-before)
-                  "noninteractive command calls do not create user operations")))
+                    (application-input-controller--run-responsive-lisp controller "(help)")
+                    ':continue)
+                  "responsive native commands share durable capture")))
+              (let ((count-before
+                      (length
+                       (conversation-user-operation-snapshot conversation))))
+                 (application-operation-invoke operation application nil)
+                (test-assert
+                 (= (length
+                     (conversation-user-operation-snapshot conversation))
+                    count-before)
+                 "noninteractive command calls do not create user operations")))
              (test-assert
               (eq (application-run-lisp-input application "(help)") ':continue)
               "canonical commands execute inside explicit local Lisp")
@@ -542,7 +534,7 @@
                      (equal (mapcar (lambda (record)
                                       (getf record :kind))
                                     properties)
-                            '(:lisp :lisp :lisp :command :command :lisp))
+                            '(:lisp :lisp :lisp :lisp :lisp :lisp))
                      (equal (mapcar (lambda (record)
                                       (getf record :status))
                                     properties)
@@ -553,10 +545,10 @@
                             '("(progn (format t \"hello~%\") (values 1 2))"
                               "(error \"stop\")"
                               "(synthetic-error)"
-                              "/help"
-                              "/help"
+                               "(help)"
+                               "(help)"
                               "(help)")))
-                "local Lisp and slash paths retain exact source, kind, and status once")
+                "local Lisp and native commands retain exact source, kind, and status once")
                (test-assert
                 (and (search "output" (getf success :result))
                      (search "hello" (getf success :result))
@@ -565,13 +557,8 @@
                      (search "aborted: stop" (getf aborted :result)
                              :test #'char-equal)
                      (search "error: synthetic failure" (getf failed :result)
-                             :test #'char-equal)
-                     (every
-                      (lambda (record)
-                        (string= (getf record :result)
-                                 "loop action: continue"))
-                      (subseq properties 3 5)))
-                "captured results preserve output, values, conditions, and command actions")
+                              :test #'char-equal))
+                "captured results preserve output, values, and conditions")
                (test-assert
                 (equal provider-items-before
                        (conversation-input-items conversation))
@@ -633,52 +620,32 @@
                     (controller (lisp-machine-tests--controller application)))
                (unwind-protect
                     (progn
-                      (terminal-ui-start ui)
-                      (test-assert
-                       (eq (application--run-command-input
-                            application "/operation-abort")
-                           ':aborted)
-                       "idle command cancellation returns its debugger outcome")
-                      (let* ((abort-invocation
-                               (application-command-invocation-parse
-                                "/operation-abort"))
-                             (abort-command
-                               (application-command-invocation-command
-                                abort-invocation))
-                             (failure-invocation
-                               (application-command-invocation-parse
-                                "/operation-failure"))
-                             (quit-invocation
-                               (application-command-invocation-parse "/close"))
-                             (quit-command
-                               (application-command-invocation-command
-                                quit-invocation)))
-                        (test-call-with-function-replacements
-                         (list
-                          (list
-                           'application-input-controller--call-with-responsive-prompt-block
-                           (lambda (observed-controller function)
-                             (declare (ignore observed-controller))
-                             (funcall function))))
-                         (lambda ()
-                           (test-assert
-                            (eq
-                             (application-input-controller--run-responsive-command
-                              controller abort-command abort-invocation)
-                             ':aborted)
-                            "responsive command cancellation returns its debugger outcome")
-                           (test-assert
-                            (eq
-                             (application-input-controller--run-responsive-command
-                              controller failure-command failure-invocation)
-                             ':failed)
-                            "responsive expected failures return their command outcome")
-                           (test-assert
-                            (eq
-                             (application-input-controller--run-responsive-command
-                              controller quit-command quit-invocation)
-                             ':quit)
-                            "responsive close preserves its successful loop action"))))
+                       (terminal-ui-start ui)
+                       (test-call-with-function-replacements
+                        (list (list 'application-lisp--select-restart
+                                    (lambda (application condition restarts)
+                                      (declare (ignore application condition restarts))
+                                      (values nil nil)))
+                              (list 'application-input-controller--call-with-responsive-prompt-block
+                                    (lambda (controller function)
+                                      (declare (ignore controller))
+                                      (funcall function))))
+                        (lambda ()
+                          (test-assert
+                           (eq (application-run-lisp-input application "(operation-abort)") ':aborted)
+                           "idle command cancellation returns its debugger outcome")
+                          (test-assert
+                           (eq (application-input-controller--run-responsive-lisp
+                                controller "(operation-abort)") ':aborted)
+                           "responsive command cancellation returns its debugger outcome")
+                          (test-assert
+                           (eq (application-input-controller--run-responsive-lisp
+                                controller "(operation-failure)") ':aborted)
+                           "aborting from a responsive command error returns to the prompt")
+                          (test-assert
+                           (eq (application-input-controller--run-responsive-lisp
+                                controller "(close)") ':quit)
+                           "responsive close preserves its successful loop action")))
                       (let* ((records
                                (conversation-user-operation-snapshot
                                 (application-conversation application)))
@@ -689,13 +656,13 @@
                                (mapcar (lambda (record)
                                          (getf record :source))
                                        properties)
-                               '("/operation-abort" "/operation-abort"
-                                 "/operation-failure" "/close"))
+                               '("(operation-abort)" "(operation-abort)"
+                                 "(operation-failure)" "(close)"))
                               (equal
                                (mapcar (lambda (record)
                                          (getf record :status))
                                        properties)
-                               '(:aborted :aborted :error :ok)))
+                               '(:aborted :aborted :aborted :ok)))
                          "terminal command outcomes retain exact source and final status")
                         (test-assert
                          (and
@@ -705,10 +672,8 @@
                                      (getf record :result)
                                      :test #'char-equal))
                            (subseq properties 0 2))
-                          (string= (getf (third properties) :result)
-                                   "error: synthetic command failure")
-                          (string= (getf (fourth properties) :result)
-                                   "loop action: quit"))
+                          (search "synthetic command failure" (getf (third properties) :result))
+                          (search "loop action: quit" (getf (fourth properties) :result)))
                          "terminal command outcomes retain bounded local diagnostics")))
                  (ignore-errors (terminal-ui-stop ui))
                  (ignore-errors
@@ -741,7 +706,7 @@
                           conversation)
                     observed-application)))
                 (lambda ()
-                  (setf result (application-command application "/new")
+                   (setf result (application-run-lisp-input application "(new)")
                         replacement-conversation
                         (application-conversation application))))
                (let ((records
@@ -755,11 +720,9 @@
                         (conversation-user-operation-snapshot
                          original-conversation))
                        (= (length records) 1)
-                       (eq (getf (rest (first records)) :kind) ':command)
+                       (eq (getf (rest (first records)) :kind) ':lisp)
                        (eq (getf (rest (first records)) :status) ':ok)
-                       (string= (getf (rest (first records)) :source) "/new")
-                       (string= (getf (rest (first records)) :result)
-                                "loop action: continue"))
+                       (string= (getf (rest (first records)) :source) "(new)"))
                   "conversation-changing commands retain evidence in the new conversation"))))
         (ignore-errors (terminal-ui-stop ui))
         (ignore-errors

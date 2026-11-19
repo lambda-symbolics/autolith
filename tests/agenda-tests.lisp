@@ -58,9 +58,9 @@
       (unwind-protect
            (progn
              (terminal-ui-start ui)
-             (test-assert (eq (application-command application "/agenda")
-                              ':continue)
-                          "/agenda remains inside the interactive application")
+             (test-assert (eq ':ok (application-lisp-evaluation-status
+                                    (application-lisp-evaluate "(agenda)" :application application)))
+                          "agenda runs from the Lisp prompt")
              (let ((output (recording-terminal-output terminal)))
                (test-assert
                 (and (search "agenda" output)
@@ -68,9 +68,9 @@
                      (search "inspect the current agenda" output)
                      (search (agenda-item-identifier item) output)
                      (search (memory-identifier memory) output))
-                "/agenda shows complete current-workspace entry information"))
-             (test-assert (search "/agenda" (application-help))
-                          "interactive help includes /agenda"))
+                "agenda shows complete current-workspace entry information"))
+             (test-assert (search "(agenda)" (application-operation-help application "agenda"))
+                          "interactive help documents agenda"))
         (ignore-errors (terminal-ui-stop ui)))))
   nil)
 

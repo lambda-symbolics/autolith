@@ -588,11 +588,7 @@ the draft is exact."
                             (syntax--highlight-spans
                              content
                              :language (language-find ':common-lisp :errorp nil)))
-                       (list (terminal-span
-                              (if (uiop:string-prefix-p "/" content)
-                                  ':user
-                                  ':plain)
-                              content))))
+                       (list (terminal-span ':plain content))))
                  (prompt-display  (terminal--render-spans terminal prompt-spans))
                  (content-display (terminal--render-spans terminal content-spans)))
             (multiple-value-bind (wrapped-content wrapped-display wrapped-cursor)
@@ -626,14 +622,12 @@ the draft is exact."
 
 (-> terminal-ui--operation-completion-prefix-p (string) boolean)
 (defun terminal-ui--operation-completion-prefix-p (text)
-  "Return whether TEXT can prefix a slash or parenthesized completion."
+  "Return whether TEXT can prefix a parenthesized operation completion."
   (and (non-empty-string-p text)
-       (member (char text 0) '(#\/ #\() :test #'char=)
+       (char= (char text 0) #\()
        (not (find-if (lambda (character)
-                       (find character '(#\Newline #\Return)))
-                     text))
-       (or (char= (char text 0) #\/)
-           (not (find #\) text)))))
+                       (find character '(#\Newline #\Return #\))))
+                     text))))
 
 (-> terminal-ui--shadowed-completions (list) list)
 (defun terminal-ui--shadowed-completions (matches)
@@ -3778,10 +3772,9 @@ transcript widgets and URLs do nothing."
   "Call FUNCTION while it alone reads UI's terminal input, returning its values.
 
 Modal pickers and other direct event readers take ownership here when they
-open, so the work that reached them, whether a slash command, a Lisp form, or
-an agent turn, never has to give up responsive input in advance. Publish the
-blocked status before ownership changes, so a paused reader still shows why it
-waits. Without an installed owner the thunk simply runs."
+open, so the work that reached them never has to give up responsive input in
+advance. Publish the blocked status before ownership changes, so a paused
+reader still shows why it waits. Without an installed owner the thunk simply runs."
   (terminal-ui-call-with-blocked-status
    ui status-kind
    (lambda ()

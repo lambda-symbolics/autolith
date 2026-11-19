@@ -1862,12 +1862,12 @@
   "Test suggestion filtering, selection movement, acceptance, and submission."
   (let* ((terminal (make-instance 'recording-terminal :columns 60))
          (completions
-           '((:name "/help" :argument nil :description "show this reference")
-             (:name "/resume" :argument "ID" :description "load a conversation")
-             (:name "/rollback" :argument "ID" :description "select a generation")
-             (:name "/quit" :argument nil :description "leave Autolith")
-             (:name "/exit" :argument nil :description "leave Autolith (alias of /quit)"
-              :primary "/quit")))
+           '((:name "(help)" :argument nil :description "show this reference")
+             (:name "(resume" :argument "ID)" :description "load a conversation")
+             (:name "(rollback" :argument "ID)" :description "select a generation")
+             (:name "(quit)" :argument nil :description "leave Autolith")
+             (:name "(exit)" :argument nil :description "leave Autolith (alias of quit)"
+              :primary "(quit)")))
          (ui       (terminal-ui-create :terminal    terminal
                                        :completions completions)))
     (with-terminal-ui (active-ui ui)
@@ -1876,75 +1876,75 @@
                  "Return the names of the completions matching the input."
                  (mapcar (lambda (entry) (getf entry :name))
                          (terminal-ui--matching-completions active-ui))))
-          (terminal-ui-set-input active-ui "/")
+          (terminal-ui-set-input active-ui "(")
           (test-assert
-           (equal (matching-names) '("/help" "/resume" "/rollback" "/quit"))
+           (equal (matching-names) '("(help)" "(resume" "(rollback" "(quit)"))
            "browsing every command hides aliases behind their canonical names")
-          (terminal-ui-set-input active-ui "/e")
+          (terminal-ui-set-input active-ui "(e")
           (test-assert
-           (equal (matching-names) '("/exit"))
-           "an alias appears once the typed text stops matching its command")
-          (terminal-ui-set-input active-ui ""))
+           (equal (matching-names) '("(exit)"))
+           "an alias appears once the typed text stops matching its command"))
+        (terminal-ui-set-input active-ui "")
         (recording-terminal-reset terminal)
-        (terminal-ui-process-event active-ui '(:insert "/r"))
+        (terminal-ui-process-event active-ui '(:insert "(r"))
         (let ((painted (recording-terminal-output terminal)))
-          (test-assert (search "/resume ID" painted)
+          (test-assert (search "(resume ID)" painted)
                        "typing a command prefix paints matching suggestions")
-          (test-assert (search "/rollback ID" painted)
+          (test-assert (search "(rollback ID)" painted)
                        "every matching command is suggested")
           (test-assert
-           (and (search "/rollback ID    select a generation" painted)
-                (search "/resume ID      load a conversation" painted))
+           (and (search "(rollback ID)    select a generation" painted)
+                (search "(resume ID)      load a conversation" painted))
            "descriptions start four cells after the widest visible label")
-          (test-assert (not (search "/quit" painted))
+          (test-assert (not (search "(quit)" painted))
                        "commands outside the typed prefix are not suggested"))
         (recording-terminal-reset terminal)
         (terminal-ui-process-event active-ui :escape)
-        (test-assert (not (search "/resume ID"
+        (test-assert (not (search "(resume ID)"
                                   (recording-terminal-output terminal)))
                      "escape hides a passive completion menu")
         (terminal-ui-process-event active-ui :complete)
-        (test-assert (string= (line-editor-text editor) "/rollback ")
+        (test-assert (string= (line-editor-text editor) "(rollback )")
                      "tab cycles to and previews the next command")
         (test-assert (terminal-ui-completion-active-p active-ui)
                      "tab keeps command completion selection active")
         (terminal-ui-process-event active-ui :complete)
-        (test-assert (string= (line-editor-text editor) "/resume ")
+        (test-assert (string= (line-editor-text editor) "(resume )")
                      "repeated tab cycles through command completions")
         (terminal-ui-process-event
          active-ui
          :complete-previous
          :queue-completion-p t
          :queue-editing-p t)
-        (test-assert (string= (line-editor-text editor) "/rollback ")
+        (test-assert (string= (line-editor-text editor) "(rollback )")
                      "command completions take precedence over follow-up cycling")
         (terminal-ui-process-event active-ui :complete)
         (terminal-ui-process-event active-ui '(:insert "draft"))
-        (test-assert (string= (line-editor-text editor) "/resume draft")
+        (test-assert (string= (line-editor-text editor) "(resume draft)")
                      "ordinary input retains the selected completion")
         (test-assert (not (terminal-ui-completion-active-p active-ui))
                      "ordinary input dismisses completion selection")
         (terminal-ui-process-event active-ui :interrupt)
-        (terminal-ui-process-event active-ui '(:insert "/r"))
+        (terminal-ui-process-event active-ui '(:insert "(r"))
         (terminal-ui-process-event active-ui :history-next)
         (test-assert (not (terminal-ui-completion-active-p active-ui))
                      "history keys do not hijack an unbegun completion")
         (terminal-ui-process-event active-ui :down)
         (test-assert (terminal-ui-completion-active-p active-ui)
                      "arrow keys begin completion for a typed command prefix")
-        (test-assert (string= (line-editor-text editor) "/rollback ")
+        (test-assert (string= (line-editor-text editor) "(rollback )")
                      "arrow keys move the completion selection")
         (terminal-ui-process-event active-ui :escape)
-        (test-assert (string= (line-editor-text editor) "/r")
+        (test-assert (string= (line-editor-text editor) "(r)")
                      "escape restores the prefix from before completion")
         (terminal-ui-process-event active-ui :interrupt)
-        (terminal-ui-process-event active-ui '(:insert "/help"))
+        (terminal-ui-set-input active-ui "(help)")
         (terminal-ui-process-event active-ui :submit)
-        (terminal-ui-process-event active-ui '(:insert "/quit"))
+        (terminal-ui-set-input active-ui "(quit)")
         (terminal-ui-process-event active-ui :submit)
         (recording-terminal-reset terminal)
         (terminal-ui-process-event active-ui :history-previous)
-        (test-assert (string= (line-editor-text editor) "/quit")
+        (test-assert (string= (line-editor-text editor) "(quit)")
                      "history recall restores the newest command")
         (test-assert (not (terminal-ui-completion-active-p active-ui))
                      "history recall does not begin completion")
@@ -1959,7 +1959,7 @@
          "history traversal clears stale completion selector items")
         (recording-terminal-reset terminal)
         (terminal-ui-process-event active-ui :up)
-        (test-assert (string= (line-editor-text editor) "/help")
+        (test-assert (string= (line-editor-text editor) "(help)")
                      "arrows continue history through recalled commands")
         (test-assert (not (search "show this reference"
                                   (recording-terminal-output terminal)))
@@ -1972,20 +1972,20 @@
         (test-assert (not (search "show this reference"
                                   (recording-terminal-output terminal)))
                      "escape hides the completion menu")
-        (test-assert (string= (line-editor-text editor) "/help")
+        (test-assert (string= (line-editor-text editor) "(help)")
                      "escape restores the recalled history entry")
         (test-assert (terminal-ui--editor-history-navigating-p editor)
                      "escape restores history traversal after completion")
         (terminal-ui-process-event active-ui :down)
-        (test-assert (string= (line-editor-text editor) "/quit")
+        (test-assert (string= (line-editor-text editor) "(quit)")
                      "history navigation continues after completion is cancelled")
         (terminal-ui-process-event active-ui :interrupt)
-        (terminal-ui-process-event active-ui '(:insert "/q"))
+        (terminal-ui-process-event active-ui '(:insert "(q"))
         (multiple-value-bind (action payload)
             (terminal-ui-process-event active-ui :submit)
           (test-assert (eq action :submit)
                        "enter on an argument-free suggestion submits")
-          (test-assert (string= payload "/quit")
+          (test-assert (string= payload "(quit)")
                        "enter submits the completed command name"))
         (terminal-ui-process-event active-ui '(:insert "plain text"))
         (multiple-value-bind (action payload)
@@ -2070,20 +2070,20 @@
              "follow-up cycling preserves image attachments"))))))
   (let* ((terminal (make-instance 'recording-terminal :columns 60))
          (completions
-           '((:name "/help" :argument nil :description "show this reference")))
+           '((:name "(help)" :argument nil :description "show this reference")))
          (ui       (terminal-ui-create
                     :terminal            terminal
                     :completion-function (lambda () completions))))
     (with-terminal-ui (active-ui ui)
-      (terminal-ui-process-event active-ui '(:insert "/n"))
+      (terminal-ui-process-event active-ui '(:insert "(n"))
       (test-assert
-       (not (search "/new" (recording-terminal-output terminal)))
+       (not (search "(new)" (recording-terminal-output terminal)))
        "a dynamic completion provider initially omits unregistered commands")
       (setf completions
-            '((:name "/help" :argument nil :description "show this reference")
-              (:name "/new" :argument nil :description "start a conversation")))
+            '((:name "(help)" :argument nil :description "show this reference")
+              (:name "(new)" :argument nil :description "start a conversation")))
       (test-assert
-       (find "/new"
+       (find "(new)"
              (terminal-ui--matching-completions active-ui)
              :key  (lambda (entry) (getf entry :name))
              :test #'string=)
@@ -2095,13 +2095,7 @@
   "Test registered parenthesized operation suggestions and acceptance."
   (let* ((terminal (make-instance 'recording-terminal :columns 72))
          (completions
-           '((:name "/help" :argument nil :description "show this reference")
-             (:name "/ste" :argument "[on|off]" :description "toggle STE")
-             (:name "/ste on" :argument nil :description "enable STE"
-              :primary "/ste")
-             (:name "/ste off" :argument nil :description "disable STE"
-              :primary "/ste")
-             (:name "(help)" :argument nil :description "show this reference")
+           '((:name "(help)" :argument nil :description "show this reference")
              (:name "(ste" :argument "[on|off])" :description "toggle STE")
              (:name "(ste \"on\")" :argument nil :description "enable STE"
               :primary "(ste")
@@ -2149,22 +2143,8 @@
                  "Return the names of the completions matching the input."
                  (mapcar (lambda (entry) (getf entry :name))
                          (terminal-ui--matching-completions active-ui))))
-          (terminal-ui-set-input active-ui "/s")
-          (test-assert
-           (equal (matching-names) '("/ste"))
-           "a command prefix offers one bracketed row instead of every option")
-          (terminal-ui-set-input active-ui "/ste")
-          (test-assert
-           (equal (matching-names) '("/ste"))
-           "the complete command name still hides its option rows")
-          (terminal-ui-set-input active-ui "/ste ")
-          (test-assert
-           (equal (matching-names) '("/ste on" "/ste off"))
-           "slash argument prefixes offer finite command options")
-          (terminal-ui-set-input active-ui "/ste of")
-          (test-assert
-           (equal (matching-names) '("/ste off"))
-           "a partial option narrows the revealed option rows")
+          (terminal-ui-set-input active-ui "/h")
+          (test-assert (null (matching-names)) "a leading slash does not offer command completion")
           (terminal-ui-set-input active-ui "(s")
           (test-assert
            (equal (matching-names) '("(ste"))
@@ -2172,7 +2152,7 @@
           (terminal-ui-set-input active-ui "(ste ")
           (test-assert
            (equal (matching-names) '("(ste \"on\")" "(ste \"off\")"))
-           "Lisp argument prefixes offer the same finite command options")))))
+           "Lisp argument prefixes offer finite command options")))))
   nil)
 
 (-> test-terminal-path-completion-write (pathname string) null)
@@ -2259,16 +2239,16 @@
                              :terminal        terminal
                              :completion-root root
                              :completions
-                             '((:name "/help" :argument nil
+                             '((:name "(help)" :argument nil
                                 :description "show this reference")))))
              (with-terminal-ui (active-ui ui)
-               (terminal-ui-set-input active-ui "/help")
+               (terminal-ui-set-input active-ui "(h")
                (test-assert
-                (find "/help"
+                (find "(help)"
                       (terminal-ui--matching-completions active-ui)
                       :key  (lambda (entry) (getf entry :name))
                       :test #'string=)
-                "slash commands still win over path completion")
+                "parenthesized input offers its operation completion")
                (terminal-ui-set-input active-ui "/docs/docu")
                (test-assert (null (terminal-ui--matching-completions active-ui))
                             "/docs/docu without @ is not a file mention")

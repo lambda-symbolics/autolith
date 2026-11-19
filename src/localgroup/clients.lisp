@@ -318,7 +318,6 @@ whatever would change the channel."
                (images (getf arguments :images)))
            (unless (and controller (stringp text) (listp images) (every #'stringp images))
              (refuse "A submit carries text and optional image pathnames."))
-           (application-localgroup-resume application)
            (if (and (not (non-empty-string-p text)) (null images))
                (application-clients-publish
                 application (list :work-finished :kind ':submission
@@ -327,7 +326,8 @@ whatever would change the channel."
                 controller
                 (user-message-input-create
                  :text            text
-                 :image-pathnames (mapcar #'image-input-validate-pathname images)
+                 :image-pathnames (unless (input-leading-slash-p text)
+                                    (mapcar #'image-input-validate-pathname images))
                  :submission      (getf arguments :submission))
                 :steer-p (not (null (getf arguments :steer-p)))))
            (list :busy-p (application-input-controller-busy-p controller))))
@@ -370,17 +370,18 @@ whatever would change the channel."
            (unless (and controller (keywordp action) (typep text '(or null string))
                         (listp images) (every #'stringp images))
              (refuse "An input names its action and may carry text and image pathnames."))
-           (application-localgroup-resume application)
-           (list :handled-p
-                 (not (null (input-port-apply
-                             controller action
-                             (cond
-                               (images
-                                (user-message-input-create
-                                 :text            (or text "")
-                                 :image-pathnames (mapcar #'image-input-validate-pathname images)))
-                               (t
-                                text))))))))
+           (let ((slash-p (and text (member action '(:submit :queue :command))
+                               (input-leading-slash-p text))))
+             (unless slash-p
+               (application-localgroup-resume application))
+             (list :handled-p
+                   (not (null (input-port-apply
+                               controller action
+                               (if (and images (not slash-p))
+                                   (user-message-input-create
+                                    :text            (or text "")
+                                    :image-pathnames (mapcar #'image-input-validate-pathname images))
+                                   text))))))))
         (:geometry
          (localgroup--client-geometry application arguments)
          nil)

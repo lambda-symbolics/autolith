@@ -502,6 +502,63 @@
                      "a second replay clears first, so nothing shows twice"))))
   nil)
 
+(-> presentation-tests--hosted-completion (application function function) null)
+(defun presentation-tests--hosted-completion (application seen await)
+  "Exercise a hosted catalog through real transport, a channel view and composer input."
+  (let* ((server   (application-ui application))
+         (provider (terminal-ui-completion-function server))
+         (screen   (localgroup-screen-create
+                      :terminal (make-instance 'recording-terminal :rows 30 :columns 90 :interactive-p t)))
+         (view     (channel-view-create (application-configuration application) "completion-test" screen)))
+    (with-terminal-ui (ui (channel-view-ui view))
+      (test-assert (funcall await ':completions
+                            (lambda (event) (getf (rest event) :complete-p)))
+                   "Initial hosted replay includes its authoritative completion catalog.")
+      (dolist (event (funcall seen))
+        (when (eq (getf (rest event) :operation) ':completions)
+          (channel-subscription-present-event view event)))
+      (terminal-ui-process-event ui '(:insert "(sta"))
+      (test-assert (find "(status)" (terminal-ui--reconcile-completions ui)
+                         :key (lambda (entry) (getf entry :name)) :test #'equal)
+                   "A hosted parenthesized draft offers the native command.")
+      (terminal-ui-process-event ui ':complete)
+      (test-assert (uiop:string-prefix-p "(status" (line-editor-text (terminal-ui-editor ui)))
+                   "Tab inserts the hosted native command into the composer.")
+      (line-editor-set-text (terminal-ui-editor ui) "(sta")
+      (terminal-ui--reconcile-completions ui)
+      (unwind-protect
+           (let* ((before  (length (funcall seen)))
+                  (entries (loop for index below 100
+                                 collect (list :name        (format nil "(dynamic-~D)" index)
+                                               :description (make-string 10000 :initial-element #\x)))))
+             (setf (terminal-ui-completion-function server) (constantly entries))
+             (with-terminal-ui-locked (server)
+               (terminal-ui--present-live server))
+             (test-assert (funcall await ':completions
+                                   (lambda (event)
+                                     (and (getf (rest event) :complete-p)
+                                          (find "(dynamic-99)" (getf (rest event) :entries)
+                                                :key (lambda (entry) (getf entry :name)) :test #'equal))))
+                          "Changed server capabilities publish a fresh bounded catalog.")
+             (let ((events (remove-if-not
+                            (lambda (event) (eq (getf (rest event) :operation) ':completions))
+                            (nthcdr before (funcall seen)))))
+               (test-assert (= (length events) 4) "A large catalog crosses the real wire in bounded chunks.")
+               (dolist (event (butlast events))
+                 (image-daemon:daemon-packet-string (client-portable event))
+                 (channel-subscription-present-event view event))
+               (test-assert (find "(status)" (terminal-ui--reconcile-completions ui)
+                                  :key (lambda (entry) (getf entry :name)) :test #'equal)
+                            "Partial catalog delivery preserves the active completion set.")
+               (channel-subscription-present-event view (first (last events)))
+               (test-assert (and (= (length (terminal-ui-completions ui)) 100)
+                                 (every (lambda (entry) (<= (length (getf entry :description)) 512))
+                                        (terminal-ui-completions ui))
+                                 (null (terminal-ui--reconcile-completions ui)))
+                            "The final catalog chunk atomically replaces suggestions and invalidates a cached draft.")))
+        (setf (terminal-ui-completion-function server) provider))))
+  nil)
+
 (-> test-presentation-client () null)
 (defun test-presentation-client ()
   "Test a client that presents follows a hosted channel and drives it with input."
@@ -517,16 +574,23 @@
             (progn
               (test-assert (and (funcall await ':reset) (funcall await ':turn) (funcall await ':modal))
                            "a client that presents is first told what the channel shows")
+              (presentation-tests--hosted-completion application seen await)
               (test-assert (and (terminal-interactive-p
                                  (terminal-ui-terminal (application-ui application)))
                                 (= 90 (terminal-columns
                                        (terminal-ui-terminal (application-ui application)))))
                            "the channel is laid out for its client and somebody can answer it")
-              (localgroup-client-send connection ':input :action ':submit :text "/status")
+              (localgroup-client-call connection ':submit :text "(list 34 47)")
               (test-assert (funcall await ':append
                                     (lambda (event)
-                                      (search "status" (test-localgroup--event-text event))))
-                           "a submitted command's output is presented")
+                                      (search "(34 47)" (test-localgroup--event-text event))))
+                           "a native prompt result is presented")
+              (test-assert (task-tests--wait-until
+                            (lambda ()
+                              (not (application-input-controller-busy-p
+                                    (application-input-controller application))))
+                            10)
+                           "the channel returns to idle after presenting its result")
               (test-assert (null (getf (localgroup-client-call connection ':input :action ':interrupt)
                                        :handled-p))
                            "an interrupt with nothing running is the client's to handle")

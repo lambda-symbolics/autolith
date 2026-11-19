@@ -24,8 +24,8 @@ Autolith's prompt window can also evaluate Lisp forms directly:
 
 You can use the same tools and Lisp machinery as the clanker.
 
-Slash syntax is optional syntactic sugar for command forms, for example
-=/status= for =(status)=.
+Enter commands as parenthesized forms. If you submit text starting with =/=,
+Autolith warns and leaves it unsent.
 
 Type =(=, =[=, or ={= in the composer to insert a matching pair with the cursor
 between the delimiters. Type the closing delimiter to move past it, or press
@@ -457,8 +457,8 @@ Terminal-only operations return an explicit unsupported outcome. Workspace resou
 windows use =startLine= and =lineCount= and include the observed revision. Shell-log
 windows use =byteOffset= and =byteCount= and require session ownership.
 
-Invoke ordinary commands with =arguments: {"input": "..."}=, using slash-command
-text without the command name. =text= is an alias for =input=. Commands such
+Invoke ordinary commands with =arguments: {"input": "..."}=, passing argument
+text for the selected operation. =text= is an alias for =input=. Commands such
 as =skills=, =hurry-up= and =papercuts= return their presented text. Operations with
 =terminalWithoutArguments= require an argument to avoid a terminal picker. During
 an active turn, native inspection and execution policies apply; boundary-applied
@@ -2969,7 +2969,8 @@ Put user commands in =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp=, or load
 a user-owned Lisp file from there. Autolith loads those definitions after the
 tracked system on each startup, including after a source update or an installed
 upgrade. Register commands with =define-application-command=, which defines
-Lisp names, slash aliases, completion, and busy/terminal policy.
+Lisp names, aliases, completion, and busy/terminal policy. Registry names and
+aliases use a leading =/= in this metadata only.
 
 #+BEGIN_SRC lisp
 (define-application-command my-version-command
@@ -2988,20 +2989,18 @@ Lisp names, slash aliases, completion, and busy/terminal policy.
 
 - Callable handlers accept ordinary Lisp lambda lists, including =&key= and
   supplied-p parameters. Lisp argument values reach the handler directly.
-- Use =:slash-parser function-name= for commands with structured or action
-  arguments. Define the function before the command. It receives the complete
-  slash remainder and returns a list of native handler arguments. Parser and
-  handler functions are captured when you register the command.
+- Use =:slash-parser function-name= to decode a structured client's argument
+  text when the default token splitting is insufficient. Define the function
+  before the command. It receives only the argument text and returns a list of
+  native handler arguments. Registration captures the decoder and the handler.
 - Missing interactive arguments open the restart debugger. =supply-arguments=
-  takes one Lisp form of replacement arguments. Excess slash arguments are
-  rejected before dispatch. Programmatic calls keep ordinary Common Lisp arity
-  rules.
+  accepts replacement arguments as Lisp values. Excess arguments are rejected
+  before dispatch.
 - Busy behavior is =:inspect=, =:execute=, =:apply=, =:hold=, or =:cancel=.
   During active work, =:execute= runs immediately, =:apply= applies its
   change at the turn's next safe provider boundary, and =:hold= waits for
   the idle queue. Argument-free =:inspect= and =:apply= invocations only
-  display state, so they run immediately. An unknown command reports its
-  error immediately instead of being scheduled.
+  display state, so they run immediately.
 - Terminal behavior is =:shared=, =:exclusive=, or
   =:exclusive-without-arguments=. It declares which invocations open a modal
   picker. A modal picker requires exclusive terminal input when open.
@@ -3013,8 +3012,7 @@ Lisp names, slash aliases, completion, and busy/terminal policy.
   The responsive reader continues animating until the picker opens.
 - =:static-options= replaces =:argument= for one finite positional parameter.
   Supply native strings, keywords, or booleans to derive the help hint and
-  completions. Use =(t nil)= for boolean controls. Define a slash parser to
-  translate text choices to native values.
+  completions. Use =(t nil)= for boolean controls.
 
 ** Live definitions
 

@@ -116,11 +116,6 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-world-server
     :type          t
     :documentation "The world server hosting this application, or NIL in a direct session.")
-   (lisp-hinted-command-names
-    :initform      nil
-    :accessor      application-lisp-hinted-command-names
-    :type          list
-    :documentation "Canonical slash commands already given a Lisp spelling hint.")
    (participant-state
     :initarg       :participant-state
     :initform      (make-instance 'participant-state)
@@ -557,7 +552,6 @@ complete @ participant names from its world."
            :prompt-padding          padding
            :message-header-prefixes *application-message-header-prefixes*
            :placeholder             placeholder
-           :completion-function     #'application-command-completion-entries
            :mention-function        (and configuration
                                          (application-world-mention-function configuration)))))))
 

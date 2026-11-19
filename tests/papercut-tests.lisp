@@ -408,8 +408,9 @@
                                   :start2 (1+ first-card))))
                 "a completed papercut report is presented exactly once")))
            (recording-terminal-reset terminal)
-           (test-assert (eq (application-command application "/papercuts") ':continue)
-                        "/papercuts remains inside the interactive application")
+           (test-assert (eq ':ok (application-lisp-evaluation-status
+                                  (application-lisp-evaluate "(papercuts)" :application application)))
+                        "papercuts runs from the Lisp prompt")
            (let ((list-output (recording-terminal-output terminal)))
              (test-assert
               (and (search "# papercuts" list-output)
@@ -449,12 +450,9 @@
                    (null (papercut-find
                           configuration (papercut-identifier report))))
               "the canonical papercut-close call persists a closure tombstone"))
-           (test-assert (search "/papercuts" (application-help))
-                        "interactive help includes /papercuts")
-           (test-assert (search "/papercut [ID]" (application-help))
-                        "interactive help includes optional /papercut syntax")
-           (test-assert (search "/papercut-close [ID]" (application-help))
-                        "interactive help includes optional /papercut-close syntax"))
+           (dolist (name '("papercuts" "papercut" "papercut-close"))
+             (test-assert (search (concatenate 'string "(" name) (application-operation-help application name))
+                          "interactive help documents native papercut calls")))
       (ignore-errors (terminal-ui-stop ui))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

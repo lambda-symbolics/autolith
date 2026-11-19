@@ -252,7 +252,7 @@ hide its side panel while such frames show, as during the boot screen."))
    (completions
     :initarg       :completions
     :initform      nil
-    :reader        terminal-ui-completions
+    :accessor      terminal-ui-completions
     :type          list
     :documentation "Completion entries offered while typing an interactive command.")
    (completion-function

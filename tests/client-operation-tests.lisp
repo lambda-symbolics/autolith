@@ -319,9 +319,9 @@
                                "command help comes from registered metadata")
                   (test-assert
                    (equalp (gethash "choices" row)
-                           (map 'vector #'application-command--slash-option-token
-                                (application-command-static-options command)))
-                   "supported textual choices use the registered slash spelling"))
+                           (map 'vector #'application-client-catalog--option-token
+                               (application-command-static-options command)))
+                   "supported textual choices use the structured client's argument encoding"))
                 (let ((find-command (symbol-function 'application-command-find))
                       (restricted   (make-instance 'application-command
                                                    :static-options '(:full :list :ask))))

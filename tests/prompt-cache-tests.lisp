@@ -667,7 +667,7 @@
                 t))
             "an unknown /cache-misses argument is rejected")
            (test-assert
-            (search "/cache-misses [on|off]" (application-help))
+             (search "(cache-misses" (application-operation-help application "cache-misses"))
             "help lists the cache-miss notice command"))
       (ignore-errors (terminal-ui-stop ui))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))

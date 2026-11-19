@@ -226,10 +226,9 @@
                            :work-items
                            (list (input-work-from-input input)
                                  (list ':native-lisp "(values)" :submission submission)
-                                 (input-work-from-input
-                                  (user-message-input-create :text "/help" :submission submission))
-                                 (input-work-from-input
-                                  (user-message-input-create :text "(+ 1 2)" :submission submission)))
+                                (list ':command "/help" :submission submission)
+                                (input-work-from-input
+                                 (user-message-input-create :text "(+ 1 2)" :submission submission)))
                            :steering-promotion-prefix-count 2))
          (payload    (input-state->payload state))
          (restored   (input-state-from-payload payload)))

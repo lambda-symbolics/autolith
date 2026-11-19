@@ -25,6 +25,14 @@
    :terminal-behavior terminal-behavior
    :handler           handler))
 
+(-> application-command-tests--invocation (list) application-command-invocation)
+(defun application-command-tests--invocation (form)
+  "Construct a native command invocation from literal FORM values."
+  (application-operation--command-invocation
+   (application-command-find
+    (concatenate 'string "/" (string-downcase (string (first form)))))
+   (rest form)))
+
 (defvar *application-command-tests-semantic-call* nil
   "The arguments observed by the semantic command protocol fixture.")
 
@@ -172,7 +180,7 @@
 
 (-> test-application-command-semantic-calls () null)
 (defun test-application-command-semantic-calls ()
-  "Test callable commands retain ordinary lambda-list and slash semantics."
+  "Test callable commands retain ordinary lambda-list and native Lisp semantics."
   (application-command-tests--native-arguments)
   (let ((snapshot (application-command--registry-snapshot)))
     (unwind-protect
@@ -225,46 +233,34 @@
                        (not
                         (application-command-terminal-owner-p command invocation)))
                   "canonical explicit NIL and empty strings count as supplied")))
-            (let ((invocation
-                    (application-command-invocation-parse
-                     "/semantic \"alpha beta\"")))
-              (test-assert
-               (equal (application-command-invocation-arguments invocation)
-                      '("alpha beta"))
-               "slash parsing preserves whitespace inside double quotes")
-              (application-command-execute command nil invocation)
-              (test-assert
-               (equal *application-command-tests-semantic-call*
-                      '("alpha beta" "default"))
-               "quoted slash arguments reach the canonical Lisp handler"))
-            (let ((invocation
-                    (application-command-invocation-parse
-                     "/semantic \"C:\\temp\\new file\"")))
-              (test-assert
-               (equal (application-command-invocation-arguments invocation)
-                      '("C:\\temp\\new file"))
-               "slash parsing preserves literal backslashes inside quotes")
-              (application-command-execute command nil invocation)
-              (test-assert
-               (equal *application-command-tests-semantic-call*
-                      '("C:\\temp\\new file" "default"))
-               "quoted backslashes reach the canonical Lisp handler"))
-            (dolist (option '("alpha beta" "a\"b" "C:\\temp"))
-              (test-assert
-               (equal (application-command--tokens
-                       (application-command--slash-option-token option))
-                      (list option))
-               "slash option rendering round-trips parser-significant characters"))
-            (test-assert
-             (not *application-command-tests-interactive-p*)
-             "direct command execution remains noninteractive by default")
-            (setf *application-command-tests-interactive-p* nil)
-            (application-command (make-instance 'application) "/semantic slash")
-            (test-assert
-             (and *application-command-tests-interactive-p*
-                  (equal *application-command-tests-semantic-call*
-                         '("slash" "default")))
-             "slash dispatch dynamically enables interactive command context")
+             (dolist (argument '("alpha beta" "C:\\temp\\new file" "a\"b"))
+               (let ((evaluation
+                       (application-lisp-evaluate
+                        (format nil "(semantic ~S)" argument)
+                        :application (make-instance 'application))))
+                 (test-assert
+                  (and (eq (application-lisp-evaluation-status evaluation) ':ok)
+                       (equal *application-command-tests-semantic-call*
+                              (list argument "default")))
+                  "native Lisp strings reach the canonical command handler")))
+             (test-assert
+              (not *application-command-tests-interactive-p*)
+              "direct command execution is noninteractive by default")
+             (multiple-value-bind (application root terminal tool)
+                 (application-operation-tests--application)
+               (declare (ignore terminal tool))
+               (unwind-protect
+                    (test-assert
+                     (and (eq (application-run-lisp-input
+                               application "(semantic \"interactive\")")
+                              ':continue)
+                          *application-command-tests-interactive-p*
+                          (equal *application-command-tests-semantic-call*
+                                 '("interactive" "default")))
+                     "native prompt dispatch enables interactive command context")
+                 (tool-registry-close-runtime-state (application-tool-registry application))
+                 (platform-delete-directory-tree
+                  *platform* root :validate t :if-does-not-exist ':ignore)))
             (let ((invocation
                     (make-instance
                      'application-command-invocation
@@ -389,7 +385,7 @@
 
 (-> test-application-command-policies () null)
 (defun test-application-command-policies ()
-  "Test invocation parsing and invocation-sensitive command policies."
+  "Test structured invocations and invocation-sensitive command policies."
   (let ((snapshot (application-command--registry-snapshot)))
     (unwind-protect
          (progn
@@ -416,60 +412,58 @@
                   :terminal-behavior ':exclusive-without-arguments)))
              (register-application-command command :source ':runtime))
            (let* ((inspection
-                    (application-command-invocation-parse "  /I  "))
+                    (application-client-command-invocation
+                     (application-command-find "/I") ""))
                   (inspection-with-argument
-                     (application-command-invocation-parse
-                      "/peek alpha beta"))
+                    (application-client-command-invocation
+                     (application-command-find "/peek") "alpha beta"))
                   (held
-                    (application-command-invocation-parse "/hold"))
+                    (application-client-command-invocation
+                     (application-command-find "/hold") ""))
                   (conditional
-                    (application-command-invocation-parse "/conditional value")))
+                    (application-client-command-invocation
+                     (application-command-find "/conditional") "value")))
              (test-assert
-              (and
-               (string= (application-command-invocation-name inspection) "/i")
-               (string=
-                (application-command-name
-                 (application-command-invocation-command inspection))
-                "/peek")
-               (string=
-                (application-command-invocation-remainder
-                 inspection-with-argument)
-                "alpha beta")
-               (string=
-                (application-command-invocation-argument
-                 inspection-with-argument)
-                "alpha"))
-              "command parsing preserves the full remainder and resolves aliases")
-             (test-assert
-              (and
-               (eq (application-command-busy-action
-                    (application-command-invocation-command inspection)
-                    inspection)
-                   ':execute)
-               (eq (application-command-busy-action
-                    (application-command-invocation-command
-                     inspection-with-argument)
+              (and (string= (application-command-invocation-name inspection) "/peek")
+                   (eq (application-command-invocation-command inspection)
+                       (application-command-find "/I"))
+                   (string= (application-command-invocation-remainder
+                             inspection-with-argument)
+                            "alpha beta")
+                   (string= (application-command-invocation-argument
+                             inspection-with-argument)
+                            "alpha"))
+              "structured invocations resolve aliases and preserve argument text")
+            (test-assert
+             (and
+              (eq (application-command-busy-action
+                   (application-command-invocation-command inspection)
+                   inspection)
+                  ':execute)
+              (eq (application-command-busy-action
+                   (application-command-invocation-command
                     inspection-with-argument)
-                   ':hold)
-               (eq (application-command-busy-action
-                    (application-command-invocation-command held)
-                    held)
-                   ':hold)
-               (eq (application-command-busy-action
-                    (application-command-invocation-command conditional)
-                    conditional)
-                   ':cancel))
-              "busy behavior is declared by the command and refined by invocation")
-             (test-assert
-              (and
+                   inspection-with-argument)
+                  ':hold)
+              (eq (application-command-busy-action
+                   (application-command-invocation-command held)
+                   held)
+                  ':hold)
+              (eq (application-command-busy-action
+                   (application-command-invocation-command conditional)
+                   conditional)
+                  ':cancel))
+             "busy behavior is declared by the command and refined by invocation")
+            (test-assert
+             (and
+              (application-command-terminal-owner-p
+               (application-command-invocation-command held)
+               held)
+              (not
                (application-command-terminal-owner-p
-                (application-command-invocation-command held)
-                held)
-               (not
-                (application-command-terminal-owner-p
-                 (application-command-invocation-command conditional)
-                 conditional)))
-              "terminal ownership follows each command's declared policy")))
+                (application-command-invocation-command conditional)
+                conditional)))
+             "terminal ownership follows each command's declared policy")))
       (application-command--registry-restore snapshot)))
   nil)
 
@@ -478,37 +472,37 @@
   "Test representative built-ins follow active-turn and terminal policy."
   (dolist
       (case
-       '(("/help" :execute)
-         ("/cwd /tmp" :steer)
-         ("/cwd" :execute)
-         ("/model gpt-5.6-sol" :apply)
-         ("/detach" :execute)
-         ("/fix-skipped-definitions" :hold)
-         ("/vault-restore" :execute)
-         ("/vault-discard" :execute)
-         ("/close" :cancel)))
-    (destructuring-bind (input expected) case
-      (let* ((invocation (application-command-invocation-parse input))
+       '(((help) :execute)
+         ((cwd "/tmp") :steer)
+         ((cwd) :execute)
+         ((model "gpt-5.6-sol") :apply)
+         ((detach) :execute)
+         ((fix-skipped-definitions) :hold)
+         ((vault-restore) :execute)
+         ((vault-discard) :execute)
+         ((close) :cancel)))
+    (destructuring-bind (form expected) case
+      (let* ((invocation (application-command-tests--invocation form))
              (command    (application-command-invocation-command invocation)))
         (test-assert
          (eq (application-command-busy-action command invocation) expected)
-         (format nil "~A has active-turn behavior ~S" input expected)))))
+         (format nil "~S has active-turn behavior ~S" form expected)))))
   (dolist
       (case
-       '(("/model" t)
-         ("/effort high" nil)
-         ("/open K-8vQ2mp" nil)
-         ("/compact" nil)
-         ("/close" nil)))
-    (destructuring-bind (input expected) case
-      (let* ((invocation (application-command-invocation-parse input))
+       '(((model) t)
+         ((effort "high") nil)
+         ((open "K-8vQ2mp") nil)
+         ((compact) nil)
+         ((close) nil)))
+    (destructuring-bind (form expected) case
+      (let* ((invocation (application-command-tests--invocation form))
              (command    (application-command-invocation-command invocation)))
         (test-assert
          (eq (not
               (null
                (application-command-terminal-owner-p command invocation)))
              expected)
-         (format nil "~A has terminal ownership ~S" input expected)))))
+         (format nil "~S has terminal ownership ~S" form expected)))))
   nil)
 
 (-> test-built-in-application-command-calls () null)
@@ -536,32 +530,20 @@
         (test-assert
          (and command
               (equal (application-command-lambda-list command) lambda-list))
-         (format nil "~A derives its slash contract from its Lisp lambda list"
+         (format nil "~A derives its native contract from its Lisp lambda list"
                  name)))))
   (let ((command (application-command-find "/ste")))
     (test-assert
-     (and (equal (application-command-static-options command) '(t nil))
-          (string= (application-command-argument command) "[on|off]"))
-     "native finite options derive their slash spelling from one metadata list"))
-  (let* ((objective "fix argument mismatches without crashing the application")
-         (invocation
-           (application-command-invocation-parse
-            (format nil "/goal ~A" objective))))
-    (test-assert
-     (and (equal (application-command-invocation-arguments invocation)
-                 (list objective))
-          (string= (application-command-invocation-argument invocation)
-                   objective))
-     "single-argument free-form commands preserve their complete remainder"))
-
-  (let* ((objective "Fix the \"widget=")
-         (invocation
-           (application-command-invocation-parse
-            (format nil "/goal ~A" objective))))
-    (test-assert
-     (equal (application-command-invocation-arguments invocation)
-            (list objective))
-     "raw-remainder commands do not tokenize quotation marks"))
+     (equal (application-command-static-options command) '(t nil))
+     "finite command options retain native boolean values"))
+  (dolist (objective '("fix argument mismatches without crashing the application"
+                       "Fix the \"widget="))
+    (let ((invocation
+            (application-command-tests--invocation `(goal ,objective))))
+      (test-assert
+       (equal (application-command-invocation-arguments invocation)
+              (list objective))
+       "native command arguments preserve complete strings")))
   (let ((application (make-instance 'application))
         (objective   "fix argument mismatches without crashing the application"))
     (test-call-with-function-replacements
@@ -580,11 +562,11 @@
               nil)))
      (lambda ()
        (test-assert
-        (eq (application-command
-             application
-             (format nil "/goal ~A" objective))
-            ':continue)
-        "a multiword goal executes as one free-form command argument")
+         (eq (application-lisp-evaluation-status
+              (application-lisp-evaluate
+               (format nil "(goal ~S)" objective) :application application))
+             ':ok)
+         "a multiword goal executes as one native string argument")
        (test-assert
         (string= (getf (application-goal application) :objective) objective)
         "the complete multiword goal becomes the session objective"))))
@@ -601,36 +583,25 @@
           (lambda ()
             (dolist (name '("cwd" "trace" "timestamps" "ste" "titles"
                             "hurry-up" "papercut" "papercut-close"))
-              (test-assert
-               (eq (application-command application (format nil "/~A" name))
-                   ':continue)
-               (format nil "/~A accepts its omitted optional argument" name))
-              (test-assert
-               (null (application-operation-call application name))
-               (format nil "(~A) accepts its omitted optional argument" name)))))
+               (test-assert
+                (null (application-operation-call application name))
+                (format nil "(~A) accepts its omitted optional argument" name)))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  (dolist (case '(("/mcp refresh typo" 3)
-                  ("/permissions auto garbage" 3)))
-    (destructuring-bind (input token-count) case
-      (test-assert
-       (= (length (application-command--tokens input)) token-count)
-       (format nil "~A tokenizes every supplied slash argument" input))
-      (test-assert
-       (handler-case
-           (let* ((invocation (application-command-invocation-parse input))
-                  (command    (application-command-invocation-command invocation)))
-             (application-command-execute command nil invocation)
-             nil)
-         (configuration-error () t))
-       (format nil "~A rejects excess slash arguments before handler effects" input))))
+  (dolist (form '((mcp :refresh :typo) (permissions :auto :garbage)))
+    (test-assert
+     (handler-case
+         (let* ((invocation (application-command-tests--invocation form))
+                (command    (application-command-invocation-command invocation)))
+           (application-command-execute command nil invocation)
+           nil)
+      (configuration-error () t))
+     (format nil "~S rejects excess arguments before handler effects" form)))
   (test-assert
-   (handler-case
-       (progn
-         (application-command-invocation-parse "/cwd \"unfinished")
-         nil)
-     (configuration-error ()
-       t))
-   "slash parsing rejects unterminated quoted arguments")
+   (eq (application-lisp-evaluation-status
+        (application-lisp-evaluate "(cwd \"unfinished)"
+                                   :application (make-instance 'application)))
+       ':error)
+   "native Lisp rejects unterminated string arguments")
   (let ((application (make-instance 'application)))
     (test-assert
      (handler-case
@@ -814,7 +785,7 @@
 
 (-> test-application-typed-boolean-controls () null)
 (defun test-application-typed-boolean-controls ()
-  "Test completed boolean calls, query defaults, slash parsing, and invalid controls."
+  "Test completed boolean calls, query defaults, and invalid native controls."
   (test-call-with-typed-control-application
    (lambda (application root observations)
      (declare (ignore root observations))
@@ -891,12 +862,7 @@
                    (string= saved
                             (uiop/stream:read-file-string
                              (configuration-preferences-path configuration))))
-              "status and invalid controls do not change state or preferences"))
-           (application-command application (format nil "/~A \"ON\"" name))
-           (test-assert (config setting configuration) "slash on parses to a native action")
-           (application-command application (format nil "/~A off" name))
-           (test-assert (null (config setting configuration))
-                        "slash off parses to a native action"))))))
+              "status and invalid controls do not change state or preferences")))))))
   nil)
 
 (-> test-application-compact-setting-transitions () null)
@@ -1184,22 +1150,31 @@
 
 (-> test-application-authentication-command () null)
 (defun test-application-authentication-command ()
-  "Test /auth and (auth) share selection, explicit naming, and direct output."
+  "Test native auth selection, explicit naming, and direct output."
   (test-assert
    (handler-case
-       (progn (application-command-invocation-parse "/auth grok device typo") nil)
-     (authentication-error () t))
-   "slash auth rejects excess arguments before command effects")
-  (dolist (case '(("" nil)
-                  ("\"MiXeD provider\"" ("MiXeD provider"))
-                  ("chatgpt browser" ("chatgpt" :browser))
-                  ("chatgpt device-code" ("chatgpt" :device-code))))
-    (destructuring-bind (text expected) case
-      (test-assert
-       (equal (application-command-invocation-arguments
-               (application-command-invocation-parse (concatenate 'string "/auth " text)))
-              expected)
-       "slash auth preserves identifiers and decodes only the method")))
+       (progn
+         (application-operation-call (make-instance 'application)
+                                     'auth "grok" ':device-code ':typo)
+         nil)
+    (configuration-error () t))
+   "native auth rejects excess arguments before command effects")
+  (let ((command (application-command-find "/auth")))
+    (test-assert
+     (handler-case
+         (progn (application-client-command-invocation command "grok device typo") nil)
+       (authentication-error () t))
+     "structured auth rejects excess arguments before command effects")
+    (dolist (case '(("" nil)
+                    ("\"MiXeD provider\"" ("MiXeD provider"))
+                    ("chatgpt browser" ("chatgpt" :browser))
+                    ("chatgpt device-code" ("chatgpt" :device-code))))
+      (destructuring-bind (text expected) case
+        (test-assert
+         (equal (application-command-invocation-arguments
+                 (application-client-command-invocation command text))
+                expected)
+         "structured auth preserves identifiers and decodes only the method"))))
   (let ((application            (make-instance 'application))
         (picked-p               nil)
         (authenticated-provider nil)
@@ -1297,11 +1272,13 @@
                  (eq authenticated-method ':device-code))
             "callable auth passes its authentication method through")
            (test-assert
-            (eq (application-command application "/auth chatgpt device")
+            (eq (application-run-lisp-input application "(auth \"MiXeD provider\" :browser)")
                 ':continue)
-            "slash auth accepts textual device authentication")
-           (test-assert (eq authenticated-method ':device-code)
-            "slash auth decodes method text before calling the handler")))
+            "native auth accepts a literal provider and keyword method")
+           (test-assert
+            (and (string= authenticated-provider "MiXeD provider")
+                 (eq authenticated-method ':browser))
+            "native auth preserves provider case and the explicit method")))
       (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
                                              ':ignore)))
   (let ((application (make-instance 'application :ui nil))
@@ -1502,7 +1479,7 @@
 
 (-> test-application-typed-action-controls () null)
 (defun test-application-typed-action-controls ()
-  "Test keyword service and permission actions at public Lisp and slash boundaries."
+  "Test keyword service and permission actions through native Lisp."
   (test-call-with-typed-control-application
    (lambda (application root observations)
      (let ((configuration (application-configuration application)))
@@ -1519,11 +1496,6 @@
           "keyword service controls execute through local Lisp"))
        (test-assert (equal (reverse (first observations)) '(:start :stop :refresh :reload))
                     "status does not start, stop, refresh, or reload a service")
-       (setf (first observations) nil)
-       (dolist (source '("/slynk start" "/slynk stop" "/mcp refresh" "/mcp reload"))
-         (application-command application source))
-       (test-assert (equal (reverse (first observations)) '(:start :stop :refresh :reload))
-                    "slash service actions use the same native handlers")
        (let ((before (first observations)))
          (dolist
              (call
@@ -1631,17 +1603,21 @@
                 (setting-invalid () t))
               "native choice validation does not silently normalize strings")
              (let ((literal "Keep \"quoted\" Case \\path"))
-               (application-command
-                application
-                (format nil "/settings typed-value ~S" literal))
+               (test-assert
+                (eq (application-lisp-evaluation-status
+                     (application-lisp-evaluate
+                      (format nil "(settings :typed-value ~S)" literal)
+                      :application application))
+                    ':ok)
+                "native settings evaluate literal string values")
                (test-assert (string= (config :typed-value configuration) literal)
-                            "slash quoted strings are decoded exactly once")))
+                            "native quoted strings are decoded exactly once")))
         (setf (application-configuration application) original))))
   nil)
 
 (-> test-application-typed-settings () null)
 (defun test-application-typed-settings ()
-  "Test native values and schema-aware slash settings without coercion of Lisp data."
+  "Test schema-validated native setting values without coercion of Lisp data."
   (test-call-with-typed-control-application
    (lambda (application root observations)
      (declare (ignore root observations))
@@ -1661,12 +1637,17 @@
        (application-operation-call application 'settings 'terminal-theme ':almighty)
        (test-assert (eq (config :terminal-theme configuration) ':almighty)
                     "symbol names and native choice values follow the schema")
-       (application-command application "/settings boot-screen-seconds 3.5")
-       (application-command application "/settings onboarding-p off")
+       (test-assert
+        (eq (application-lisp-evaluation-status
+             (application-lisp-evaluate
+              "(progn (settings :boot-screen-seconds 3.5) (settings :onboarding-p nil))"
+              :application application))
+            ':ok)
+        "native settings accept numeric and boolean literals")
        (test-assert
         (and (= (config :boot-screen-seconds configuration) 3.5)
              (null (config :onboarding-p configuration)))
-        "slash settings parses values with the active setting schema")
+        "native literal setting values follow the active schema")
        (let ((saved
               (uiop/stream:read-file-string (configuration-preferences-path configuration))))
          (dolist
@@ -1812,7 +1793,7 @@
                     (recording-terminal-chunks terminal) nil
                     picks (list "turn-timestamps-p" "off" "cache-miss-notices-p" "off" nil))
               (application-command--call-with-presentation
-               (application-command-invocation-parse "/settings")
+                (application-command-tests--invocation '(settings))
                (lambda ()
                  (application--builtin-settings-command application)
                  (test-assert (null *application-command-presentation-pending-p*)
@@ -1881,10 +1862,10 @@
   nil)
 
 
-;;;; -- Native Values and Slash Adapters --
+;;;; -- Native Values and Structured Argument Adapters --
 
 (defvar *application-command-tests-parser-calls* nil
-  "The complete remainders received by the slash parser fixture.")
+  "The complete argument texts received by the structured decoder fixture.")
 
 (-> application-command-tests--slash-parser (string) list)
 (defun application-command-tests--slash-parser (remainder)
@@ -1908,7 +1889,7 @@
 
 (-> application-command-tests--native-arguments () null)
 (defun application-command-tests--native-arguments ()
-  "Exercise native value transport, slash-only parsers and keyword binding."
+  "Exercise native value transport, structured argument decoders and keyword binding."
   (dolist (parser '(nil t :parser "parser" (function parser)))
     (test-assert
      (application-command-tests--macroexpand-error-p
@@ -1953,18 +1934,17 @@
                    (every #'eq arguments *application-command-tests-semantic-call*))
               "symbols, NIL, numbers, paths, nested and opaque values retain identity")
              (test-assert (null *application-command-tests-parser-calls*)
-                          "Lisp invocation never invokes a slash parser")
+                          "native invocation bypasses the structured argument decoder")
              (let* ((payload "quoted \"Mixed Case\" and an unmatched \"")
                     (invocation
-                      (application-command-invocation-parse
-                       (concatenate 'string "/native-values " payload))))
+                       (application-client-command-invocation command payload)))
                (application-command-execute command application invocation)
                (test-assert
                 (and (equal *application-command-tests-parser-calls* (list payload))
                      (equal *application-command-tests-semantic-call* (list payload)))
-                "an explicit slash parser receives complete text before token parsing"))
-             ;; A submitted invocation owns both handler and parser snapshots.
-             (let ((old        (application-command-invocation-parse "/native-values old"))
+                "a structured decoder receives complete argument text before token parsing"))
+             ;; A submitted invocation owns both handler and decoder snapshots.
+             (let ((old        (application-client-command-invocation command "old"))
                    (registered (application-command--registry-snapshot)))
                (eval
                 '(define-application-command application-command-tests--native
@@ -1982,23 +1962,24 @@
                 (application-command-invocation-command old) application old)
                (test-assert (equal *application-command-tests-semantic-call* '("old"))
                             "submitted invocations retain captured handler behavior")
-               (let ((new (application-command-invocation-parse
-                           "/native-values \"new value\"")))
+               (let ((new (application-client-command-invocation
+                           (application-command-find "/native-values") "\"new value\"")))
                  (application-command-execute
                   (application-command-invocation-command new) application new)
                  (test-assert
                   (equal *application-command-tests-semantic-call*
                          '(:replacement "new value"))
-                  "replacement without a parser uses ordinary slash tokenization"))
+                  "structured arguments use token decoding when no decoder is registered"))
                (application-command--registry-restore registered)
-               (let ((restored (application-command-invocation-parse
-                                "/native-values restored \"literal\"")))
+               (let ((restored (application-client-command-invocation
+                                (application-command-find "/native-values")
+                                "restored \"literal\"")))
                  (application-command-execute
                   (application-command-invocation-command restored) application restored)
                  (test-assert
                   (equal *application-command-tests-semantic-call*
                          '("restored \"literal\""))
-                  "restoring a registration restores its captured slash parser"))))
+                  "restoring a registration restores its captured argument decoder"))))
            (eval
             '(define-application-command application-command-tests--options
                  (:name "/native-options" :static-options (:on "MiXeD")
@@ -2009,25 +1990,20 @@
                (declare (ignore application))
                (setf *application-command-tests-semantic-call* (list mode))
                :continue))
-           (let ((application  (make-instance 'application))
-                 (lisp-values  nil)
-                 (slash-values nil)
-                 (*read-eval*  nil))
+           (let ((application (make-instance 'application))
+                 (lisp-values nil)
+                 (*read-eval* nil))
              (dolist (entry (application-operation--command-option-completion-entries))
                (when (equal (getf entry :primary) "(native-options")
-                 (let ((form (read-from-string (getf entry :name))))
-                   (application-operation-call application "native-options" (second form))
+                 (let* ((source (getf entry :name))
+                        (evaluation
+                          (application-lisp-evaluate source :application application)))
+                   (test-assert
+                    (eq (application-lisp-evaluation-status evaluation) ':ok)
+                    "completed native choices evaluate as Lisp forms")
                    (push (first *application-command-tests-semantic-call*) lisp-values))))
-             (dolist (entry (application-command-option-completion-entries))
-               (when (equal (getf entry :primary) "/native-options")
-                 (application-command-execute
-                  (application-command-find "/native-options") application
-                  (application-command-invocation-parse (getf entry :name)))
-                 (push (first *application-command-tests-semantic-call*) slash-values)))
              (test-assert (equal (reverse lisp-values) '(:on "MiXeD"))
-                          "Lisp option completions retain keyword types and string case")
-             (test-assert (equal slash-values lisp-values)
-                          "slash and Lisp option completions invoke the same native choices"))
+                          "Lisp option completions retain keyword types and string case"))
            (eval
             '(define-application-command application-command-tests--keywords
                  (:name "/native-keywords" :argument "[VALUE] [:PAYLOAD VALUE]"
@@ -2126,9 +2102,7 @@
                                            (push entry entries) nil)))
        (lambda ()
          (application-operation-call application 'generations)
-         (application-command application "/generations")
-         (test-assert (= (length entries) 2) "native and slash generation commands both present")
-         (test-assert (equal (first entries) (second entries)) "both forms use the same semantic view")
+         (test-assert (= (length entries) 1) "the native generation command presents its view")
          (let ((entry (first entries)))
            (dolist (role (list '(:code "current-generation") '(:success "compatible")
                               '(:failure "incompatible") '(:notice "unavailable")
@@ -2139,7 +2113,7 @@
 
 (-> test-command-view-model-warnings () null)
 (defun test-command-view-model-warnings ()
-  "Present discovered models and partial discovery failures through either command form."
+  "Present discovered models and partial discovery failures through native operations."
   (with-test-configuration (configuration root)
     (declare (ignore root))
     (let* ((application (make-instance 'application :configuration configuration))
@@ -2156,8 +2130,7 @@
                                            (declare (ignore application)) (push entry entries) nil)))
        (lambda ()
          (application-operation-call application 'models)
-         (application-command application "/models")
-         (test-assert (= (length entries) 2) "native and slash model discovery both present")
+         (test-assert (= (length entries) 1) "native model discovery presents its view")
          (dolist (entry entries)
            (test-assert (terminal-styled-text-p entry) "model discovery returns semantic spans")
            (test-assert (command-view-tests--role-p entry ':code model) "model identifiers use code style")
@@ -2183,8 +2156,7 @@
                                            (declare (ignore application)) (push entry entries) nil)))
        (lambda ()
          (application-operation-call application 'permissions ':list)
-         (application-command application "/permissions list")
-         (test-assert (= (length entries) 2) "both command forms list saved approvals")
+         (test-assert (= (length entries) 1) "the native command lists saved approvals")
          (test-assert (every (lambda (entry)
                               (and (command-view-tests--role-p entry ':code "echo 猫")
                                    (command-view-tests--role-p entry ':code "server.lookup {}")
@@ -2228,11 +2200,16 @@
                  (setting-render-value
                   (configuration-setting configuration :goal-continuation-limit) ':unlimited))
         "the keyword has a readable settings value")
-       (dolist (input '("unlimited" "UNLIMITED" "12"))
-         (application-command application (format nil "/settings goal-continuation-limit ~A" input))
-         (test-assert (eql (if (string-equal input "unlimited") ':unlimited 12)
-                           (config :goal-continuation-limit configuration))
-                      "slash input follows the continuation setting schema"))
+       (dolist (case '((":unlimited" :unlimited) (":UNLIMITED" :unlimited) ("12" 12)))
+         (destructuring-bind (literal expected) case
+           (test-assert
+            (and (eq (application-lisp-evaluation-status
+                      (application-lisp-evaluate
+                       (format nil "(settings :goal-continuation-limit ~A)" literal)
+                       :application application))
+                     ':ok)
+                 (eql expected (config :goal-continuation-limit configuration)))
+            "native continuation literals follow the setting schema")))
        (test-assert
         (eq ':unlimited
             (setting-parse (configuration-setting configuration :goal-continuation-limit)
@@ -2286,7 +2263,7 @@
                               (format nil "~A has channel admission ~S" source expected))))
              (application-input-controller-begin-external-work controller)
              (unwind-protect
-                  (dolist (source '("(new)" "/new"))
+                   (let ((source "(new)"))
                     (application-input-controller--handle-submission controller source)
                     (test-assert (and (eq (application-conversation application) conversation)
                                       (application-input-controller-turn-active-p controller))

@@ -74,7 +74,7 @@ commands before sections. Tool namespaces and command aliases are also accepted.
 
 (-> application-help-completion-entries (application) list)
 (defun application-help-completion-entries (application)
-  "Return live Lisp and slash help-subject completions behind the help command."
+  "Return live Lisp help-subject completions behind the help command."
   (let ((command (application-command-find "/help")))
     (when (and command
                (eq (application-command-definition-name command)
@@ -88,23 +88,18 @@ commands before sections. Tool namespaces and command aliases are also accepted.
          (append
           (loop for topic in topics
                 for name = (string-downcase (symbol-name topic))
-                append (list (list :name    (format nil "(help :~A)" name)
-                                   :argument nil :description "browse a help section"
-                                   :primary "(help")
-                             (list :name    (format nil "/help ~A" name)
-                                   :argument nil :description "browse a help section"
-                                   :primary "/help")))
+                collect (list :name        (format nil "(help :~A)" name)
+                              :argument    nil
+                              :description "browse a help section"
+                              :primary     "(help"))
           (loop for name in (remove-duplicates
                              (append namespaces
                                      (mapcar #'application-operation-name operations))
                              :test #'string-equal)
-                append (list (list :name    (format nil "(help ~S)" name)
-                                   :argument nil :description "show help for this subject"
-                                   :primary "(help")
-                             (list :name    (format nil "/help ~A"
-                                                    (application-command--slash-option-token name))
-                                   :argument nil :description "show help for this subject"
-                                   :primary "/help"))))
+                collect (list :name        (format nil "(help ~S)" name)
+                              :argument    nil
+                              :description "show help for this subject"
+                              :primary     "(help")))
          :test #'string= :key (lambda (entry) (getf entry :name)))))))
 
 

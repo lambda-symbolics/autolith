@@ -164,6 +164,12 @@ modal reader so the view can act on it."
     :accessor      channel-view-ui
     :type          terminal-ui
     :documentation "The terminal UI that renders the channel in the pane.")
+   (completion-chunks
+    :initform nil :accessor channel-view-completion-chunks :type list
+    :documentation "Pending bounded catalog chunks, newest first, until the final chunk.")
+   (completion-receiving-p
+    :initform nil :accessor channel-view-completion-receiving-p :type boolean
+    :documentation "Whether a replacement completion catalog is being received.")
    (state-lock
     :initform      (make-lock "Autolith channel view")
     :reader        channel-view-state-lock
@@ -288,7 +294,6 @@ With READ-ONLY-P it watches the channel and sends it no input."
                     :prompt-padding          (config :prompt-padding configuration)
                     :message-header-prefixes *application-message-header-prefixes*
                     :placeholder             *application-placeholder*
-                    :completion-function     #'application-command-completion-entries
                     :completion-root         (config :working-directory configuration)
                     :mention-function        (application-world-mention-function configuration))))
     (terminal-ui-connect-transcript-actions ui)
@@ -433,6 +438,32 @@ reader objects exceed the budget rather than escaping its bound."
 
 Operations that concern the view itself are handled here; every other one
 goes to its terminal UI."))
+
+(defmethod channel-view-apply
+    ((view channel-view) (operation (eql :completions))
+     &key entries reset-p complete-p &allow-other-keys)
+  "Install a complete server catalog atomically, then invalidate draft matching."
+  (unless (and (listp entries) (<= (length entries) 32)
+               (every (lambda (entry)
+                        (and (terminal-completion-p entry)
+                             (equal entry (presentation--completion-entry entry)))) entries))
+    (error 'terminal-error :message "Invalid completion catalog chunk."
+                           :operation ':complete :cause nil))
+  (when reset-p
+    (setf (channel-view-completion-chunks view) nil
+          (channel-view-completion-receiving-p view) t))
+  (when (channel-view-completion-receiving-p view)
+    (push entries (channel-view-completion-chunks view))
+    (when complete-p
+      (let ((ui (channel-view-ui view)))
+        (with-terminal-ui-locked (ui)
+          (setf (terminal-ui-completions ui)
+                (loop for chunk in (reverse (channel-view-completion-chunks view))
+                      append chunk))
+          (terminal-ui--clear-completions ui)))
+      (setf (channel-view-completion-chunks view) nil
+            (channel-view-completion-receiving-p view) nil)))
+  nil)
 
 (defmethod channel-view-apply ((view channel-view) operation &rest fields &key &allow-other-keys)
   "Apply an operation of the channel's presentation to the view's terminal UI."

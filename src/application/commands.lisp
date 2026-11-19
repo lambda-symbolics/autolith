@@ -2,20 +2,6 @@
 
 ;;;; -- Interactive Commands --
 
-(-> application-help () string)
-(defun application-help ()
-  "Return the concise interactive command reference."
-  (let* ((entries (application-command-completion-entries))
-         (label-width
-           (loop for entry in entries
-                 maximize (length (terminal-completion-label entry)))))
-    (format nil "~{~A~^~%~}"
-            (loop for entry in entries
-                  collect (format nil "~vA  ~A"
-                                  label-width
-                                  (terminal-completion-label entry)
-                                  (getf entry :description))))))
-
 (-> application--entry-fields (list) list)
 (defun application--entry-fields (fields)
   "Return terminal spans for FIELDS, a list of label, style, and value triples.
@@ -3942,44 +3928,3 @@ pristine or recovery session runs apart from it."
     (application)
   (declare (ignore application))
   ':quit)
-
-
-;;;; -- Command Dispatch --
-
-(-> application-command
-    (application string &key (:interactive-p boolean))
-    keyword)
-(defun application-command (application input &key (interactive-p t))
-  "Execute slash command INPUT for APPLICATION and return its loop action."
-  (let* ((*application-command-interactive-p* interactive-p)
-         (invocation                          (application-command-invocation-parse input))
-         (command                             (application-command-invocation-command invocation)))
-    (application-command--call-with-presentation
-     invocation
-     (lambda ()
-       (if command
-           (application-command-execute command application invocation)
-           (progn
-             (application-present
-              application
-              (application-failure-line
-               (format nil "unknown command ~A; (help) lists commands"
-                       (application-command-invocation-name invocation))))
-             ':continue))))))
-
-(-> application-handle-input
-    (application string &key (:interactive-p boolean))
-    keyword)
-(defun application-handle-input (application input &key (interactive-p t))
-  "Handle submitted INPUT and return :CONTINUE or :QUIT."
-  (cond
-    ((not (non-empty-string-p input))
-     :continue)
-    ((uiop:string-prefix-p "//" input)
-     (application-run-message application (subseq input 1))
-     :continue)
-    ((uiop:string-prefix-p "/" input)
-     (application-command application input :interactive-p interactive-p))
-    (t
-     (application-run-message application input)
-     :continue)))

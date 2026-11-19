@@ -233,6 +233,11 @@
   "Return true when TEXT begins with a question-mark Lisp draft prefix."
   (not (null (input-async-lisp-prefix-length text))))
 
+(-> input-leading-slash-p (string) boolean)
+(defun input-leading-slash-p (text)
+  "Return true when TEXT starts with the retired slash prompt syntax."
+  (and (plusp (length text)) (char= #\/ (char text 0))))
+
 (-> input-message
     ((or string user-message-input))
     (option (or string user-message-input)))
@@ -245,19 +250,10 @@
       ((and (not (non-empty-string-p text))
             (null (user-message-input-image-pathnames input)))
        nil)
-      ((uiop:string-prefix-p "//" text)
-       (etypecase input
-         (string
-          (subseq text 1))
-         (user-message-input
-          (user-message-input-create
-           :text            (subseq text 1)
-           :image-pathnames (user-message-input-image-pathnames input)
-           :submission      (user-message-input-submission input)))))
       ((or (input-lisp-p text)
            (input-async-lisp-p text))
        nil)
-      ((uiop:string-prefix-p "/" text)
+      ((input-leading-slash-p text)
        nil)
       (t
        (user-message-input-copy input)))))
@@ -284,9 +280,7 @@
                          (input-async-lisp-p text))
                      (list ':lisp (copy-seq text)))
                     (message
-                     (list ':message message))
-                    ((non-empty-string-p text)
-                     (list ':command (copy-seq text))))))
+                      (list ':message message)))))
     (when work
       (append work (when (user-message-input-submission input)
                      (list :submission (user-message-input-submission input)))))))

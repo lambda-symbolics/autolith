@@ -1014,49 +1014,6 @@ without changing the registry."
         (*application-command-presentation-pending-p*  t))
     (funcall function)))
 
-(-> application-command-invocation-parse
-    (string)
-    application-command-invocation)
-(defun application-command-invocation-parse (input)
-  "Parse INPUT and resolve its command through one registry snapshot."
-  (let* ((trimmed
-           (string-left-trim *application-command-whitespace* input))
-         (separator
-           (position-if
-            (lambda (character)
-              (find character *application-command-whitespace*))
-            trimmed))
-         (submitted-name
-           (string-downcase
-            (if separator (subseq trimmed 0 separator) trimmed)))
-         (remainder
-           (if separator
-               (string-trim *application-command-whitespace*
-                            (subseq trimmed separator))
-               ""))
-         (command       (application-command-find submitted-name))
-         (parsed-arguments
-           (if (and command (application-command-slash-parser command))
-               nil
-               (application-command--tokens remainder)))
-         (arguments
-           (application-command--slash-arguments
-            command parsed-arguments remainder))
-         (argument
-           (if (and command (application-command-callable-p command))
-               (first arguments)
-               (first parsed-arguments)))
-         (text-argument (and (stringp argument) argument)))
-    (make-instance
-     'application-command-invocation
-     :input                   (copy-seq input)
-     :name                    submitted-name
-     :remainder               remainder
-     :argument                text-argument
-     :arguments               arguments
-     :supplied-argument-count (length arguments)
-     :command                 command)))
-
 (defgeneric application-command-execute (command application invocation)
   (:documentation
    "Execute COMMAND for APPLICATION and INVOCATION; return a loop action and the command's value."))
@@ -1183,74 +1140,6 @@ update bounded in-memory state, atomically against cancellation."))
     (otherwise
      nil)))
 
-(defgeneric application-command-completion-entry (command)
-  (:documentation "Return COMMAND's canonical terminal completion entry."))
-
-(defmethod application-command-completion-entry
-    ((command application-command))
-  "Return a detached completion plist for COMMAND."
-  (list :name        (copy-seq (application-command-name command))
-        :argument
-        (let ((argument (application-command-argument command)))
-          (and argument (copy-seq argument)))
-        :description (copy-seq (application-command-description command))))
-
-(-> application-command-completion-entries () list)
-(defun application-command-completion-entries ()
-  "Return fresh canonical completion entries in registry order."
-  (mapcar #'application-command-completion-entry
-          (application-command-list)))
-
-(-> application-command-alias-completion-entries () list)
-(defun application-command-alias-completion-entries ()
-  "Return completion entries for every command alias in registry order.
-
-Each entry's :PRIMARY value is the canonical command name. Alias entries appear
-only when the typed text no longer matches that name."
-  (loop for command in (application-command-list)
-        for name = (application-command-name command)
-        for argument = (application-command-argument command)
-        append
-        (loop for alias in (application-command-aliases command)
-              collect
-              (list :name     (copy-seq alias)
-                    :argument (and argument (copy-seq argument))
-                    :description
-                    (format nil "~A (alias of ~A)"
-                            (application-command-description command)
-                            name)
-                    :primary  (copy-seq name)))))
-
-(-> application-command--slash-option-token ((or string keyword boolean)) string)
-(defun application-command--slash-option-token (option)
-  "Return a native OPTION's text spelling, quoted when slash syntax requires it."
-  (let ((text (application-command--option-text option)))
-    (if (find-if (lambda (character)
-                    (or (char= character #\")
-                        (find character *application-command-whitespace*)))
-                text)
-        (format nil "~S" text)
-        (copy-seq text))))
-
-(-> application-command-option-completion-entries () list)
-(defun application-command-option-completion-entries ()
-  "Return slash completion entries for every command's finite options.
-
-Each entry's :PRIMARY value is the command name. Option entries appear only
-when the typed text extends beyond that name."
-  (loop for command in (application-command-list)
-        append
-        (loop for option in (application-command-static-options command)
-              collect
-              (list :name
-                    (format nil "~A ~A"
-                            (application-command-name command)
-                            (application-command--slash-option-token option))
-                    :argument nil
-                    :description
-                    (copy-seq (application-command-description command))
-                    :primary  (copy-seq (application-command-name command))))))
-
 
 ;;;; -- Defining Form --
 
@@ -1263,11 +1152,12 @@ METADATA must contain literal :NAME, :DESCRIPTION, :TIP, :BUSY-BEHAVIOR, and
 :ARGUMENT hint or finite :STATIC-OPTIONS. Legacy handlers receive APPLICATION
 and an APPLICATION-COMMAND-INVOCATION. A :CALLABLE T handler's parameters after
 APPLICATION are its authoritative Lisp argument contract. Optional :SLASH-PARSER
-names a function receiving the complete slash remainder and returning a proper
-list of semantic arguments; it is never invoked for Lisp calls. Without a parser,
-slash input uses token splitting. Parser and handler functions are captured at
-registration. :HELP-TOPIC selects a supported section, defaulting to Other commands;
-:HELP-ORDER is an optional integer rank, with effective registration order breaking
+names the structured client's argument-text decoder. It receives only the
+arguments and returns a proper list; Lisp calls supply native arguments instead.
+Without a decoder, client argument text uses token splitting. The decoder and
+handler are captured at registration. :HELP-TOPIC selects a supported section,
+defaulting to Other commands. :HELP-ORDER is an optional integer rank, with
+registration order breaking
 ties. Replacements supply their own help metadata. Every handler returns :CONTINUE
 or :QUIT, and may return a second value, which a Lisp call of the command yields."
   (application-command--validate-defining-form

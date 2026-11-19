@@ -198,19 +198,16 @@
 
 (-> test-complaint-command-aliases () null)
 (defun test-complaint-command-aliases ()
-  "Invoke canonical and alias commands through local Lisp and slash dispatch."
+  "Invoke canonical and alias commands through native Lisp dispatch."
   (with-test-configuration (configuration)
     (let* ((application (complaint-tests--application configuration))
            (canonical   (application-command-find "/complain"))
            (calls       nil))
       (test-assert (and canonical (eq canonical (application-command-find "/wtf")))
                    "both callable names resolve to the same command")
-      (test-assert (find "/complain" (application-command-completion-entries)
+      (test-assert (find "(complain" (application-operation-completion-entries application)
                          :key (lambda (entry) (getf entry :name)) :test #'equal)
                    "canonical command is completable")
-      (test-assert (find "/wtf" (application-command-alias-completion-entries)
-                         :key (lambda (entry) (getf entry :name)) :test #'equal)
-                   "alias is completable")
       (let* ((operation  (application-operation-find application "wtf"))
              (completion (find "(wtf" (application-operation-completion-entries application)
                                :key (lambda (entry) (getf entry :name)) :test #'equal)))
@@ -233,8 +230,9 @@
          (dolist (input '("(complain \"Too verbose\")" "(wtf \"Bad choice\")"))
            (test-assert (eq (application-run-lisp-input application input) ':continue)
                         "callable commands invoke the local handler"))
-         (test-assert (eq (application-command application "/wtf preserve (all) words") ':continue)
-                      "slash alias invokes the same handler without evaluating the complaint")
+         (test-assert (eq (application-run-lisp-input
+                           application "(wtf \"preserve (all) words\")") ':continue)
+                      "native alias preserves literal complaint text")
          (test-assert (equal (reverse calls) '("Too verbose" "Bad choice" "preserve (all) words"))
                       "all invocations preserve complaint text")))))
   nil)

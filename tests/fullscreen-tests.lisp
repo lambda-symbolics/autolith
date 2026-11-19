@@ -1250,8 +1250,7 @@
                        observed)))
          (lambda ()
            (test-assert
-            (handler-case (progn (application-command application "/new") nil)
-              (simple-error () t))
+             (eq (application-run-lisp-input application "(new)" :interactive-p nil) ':failed)
             "a failed conversation installation is reported")
            (test-assert
             (and (eq (application-conversation application) conversation)
@@ -1259,7 +1258,7 @@
                                        (fullscreen-terminal-ui-viewport active) 0)))
             "a failed switch retains its current fullscreen ledger")
            (setf fail-p nil)
-           (test-assert (eq (application-command application "/new") ':continue)
+           (test-assert (eq (application-run-lisp-input application "(new)" :interactive-p nil) ':continue)
                         "new dispatch completes successfully")))
         (setf (terminal-ui-live-output-suspended-p active) nil)
         (terminal-ui--paint-live active)

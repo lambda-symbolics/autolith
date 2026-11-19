@@ -879,12 +879,6 @@
       (test-assert (eq ':ok (application-lisp-evaluation-status
                              (application-lisp-evaluate "(mission :status)" :application application)))
                    "mission keyword control is callable from the Lisp prompt")
-      (dolist (text '("/mission start #.(error \"reader evaluated\")"
-                       "/mission start (:objective \"first\") (:objective \"extra\")"
-                       "/mission accept (\"delivery\" . \"bad\")"))
-        (test-assert (handler-case (progn (application-command application text) nil)
-                       (mission-error () t))
-                     "slash mission data rejects evaluation, extra forms and malformed fields"))
       (test-call-with-function-replacements
        (list (list 'application-tool-context (lambda (app) (mission-test--context app))))
        (lambda ()
@@ -901,7 +895,7 @@
          (application-operation-call application "mission" ':accept "delivery"
                                      "Inspected by the operator: quote \"  Keep Case")
          (application-operation-call application "mission" ':resume)
-         (application-command application "/mission verify")))
+         (application-operation-call application "mission" ':verify)))
       (test-assert (eq ':verified (getf (application-goal application) :status)) "user commands complete verification")
       (let* ((conversation (application-conversation application))
              (identifier   (conversation-identifier conversation)))

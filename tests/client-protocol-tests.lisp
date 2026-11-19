@@ -49,14 +49,35 @@
                 (test-assert (eq (first (getf (localgroup-client-call connection ':state) :state))
                                  ':localgroup-status)
                              "a state command answers with the channel's state")
-                (localgroup-client-call connection ':submit :text "/status")
-                (test-assert (and (await ':present)
-                                  (await ':work-finished
-                                         (lambda (event)
-                                           (and (eq (getf (rest event) :kind) ':command)
-                                                (eq (getf (rest event) :outcome) ':done)
-                                                (getf (rest event) :idle-p)))))
-                             "a submitted command's output arrives, then the end of its work with the channel idle")
+                (flet ((submission ()
+                         "Identify one prompt from this attached client."
+                         (list :id (make-identifier) :client (getf (rest greeting) :client-id) :source ':prompt)))
+                  (let ((submission (submission)))
+                    (localgroup-client-call connection ':submit :text "(list 34 47)" :submission submission)
+                    (test-assert
+                     (and (await ':present (lambda (event) (search "(34 47)" (prin1-to-string event))))
+                          (await ':work-finished
+                                 (lambda (event)
+                                   (and (equal (getf (rest event) :submission) submission)
+                                        (eq (getf (rest event) :kind) ':lisp)
+                                        (eq (getf (rest event) :outcome) ':done)
+                                        (getf (rest event) :idle-p)))))
+                     "native Lisp publishes its result and correlated idle completion"))
+                  (let* ((conversation (application-conversation application))
+                         (items        (conversation-input-items conversation)))
+                    (dolist (text '("/close" "//escaped"))
+                      (let ((submission (submission)))
+                        (localgroup-client-call connection ':submit :text text :submission submission)
+                        (test-assert
+                         (await ':work-finished
+                                (lambda (event)
+                                  (and (equal (getf (rest event) :submission) submission)
+                                       (eq (getf (rest event) :outcome) ':failed))))
+                         "leading-slash submissions finish with a correlated failure")))
+                    (test-assert
+                     (and (equal items (conversation-input-items conversation))
+                          (getf (localgroup-client-call connection ':state) :state))
+                     "leading-slash text neither becomes model input nor closes the hosted channel")))
                 (localgroup-client-call connection ':mode :value ':ask)
                 (test-assert (and (eq (application-permission-mode application) ':ask)
                                   (await ':state))

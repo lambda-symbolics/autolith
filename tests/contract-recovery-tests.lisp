@@ -127,10 +127,10 @@
     (let* ((application (make-instance 'application :configuration configuration
                                       :tool-registry               (make-default-tool-registry)))
            (pathname    (configuration-knowledge-path configuration))
-           (command     (application-command-find "/reset-contracts"))
+           (operation   (application-operation-find application "reset-contracts"))
            (presented-p nil))
-      (test-assert command "the canonical recovery command is registered")
-      (test-assert (application-command-completion-entry command)
+      (test-assert operation "the canonical recovery command is registered")
+      (test-assert (equal (getf (application-operation-completion-entry operation) :name) "(reset-contracts)")
                    "the registered recovery command participates in completion")
       (sexp-store:log-append pathname '(:contract-defined :version 1 :contract nil)
                             :repair-tail-p nil)

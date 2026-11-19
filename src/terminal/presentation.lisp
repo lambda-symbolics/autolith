@@ -776,18 +776,59 @@ state that did not change is not sent again."))
 (defparameter *channel-presentation-state-operations*
   '(:turn :title :idle-details :context :status :local-activity :compacting :judgments
     :agent-activities :command-activities :preview :pending-inputs :prompt-padding :program-status
-    :lisp-input :tail :page :selector :draft :modal :history)
+    :lisp-input :tail :page :selector :draft :modal :history :completions)
   "The state operations a client that attaches is told, in this order.")
+
+(-> presentation--completion-entry (list) (option list))
+(defun presentation--completion-entry (entry)
+  "Return ENTRY's bounded display metadata without altering its operation name."
+  (let ((name    (getf entry :name))
+        (primary (getf entry :primary)))
+    (when (and (stringp name) (<= (length name) 4096))
+      (append (list :name        name
+                    :argument    (let ((value (getf entry :argument)))
+                                   (and (stringp value) (subseq value 0 (min 512 (length value)))))
+                    :description (let ((value (getf entry :description)))
+                                   (if (stringp value)
+                                       (subseq value 0 (min 512 (length value)))
+                                       "")))
+              (when (and (stringp primary) (<= (length primary) 4096))
+                (list :primary primary))))))
+
+(defmethod channel-presentation-state ((ui channel-presentation) (operation (eql :completions)))
+  "Describe the authoritative catalog connected to this channel's application."
+  (let ((entries (remove nil (mapcar #'presentation--completion-entry
+                                    (terminal-ui--current-completions ui)))))
+    (values (list :entries entries) entries)))
+
+(-> channel-presentation--state-events (channel-presentation keyword) (values list t))
+(defun channel-presentation--state-events (ui operation)
+  "Return bounded state events and the signature of their complete logical state."
+  (multiple-value-bind (fields signature) (channel-presentation-state ui operation)
+    (values
+     (if (eq operation ':completions)
+         (loop with entries = (getf fields :entries)
+               with remaining = (length entries)
+               for tail = entries then (nthcdr 32 tail)
+               for first-p = t then nil
+               collect (list :ui      :operation operation
+                             :entries (subseq tail 0 (min 32 remaining))
+                             :reset-p first-p :complete-p (<= remaining 32))
+               while (> remaining 32)
+               do (decf remaining 32))
+         (list (list* :ui :operation operation fields)))
+     signature)))
 
 (-> channel-presentation--publish-state (channel-presentation keyword) null)
 (defun channel-presentation--publish-state (ui operation)
   "Tell UI's clients state OPERATION when it differs from what they were told last."
-  (multiple-value-bind (fields signature) (channel-presentation-state ui operation)
+  (multiple-value-bind (events signature) (channel-presentation--state-events ui operation)
     (let ((published (channel-presentation-published-state ui)))
       (multiple-value-bind (previous present-p) (gethash operation published)
         (unless (and present-p (equal previous signature))
           (setf (gethash operation published) signature)
-          (channel-presentation--publish ui operation fields)))))
+          (dolist (event events)
+            (channel-presentation--publish ui operation (nthcdr 3 event)))))))
   nil)
 
 (-> channel-presentation--call-publishing (channel-presentation keyword function) t)
@@ -847,8 +888,7 @@ TRANSCRIPT replaces the transient log's events without changing state replay."
        (loop for cell in (deque->list (channel-presentation-transcript-log ui))
              collect (first cell)))
    (loop for operation in *channel-presentation-state-operations*
-         collect (list* :ui :operation operation
-                        (nth-value 0 (channel-presentation-state ui operation))))
+         append (nth-value 0 (channel-presentation--state-events ui operation)))
    (list (list :ui :operation ':replayed))))
 
 (-> channel-presentation-set-geometry
@@ -905,6 +945,7 @@ event, as a terminal tells it, so it lays itself out again."
   (channel-presentation--publish-state ui ':page)
   (channel-presentation--publish-state ui ':selector)
   (channel-presentation--publish-state ui ':draft)
+  (channel-presentation--publish-state ui ':completions)
   nil)
 
 

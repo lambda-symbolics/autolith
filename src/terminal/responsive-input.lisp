@@ -1607,35 +1607,13 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
                       message)
                 ':hint)))))))
 
-(-> application-input-controller--present-scheduled-command
-    (application-input-controller string)
-    null)
-(defun application-input-controller--present-scheduled-command (controller input)
-  "Present the busy-command scheduling result for INPUT."
-  (let ((invocation (application-command-invocation-parse input)))
-    (application-command--call-with-presentation
-     invocation
-     (lambda ()
-       (application-present
-        (application-input-controller-application controller)
-        (list
-         (terminal-span
-          ':hint
-          "· command scheduled until the current response finishes")
-         (terminal-span ':plain (string #\Newline))
-         (terminal-span
-          ':dim
-          "  it runs at the first opportunity; Empty Tab edits it, Shift-Tab cycles"))))))
-  nil)
-
-(-> application-input-controller--schedule-command
-    (application-input-controller (or string user-message-input))
-    boolean)
-(defun application-input-controller--schedule-command (controller input)
-  "Queue busy command INPUT to run at the first idle opportunity."
-  (when (application-input-controller--enqueue controller ':command input)
-    (application-input-controller--present-scheduled-command controller (user-message-input-text input))
-    t))
+(-> application--reject-slash-input (application) keyword)
+(defun application--reject-slash-input (application)
+  "Warn that leading-slash submissions are rejected rather than executed or sent."
+  (application-present
+   application
+   (list (terminal-span ':failure "Input starting with / was not sent. Use (help) to list commands.")))
+  ':failed)
 
 (-> application-input-controller--present-scheduled-lisp
     (application-input-controller string)
@@ -1688,19 +1666,16 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
 (-> application-input-controller--steering-invocation
     (application (or string user-message-input)) application-command-invocation)
 (defun application-input-controller--steering-invocation (application input)
-  "Decode literal local INPUT or slash syntax without reconstructing native arguments."
-  (let ((text (user-message-input-text input)))
-    (if (input-lisp-p text)
-        (let* ((*package* (find-package '#:autolith))
-               (form      (self-read-form text :read-eval nil))
-               (operation (and (proper-list-p form) (symbolp (first form))
-                               (application-operation-find application (first form)))))
-          (unless (and (typep operation 'application-command-operation)
-                       (application-operation-immediate-arguments-p operation (rest form)))
-            (error 'configuration-error :message "Only literal command arguments may enter steering."))
-          (application-operation--command-invocation
-           (application-operation-backend operation) (mapcar #'eval (rest form))))
-        (application-command-invocation-parse text))))
+  "Decode literal local INPUT without reconstructing native arguments."
+  (let* ((*package* (find-package '#:autolith))
+         (form      (self-read-form (user-message-input-text input) :read-eval nil))
+         (operation (and (proper-list-p form) (symbolp (first form))
+                         (application-operation-find application (first form)))))
+    (unless (and (typep operation 'application-command-operation)
+                 (application-operation-immediate-arguments-p operation (rest form)))
+      (error 'configuration-error :message "Only literal command arguments may enter steering."))
+    (application-operation--command-invocation
+     (application-operation-backend operation) (mapcar #'eval (rest form)))))
 
 (-> application-input-controller--schedule-steering-command
     (application-input-controller (or string user-message-input)
@@ -1808,14 +1783,16 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
     (if (eq (command-message-input-phase input) ':failed) ':failed ':continue)))
 
 (-> application-input-controller--schedule-apply
-    (application-input-controller (or string user-message-input))
-    boolean)
-(defun application-input-controller--schedule-apply (controller input)
-  "Queue busy command INPUT to apply at the active turn's next safe boundary."
+    (application-input-controller (or string user-message-input)
+     &optional (option application-command-invocation)) boolean)
+(defun application-input-controller--schedule-apply (controller input &optional invocation)
+  "Queue INPUT at the next safe boundary, preserving a structured INVOCATION."
   (with-lock-held ((application-input-controller-lock controller))
     (deque-push-back
      (application-input-controller-pending-apply-items controller)
-     (user-message-input-copy input)))
+     (if invocation
+         (command-message-input-create input invocation)
+         (user-message-input-copy input))))
   (application-present
    (application-input-controller-application controller)
    (list
@@ -1841,9 +1818,6 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
             do (push (deque-pop-front items) drained))
       (nreverse drained))))
 
-(-> application--run-command-input
-    (application string &key (:interactive-p boolean))
-    keyword)
 (-> application-input-controller--apply-pending-commands
     (application-input-controller &key (:agent t))
     null)
@@ -1863,12 +1837,16 @@ reaches the very next provider request."
          (lambda ()
            (let ((text (user-message-input-text input)))
              (cond
+                ((typep input 'command-message-input)
+                 (let* ((invocation (command-message-input-invocation input))
+                        (command    (application-command-invocation-command invocation)))
+                   (application-command-execute command application invocation)))
                ((input-async-lisp-p text)
                 (application-run-async-lisp-input application text))
                ((input-lisp-p text)
                 (application-run-lisp-input application text :interactive-p nil))
-               (t
-                (application--run-command-input application text :interactive-p nil)))))))
+               ((input-leading-slash-p text)
+                (application--reject-slash-input application)))))))
       (when agent
         (application--agent-adopt-runtime application agent))))
   nil)
@@ -1936,61 +1914,6 @@ reaches the very next provider request."
                    (not (and result-p (eq result ':quit))))
           (application-input-controller--open-prompt-if-ready controller))))))
 
-(-> application--call-with-command-debugger
-    (application function
-     &key (:expected-error-function function)
-          (:source (option string))
-          (:operation-kind keyword)
-          (:retry-p boolean)
-          (:return-values-p boolean))
-    (values keyword (option string)))
-(defun application--call-with-command-debugger
-    (application function
-     &key (expected-error-function #'application-handle-expected-error)
-       source (operation-kind ':command) retry-p (return-values-p nil))
-  "Call FUNCTION under the user restart debugger and fatal condition boundary."
-  (let ((signal-backtrace nil))
-    ;; The backtrace handler must sit inside HANDLER-CASE: its handlers are
-    ;; tried first and unwind before any enclosing handler could look.
-    (handler-case
-        (handler-bind
-            ((serious-condition
-               (lambda (condition)
-                 (declare (ignore condition))
-                 (setf signal-backtrace (application-safe-backtrace)))))
-          (multiple-value-bind
-                (values debugger-status condition restart-names
-                        selected-restart-name)
-              (application-lisp-call-with-ui-debugger
-               application function
-               :source          source
-               :operation-kind  operation-kind
-               :retry-p         retry-p
-               :return-values-p return-values-p
-               :debug-condition-p
-               (lambda (condition)
-                 (not (typep condition
-                             '(or autolith-error cl-llm-provider-api:provider-api-error)))))
-            (declare (ignore restart-names selected-restart-name))
-            (if (eq debugger-status ':aborted)
-                (values ':aborted condition)
-                (values (first values) condition))))
-      ((or application-operation-loop-action
-           application-turn-cancelled
-           application-input-failed)
-       (condition)
-       (error condition))
-      ((or agent-loop-error
-           conversation-invariant-error
-           active-image-corruption)
-       (condition)
-       (application-raise-fatal application condition signal-backtrace))
-      ((or autolith-error cl-llm-provider-api:provider-api-error) (condition)
-        (funcall expected-error-function application condition)
-        (values ':failed (princ-to-string condition)))
-      (serious-condition (condition)
-        (application-raise-fatal application condition signal-backtrace)))))
-
 (-> application-input-controller--run-responsive-lisp
     (application-input-controller string)
     keyword)
@@ -2001,79 +1924,6 @@ reaches the very next provider request."
    (lambda ()
      (application-run-lisp-input
       (application-input-controller-application controller) source))))
-
-(-> application-input-controller--run-responsive-unknown
-    (application-input-controller string)
-    keyword)
-(defun application-input-controller--run-responsive-unknown (controller input)
-  "Report unknown or malformed command INPUT immediately during active work."
-  (application-input-controller--call-with-responsive-prompt-block
-   controller
-   (lambda ()
-     (application--run-command-input
-      (application-input-controller-application controller)
-      input))))
-
-(-> application-input-controller--call-with-responsive-command
-    (application-input-controller application-command-invocation function)
-    keyword)
-(defun application-input-controller--call-with-responsive-command
-    (controller invocation function)
-  "Call FUNCTION with responsive command presentation and error recovery."
-  (application-input-controller--call-with-responsive-prompt-block
-   controller
-   (lambda ()
-     (let ((application
-             (application-input-controller-application controller))
-           (*application-command-interactive-p* t))
-        (application-command--call-with-presentation
-         invocation
-         (lambda ()
-           (multiple-value-bind (result condition)
-               (application--call-with-command-debugger
-                application
-                 function
-                :source          (application-command-invocation-input invocation)
-                :operation-kind  ':command
-                :retry-p         t
-                :return-values-p nil
-                :expected-error-function
-                (lambda (observed-application observed-condition)
-                  (application-present
-                   observed-application
-                   (application--expected-error-entry observed-condition))))
-             (application-user-operation-record-command-outcome
-              application invocation :action result :condition condition)
-             result)))))))
-
-(-> application-input-controller--run-responsive-command
-    (application-input-controller application-command
-     application-command-invocation)
-    keyword)
-(defun application-input-controller--run-responsive-command
-    (controller command invocation)
-  "Execute an immediate COMMAND through the local restart debugger."
-  (application-input-controller--call-with-responsive-command
-   controller invocation
-   (lambda ()
-     (application-command-execute
-      command (application-input-controller-application controller) invocation))))
-
-(-> application-input-controller--parse-responsive-command
-    (application-input-controller string)
-    (option application-command-invocation))
-(defun application-input-controller--parse-responsive-command (controller input)
-  "Parse INPUT, presenting expected failures locally instead of scheduling work."
-  (handler-case
-      (application-command-invocation-parse input)
-    (autolith-error (condition)
-      (application-input-controller--call-with-responsive-command
-       controller
-       (make-instance 'application-command-invocation
-                      :input input :name "" :remainder ""
-                      :argument nil :command nil)
-       (lambda () (error condition)))
-      nil)))
 
 (-> application-input-controller--handle-recalled-submission
     (application-input-controller (or string user-message-input)
@@ -2094,35 +1944,17 @@ may execute immediately; other Lisp waits for the idle boundary."
          (lisp-input-p (input-lisp-p text))
          (async-p      (input-async-lisp-p text))
          (work         (input-work-from-input input))
-         (invocation
-           (and (null message)
-                (not lisp-input-p)
-                (not async-p)
-                (non-empty-string-p text)
-                (or (application-input-controller--parse-responsive-command
-                     controller text)
-                    (return-from
-                        application-input-controller--handle-recalled-submission
-                      t))))
-         (command
-           (and invocation
-                (application-command-invocation-command invocation)))
-         (busy-action
-           (cond
-             (async-p
-              ':execute)
-             (lisp-input-p
-              (application-input-controller--lisp-active-turn-action
-               controller text))
-             (invocation
-              (if command
-                  (application-command-busy-action command invocation)
-                  ;; An unknown command can only ever error, so report it
-                  ;; immediately instead of scheduling the mistake.
-                  ':execute))))
+         (busy-action  (cond (async-p
+                              ':execute)
+                             (lisp-input-p
+                              (application-input-controller--lisp-active-turn-action controller text))))
          (handled-p    nil)
          (changed-p    nil)
          (post-action  nil))
+    (when (and (input-leading-slash-p text)
+               (application-input-controller--follow-up-editing-p controller))
+      (application--reject-slash-input application)
+      (return-from application-input-controller--handle-recalled-submission t))
     (when (and work
                (application-input-controller--follow-up-editing-p controller)
                (not
@@ -2185,49 +2017,33 @@ may execute immediately; other Lisp waits for the idle boundary."
       (:cancel
        (application-input-controller--request-exit controller ':quit))
       (:execute
-       (let ((result
-               (cond
-                  (async-p
-                   (application-run-async-lisp-input application text))
-                 (lisp-input-p
-                  (application-input-controller--run-responsive-lisp
-                   controller text))
-                 (command
-                  (application-input-controller--run-responsive-command
-                   controller command invocation))
-                 (t
-                  (application-input-controller--run-responsive-unknown
-                   controller text)))))
+       (let ((result (if async-p
+                         (application-run-async-lisp-input application text)
+                         (application-input-controller--run-responsive-lisp controller text))))
          (when (eq result ':quit)
            (application-input-controller--request-exit controller ':quit))))
       (:steer
-       (application-input-controller--schedule-steering-command controller input invocation))
+       (application-input-controller--schedule-steering-command controller input))
       (:apply
        (application-input-controller--schedule-apply controller text))
       (:hold
-       (if lisp-input-p
-           (application-input-controller--present-scheduled-lisp controller text)
-           (application-input-controller--present-scheduled-command controller text))))
+       (application-input-controller--present-scheduled-lisp controller text)))
     handled-p))
 
 (-> application-input-controller--vault-input-p
     ((or string user-message-input))
     boolean)
 (defun application-input-controller--vault-input-p (input)
-  "Return true when INPUT is a recovery-vault control in slash or Lisp form."
+  "Return true when INPUT is a recovery-vault control in Lisp form."
   (let ((text (user-message-input-text input)))
-    (or (not (null (member text
-                          '("/vault" "/vault-restore" "/vault-discard" "/vault-store")
-                          :test #'string=)))
-        (and (input-lisp-p text)
-             (handler-case
-                 (let* ((*package* (find-package '#:autolith))
-                        (form      (self-read-form text :read-eval nil)))
-                   (or (application-operation--immediate-vault-form-p form)
-                       (not (null (member form
-                                          '((vault) (vault-restore) (vault-discard) (vault-store))
-                                          :test #'equal)))))
-               (error () nil))))))
+    (and (input-lisp-p text)
+         (handler-case
+             (let* ((*package* (find-package '#:autolith))
+                    (form      (self-read-form text :read-eval nil)))
+               (or (application-operation--immediate-vault-form-p form)
+                   (not (null (member form '((vault) (vault-restore) (vault-discard) (vault-store))
+                                      :test #'equal)))))
+           (error () nil)))))
 
 (-> application-input-controller--submission-storage-ready-p
     (application-input-controller (or string user-message-input))
@@ -2305,6 +2121,8 @@ may execute immediately; other Lisp waits for the idle boundary."
                (application-input-controller--request-exit controller ':quit))
              result))
       (cond
+        ((input-leading-slash-p text)
+         (application--reject-slash-input application))
         ((input-async-lisp-p text)
          (if (application-input-controller--submission-storage-ready-p controller input)
              (progn
@@ -2323,44 +2141,15 @@ may execute immediately; other Lisp waits for the idle boundary."
                 (application-input-controller--request-exit controller ':quit))
                (:execute
                 (executed (application-input-controller--run-responsive-lisp controller text)))
-              (:steer
-               (deferred (application-input-controller--schedule-steering-command controller input)))
-              (:apply
-               (deferred (application-input-controller--schedule-apply controller input)))
-              (:hold
-               (deferred (application-input-controller--schedule-lisp controller input))))
+               (:steer
+                (deferred (application-input-controller--schedule-steering-command controller input)))
+               (:apply
+                (deferred (application-input-controller--schedule-apply controller input)))
+               (:hold
+                (deferred (application-input-controller--schedule-lisp controller input))))
              (deferred (application-input-controller--enqueue controller ':lisp input))))
-        ((not (non-empty-string-p text))
-         ':done)
-        ((application-input-controller-busy-p controller)
-         (let* ((invocation (application-input-controller--parse-responsive-command controller text))
-                (command    (and invocation (application-command-invocation-command invocation)))
-                (action     (when invocation
-                              (if command
-                                  (application-command-busy-action command invocation)
-                                  ':execute))))
-           (if action
-               (progn
-                 (application-localgroup-resume application)
-                 (ecase action
-                   (:cancel
-                    (application-input-controller--request-exit controller ':quit))
-                   (:execute
-                    (executed
-                     (if command
-                         (application-input-controller--run-responsive-command controller command invocation)
-                         (application-input-controller--run-responsive-unknown controller text))))
-                  (:steer
-                   (deferred (application-input-controller--schedule-steering-command
-                              controller input invocation)))
-                  (:apply
-                   (deferred (application-input-controller--schedule-apply controller input)))
-                  (:hold
-                   (deferred (application-input-controller--schedule-command controller input)))))
-               ':failed)))
         (t
-         (application-localgroup-resume application)
-         (deferred (application-input-controller--enqueue controller ':command input)))))))
+         ':done)))))
 
 (-> application-input-controller--handle-queue-submission
     (application-input-controller (or string user-message-input))
@@ -2371,6 +2160,8 @@ may execute immediately; other Lisp waits for the idle boundary."
          (text        (user-message-input-text input))
          (message     (input-message input)))
     (cond
+      ((input-leading-slash-p text)
+       (application--reject-slash-input application))
       ((input-async-lisp-p text)
        (when (application-input-controller--submission-storage-ready-p controller input)
          (application-localgroup-resume application)
@@ -3738,33 +3529,6 @@ submission-time sharing request."
       :goal-continuations-p            goal-continuations-p))
    :fatal-agent-loop-errors-p fatal-agent-loop-errors-p))
 
-(defun application--run-command-input (application input &key (interactive-p t))
-  "Run command INPUT through the local restart debugger."
-  (let ((*application-command-source-input* (or *application-command-source-input* input))
-        (invocation
-          (make-instance 'application-command-invocation
-                         :input input :name "" :remainder ""
-                         :argument nil :command nil)))
-    (application-command--call-with-presentation
-     invocation
-     (lambda ()
-       (multiple-value-bind (result condition)
-           (application--call-with-command-debugger
-            application
-             (lambda ()
-               (setf invocation (application-command-invocation-parse input)
-                     *application-command-presentation-invocation* invocation)
-               (application-handle-input
-                application input :interactive-p interactive-p))
-            :source          input
-            :operation-kind  ':command
-            :retry-p         t
-            :return-values-p nil)
-         (application-user-operation-record-command-outcome
-          application invocation :action result :condition condition)
-         (application-operation-present-command-hint application invocation)
-         result)))))
-
 (-> application-input-controller--interactive-prompt-work-p (list) boolean)
 (defun application-input-controller--interactive-prompt-work-p (work)
   "Return true when WORK represents one foreground user interaction."
@@ -3879,6 +3643,11 @@ however it ended."
             (append (list :work-started :kind (first work))
                     (when (application-input-controller--work-submission work)
                       (list :submission (application-input-controller--work-submission work)))))
+           (when (and (eq (first work) ':command)
+                      (not (typep (second work) 'command-message-input)))
+             (application-input-controller--record-prompt-result
+              controller (application--reject-slash-input application))
+             (return-from application-input-controller--run-work nil))
            (application-world-before-turn application (first work))
            (case (first work)
              (:idle-compaction
@@ -3955,10 +3724,7 @@ however it ended."
                   (application-input-controller--request-exit
                    controller ':quit))))
              (:command
-              (let ((result
-                      (if (typep (second work) 'command-message-input)
-                          (application-input-controller--run-steering-command controller (second work))
-                          (application--run-command-input application (second work)))))
+              (let ((result (application-input-controller--run-steering-command controller (second work))))
                 (application-input-controller--record-prompt-result controller result)
                 (when (eq result ':quit)
                   (application-input-controller--request-exit controller ':quit))))
