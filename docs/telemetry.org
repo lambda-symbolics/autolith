@@ -457,6 +457,6 @@ AUTOLITH_TEST_TELEMETRY_MODEL=1 \
 Reference contracts were inspected in =chakanysystems/seismograph=
 =src/otlp.rs= and =client/index.js=. The Defingerprinter reference checkout
 from =https://github.com/chakanysystems/defingerprinter.git= was refreshed and
-inspected at version =1.0.1=, commit =3b428f7b3b7a13baf85689d48d87fb1aa99efb8b=,
+inspected at version =1.0.2=, commit =20ff2c26a89ce18fad0dc8bb4fdfd97f3d98327d=,
 pinned through =qlfile=. Model revision is
 =b1993e4e68b082835b80ffc65acc03325ea2e501=.

@@ -97,7 +97,7 @@ let
   } ''
     export HOME="$TMPDIR/home"
     mkdir -p "$HOME"
-    export DEFINGERPRINTER_LIBRARY="${defingerprinterNative}/lib/libdefingerprinter${sharedLibrary}"
+    export DEFINGERPRINTER_LIBRARY="${defingerprinterNative.lib}/lib/libdefingerprinter${sharedLibrary}"
     # ASDF loading must not open the native library before explicit consent.
     sbcl --noinform --no-sysinit --no-userinit --non-interactive \
       --eval '(require :asdf)' \
@@ -773,7 +773,7 @@ let
     nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.makeBinaryWrapper ];
     postFixup = (old.postFixup or "") + lib.optionalString defingerprinterSupported ''
       wrapProgram "$out/bin/sbcl" \
-        --set AUTOLITH_DEFINGERPRINTER_LIBRARY "${defingerprinterNative}/lib/libdefingerprinter${sharedLibrary}"
+        --set AUTOLITH_DEFINGERPRINTER_LIBRARY "${defingerprinterNative.lib}/lib/libdefingerprinter${sharedLibrary}"
     '' + ''
       # Capture before withPackages' binary wrapper prefixes ASDF settings,
       # including direct worker and development-runtime invocations.
