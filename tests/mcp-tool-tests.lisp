@@ -2607,8 +2607,8 @@
              (non-empty-string-p
               (mcp-server-runtime-launch-environment-fingerprint runtime)))
             "the first credential snapshot launches one tracked MCP process")
-             (let* ((provider-tool
-                      (test-mcp--activate-first-provider-tool registry))
+           (let* ((provider-tool
+                    (test-mcp--activate-first-provider-tool registry))
                   (context
                     (test-mcp--context
                      configuration conversation registry))
@@ -2616,81 +2616,81 @@
                     (symbol-function
                      'mcp-tools--resolve-environment-snapshot))
                   (result nil))
-             (platform-setenv environment-name credential-b)
-             (test-call-with-function-replacements
+            (platform-setenv environment-name credential-b)
+            (test-call-with-function-replacements
+             (list
               (list
-               (list
-                'mcp-tools--resolve-environment-snapshot
-                (lambda (server-configuration)
-                  (multiple-value-prog1
-                      (funcall snapshot-function server-configuration)
-                    (platform-setenv
-                     environment-name credential-c)))))
-              (lambda ()
-                (setf
-                 result
-                 (tool-execute
-                  provider-tool context (json-object)))))
-             (setf process-b (slot-value transport process-slot))
-             (conversation-append-tool-result
-              conversation
-              "credential-rotation"
-              :tool-name "mcp"
-              :output    (tool-result-content result)
-              :success-p (tool-result-success-p result))
-             (let ((status (mcp-manager-render-status manager))
-                   (conversation-text
-                     (uiop:read-file-string
-                      (conversation-log-pathname conversation))))
-               (test-assert
-                (and
-                 (tool-result-success-p result)
-                 (search
-                  *mcp-credential-redaction-marker*
-                  (tool-result-content result))
-                 (not (search credential-a (tool-result-content result)))
-                 (not (search credential-b (tool-result-content result)))
-                 (not (search credential-c (tool-result-content result)))
-                 (not (eq process-a process-b))
-                 (not (test-mcp--process-alive-p process-a))
-                 (test-mcp--process-alive-p process-b)
-                 (not
-                  (test-mcp--object-contains-string-p
-                   runtime credential-a))
-                 (not
-                  (test-mcp--object-contains-string-p
-                   runtime credential-b))
-                 (not
-                  (test-mcp--object-contains-string-p
-                   runtime credential-c))
-                 (not (search credential-a status))
-                 (not (search credential-b status))
-                 (not (search credential-c status))
-                 (not (search credential-a conversation-text))
-                 (not (search credential-b conversation-text))
-                 (not (search credential-c conversation-text)))
-                "one exact snapshot drives rotation, launch, redaction, and persistence"))
-             (platform-unsetenv environment-name)
-             (let ((result
-                     (tool-execute
-                      provider-tool context (json-object))))
-               (test-assert
-                (and
-                 (not (tool-result-success-p result))
-                 (eq (mcp-server-runtime-state runtime) :failed)
-                 (not (mcp-transport-open-p transport))
-                 (null (slot-value transport process-slot))
-                 (not (test-mcp--process-alive-p process-b))
-                 (not
-                  (test-mcp--object-contains-string-p
-                   runtime credential-a))
-                 (not
-                  (test-mcp--object-contains-string-p
-                   runtime credential-b))
-                 (not
-                  (test-mcp--object-contains-string-p
-                   runtime credential-c)))
-                "an unset launch credential closes the old process before failure")))
+               'mcp-tools--resolve-environment-snapshot
+               (lambda (server-configuration)
+                 (multiple-value-prog1
+                     (funcall snapshot-function server-configuration)
+                   (platform-setenv
+                    environment-name credential-c)))))
+             (lambda ()
+               (setf
+                result
+                (tool-execute
+                 provider-tool context (json-object)))))
+            (setf process-b (slot-value transport process-slot))
+            (conversation-append-tool-result
+             conversation
+             "credential-rotation"
+             :tool-name "mcp"
+             :output    (tool-result-content result)
+             :success-p (tool-result-success-p result))
+            (let ((status (mcp-manager-render-status manager))
+                  (conversation-text
+                    (uiop:read-file-string
+                     (conversation-log-pathname conversation))))
+              (test-assert
+               (and
+                (tool-result-success-p result)
+                (search
+                 *mcp-credential-redaction-marker*
+                 (tool-result-content result))
+                (not (search credential-a (tool-result-content result)))
+                (not (search credential-b (tool-result-content result)))
+                (not (search credential-c (tool-result-content result)))
+                (not (eq process-a process-b))
+                (not (test-mcp--process-alive-p process-a))
+                (test-mcp--process-alive-p process-b)
+                (not
+                 (test-mcp--object-contains-string-p
+                  runtime credential-a))
+                (not
+                 (test-mcp--object-contains-string-p
+                  runtime credential-b))
+                (not
+                 (test-mcp--object-contains-string-p
+                  runtime credential-c))
+                (not (search credential-a status))
+                (not (search credential-b status))
+                (not (search credential-c status))
+                (not (search credential-a conversation-text))
+                (not (search credential-b conversation-text))
+                (not (search credential-c conversation-text)))
+               "one exact snapshot drives rotation, launch, redaction, and persistence"))
+            (platform-unsetenv environment-name)
+            (let ((result
+                    (tool-execute
+                     provider-tool context (json-object))))
+              (test-assert
+               (and
+                (not (tool-result-success-p result))
+                (eq (mcp-server-runtime-state runtime) :failed)
+                (not (mcp-transport-open-p transport))
+                (null (slot-value transport process-slot))
+                (not (test-mcp--process-alive-p process-b))
+                (not
+                 (test-mcp--object-contains-string-p
+                  runtime credential-a))
+                (not
+                 (test-mcp--object-contains-string-p
+                  runtime credential-b))
+                (not
+                 (test-mcp--object-contains-string-p
+                  runtime credential-c)))
+               "an unset launch credential closes the old process before failure")))
            (let* ((provider (provider-create configuration))
                   (application
                     (make-instance
@@ -3214,7 +3214,7 @@
   (test-mcp-server-scoped-tool-identifiers)
   (test-mcp-initialization-metadata-bounds)
   (test-mcp-result-text-bound)
-    (test-mcp-search-activation-bounds)
+  (test-mcp-search-activation-bounds)
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration)))
     (unwind-protect
@@ -3812,52 +3812,52 @@
                   (tool-registry-delete-if all-tools-registry
                                            (lambda (tool)
                                              (eq tool static-tool)))
-                    (mcp-tool-registry--replace-dynamic-tools
-                     all-tools-registry
-                     manager
-                     (mcp-tools--manager-tool-objects manager))
-                    (test-assert
-                     (equal
-                      (mapcar
-                       (lambda (tool)
-                         (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
-                       (mcp-tool-registry-discovered-tools all-tools-registry))
-                      '("read file" "read/file" "mutate" "error" "image"))
-                     "a valid MCP retry restores the discovery set in order")
-                    (mcp-tool-registry-activate-discovered-tools
-                     all-tools-registry)
-                    (test-assert
-                     (equal
-                      (mapcar
-                       (lambda (tool)
-                         (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
-                       (remove-if-not
-                        (lambda (tool)
-                          (and (typep tool 'mcp-provider-tool)
-                               (eq (mcp-managed-tool-manager tool) manager)))
-                        (tool-registry-tools all-tools-registry)))
-                      '("read file" "read/file" "mutate" "error" "image"))
-                     "activation registers the discovery set in discovery order")
-                    (let ((local (make-instance
-                                  'tool
-                                  :namespace   "static"
-                                  :name        "after"
-                                  :description "A local tool registered after MCP discovery."
-                                  :parameters  (tool-object-schema (json-object) nil))))
-                      (tool-registry-register all-tools-registry local)
-                      (let ((before (json-encode
-                                     (tool-registry-provider-schemas all-tools-registry))))
-                        (mcp-tool-registry--replace-dynamic-tools
-                         all-tools-registry
-                         manager
-                         (reverse (mcp-tools--manager-tool-objects manager)))
-                        (test-assert
-                         (string= before (json-encode
-                                          (tool-registry-provider-schemas all-tools-registry)))
-                         "a refresh listing the same tools in another order keeps every declaration in place"))
-                      (tool-registry-delete-if all-tools-registry
-                                               (lambda (tool)
-                                                 (eq tool local)))))
+                  (mcp-tool-registry--replace-dynamic-tools
+                   all-tools-registry
+                   manager
+                   (mcp-tools--manager-tool-objects manager))
+                  (test-assert
+                   (equal
+                    (mapcar
+                     (lambda (tool)
+                       (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
+                     (mcp-tool-registry-discovered-tools all-tools-registry))
+                    '("read file" "read/file" "mutate" "error" "image"))
+                   "a valid MCP retry restores the discovery set in order")
+                  (mcp-tool-registry-activate-discovered-tools
+                   all-tools-registry)
+                  (test-assert
+                   (equal
+                    (mapcar
+                     (lambda (tool)
+                       (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
+                     (remove-if-not
+                      (lambda (tool)
+                        (and (typep tool 'mcp-provider-tool)
+                             (eq (mcp-managed-tool-manager tool) manager)))
+                      (tool-registry-tools all-tools-registry)))
+                    '("read file" "read/file" "mutate" "error" "image"))
+                   "activation registers the discovery set in discovery order")
+                  (let ((local (make-instance
+                                'tool
+                                :namespace   "static"
+                                :name        "after"
+                                :description "A local tool registered after MCP discovery."
+                                :parameters  (tool-object-schema (json-object) nil))))
+                    (tool-registry-register all-tools-registry local)
+                    (let ((before (json-encode
+                                   (tool-registry-provider-schemas all-tools-registry))))
+                      (mcp-tool-registry--replace-dynamic-tools
+                       all-tools-registry
+                       manager
+                       (reverse (mcp-tools--manager-tool-objects manager)))
+                      (test-assert
+                       (string= before (json-encode
+                                        (tool-registry-provider-schemas all-tools-registry)))
+                       "a refresh listing the same tools in another order keeps every declaration in place"))
+                    (tool-registry-delete-if all-tools-registry
+                                             (lambda (tool)
+                                               (eq tool local)))))
                (test-assert
                 (and
                  (test-mcp--tool-with-raw-name
@@ -4272,46 +4272,46 @@
                                 collect (mcp-tool-name
                                          (mcp-provider-tool-raw-tool tool))))
 
-                        (run-search (query)
-                        (tool-execute
-                         (find "mcp.search" (tool-registry-tools registry)
-                               :test #'string= :key #'tool-canonical-name)
-                         context (json-object "query" query))))
+                      (run-search (query)
+                       (tool-execute
+                        (find "mcp.search" (tool-registry-tools registry)
+                              :test #'string= :key #'tool-canonical-name)
+                        context (json-object "query" query))))
                (mcp-tool-registry-register-manager registry manager)
-                 (let ((discovered (mcp-tool-registry-discovered-tools registry)))
-                   (test-assert (plusp (length discovered))
-                                "the binding holds discovered provider tools")
-                   (test-assert (null (active-provider-names))
-                                "discovery activates no provider tool before a search")
-                   (let ((*mcp-activated-tool-limit* 2)
-                         (*mcp-activated-tool-schema-character-limit* most-positive-fixnum))
-                     (mcp-tool-registry-activate-discovered-tools registry)
+               (let ((discovered (mcp-tool-registry-discovered-tools registry)))
+                 (test-assert (plusp (length discovered))
+                              "the binding holds discovered provider tools")
+                 (test-assert (null (active-provider-names))
+                              "discovery activates no provider tool before a search")
+                 (let ((*mcp-activated-tool-limit*                  2)
+                       (*mcp-activated-tool-schema-character-limit* most-positive-fixnum))
+                   (mcp-tool-registry-activate-discovered-tools registry)
+                   (test-assert
+                    (equal (active-provider-names)
+                           (mapcar (lambda (tool)
+                                     (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
+                                   (last discovered
+                                         (min 2 (length discovered)))))
+                    "activation keeps the newest tools and evicts the oldest"))
+                 (let ((*mcp-activated-tool-limit*                  1)
+                       (*mcp-activated-tool-schema-character-limit* most-positive-fixnum))
+                   (let ((result (run-search "read")))
                      (test-assert
-                      (equal (active-provider-names)
-                             (mapcar (lambda (tool)
-                                       (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
-                                     (last discovered
-                                           (min 2 (length discovered)))))
-                      "activation keeps the newest tools and evicts the oldest"))
-                   (let ((*mcp-activated-tool-limit* 1)
-                         (*mcp-activated-tool-schema-character-limit* most-positive-fixnum))
-                     (let ((result (run-search "read")))
-                       (test-assert
-                        (and (tool-result-success-p result)
-                             (= 1 (length (active-provider-names)))
-                             (search "activated 1 of" (tool-result-content result)))
-                        "search activates within the tool bound and reports the rest"))))
+                      (and (tool-result-success-p result)
+                           (= 1 (length (active-provider-names)))
+                           (search "activated 1 of" (tool-result-content result)))
+                      "search activates within the tool bound and reports the rest"))))
                (let ((*mcp-activated-tool-schema-character-limit* 1))
                    (let ((result (run-search "read")))
-                   (test-assert
-                    (and (not (tool-result-success-p result))
-                         (search "none fits the activation bound"
-                                 (tool-result-content result)))
-                    "search fails when no match fits the schema bound")))
-                 (let ((result (run-search "absent-tool-query")))
-                 (test-assert
-                  (and (not (tool-result-success-p result))
-                       (search "No discovered MCP tool matches" (tool-result-content result)))
-                    "search reports a query with no matches"))))
+                    (test-assert
+                     (and (not (tool-result-success-p result))
+                          (search "none fits the activation bound"
+                                  (tool-result-content result)))
+                     "search fails when no match fits the schema bound")))
+               (let ((result (run-search "absent-tool-query")))
+                (test-assert
+                 (and (not (tool-result-success-p result))
+                      (search "No discovered MCP tool matches" (tool-result-content result)))
+                 "search reports a query with no matches"))))
         (mcp-manager-close manager))))
   nil)

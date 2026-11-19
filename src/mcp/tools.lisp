@@ -635,16 +635,16 @@
     :documentation
     "The registry-specific capability predicate for discovered provider tools.")
    (discovered-tools
-    :initarg  :discovered-tools
-    :initform nil
-    :accessor mcp-registry-binding-discovered-tools
-    :type     list
+    :initarg       :discovered-tools
+    :initform      nil
+    :accessor      mcp-registry-binding-discovered-tools
+    :type          list
     :documentation "Discovered provider tools held outside the registry.")
    (activation-order
-    :initarg  :activation-order
-    :initform nil
-    :accessor mcp-registry-binding-activation-order
-    :type     list
+    :initarg       :activation-order
+    :initform      nil
+    :accessor      mcp-registry-binding-activation-order
+    :type          list
     :documentation "Canonical names of active provider tools, oldest first."))
   (:documentation
    "Per-registry MCP reconciliation state for one shared runtime manager."))
@@ -2093,7 +2093,7 @@ retained value is credential-redacted or projected."
       (let ((score (mcp-tools--search-score tool terms)))
         (when score
           (push (cons score tool) scored))))
-    (mapcar #'rest (stable-sort scored #'> :key #'car))))
+    (mapcar #'rest (stable-sort scored #'> :key #'first))))
 
 (-> mcp-tools--bounded-description (mcp-provider-tool) string)
 (defun mcp-tools--bounded-description (tool)
@@ -2103,9 +2103,10 @@ retained value is credential-redacted or projected."
         description
         (concatenate 'string (subseq description 0 117) "..."))))
 
-(-> mcp-tools--render-search-result (string list integer list list) tool-result)
-(defun mcp-tools--render-search-result
-    (query matches discovered-count bounded active)
+(-> mcp-tools--render-search-result
+    (string list &key (:discovered-count integer) (:bounded list) (:active list))
+    tool-result)
+(defun mcp-tools--render-search-result (query matches &key discovered-count bounded active)
   "Return the model-visible result of one MCP tool search."
   (let ((activated
           (remove-if-not
@@ -2152,7 +2153,7 @@ retained value is credential-redacted or projected."
 (-> mcp-tools--trimmed-activation-names (list list) list)
 (defun mcp-tools--trimmed-activation-names (held names)
   "Return NAMES within the activation bounds, dropping the oldest first."
-  (let* ((by-name (make-hash-table :test #'equal))
+  (let* ((by-name  (make-hash-table :test #'equal))
          (retained nil))
     (dolist (tool held)
       (setf (gethash (tool-canonical-name tool) by-name) tool))
@@ -2292,8 +2293,10 @@ Evict the oldest activation first when either activation bound is exceeded."
                                   0 (min (length matches)
                                          *mcp-activated-tool-limit*)))
               (active     (mcp-tool-registry-activate-tools registry bounded)))
-         (mcp-tools--render-search-result
-          query matches (length discovered) bounded active))))))
+         (mcp-tools--render-search-result query matches
+                                          :discovered-count (length discovered)
+                                          :bounded          bounded
+                                          :active           active))))))
 
 (-> mcp-tool-registry--replace-dynamic-tools
     (tool-registry mcp-manager list)
@@ -2493,25 +2496,25 @@ Evict the oldest activation first when either activation bound is exceeded."
          (tool-string-property "One prompt argument value.")))
        '("server" "name"))
       :manager manager))
-      (tool-registry-register
-       registry
-       (mcp-tools--make-helper
-        'mcp-search-tool
-        :name        "search"
-        :description
-        "Search discovered MCP tools and activate the matching ones so they become callable."
-        :parameters
-        (tool-object-schema
-         (json-object
-          "query"
-          (tool-string-property
-           "Words that describe the MCP tool you need, for example \"inspect native data type\"."))
-         '("query"))
-        :manager     manager))
-      (mcp-tool-registry--replace-dynamic-tools
-       registry manager (mcp-tools--manager-tool-objects manager))
-      (setf (mcp-registry-binding-reconciled-revisions binding)
-            (mcp-manager-tool-revisions manager)))
+    (tool-registry-register
+     registry
+     (mcp-tools--make-helper
+      'mcp-search-tool
+      :name    "search"
+      :description
+      "Search discovered MCP tools and activate the matching ones so they become callable."
+      :parameters
+      (tool-object-schema
+       (json-object
+        "query"
+        (tool-string-property
+         "Words that describe the MCP tool you need, for example \"inspect native data type\"."))
+       '("query"))
+      :manager manager))
+    (mcp-tool-registry--replace-dynamic-tools
+     registry manager (mcp-tools--manager-tool-objects manager))
+    (setf (mcp-registry-binding-reconciled-revisions binding)
+          (mcp-manager-tool-revisions manager)))
   registry)
 
 (-> mcp-tool-registry-augment
