@@ -674,17 +674,24 @@ Call this under UI's lock, before the client receives live events."
     (channel-presentation &key (:rows (option integer)) (:columns (option integer)) (:styled-p t))
     null)
 (defun channel-presentation-set-geometry (ui &key rows columns (styled-p t))
-  "Lay UI's later records out for a client of ROWS by COLUMNS."
+  "Lay UI's later records out for a client of ROWS by COLUMNS.
+
+A page or reader that owns the pane is told with a (:RESIZE COLUMNS ROWS)
+event, as a terminal tells it, so it lays itself out again."
   (with-terminal-ui-locked (ui)
-    (let* ((terminal (terminal-ui-terminal ui))
-           (previous (terminal-columns terminal)))
+    (let* ((terminal         (terminal-ui-terminal ui))
+           (previous-rows    (terminal-rows terminal))
+           (previous-columns (terminal-columns terminal)))
       (when (and (integerp columns) (plusp columns))
         (terminal-set-dimensions terminal columns
                                  :rows (if (and (integerp rows) (plusp rows))
                                            rows
-                                           (terminal-rows terminal)))
-        (unless (= columns previous)
-          (channel-presentation--lay-out-log ui)))
+                                           previous-rows))
+        (unless (= columns previous-columns)
+          (channel-presentation--lay-out-log ui))
+        (unless (and (= columns previous-columns) (= (terminal-rows terminal) previous-rows))
+          (presentation-terminal-offer-event
+           terminal (list :resize columns (terminal-rows terminal)))))
       (setf (terminal-styled-p terminal) (not (null styled-p)))))
   nil)
 
