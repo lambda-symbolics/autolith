@@ -128,16 +128,15 @@
            (application-input-controller-active-work-identifier controller) (make-identifier))
      (deque-push-back (application-input-controller-steering-in-flight-items controller)
                       (make-instance 'agent-steering-input :identifier "in-flight" :content "in-flight"))
-     (dolist (source '("(vault-store)" "/vault-store"))
-       (application-input-controller--enqueue controller ':message "queued")
-       (application-input-controller--handle-submission controller source)
-       (test-assert (null (application-input-controller--state controller :work-items))
-                    "store executes at submission, never queues behind the active turn")
-       (test-assert (equal (vault-contents) '((:message "queued"))) "the queued task is parked immediately")
-       (application-input-controller--handle-submission
-        controller "(setf (vault-contents 0) (list :message (concatenate 'string \"new\" \" task\")))")
-       (test-assert (equal (vault-contents 0) '(:message "new task")) "computed indexed SETF executes immediately")
-       (application-input-controller--handle-submission controller "(setf (vault-contents) nil)"))
+     (application-input-controller--enqueue controller ':message "queued")
+     (application-input-controller--handle-submission controller "(vault-store)")
+     (test-assert (null (application-input-controller--state controller :work-items))
+                  "store executes at submission, never queues behind the active turn")
+     (test-assert (equal (vault-contents) '((:message "queued"))) "the queued task is parked immediately")
+     (application-input-controller--handle-submission
+      controller "(setf (vault-contents 0) (list :message (concatenate 'string \"new\" \" task\")))")
+     (test-assert (equal (vault-contents 0) '(:message "new task")) "computed indexed SETF executes immediately")
+     (application-input-controller--handle-submission controller "(setf (vault-contents) nil)")
      (test-assert (equal (application-input-controller-active-work controller) '(:message "running"))
                   "active work is not moved or replaced")
      (test-assert (equal (mapcar #'agent-steering-input-content
@@ -147,7 +146,7 @@
      (test-assert (application-input-controller-active-p controller) "the turn never needed to finish")
      (test-assert (null (application-input-controller--state controller :work-items)) "SETF did not enqueue Lisp")
      (setf (application-input-controller-pending-persistence-enabled-p controller) nil)
-     (dolist (source '("(vault)" "(vault-store)" "(vault-restore)" "(vault-discard)" "/vault-store"
+     (dolist (source '("(vault)" "(vault-store)" "(vault-restore)" "(vault-discard)"
                        "(setf (vault-contents) nil)"))
        (test-assert (application-input-controller--submission-storage-ready-p controller source)
                     "vault controls are reachable after a storage failure"))))

@@ -10705,7 +10705,8 @@
            (make-instance 'application
                           :configuration configuration
                           :conversation  conversation
-                          :tool-registry registry))
+                          :tool-registry registry
+                          :ui            (terminal-ui-create :terminal (make-instance 'recording-terminal))))
          (handled-condition nil))
     (unwind-protect
          (test-call-with-function-replacements
@@ -10721,6 +10722,9 @@
                      :request-id  nil
                      :response-id "compact-empty"
                      :response    nil)))
+           (list 'application-compact
+                 (lambda (active-application)
+                   (application-run-message active-application "compact")))
            (list
             'application-handle-expected-error
             (lambda (active-application condition)

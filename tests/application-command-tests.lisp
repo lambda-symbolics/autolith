@@ -600,7 +600,7 @@
    (eq (application-lisp-evaluation-status
         (application-lisp-evaluate "(cwd \"unfinished)"
                                    :application (make-instance 'application)))
-       ':error)
+     ':aborted)
    "native Lisp rejects unterminated string arguments")
   (let ((application (make-instance 'application)))
     (test-assert

@@ -1250,7 +1250,7 @@
                        observed)))
          (lambda ()
            (test-assert
-             (eq (application-run-lisp-input application "(new)" :interactive-p nil) ':failed)
+             (eq (application-run-lisp-input application "(new)" :interactive-p nil) ':aborted)
             "a failed conversation installation is reported")
            (test-assert
             (and (eq (application-conversation application) conversation)

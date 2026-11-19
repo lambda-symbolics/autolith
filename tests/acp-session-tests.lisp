@@ -594,9 +594,10 @@
        (declare (ignore service))
        (let ((identifier (agentcomms:client-new-session client (namestring root))))
          (dolist (case '(("" :end-turn)
-                         ("/status" :end-turn)
+                         ("(status)" :end-turn)
                          ("(+ 1 2)" :end-turn)
-                         ("/no-such-acp-command" :end-turn)
+                         ("/status" :condition)
+                         ("//status" :condition)
                          ("(error \"local evaluation failed\")" :cancelled)))
            (destructuring-bind (text expected) case
              (let ((result (handler-case
@@ -610,8 +611,8 @@
 (-> test-acp-session-busy-nonprose-prompts () null)
 (defun test-acp-session-busy-nonprose-prompts ()
   "Complete responsive input immediately and defer held or boundary input until execution."
-  (dolist (case '(("" :inline) ("/status" :inline) ("(status)" :inline)
-                  ("/timestamps on" :apply) ("(+ 1 2)" :hold)))
+  (dolist (case '(("" :inline) ("(status)" :inline)
+                  ("(timestamps t)" :apply) ("(+ 1 2)" :hold)))
     (destructuring-bind (text action) case
       (with-test-configuration (configuration root)
         (let ((provider (make-instance 'acp-session-test-gated-provider

@@ -555,18 +555,17 @@
                     (command-condition
                       (handler-case
                           (progn
-                            (application-command
-                             application
-                             "/rollback rollback-generation")
+                             (application-lisp-evaluate "(rollback \"rollback-generation\")"
+                                                        :application application)
                             nil)
                         (rollback-requested (condition)
                           condition))))
                (test-assert command-condition
-                            "/rollback requests process recovery immediately")
+                             "(rollback) requests process recovery immediately")
                (test-assert
                 (string= (rollback-requested-generation-id command-condition)
                          "rollback-generation")
-                "/rollback carries the selected generation into recovery"))))
+                "(rollback) carries the selected generation into recovery"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
