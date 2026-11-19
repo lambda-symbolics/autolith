@@ -106,6 +106,65 @@
                                   "the expanded input action collapses locally")))))))))))
   nil)
 
+(-> presentation-tests--tool-entry-reflow () null)
+(defun presentation-tests--tool-entry-reflow ()
+  "Recover ordinary call content on widening and retain over-budget legacy entries."
+  (with-test-configuration (configuration)
+    (dolist (case '(45 20000 :header))
+      (let* ((marker      "VISIBLE-SUFFIX")
+             (header-p    (eq case ':header))
+             (expected-p  (not (eql case 20000)))
+             (command     (unless header-p
+                            (format nil "printf '%s' '~A~A'" (make-string case :initial-element #\a) marker)))
+             (producer    (channel-presentation-create :rows 24 :columns 24))
+             (application (make-instance 'application :configuration configuration
+                                         :tool-registry              (make-default-tool-registry)
+                                         :conversation (conversation-create configuration) :ui producer))
+             (record      (application--record-presentation
+                           application
+                           (list :provider-item :seq 1 :wire-json
+                                 (json-encode
+                                  (agent-test-call
+                                   :call-id "ordinary-reflow" :namespace (if header-p "example" "shell")
+                                   :name      (if header-p (format nil "command-~A~A" (make-string 45 :initial-element #\a) marker) "run")
+                                   :arguments (json-encode (if header-p (json-object) (json-object "command" command))))))))
+             (direct      (funcall (getf (third record) :entry-layout) 120))
+             (wire        (client-portable (presentation-record->wire record 24)))
+             (back        (presentation-wire->record wire))
+             (ui          (fullscreen-test--ui (make-instance 'recording-terminal :columns 24 :rows 24))))
+        (test-assert (and (null (getf (third record) :source-input))
+                          (null (getf (third wire) :expanded-entry))
+                          (null (getf (third back) :expanded-entry-layout)))
+                     "ordinary calls acquire no eager or local expanded source layout")
+        (test-assert (equal (presentation-entry->wire (presentation-wire->entry (second wire)))
+                            (presentation-entry->wire (second record)))
+                     "a reader ignoring the new recipe can display and click the original short entry")
+        (if expected-p
+            (progn
+              (test-assert (and (getf (third wire) :tool-entry)
+                                (getf (third back) :entry-layout) (search marker (terminal--spans-text direct)))
+                           "bounded headers and source rows retain their pre-clipping suffix")
+              (let ((future (copy-tree wire)))
+                (setf (getf (getf (third future) :tool-entry) :version) 2)
+                (let ((fallback (presentation-wire->record future)))
+                  (test-assert (and (null (getf (third fallback) :entry-layout))
+                                    (equal (presentation-entry->wire (second fallback)) (second wire)))
+                               "an unsupported ordinary recipe preserves legacy text and actions"))))
+            (test-assert (and (null (getf (third record) :tool-entry))
+                              (null (getf (third wire) :tool-entry))
+                              (null (getf (third back) :entry-layout))
+                              (equal (presentation-entry->wire (second back)) (second wire)))
+                         "over-budget call data declines the recipe without losing the record or actions"))
+        (with-terminal-ui (active ui)
+          (terminal-ui-present-records active (list back))
+          (let ((viewport (fullscreen-terminal-ui-viewport active)))
+            (test-assert (not (search marker (clinedi:transcript-viewport-chunk-text viewport 0)))
+                         "the suffix is initially outside the narrow clipped entry")
+            (terminal-ui-resize active 120 :rows 24)
+            (test-assert (eq expected-p (not (null (search marker (clinedi:transcript-viewport-chunk-text viewport 0)))))
+                         "24-to-120 resize restores bounded ordinary content and uses the legacy over-budget fallback"))))))
+  nil)
+
 (-> test-presentation-wire-forms () null)
 (defun test-presentation-wire-forms ()
   "Test styled text and records survive the wire, and what another version sent is tolerated."
@@ -162,6 +221,7 @@
                          (terminal--spans-text (funcall (getf (third schema) :entry-layout) 80)))
                  "the client lays tool schema names out itself"))
   (presentation-tests--source-inputs)
+  (presentation-tests--tool-entry-reflow)
   nil)
 
 (-> test-presentation-model-publishes () null)

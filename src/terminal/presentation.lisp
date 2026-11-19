@@ -99,9 +99,35 @@ A style this version does not know shows as plain text."
            (typep (getf description :lisp-columns) '(integer 1)))
     (type-error () nil)))
 
-(-> presentation--source-input->wire (list list) (values list list))
-(defun presentation--source-input->wire (description entry)
-  "Share ENTRY's actions once beside raw source; retain legacy spans as a fallback."
+(-> presentation--tool-entry-p (t) boolean)
+(defun presentation--tool-entry-p (description)
+  "Recognize a versioned bounded pre-clipping ordinary tool entry."
+  (handler-case
+      (and (listp description) (eql 1 (getf description :version))
+           (stringp (getf description :header)) (typep (getf description :style) 'terminal-style)
+           (typep (getf description :detail) '(or null string))
+           (typep (getf description :invocation) '(or null string))
+           (typep (getf description :provider-call-p) 'boolean)
+           (typep (getf description :inline-p) 'boolean)
+           (listp (getf description :rows)) (every #'listp (getf description :rows)))
+    (type-error () nil)))
+
+(-> presentation--wire-tool-rows (list vector) list)
+(defun presentation--wire-tool-rows (rows actions)
+  "Restore styled ROWS whose widget references name the shared ACTIONS table."
+  (loop for row in rows
+        collect (presentation-wire->entry
+                 (loop for span in row
+                       collect (if (and (consp span) (consp (rest span)))
+                                   (let ((index (third span)))
+                                     (if (and (typep index '(integer 0)) (< index (length actions)))
+                                         (list (first span) (second span) (aref actions index))
+                                         (list (first span) (second span))))
+                                   span)))))
+
+(-> presentation--tool-entry->wire (list list) (values list list))
+(defun presentation--tool-entry->wire (description entry)
+  "Share ENTRY's actions once beside its display data, retaining legacy fallback spans."
   (let ((actions nil)
         (fields  (copy-list description)))
     (labels ((action-index (action)
@@ -116,18 +142,27 @@ A style this version does not know shows as plain text."
             (getf fields :entry-actions)
             (loop for span in entry for index from 0
                   when (termdown:widget-p span)
-                    collect (list index (action-index (termdown:widget-action span))))
-            (getf fields :actions) actions)
+                    collect (list index (action-index (termdown:widget-action span)))))
+      (when (getf description :rows)
+        (setf (getf fields :rows)
+              (loop for row in (getf description :rows)
+                    collect (loop for span in row
+                                  collect (if (termdown:widget-p span)
+                                              (list (termdown:widget-role span) (termdown:widget-label span)
+                                                    (action-index (termdown:widget-action span)))
+                                              (list (terminal-span-style span) (terminal-span-text span)))))))
+      (setf (getf fields :actions) actions)
       (values fields
               (loop for span in entry
                     collect (list (terminal-span-style span) (terminal-span-text span)))))))
 
-(-> presentation--wire-source-input
+(-> presentation--wire-tool-entry
     (t (or string list)) (values (option list) (or string list)))
-(defun presentation--wire-source-input (wire entry)
-  "Restore recognized source data and actions, or retain only collapsed ENTRY."
+(defun presentation--wire-tool-entry (wire entry)
+  "Restore recognized display data and actions, or retain only collapsed ENTRY."
   (handler-case
-      (if (and (listp entry) (presentation--source-input-p wire)
+      (if (and (listp entry)
+               (or (presentation--source-input-p wire) (presentation--tool-entry-p wire))
                (listp (getf wire :actions)) (listp (getf wire :entry-actions)))
           (let* ((description   (copy-list wire))
                  (actions       (coerce (getf wire :actions) 'vector))
@@ -142,6 +177,8 @@ A style this version does not know shows as plain text."
                   (when (and (listp header-action) (= 2 (length header-action))
                              (eq (first header-action) ':insert) (stringp (second header-action)))
                     (second header-action)))
+            (when (getf wire :rows)
+              (setf (getf description :rows) (presentation--wire-tool-rows (getf wire :rows) actions)))
             (dolist (reference (getf wire :entry-actions))
               (when (and (listp reference) (= 2 (length reference))
                          (typep (first reference) '(integer 0)) (< (first reference) (length restored))
@@ -188,10 +225,10 @@ name in *PRESENTATION-ENTRY-TRANSFORMS*."
             do (case key
                  ((:entry-layout :schema-layout)
                   nil)
-                 (:source-input
+                 ((:source-input :tool-entry)
                   nil)
                  (:expanded-entry-layout
-                  (when (and value (not (getf metadata :source-input)))
+                  (when (and value (not (getf metadata :source-input)) (not (getf metadata :tool-entry)))
                     (setf (getf wire :expanded-entry)
                           (presentation-entry->wire (funcall value columns)))))
                  (:body-layout
@@ -219,16 +256,23 @@ name in *PRESENTATION-ENTRY-TRANSFORMS*."
                   (setf (getf wire key) (presentation--markdown->wire value)))
                  (otherwise
                   (setf (getf wire key) value))))
-      (let ((entry  (if (and lay-out-p (getf metadata :entry-layout))
-                        (funcall (getf metadata :entry-layout) columns)
-                        entry))
-            (source (getf metadata :source-input)))
-        (if (presentation--source-input-p source)
-            (multiple-value-bind (description collapsed)
-                (presentation--source-input->wire source entry)
-              (setf (getf wire :source-input) description)
-              (list identifier collapsed wire))
-            (list identifier (and entry (presentation-entry->wire entry)) wire))))))
+      (let ((entry      (if (and lay-out-p (getf metadata :entry-layout))
+                            (funcall (getf metadata :entry-layout) columns)
+                            entry))
+            (source     (getf metadata :source-input))
+            (tool-entry (getf metadata :tool-entry)))
+        (let ((key (cond ((presentation--source-input-p source)
+                          ':source-input)
+                         ((presentation--tool-entry-p tool-entry)
+                          ':tool-entry))))
+          (if key
+              (multiple-value-bind (description collapsed)
+                  (presentation--tool-entry->wire (getf metadata key) entry)
+                (setf (getf wire key) description)
+                (list identifier
+                      (if (eq key ':tool-entry) (presentation-entry->wire entry) collapsed)
+                      wire))
+              (list identifier (and entry (presentation-entry->wire entry)) wire)))))))
 
 (-> presentation-wire->record (t) (option list))
 (defun presentation-wire->record (wire)
@@ -241,7 +285,7 @@ input, and the row of tool schema names."
       (let ((metadata nil))
         (loop for (key value) on fields by (partial #'nthcdr 2)
               do (case key
-                   (:source-input
+                   ((:source-input :tool-entry)
                     nil)
                    (:expanded-entry
                     (let ((expanded (presentation-wire->entry value)))
@@ -265,10 +309,15 @@ input, and the row of tool schema names."
                   (getf metadata :entry-layout)
                   (lambda (columns) (terminal-tool-schema-entry names columns)))))
         (multiple-value-bind (description entry)
-            (presentation--wire-source-input (getf fields :source-input)
-                                             (and entry (presentation-wire->entry entry)))
-          (when description
-            (setf metadata (append (presentation--source-input-layouts description) metadata)))
+            (presentation--wire-tool-entry (or (getf fields :source-input) (getf fields :tool-entry))
+                                           (and entry (presentation-wire->entry entry)))
+          (cond
+            ((presentation--source-input-p description)
+             (setf metadata (append (presentation--source-input-layouts description) metadata)))
+            ((presentation--tool-entry-p description)
+             (setf (getf metadata :tool-entry) description
+                   (getf metadata :entry-layout)
+                   (lambda (columns) (application--tool-entry-from-description description columns)))))
           (list identifier entry metadata))))))
 
 (-> terminal-tool-schema-entry (list (integer 1)) (option list))

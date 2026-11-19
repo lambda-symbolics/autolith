@@ -8,6 +8,9 @@
 
 Clicking the rendered call's header inserts it into the composer.")
 
+(defparameter *application-tool-entry-description* ':inactive
+  "Bound to capture a bounded pre-clipping tool entry during one publication.")
+
 (defparameter *application-transcript-layout-columns* nil
   "Dynamic column count when replaying a resident transcript source.")
 
@@ -3244,19 +3247,25 @@ the entry's text as a :PRESENT event."
            (or source-cache
                (when (terminal-ui-fullscreen-p (application-ui application))
                  (make-hash-table :test #'equal))))
-         (entry    (conversation-record-entry application record))
-         (metadata (append
-                    (application--record-entry-semantics record entry)
-                    (when (terminal-ui-fullscreen-p (application-ui application))
-                       (append
-                        (application--record-tool-outcome application record entry)
-                        (let ((text (application--assistant-message-record-text record)))
-                          (when text
-                            (list :markdown
-                                  (application--markdown-presentation
-                                   application text (getf (rest record) :time)))))))))
-         (resolved (and outcomes (getf metadata :call-key)
-                        (gethash (getf metadata :call-key) outcomes))))
+         (*application-tool-entry-description* nil)
+         (entry                                (conversation-record-entry application record))
+         (tool-entry-description               *application-tool-entry-description*)
+         (metadata                             (append
+                                                (application--record-entry-semantics record entry)
+                                                (when (terminal-ui-fullscreen-p (application-ui application))
+                                                   (append
+                                                    (application--record-tool-outcome application record entry)
+                                                    (let ((text (application--assistant-message-record-text record)))
+                                                      (when text
+                                                        (list :markdown
+                                                              (application--markdown-presentation
+                                                               application text (getf (rest record) :time)))))))))
+         (resolved                             (and outcomes (getf metadata :call-key)
+                                                    (gethash (getf metadata :call-key) outcomes))))
+    (when (and entry (eq (getf metadata :kind) ':call)
+               (terminal-ui-fullscreen-p (application-ui application))
+               tool-entry-description (not (getf metadata :source-input)))
+      (setf (getf metadata :tool-entry) tool-entry-description))
     (when (and entry (terminal-ui-fullscreen-p (application-ui application))
                (not (getf metadata :markdown)))
       (setf (getf metadata :entry-layout) (application--record-layout application record)

@@ -233,6 +233,68 @@ header without participating in compaction."
             (values spans (nthcdr (length arguments) rows))))))
     (values nil rows)))
 
+(-> application--tool-entry-wire-p
+    (string list &key (:detail (option string)) (:invocation (option string))) boolean)
+(defun application--tool-entry-wire-p (header rows &key detail invocation)
+  "Check the 8KiB text, 512 span and 64 row caps before retaining extra layout data."
+  (let ((characters 8192)
+        (spans      512)
+        (row-count  64)
+        (cells      4096))
+    (labels ((charge (value)
+               "Charge action data and text without allocating a serialized copy."
+               (typecase value
+                 (string
+                  (decf characters (length value)))
+                 (cons
+                  (when (minusp (decf cells))
+                    (return-from application--tool-entry-wire-p nil))
+                  (charge (first value))
+                  (charge (rest value)))
+                 (symbol
+                  (charge (symbol-name value)))
+                 ((signed-byte 64)
+                  (decf characters 20))
+                 (t
+                  (return-from application--tool-entry-wire-p nil)))
+               (when (minusp characters)
+                 (return-from application--tool-entry-wire-p nil))))
+      (charge header)
+      (charge detail)
+      (charge invocation)
+      (dolist (row rows)
+        (when (minusp (decf row-count))
+          (return-from application--tool-entry-wire-p nil))
+        (dolist (span row)
+          (when (minusp (decf spans))
+            (return-from application--tool-entry-wire-p nil))
+          (charge (terminal-span-text span))
+          (when (termdown:widget-p span)
+            (charge (termdown:widget-action span)))))
+      t)))
+
+(-> application--tool-entry-from-description (list (integer 1)) list)
+(defun application--tool-entry-from-description (description columns)
+  "Fit bounded pre-clipping tool data to the client's current COLUMNS."
+  (let ((*application-provider-call-presentation* (getf description :provider-call-p))
+        (*application-tool-call-invocation*       (getf description :invocation))
+        (*application-tool-input-expanded-p*      nil))
+    (multiple-value-bind (inline-header body-rows)
+        (if (getf description :inline-p)
+            (application--inline-tool-call-header-at-columns
+             columns (getf description :header) (getf description :rows) :style (getf description :style))
+            (values nil (getf description :rows)))
+      (append
+       (application--tool-call-header-actions
+        (or inline-header
+            (application--transcript-header
+             (application--tool-header-at-columns columns (getf description :header))
+             (getf description :detail) columns :style (getf description :style))))
+       (loop for row in body-rows
+             append (list (terminal-span ':plain (string #\Newline)))
+             when row
+               append (application--tool-row-spans-at-columns columns row))))))
+
 (-> application--tool-entry
     (application &key (:style terminal-style) (:header string)
                  (:detail (option string)) (:rows list))
@@ -240,6 +302,15 @@ header without participating in compaction."
 (defun application--tool-entry
     (application &key (style ':plain) (header "") detail rows)
   "Return a tool entry, inlining fitting call arguments above any body rows."
+  (unless (eq *application-tool-entry-description* ':inactive)
+    (let ((display-detail (or detail (application--turn-timestamp-text application nil))))
+      (setf *application-tool-entry-description*
+            (when (application--tool-entry-wire-p
+                   header rows :detail display-detail :invocation *application-tool-call-invocation*)
+              (list :version 1 :style style :header header :detail display-detail :rows rows
+                    :provider-call-p (not (null *application-provider-call-presentation*))
+                    :inline-p        (and (not (null *application-provider-call-presentation*)) (null detail))
+                    :invocation      *application-tool-call-invocation*)))))
   (multiple-value-bind (inline-header body-rows)
       (if (and *application-provider-call-presentation* (null detail))
           (application--inline-tool-call-header application header rows :style style)
