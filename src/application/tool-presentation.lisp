@@ -139,7 +139,7 @@ letters but no lowercase letters."
                     (uiop:string-prefix-p "▸ " header))
                (format nil "▸ (~A)" (subseq header 2))
                header))
-         (safe-header (sanitize-text call-header :single-line-p t))
+         (safe-header   (sanitize-text call-header :single-line-p t))
          (maximum-width (max 1 (1- columns))))
     (cond
       ((<= (text-cell-width safe-header) maximum-width)
@@ -670,31 +670,32 @@ structural discriminator as a readable heading instead."
   (application--transcript-source-value
    (list ':source-input call argument-name *application-tool-call-invocation*)
    (lambda ()
-     (let* ((arguments (application--function-call-arguments call))
-            (value     (and arguments (json-get arguments argument-name))))
+     (let* ((arguments     (application--function-call-arguments call))
+            (value         (and arguments (json-get arguments argument-name)))
+            (restart-value (and arguments (json-get arguments "restart-value"))))
        (list :version 1 :header (format nil "▸ ~A" (function-call-canonical-name call))
-             :sources (if (and (vectorp value) (not (stringp value)) (every #'stringp value))
-                          (coerce value 'list)
-                          (list (application--presentation-value (or value ""))))
-             :fields (when arguments
-                       (application--argument-fields arguments :excluded-keys (list argument-name "restart-value")))
-             :restart-value (and arguments (json-get arguments "restart-value"))
-             :input-key (when (terminal-ui-fullscreen-p (application-ui application))
-                          (application--tool-outcome-key application ':call (json-get call "call_id")))
-             :invocation *application-tool-call-invocation*
-             :detail (application--turn-timestamp-text application nil)
-             :line-limit *application-tool-call-lines*
-             :lisp-columns *application-lisp-input-columns*)))))
+             :sources       (if (and (vectorp value) (not (stringp value)) (every #'stringp value))
+                                (coerce value 'list)
+                                (list (application--presentation-value (or value ""))))
+             :fields        (when arguments
+                              (application--argument-fields arguments :excluded-keys (list argument-name "restart-value")))
+             :restart-value (and (stringp restart-value) restart-value)
+             :input-key     (when (terminal-ui-fullscreen-p (application-ui application))
+                              (application--tool-outcome-key application ':call (json-get call "call_id")))
+             :invocation    *application-tool-call-invocation*
+             :detail        (application--turn-timestamp-text application nil)
+             :line-limit    *application-tool-call-lines*
+             :lisp-columns  *application-lisp-input-columns*)))))
 
 (-> application--source-input-entry (list (integer 1) &key (:expanded-p boolean)) list)
 (defun application--source-input-entry (description columns &key expanded-p)
   "Lay out source display DESCRIPTION locally; its strings are never read or evaluated."
-  (let* ((*application-tool-input-expanded-p* expanded-p)
+  (let* ((*application-tool-input-expanded-p*      expanded-p)
          (*application-provider-call-presentation* t)
-         (*application-tool-call-invocation* (getf description :invocation))
-         (*application-tool-call-lines* (getf description :line-limit))
-         (header (getf description :header))
-         (input-key (getf description :input-key))
+         (*application-tool-call-invocation*       (getf description :invocation))
+         (*application-tool-call-lines*            (getf description :line-limit))
+         (header                                   (getf description :header))
+         (input-key                                (getf description :input-key))
          (source
            (format nil "~{~A~^~%~}"
                    (loop for text in (getf description :sources)

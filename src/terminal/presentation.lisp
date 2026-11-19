@@ -103,7 +103,7 @@ A style this version does not know shows as plain text."
 (defun presentation--source-input->wire (description entry)
   "Share ENTRY's actions once beside raw source; retain legacy spans as a fallback."
   (let ((actions nil)
-        (fields (copy-list description)))
+        (fields  (copy-list description)))
     (labels ((action-index (action)
                "Intern one action in this record's small action table."
                (or (position action actions :test #'equal)
@@ -129,13 +129,13 @@ A style this version does not know shows as plain text."
   (handler-case
       (if (and (listp entry) (presentation--source-input-p wire)
                (listp (getf wire :actions)) (listp (getf wire :entry-actions)))
-          (let* ((description (copy-list wire))
-                 (actions (coerce (getf wire :actions) 'vector))
-                 (header-index (getf wire :header-action))
+          (let* ((description   (copy-list wire))
+                 (actions       (coerce (getf wire :actions) 'vector))
+                 (header-index  (getf wire :header-action))
                  (header-action (when (and (typep header-index '(integer 0))
                                            (< header-index (length actions)))
                                   (aref actions header-index)))
-                 (restored (coerce entry 'vector)))
+                 (restored      (coerce entry 'vector)))
             (dolist (key '(:actions :entry-actions :header-action))
               (remf description key))
             (setf (getf description :invocation)
@@ -163,8 +163,8 @@ A style this version does not know shows as plain text."
              (let ((*application-transcript-source-cache* cache))
                (declare (special *application-transcript-source-cache*))
                (application--source-input-entry description columns :expanded-p expanded-p))))
-      (list :source-input description
-            :entry-layout (lambda (columns) (layout columns nil))
+      (list :source-input          description
+            :entry-layout          (lambda (columns) (layout columns nil))
             :expanded-entry-layout (lambda (columns) (layout columns t))
             :source-characters
             (lambda ()
@@ -219,9 +219,9 @@ name in *PRESENTATION-ENTRY-TRANSFORMS*."
                   (setf (getf wire key) (presentation--markdown->wire value)))
                  (otherwise
                   (setf (getf wire key) value))))
-      (let ((entry (if (and lay-out-p (getf metadata :entry-layout))
-                       (funcall (getf metadata :entry-layout) columns)
-                       entry))
+      (let ((entry  (if (and lay-out-p (getf metadata :entry-layout))
+                        (funcall (getf metadata :entry-layout) columns)
+                        entry))
             (source (getf metadata :source-input)))
         (if (presentation--source-input-p source)
             (multiple-value-bind (description collapsed)

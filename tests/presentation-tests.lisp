@@ -22,15 +22,15 @@
   "Exercise bounded source packets, local lazy expansion and version fallback."
   (with-test-configuration (configuration)
     (dolist (count '(1 12 5000 10000))
-      (let* ((ui (channel-presentation-create :rows 24 :columns 80))
-             (application (make-instance 'application :configuration configuration
-                                         :tool-registry (make-default-tool-registry)
-                                         :conversation (conversation-create configuration) :ui ui))
-             (forms (make-array count :initial-element "(list :x 1)"))
-             (record nil)
+      (let* ((ui             (channel-presentation-create :rows 24 :columns 80))
+             (application    (make-instance 'application :configuration configuration
+                                            :tool-registry              (make-default-tool-registry)
+                                            :conversation (conversation-create configuration) :ui ui))
+             (forms          (make-array count :initial-element "(list :x 1)"))
+             (record         nil)
              (expanded-calls 0)
-             (render-calls 0)
-             (render #'render-source))
+             (render-calls   0)
+             (render         #'render-source))
         (when (= count 12)
           (setf (aref forms 0) (format nil "(let ((value 1))~%  (list :value value))")
                 (aref forms 11) "(list :late-source #.(error \"source was evaluated\"))"))
@@ -50,9 +50,9 @@
          (list (list 'render-source
                      (lambda (&rest arguments) (incf render-calls) (apply render arguments))))
          (lambda ()
-           (let* ((wire (client-portable (presentation-record->wire record 80)))
-                  (packet (image-daemon:daemon-packet-string (list :ui :operation :records :presentations (list wire))))
-                  (back (presentation-wire->record wire))
+           (let* ((wire        (client-portable (presentation-record->wire record 80)))
+                  (packet      (image-daemon:daemon-packet-string (list :ui :operation :records :presentations (list wire))))
+                  (back        (presentation-wire->record wire))
                   (description (getf (third wire) :source-input)))
              (test-assert (and (zerop expanded-calls) (zerop render-calls))
                           "serialization and reconstruction never invoke the expanded layout or source renderer")
@@ -70,7 +70,7 @@
                (test-assert
                 (and (non-empty-string-p invocation) (search "lisp.eval" invocation)
                      (find (list ':insert invocation) (second back) :test #'equal
-                           :key (lambda (span) (when (termdown:widget-p span) (termdown:widget-action span)))))
+                           :key                                           (lambda (span) (when (termdown:widget-p span) (termdown:widget-action span)))))
                 "durable source publication retains the bound local invocation as a header insertion action"))
              (dolist (version '(2 :unknown))
                (let ((future (copy-tree wire)))
@@ -82,8 +82,8 @@
                                      (null (getf (third fallback) :expanded-entry-layout)))
                                 "an unsupported recipe preserves the collapsed representation without interpreting it"))))
              (when (= count 12)
-               (let* ((key (getf (third back) :call-key))
-                      (terminal (make-instance 'recording-terminal :columns 80 :rows 24))
+               (let* ((key       (getf (third back) :call-key))
+                      (terminal  (make-instance 'recording-terminal :columns 80 :rows 24))
                       (client-ui (fullscreen-test--ui terminal)))
                  (with-terminal-ui (active client-ui)
                    (terminal-ui-present-records active (list back))
@@ -94,7 +94,7 @@
                      (test-assert (terminal-ui-fullscreen--toggle-tool-input active key)
                                   "the collapsed input action expands the local resident record"))
                    (test-assert (search ":late-source" (clinedi:transcript-viewport-chunk-text
-                                                       (fullscreen-terminal-ui-viewport active) 0))
+                                                        (fullscreen-terminal-ui-viewport active) 0))
                                 "local expansion displays the complete source without reader evaluation")
                    (dolist (columns '(32 80 120))
                      (test-assert
