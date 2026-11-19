@@ -2706,25 +2706,7 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
 (-> application--tool-schema-entry (application list) (option list))
 (defun application--tool-schema-entry (application names)
   "Return one width-bounded schema row for ordered namespace NAMES."
-  (when names
-    (let* ((maximum-width
-             (max 1
-                  (1- (application--transcript-columns application))))
-           (row
-             (append
-              (list (terminal-span ':tool "▸ tool schemas: "))
-              (loop for namespace in names
-                    for first-name-p = t then nil
-                    append
-                    (append
-                     (unless first-name-p
-                       (list (terminal-span ':dim ", ")))
-                     (list (terminal-span ':syntax-function namespace)))))))
-      (if (<= (terminal--spans-width row) maximum-width)
-          row
-          (append
-           (terminal--clip-spans row (max 0 (1- maximum-width)))
-           (list (terminal-span ':dim "…")))))))
+  (terminal-tool-schema-entry names (application--transcript-columns application)))
 
 (-> application--tool-search-entry (application json-object) (option list))
 (defun application--tool-search-entry (application item)

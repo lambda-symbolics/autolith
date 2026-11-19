@@ -703,6 +703,7 @@
                 #:selector-items
                 #:selector-selection
                 #:selector-visible-count
+                #:selector-window
                 #:selector-move
                 #:selector-set-items
                 #:selector-arrange

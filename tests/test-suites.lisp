@@ -807,6 +807,12 @@
   test-portable-structural-bounds
   test-portable-operation-rejections)
 
+(define-test-suite presentation
+  test-presentation-wire-forms
+  test-presentation-model-publishes
+  test-presentation-applies
+  test-presentation-pages-and-readers)
+
 (define-test-suite client-protocol
   test-client-protocol-channel
   test-client-operation-admission
