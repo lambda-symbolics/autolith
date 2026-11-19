@@ -402,6 +402,7 @@
                                           (:file "terminal/usage")
                                           (:file "startup/usage")
                                           (:file "localgroup/subscription")
+                                          (:file "localgroup/view")
                                           (:file "application/onboarding")
                                           (:file "state/data-transfer")
                                           (:file "state/data-transfer-collect")
