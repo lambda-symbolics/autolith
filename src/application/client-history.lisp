@@ -47,13 +47,14 @@ as its own frame, an upper bound for the grouped frames we emit."
                (application--associate-tool-outcomes
                 (loop for record in records
                       for presentation = (application--record-presentation
-                                          application record :outcomes outcomes
-                                          :source-cache (gethash record sources))
+                                            application record
+                                            :outcomes     outcomes
+                                            :source-cache (gethash record sources))
                       when presentation collect presentation)))
              (newest-first (reverse (getf (channel-presentation--records-fields ui presentations) :presentations)))
-             (selected nil)
-             (floor before-sequence)
-             (more-p (> candidate-count limit)))
+             (selected     nil)
+             (floor        before-sequence)
+             (more-p       (> candidate-count limit)))
         (labels ((event (records)
                    "Wrap wire RECORDS in one transcript event."
                    (list :ui :operation ':records :presentations records))
@@ -127,23 +128,23 @@ as its own frame, an upper bound for the grouped frames we emit."
 (defun application-client-history-replay (application presentation &key (character-limit *application-client-history-character-limit*))
   "Seed a fresh presenting client from durable history, retained local output and current state."
   (if (and (slot-boundp application 'conversation) (application-conversation application))
-      (let* ((conversation (conversation-identifier (application-conversation application)))
-             (local (application-client-history--transient-events presentation conversation))
-             (state (rest (channel-presentation-replay presentation :transcript nil)))
+      (let* ((conversation  (conversation-identifier (application-conversation application)))
+             (local         (application-client-history--transient-events presentation conversation))
+             (state         (rest (channel-presentation-replay presentation :transcript nil)))
              (active-stream (fullscreen-terminal-ui-markdown-stream presentation))
-             (active-id (when active-stream
-                          (channel-presentation--stream-wire-identifier presentation active-stream)))
-             (seed (and active-id (find-if (lambda (event)
-                                            (and (eq (getf (rest event) :operation) ':markdown)
-                                                 (equal (getf (rest event) :identifier) active-id))) local)))
-             (available (- character-limit 1024))
-             (kept nil))
+             (active-id     (when active-stream
+                              (channel-presentation--stream-wire-identifier presentation active-stream)))
+             (seed          (and active-id (find-if (lambda (event)
+                                                      (and (eq (getf (rest event) :operation) ':markdown)
+                                                           (equal (getf (rest event) :identifier) active-id))) local)))
+             (available     (- character-limit 1024))
+             (kept          nil))
         ;; State and an active Markdown base are required for applying later deltas.
         (dolist (event (if seed (cons seed state) state))
           (let ((size (application-client-history--frame-size event)))
             (unless (and size (<= size available))
               (error 'localgroup-error :operation ':client
-                     :message "The channel's current presentation exceeds the attachment budget."))
+                                       :message   "The channel's current presentation exceeds the attachment budget."))
             (decf available size)))
         (loop for event in (reverse local)
               unless (eq event seed)
@@ -174,7 +175,7 @@ An operation overridden since attachment is declined without executing the pager
                          (equal conversation (conversation-identifier current))
                          (typep before-sequence '(integer 1)))
               (error 'localgroup-error :operation ':transcript-history
-                     :message "The transcript history cursor does not name this channel's conversation."))
+                                       :message   "The transcript history cursor does not name this channel's conversation."))
             (with-terminal-ui-locked (presentation)
               (with-recursive-lock-held ((conversation-append-lock current))
                 (let ((before (min before-sequence (application-client-history--cut application))))
@@ -186,5 +187,5 @@ An operation overridden since attachment is declined without executing the pager
                                    (- (floor image-daemon:*attachment-queue-character-limit* 2) 1024))))
                     (when (and (getf fields :more-p) (= (getf fields :before-sequence) before))
                       (error 'localgroup-error :operation ':transcript-history
-                             :message "The attachment budget is too small for the next transcript record."))
+                                               :message   "The attachment budget is too small for the next transcript record."))
                     (list* :history-page-p t :builtin-p t :events events fields))))))))))

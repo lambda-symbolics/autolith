@@ -15,7 +15,6 @@
                             :duration-seconds 4))
   nil)
 
-
 (-> channel-view--apply-history-page (channel-view list) null)
 (defun channel-view--apply-history-page (view reply)
   "Apply the correlated durable page on the UI owner, then advance its cursor."
@@ -29,10 +28,13 @@
       (error 'channel-subscription-unavailable :message "The channel returned an invalid transcript history page."))
     (dolist (event events)
       (channel-subscription-present-event view event))
-    (channel-view-apply view ':transcript-history :conversation (getf reply :conversation)
+    (channel-view-apply view ':transcript-history
+                        :conversation    (getf reply :conversation)
                         :before-sequence (getf reply :before-sequence)
-                        :more-p (getf reply :more-p) :page-p t))
+                        :more-p          (getf reply :more-p)
+                        :page-p          t))
   nil)
+
 (-> channel-view--load-transcript-history (channel-view) boolean)
 (defun channel-view--load-transcript-history (view)
   "Load an earlier page into VIEW alone, returning NIL only for an overridden pager.
@@ -64,7 +66,8 @@ shared history rendering. A declined built-in identity follows normal input."
 (defmethod input-port-apply :around ((view channel-view) action &optional payload)
   "Probe the advertised history endpoint for this exact canonical form."
   (let ((text (typecase payload
-                (string payload)
+                (string
+                 payload)
                 (user-message-input
                  (unless (user-message-input-image-pathnames payload)
                    (user-message-input-text payload))))))
