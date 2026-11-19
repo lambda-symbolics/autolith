@@ -708,29 +708,42 @@ compose."
                            (t
                             0))))))
 
+(-> channel-presentation--cell-group (cons) t)
+(defun channel-presentation--cell-group (cell)
+  "Return the identity of CELL's logical publication for replay retention."
+  (or (fourth cell) cell))
+
 (-> channel-presentation--trim-log (channel-presentation) null)
 (defun channel-presentation--trim-log (ui)
-  "Evict the oldest replay cells until the budget fits, always retaining the newest cell."
-  (let ((log (channel-presentation-transcript-log ui)))
-    (loop while (and (> (channel-presentation-log-characters ui) *channel-presentation-log-character-limit*)
-                     (> (deque-count log) 1))
-          do (let ((evicted (deque-pop-front log)))
-               (decf (channel-presentation-log-characters ui) (second evicted))
-               (channel-presentation--forget-cell ui evicted))))
+  "Evict oldest logical publications until the budget fits, retaining the newest."
+  (when (> (channel-presentation-log-characters ui) *channel-presentation-log-character-limit*)
+    (let* ((log (channel-presentation-transcript-log ui))
+           (cells (deque->list log))
+           (newest-group (and cells (channel-presentation--cell-group (first (last cells))))))
+      (loop while (and cells
+                       (> (channel-presentation-log-characters ui) *channel-presentation-log-character-limit*)
+                       (not (eq newest-group (channel-presentation--cell-group (first cells)))))
+            do (let ((group (channel-presentation--cell-group (first cells))))
+                 (loop while (and cells (eq group (channel-presentation--cell-group (first cells))))
+                       do (let ((evicted (deque-pop-front log)))
+                            (pop cells)
+                            (decf (channel-presentation-log-characters ui) (second evicted))
+                            (channel-presentation--forget-cell ui evicted)))))))
   nil)
 
-(-> channel-presentation--log (channel-presentation list &key (:presentations list)) cons)
-(defun channel-presentation--log (ui event &key presentations)
+(-> channel-presentation--log
+    (channel-presentation list &key (:presentations list) (:retention-group t)) cons)
+(defun channel-presentation--log (ui event &key presentations retention-group)
   "Keep transcript EVENT for a client that attaches later and return its log cell.
 
-A cell is (EVENT CHARACTERS PRESENTATIONS): the records an event was made
-from stay with it, so it can be laid out again for a client of another
-width. The oldest cells leave once the log holds more than its character limit."
+A cell is (EVENT CHARACTERS PRESENTATIONS RETENTION-GROUP). The source
+presentations permit later layout at another width. Physical transport cells
+of one logical publication share RETENTION-GROUP and leave the log together."
   (let ((cell (list event
                     (if presentations
                         (channel-presentation--record-weight event presentations)
                         (presentation--weight event))
-                    presentations))
+                    presentations retention-group))
         (log  (channel-presentation-transcript-log ui)))
     (deque-push-back log cell)
     (incf (channel-presentation-log-characters ui) (second cell))
@@ -738,8 +751,9 @@ width. The oldest cells leave once the log holds more than its character limit."
     cell))
 
 (-> channel-presentation--publish
-    (channel-presentation keyword list &key (:log-p boolean) (:presentations list)) null)
-(defun channel-presentation--publish (ui operation fields &key log-p presentations)
+    (channel-presentation keyword list &key (:log-p boolean) (:presentations list)
+                                           (:retention-group t)) null)
+(defun channel-presentation--publish (ui operation fields &key log-p presentations retention-group)
   "Tell UI's clients of OPERATION with FIELDS, keeping a transcript operation when LOG-P.
 
 PRESENTATIONS are the records a logged :RECORDS operation was made from."
@@ -748,7 +762,8 @@ PRESENTATIONS are the records a logged :RECORDS operation was made from."
     (channel-presentation--publish-state ui ':turn))
   (let ((event (list* :ui :operation operation fields)))
     (when log-p
-      (channel-presentation--log ui event :presentations presentations))
+      (channel-presentation--log ui event :presentations presentations
+                                         :retention-group retention-group))
     (channel-presentation--send ui event))
   nil)
 
@@ -1002,11 +1017,12 @@ event, as a terminal tells it, so it lays itself out again."
             (setf (gethash identifier seen) t)
             (push presentation pending))))
       (setf pending (nreverse pending))
-      (when pending
-        (terminal-ui--remember-finalized ui (mapcar #'first pending))
-        (channel-presentation--publish
-         ui ':records (channel-presentation--records-fields ui pending)
-         :log-p t :presentations pending))
+      (dolist (cell (channel-presentation--record-cells ui pending))
+        (let ((batch (third cell)))
+          (channel-presentation--publish
+           ui ':records (list :presentations (getf (rest (first cell)) :presentations))
+           :log-p t :presentations batch :retention-group (fourth cell))
+          (terminal-ui--remember-finalized ui (mapcar #'first batch))))
       (length pending))))
 
 (-> channel-presentation--records-fields
@@ -1021,16 +1037,148 @@ With LAY-OUT-P each record is laid out again for that width."
                     (presentation-record->wire presentation columns :lay-out-p lay-out-p))
                   presentations))))
 
+(-> presentation--validate-transport-shape (t) null)
+(defun presentation--validate-transport-shape (value)
+  "Check cycles and depth without copying an oversized rendered VALUE."
+  (let ((active (make-hash-table :test #'eq)))
+    (labels ((enter (item)
+               "Enter an active container without retaining completed subtrees."
+               (when (gethash item active)
+                 (error 'portable-value-error :reason ':cycle))
+               (setf (gethash item active) t))
+
+             (walk (item depth)
+               "Check ITEM at the transport mapper's structural DEPTH."
+               (when (> depth 128)
+                 (error 'portable-value-error :reason ':depth))
+               (cond
+                 ((consp item)
+                  (let ((tails nil))
+                    (unwind-protect
+                         (loop for tail = item then (rest tail)
+                               while (consp tail)
+                               do (enter tail)
+                                  (push tail tails)
+                                  (walk (first tail) (1+ depth))
+                               finally (walk tail depth))
+                      (dolist (tail tails) (remhash tail active)))))
+                 ((or (hash-table-p item) (and (vectorp item) (not (stringp item))))
+                  (enter item)
+                  (unwind-protect
+                       (if (hash-table-p item)
+                           (maphash (lambda (key value)
+                                      (walk key (1+ depth))
+                                      (walk value (1+ depth))) item)
+                           (map nil (lambda (value) (walk value (1+ depth))) item))
+                    (remhash item active))))))
+      (walk value 0)))
+  nil)
+
+(-> presentation--small-field-p (t) boolean)
+(defun presentation--small-field-p (value)
+  "Return whether VALUE fits bounded lifecycle metadata in an overflow notice."
+  (block nil
+    (handler-case
+        (progn
+          (portable-value-map
+           value (lambda (item child)
+                   (declare (ignore child))
+                   (unless (typep item '(or null integer keyword (eql t) character string))
+                     (return nil))
+                   (when (or (and (stringp item) (> (length item) 512))
+                             (and (symbolp item) (> (length (symbol-name item)) 512))
+                             (and (integerp item) (> (integer-length item) 64)))
+                     (return nil))
+                   item)
+           :maximum-nodes 256)
+          t)
+      (portable-value-error (condition)
+        (if (eq (portable-value-error-reason condition) ':nodes)
+            nil
+            (error condition))))))
+
+(-> presentation--overflow-record (list) list)
+(defun presentation--overflow-record (record)
+  "Replace oversized rendered content with a width-independent lifecycle notice."
+  (let* ((notice "[Rendered record exceeds the transport budget. Full content is retained in conversation history.]")
+         (metadata (list :body notice :annotations (list (list ':dim notice)))))
+    (dolist (key '(:entry-kind :kind :state :call-key :job-key :group :retain-output-p))
+      (let ((value (getf (third record) key)))
+        (when (presentation--small-field-p value)
+          (setf (getf metadata key) value))))
+    (list (first record) notice metadata)))
+
+(-> channel-presentation--record-cells
+    (channel-presentation list &key (:lay-out-p boolean) (:retention-group t)) list)
+(defun channel-presentation--record-cells (ui presentations &key lay-out-p retention-group)
+  "Partition PRESENTATIONS into replay cells accepted by the client transport.
+
+Check the publisher's cursor fields and the actual packet character limit.
+Split oversized batches; replace an oversized singleton's rendered content
+with a notice. Keep its source presentation for later layout and history."
+  (let ((records (getf (channel-presentation--records-fields
+                       ui presentations :lay-out-p lay-out-p)
+                      :presentations))
+        (group (or retention-group (list nil))))
+    (labels ((partition (records presentations)
+               "Return bounded cells for matching wire RECORDS and PRESENTATIONS."
+               (let* ((event (list :ui :operation ':records :presentations records))
+                      (split-p
+                        (handler-case
+                            (progn
+                              (image-daemon:daemon-packet-string
+                               (client-portable
+                                (append event (list :sequence most-positive-fixnum
+                                                    :record-sequence most-positive-fixnum))))
+                              nil)
+                          (portable-value-error (condition)
+                            (if (eq (portable-value-error-reason condition) ':nodes)
+                                t
+                                (error condition)))
+                          (image-daemon:daemon-error (condition)
+                            (if (eq (image-daemon:daemon-error-operation condition) ':write-packet)
+                                t
+                                (error condition))))))
+               (cond
+                 ((and split-p (null (rest records)))
+                  (presentation--validate-transport-shape event)
+                  (let ((notice (presentation--overflow-record (first records))))
+                    (image-daemon:daemon-packet-string
+                     (client-portable (list :ui :operation ':records :presentations (list notice)
+                                            :sequence most-positive-fixnum
+                                            :record-sequence most-positive-fixnum)))
+                    (let ((event (list :ui :operation ':records :presentations (list notice))))
+                      (list (list event (channel-presentation--record-weight event presentations)
+                                  presentations group)))))
+                 (split-p
+                  (let ((middle (floor (length records) 2)))
+                    (nconc (partition (subseq records 0 middle)
+                                      (subseq presentations 0 middle))
+                           (partition (nthcdr middle records)
+                                      (nthcdr middle presentations)))))
+                 (t
+                  (list (list event
+                              (channel-presentation--record-weight event presentations)
+                              presentations group)))))))
+      (when records
+        (partition records presentations)))))
+
 (-> channel-presentation--lay-out-log (channel-presentation) null)
 (defun channel-presentation--lay-out-log (ui)
-  "Lay the logged records out again at UI's width, for the client that attaches next."
-  (dolist (cell (deque->list (channel-presentation-transcript-log ui)))
-    (when (third cell)
-      (let* ((event  (list* :ui :operation ':records
-                            (channel-presentation--records-fields ui (third cell) :lay-out-p t)))
-             (weight (channel-presentation--record-weight event (third cell))))
-        (incf (channel-presentation-log-characters ui) (- weight (second cell)))
-        (setf (first cell) event (second cell) weight))))
+  "Rebuild replay cells at UI's width, splitting any that outgrow transport bounds."
+  (let* ((log (channel-presentation-transcript-log ui))
+         (cells
+           (loop for cell in (deque->list log)
+                 append (if (third cell)
+                          (channel-presentation--record-cells
+                           ui (third cell) :lay-out-p t
+                           :retention-group (channel-presentation--cell-group cell))
+                            (list cell)))))
+    (deque-clear log)
+    (setf (channel-presentation-log-characters ui) 0)
+    (dolist (cell cells)
+      (deque-push-back log cell)
+      (incf (channel-presentation-log-characters ui) (second cell))))
   (channel-presentation--trim-log ui))
 
 (defmethod terminal-ui-stream-update ((ui channel-presentation) &key rows tail)

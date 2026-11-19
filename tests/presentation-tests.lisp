@@ -312,6 +312,161 @@
                    "Growing a streamed block evicts older replay entries without waiting for a new entry.")))
   nil)
 
+(-> test-presentation-transport-batches () null)
+(defun test-presentation-transport-batches ()
+  "Exercise startup and resized replay across the real portable node boundary."
+  (flet ((layout (columns)
+           (loop repeat (if (<= columns 80) 15 100)
+                 collect (terminal-span ':tool "styled"))))
+    (dolist (columns '(80 418))
+      (let* ((*channel-presentation-log-character-limit* 1)
+             (ui (channel-presentation-create :rows 127 :columns columns))
+             (identifiers (loop for index below 250 collect (list ':synthetic index)))
+             (records
+               (loop for identifier in identifiers
+                     for entry = (layout columns)
+                     for origin = (list (list ':origin identifier) entry
+                                        (list :entry-kind ':tool-call :entry-layout #'layout))
+                     collect (list identifier entry
+                                   (list :entry-kind ':tool-result :entry-layout #'layout
+                                         :origin (list (list ':outer identifier) entry
+                                                       (list :entry-kind ':tool-call
+                                                             :entry-layout #'layout
+                                                             :origin origin))))))
+             (delivered nil))
+        (labels ((transport (event)
+                   "Convert and frame EVENT exactly as a sequenced publication."
+                   (let ((portable (client-portable
+                                    (append event (list :sequence 1 :record-sequence 250)))))
+                     (image-daemon:daemon-packet-string portable)
+                     portable))
+
+                 (record-identifiers (events)
+                   "Decode the ordered record identities from EVENTS."
+                   (loop for event in events
+                         when (eq (getf (rest event) :operation) ':records)
+                           append (mapcar (lambda (wire)
+                                            (first (presentation-wire->record wire)))
+                                          (getf (rest event) :presentations))))
+
+                 (replay ()
+                   "Transport the initial attach prefix and verify its full record order."
+                   (let ((events (mapcar #'transport (channel-presentation-replay ui))))
+                     (test-assert (and (eq (getf (rest (first events)) :operation) ':reset)
+                                       (eq (getf (rest (first (last events))) :operation) ':replayed)
+                                       (equal identifiers (record-identifiers events))
+                                       (equal (getf (channel-presentation--records-fields
+                                                     ui records :lay-out-p t)
+                                                    :presentations)
+                                              (loop for event in events
+                                                    when (eq (getf (rest event) :operation) ':records)
+                                                      append (getf (rest event) :presentations))))
+                                  "Attach replay transports every record in order before its terminator."))))
+          (setf (channel-presentation-publish-function ui)
+                (lambda (event) (push (transport event) delivered)))
+          (let ((rejected-p nil))
+            (handler-case
+                (transport (list* :ui :operation ':records
+                                  (channel-presentation--records-fields ui records)))
+              (portable-value-error (condition)
+                (setf rejected-p (eq (portable-value-error-reason condition) ':nodes))))
+            (test-assert (eq rejected-p (= columns 418))
+                         "The unsplit synthetic wide transcript crosses the actual 262144-node limit."))
+          (test-assert (= 250 (terminal-ui-present-records ui records))
+                       "Startup presents the whole transcript without a structural rejection.")
+          (test-assert (equal identifiers (record-identifiers (reverse delivered)))
+                       "Live transport preserves every startup record in order.")
+          (replay)
+          ;; A formerly small replay cell can grow past the bound at a new width.
+          (dolist (width '(418 80 418))
+            (channel-presentation-set-geometry ui :rows 127 :columns width)
+            (replay)
+            (test-assert (= (channel-presentation-log-characters ui)
+                            (loop for cell in (deque->list (channel-presentation-transcript-log ui))
+                                  sum (second cell)))
+                         "Resized replay partitions retain exact log accounting."))
+          (test-assert (zerop (terminal-ui-present-records ui records))
+                       "Resized replay retains finalized record identities.")
+          (terminal-ui-append-finalized ui ':after "next publication")
+          (test-assert (null (record-identifiers (channel-presentation-replay ui)))
+                       "Budget eviction removes the whole earlier logical publication.")))))
+  (multiple-value-bind (ui events) (presentation-tests--model)
+    (let ((cycle (list ':cycle)))
+      (setf (rest cycle) cycle)
+      (dolist (case (list (list ':cycle "invalid group" (list :group cycle))
+                         (list ':cycle
+                               (loop repeat 40000 collect (terminal-span ':tool "x"))
+                               (list :group cycle))
+                         (list ':depth "invalid depth"
+                               (list :group (loop with value = nil repeat 140
+                                                  do (setf value (list value))
+                                                  finally (return value))))))
+        (destructuring-bind (reason entry metadata) case
+          (let ((rejected-p nil))
+            (handler-case
+                (terminal-ui-present-records ui (list (list ':invalid entry metadata)))
+              (portable-value-error (condition)
+                (setf rejected-p (eq reason (portable-value-error-reason condition)))))
+            (test-assert (and rejected-p
+                              (not (terminal-ui--finalized-p ui ':invalid))
+                              (zerop (deque-count (channel-presentation-transcript-log ui)))
+                              (null (funcall events)))
+                         "An invalid individual record is rejected before publishing or finalizing it."))))))
+  (dolist (entry (list (loop repeat 40000 collect (terminal-span ':tool "x"))
+                      (make-string (1+ image-daemon:*daemon-packet-character-limit*)
+                                   :initial-element #\x)))
+    (let* ((ui (channel-presentation-create :rows 127 :columns 418))
+           (record (list '(:conversation "synthetic" 1) entry
+                         (list :entry-kind ':tool-result :kind ':result :state ':done
+                               :call-key '(:call "synthetic" "call")
+                               :entry-layout (lambda (columns)
+                                               (if (<= columns 80) "small rendering" entry)))))
+           (notice nil))
+      (labels ((wire-record ()
+                 "Transport and read the retained singleton."
+                 (let* ((events (mapcar (lambda (event)
+                                         (let ((portable (client-portable event)))
+                                           (image-daemon:daemon-packet-string portable)
+                                           portable))
+                                       (channel-presentation-replay ui)))
+                        (event (find ':records events
+                                     :key (lambda (event) (getf (rest event) :operation)))))
+                   (first (getf (rest event) :presentations)))))
+        (test-assert (= 1 (terminal-ui-present-records ui (list record)))
+                     "An oversized singleton does not prevent startup.")
+        (setf notice (wire-record))
+        (test-assert (and (equal (first record) (first notice))
+                          (stringp (second notice)) (< (length (second notice)) 512)
+                          (eq (getf (third notice) :kind) ':result)
+                          (eq (getf (third notice) :state) ':done)
+                          (equal (getf (third notice) :call-key) '(:call "synthetic" "call"))
+                          (equal (getf (third notice) :body) (second notice))
+                          (eq record (first (third (first (deque->list
+                                                         (channel-presentation-transcript-log ui)))))))
+                     "The bounded notice retains identity, outcome semantics and original source.")
+        (channel-presentation-set-geometry ui :rows 127 :columns 80)
+        (test-assert (equal (second (wire-record)) "small rendering")
+                     "A narrower replay restores the complete rendering from the retained source.")
+        (channel-presentation-set-geometry ui :rows 127 :columns 418)
+        (test-assert (equal notice (wire-record))
+                     "An oversized wider replay uses the same width-independent notice."))))
+  (let* ((*channel-presentation-log-character-limit* most-positive-fixnum)
+         (ui (channel-presentation-create :rows 127 :columns 418))
+         (text (make-string (floor image-daemon:*daemon-packet-character-limit* 2)
+                            :initial-element #\x))
+         (records (list (list ':first text nil) (list ':second text nil))))
+    (test-assert (= 2 (terminal-ui-present-records ui records))
+                 "A packet-size-only overflow splits the publication without replacing its records.")
+    (let ((wires nil))
+      (dolist (event (channel-presentation-replay ui))
+        (image-daemon:daemon-packet-string (client-portable event))
+        (when (eq (getf (rest event) :operation) ':records)
+          (setf wires (append wires (getf (rest event) :presentations)))))
+      (test-assert (and (= (length wires) 2)
+                        (every (lambda (wire) (equal (second wire) text)) wires))
+                   "Each full record survives packet-bounded replay without a notice.")))
+  nil)
+
 (-> presentation-tests--shown (terminal-ui string) (integer 0))
 (defun presentation-tests--shown (ui text)
   "Return how many rows of UI's frame show TEXT."

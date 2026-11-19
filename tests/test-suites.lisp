@@ -818,6 +818,7 @@
 (define-test-suite presentation
   test-presentation-wire-forms
   test-presentation-model-publishes
+  test-presentation-transport-batches
   test-presentation-applies
   test-presentation-pages-and-readers
   test-presentation-client)
