@@ -953,6 +953,7 @@ values from either side of a terminal transition."
         (with-lock-held ((task-progress-lock progress))
           (let ((now (get-internal-real-time)))
             (list :id            (session-job-identifier job)
+                  :channel       (session-job-execution-identifier job)
                   :type          ':task
                   :index         (session-job-order job)
                   :agent         (task-job-agent-name job)

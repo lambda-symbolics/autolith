@@ -214,6 +214,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-task-presentation-listener
     :type          (option function)
     :documentation "The exact task event callback removed during reconnection.")
+   (world-child-activities
+    :initform      nil
+    :accessor      application-world-child-activities
+    :type          list
+    :documentation "Live turns in child channels, guarded by the task presentation lock.")
    (input-controller
     :initform      nil
     :accessor      application-input-controller
@@ -668,6 +673,34 @@ A model this launch selected explicitly stays, as it does for any conversation."
                    (conversation-title (application-conversation application)))))))
   nil)
 
+(-> application--present-child-activities (application terminal-ui list) null)
+(defun application--present-child-activities (application ui activities)
+  "Combine spawned jobs and child-channel turns under the task presentation lock."
+  (let ((tasks (remove-if-not (lambda (activity) (eq (getf activity :type) ':task)) activities)))
+    (terminal-ui-set-agent-activities
+     ui (append tasks
+                (remove-if (lambda (activity)
+                             (find (getf activity :channel) tasks :test #'equal
+                                   :key (lambda (task) (getf task :channel))))
+                           (application-world-child-activities application)))))
+  nil)
+
+(-> application-set-world-child-activities (application list) null)
+(defun application-set-world-child-activities (application activities)
+  "Update the child-channel rows without changing this application's job ownership."
+  (let ((changed-p nil))
+    (with-lock-held ((application-task-presentation-lock application))
+      (unless (equal activities (application-world-child-activities application))
+        (setf (application-world-child-activities application) activities
+              changed-p t)
+        (let ((runtime (application-task-presentation-orchestrator application)))
+          (application--present-child-activities
+           application (application-ui application)
+           (when runtime (task-orchestrator-live-activities runtime))))))
+    (when changed-p
+      (application--wake-input-controller application)))
+  nil)
+
 (-> application--refresh-task-presentation-locked
     (application task-orchestrator)
     null)
@@ -679,10 +712,7 @@ A model this launch selected explicitly stays, as it does for any conversation."
                    (application-ui application))))
       (when (typep ui 'terminal-ui)
         (let ((activities (task-orchestrator-live-activities orchestrator)))
-          (terminal-ui-set-agent-activities
-           ui (remove-if-not (lambda (activity)
-                               (eq (getf activity :type) ':task))
-                             activities))
+          (application--present-child-activities application ui activities)
           (terminal-ui-set-command-activities
            ui (remove-if-not (lambda (activity)
                                (eq (getf activity :type) ':tool))
@@ -745,7 +775,7 @@ A model this launch selected explicitly stays, as it does for any conversation."
     (let ((ui (and (slot-boundp application 'ui)
                    (application-ui application))))
       (when (typep ui 'terminal-ui)
-        (terminal-ui-set-agent-activities ui nil)
+        (application--present-child-activities application ui nil)
         (terminal-ui-clear-command-activities ui)
         (terminal-ui-report-job-statuses ui nil))))
   nil)

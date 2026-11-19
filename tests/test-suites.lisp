@@ -768,6 +768,7 @@
 (define-test-suite world-server test-world-server-endpoint-recovery
  test-world-server-endpoint-precedence test-world-server-endpoint-escalation
  test-world-server-cold-channels test-world-server-child-maintenance
+  test-world-server-child-message-activity
   test-world-server-channel-permission-modes
  test-world-server-wake-channel test-world-server-stop-reason
  test-world-server-control-z-detach test-world-server-status-line

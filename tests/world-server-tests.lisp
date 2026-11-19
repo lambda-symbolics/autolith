@@ -469,6 +469,61 @@ Keep the override until the captured thread exits; replacement threads pass thro
                       "removal deletes the visited child's world channel")))))
   nil)
 
+(-> test-world-server-child-message-activity () null)
+(defun test-world-server-child-message-activity ()
+  "Show a reactivated child to its parent during messages from any sender."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (declare (ignore root))
+     (world-tests--persisted-conversation configuration "bactivityparent" 1000)
+     (world-tests--persisted-conversation configuration "bactivitypeer" 2000)
+     (world-tests--child-conversation configuration "bactivitykid" :root "bactivityparent"
+                                     :parent "bactivityparent" :name "helper" :role "general" :created-at 1500)
+     (world-reconcile-sessions configuration)
+     (localgroup-query-record (world-client-entry configuration) ':open
+                              (list :channel "bactivityparent" :switch-p t))
+     (let* ((parent  (world-host-application (world-server--find-host server "bactivityparent")))
+            (ui      (application-presentation parent))
+            (human   (world-human-participant (world-load configuration)))
+            (entered (sb-thread:make-semaphore))
+            (release (sb-thread:make-semaphore))
+            (run     (symbol-function 'application--run-turn)))
+       (flet ((activities ()
+                "Read the agent rows sent to presenting terminals."
+                (with-terminal-ui-locked (ui)
+                  (getf (channel-presentation-state ui ':agent-activities) :activities))))
+         (test-call-with-function-replacements
+          (list (list 'application--run-turn
+                      (lambda (application text &rest arguments)
+                        (if (equal "bactivitykid" (application-world--served-channel application))
+                            (progn
+                              (sb-thread:signal-semaphore entered)
+                              (sb-thread:wait-on-semaphore release :timeout 20)
+                              ':continue)
+                            (apply run application text arguments)))))
+          (lambda ()
+            (dolist (sender (list (participant-identifier human) "al-bactivityparent" "al-bactivitypeer"))
+              (test-assert (null (activities)) "An idle child has no activity row.")
+              (unwind-protect
+                   (progn
+                     (world-message-send configuration :sender sender :channel "bactivitykid"
+                                         :text "check child activity")
+                     (test-assert (sb-thread:wait-on-semaphore entered :timeout 20)
+                                  "The existing child starts the delivered turn.")
+                     (test-assert
+                      (task-tests--wait-until
+                       (lambda ()
+                         (let ((rows (activities)))
+                           (and (= (length rows) 1)
+                                (equal (getf (first rows) :agent) "helper")
+                                (eq (getf (first rows) :state) ':running))))
+                       10)
+                      "The parent receives one running child row without a spawn job."))
+                (sb-thread:signal-semaphore release))
+              (test-assert (task-tests--wait-until (lambda () (null (activities))) 10)
+                           "The row clears when the child finishes its turn."))))))))
+  nil)
+
 (-> test-world-server-wake-channel () null)
 (defun test-world-server-wake-channel ()
   "Test a message serves the unserved channel its agent resides in, and nothing else."

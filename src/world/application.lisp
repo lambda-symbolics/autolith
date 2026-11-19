@@ -1101,6 +1101,14 @@ channel's history is there for it to read."
                            (format nil "Agent ~A now lives in this channel." (participant-name agent)))
       agent)))
 
+(-> application-world-note-child-turn (application keyword) null)
+(defun application-world-note-child-turn (application kind)
+  "Refresh parent activity rows when a hosted agent starts or ends a turn."
+  (let ((server (application-world-server application)))
+    (when (and server (member kind *world-agent-turn-kinds*))
+      (world-server-note-child-activities server)))
+  nil)
+
 (-> application-world--agent-turn-active-p (application) boolean)
 (defun application-world--agent-turn-active-p (application)
   "Return true while APPLICATION's agent is in a turn rather than idle or running a command."

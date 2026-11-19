@@ -651,6 +651,47 @@ REASON, when given, is what each attached terminal is told before it lets go."
   (with-lock-held ((world-server-lock server))
     (copy-list (world-server-hosts server))))
 
+(-> world-server--refresh-child-activities (world-server) null)
+(defun world-server--refresh-child-activities (server)
+  "Publish current child-channel turns to their parent channels."
+  (let* ((hosts (remove-if-not #'world-host-live-p (world-server--hosts server)))
+         (world (when hosts (world-load (world-server-configuration server))))
+         (rows  (make-hash-table :test #'equal)))
+    (dolist (host hosts)
+      (let ((channel (world-host-channel host)))
+        (when (application-world--agent-turn-active-p (world-host-application host))
+          (let* ((agent  (find ':agent (world-channel-residents world channel) :key #'participant-kind))
+                 (parent (and agent (participant-parent agent))))
+            (when parent
+              (push (list :channel       channel
+                          :id            (conversation-identifier-display channel)
+                          :agent         (participant-name agent)
+                          :index         most-positive-fixnum
+                          :state         ':running
+                          :request-count 0
+                          :assignment    ""
+                          :detached      t)
+                    (gethash parent rows)))))))
+    (dolist (host hosts)
+      (let ((agent (find ':agent (world-channel-residents world (world-host-channel host))
+                         :key #'participant-kind)))
+        (application-set-world-child-activities
+         (world-host-application host)
+         (when agent (sort (gethash (participant-identifier agent) rows) #'string<
+                           :key (lambda (activity) (getf activity :channel))))))))
+  nil)
+
+(-> world-server-note-child-activities (world-server) null)
+(defun world-server-note-child-activities (server)
+  "Refresh on the server thread rather than entering another channel from a turn."
+  (world-server--enqueue
+   server (lambda ()
+            (handler-case (world-server--refresh-child-activities server)
+              (world-error (cause)
+                (warn 'world-session-warning
+                      :pathname (configuration-world-path (world-server-configuration server))
+                      :cause    cause))))))
+
 (-> world-server--wake (world-server) null)
 (defun world-server--wake (server)
   "Wake SERVER's main thread and every waiter."
@@ -1772,7 +1813,9 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
         (when (eq (world-startup-host startup) host)
           (setf (getf (world-startup-timings startup) :endpoint-ready-at) (get-internal-real-time))))
       (sb-thread:condition-broadcast (world-server-condition-variable server)))
-    (when closing-p (world-server--close-host host)))
+    (if closing-p
+        (world-server--close-host host)
+        (world-server-note-child-activities server)))
   nil)
 
 (-> world-server--note-failure (world-server world-host condition) null)

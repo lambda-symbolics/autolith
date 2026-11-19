@@ -620,6 +620,7 @@ controller's exit reason."
                                      (progn
                                        (unwind-protect
                                             (progn
+                                               (application-world-note-child-turn application (first work))
                                               (application-input-controller--run-work
                                                input-controller work)
                                               (when
@@ -628,8 +629,9 @@ controller's exit reason."
                                                 (error
                                                  (make-condition
                                                   'application-turn-cancelled))))
-                                         (application-input-controller--finish-work
-                                          input-controller))
+                                          (unwind-protect
+                                               (application-input-controller--finish-work input-controller)
+                                            (application-world-note-child-turn application (first work))))
                                        (application--finish-checkpoint-restart
                                         application))
                                  (application-turn-cancelled ()
