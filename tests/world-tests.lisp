@@ -1083,42 +1083,84 @@
                      "all reconciled names are mentionable handles"))))
   nil)
 
-(-> test-world-initial-names () null)
-(defun test-world-initial-names ()
-  "Test a new agent starts with a readable handle that only an explicit rename replaces."
+(-> test-world-agent-names () null)
+(defun test-world-agent-names ()
+  "Test an agent's starting handle, and what may replace it: an explicit name always, an inferred one once."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
-      (declare (ignore human))
-      (test-assert (and (eq (participant-name-source first-agent) ':initial)
-                        (world-handle-p (participant-name first-agent))
-                        (not (search "first1" (participant-name first-agent) :test #'char-equal))
-                        (string/= (participant-name first-agent) (participant-name second-agent)))
-                   "agents start with readable handles of their own, not their channel identifiers")
-      (test-assert (and (string= (prezdivka:name-for "bfirst1") (prezdivka:name-for "bfirst1"))
-                        (= 2 (length (uiop:split-string (prezdivka:name-for "bfirst1")
-                                                        :separator "-"))))
-                   "a channel always derives the same two-word handle")
-      (let ((renamed (world-participant-rename configuration (participant-identifier first-agent)
-                                               "chosen-name")))
-        (test-assert (and (equal (participant-name renamed) "chosen-name")
-                          (eq (participant-name-source renamed) ':explicit))
-                     "an explicit rename replaces the initial handle"))
-      (test-assert (handler-case
-                       (progn
-                         (world-participant-rename configuration (participant-identifier second-agent)
-                                                   "Chosen-Name")
-                         nil)
-                     (world-error ()
-                       t))
-                   "a name another participant has, whatever its case, is refused")
-      (let ((inferred (world--record->participant
-                       #P"world.sexp"
-                       (world--participant-record
-                        (world--copy-participant second-agent :name "inferred" :name-source ':generated)))))
-        (test-assert (eq (participant-name-source inferred) ':generated)
-                     "records of an older world keep the provenance of an inferred name"))))
+      (let ((first-id  (participant-identifier first-agent))
+            (second-id (participant-identifier second-agent))
+            (long-name (make-string *world-handle-limit* :initial-element #\a)))
+        (test-assert (and (eq (participant-name-source first-agent) ':initial)
+                          (world-handle-p (participant-name first-agent))
+                          (not (search "first1" (participant-name first-agent) :test #'char-equal))
+                          (string/= (participant-name first-agent) (participant-name second-agent)))
+                     "agents start with readable handles of their own, not their channel identifiers")
+        (test-assert (and (string= (prezdivka:name-for "bfirst1") (prezdivka:name-for "bfirst1"))
+                          (= 2 (length (uiop:split-string (prezdivka:name-for "bfirst1")
+                                                          :separator "-"))))
+                     "a channel always derives the same two-word handle")
+        (let ((renamed (world-participant-rename configuration second-id long-name)))
+          (test-assert (and (equal (participant-name renamed) long-name)
+                            (eq (participant-name-source renamed) ':explicit))
+                       "an explicit rename replaces the starting handle"))
+        (test-assert (handler-case
+                         (progn
+                           (world-participant-rename configuration first-id (string-upcase long-name))
+                           nil)
+                       (world-error ()
+                         t))
+                     "an explicit name another participant has, whatever its case, is refused")
+        (let ((unchanged (world-participant-rename configuration second-id "inferred-name"
+                                                   :source             ':generated
+                                                   :expected-residence "bsecnd2")))
+          (test-assert (and (equal (participant-name unchanged) long-name)
+                            (eq (participant-name-source unchanged) ':explicit))
+                       "an inferred name never replaces an explicit one"))
+        (let ((inferred (world-participant-rename configuration first-id long-name
+                                                  :source             ':generated
+                                                  :expected-residence "bfirst1")))
+          (test-assert (and (eq (participant-name-source inferred) ':generated)
+                            (not (string-equal (participant-name inferred) long-name))
+                            (world-handle-p (participant-name inferred)))
+                       "an inferred name another participant has is numbered within the handle limit")
+          (test-assert (equal (participant-identifier
+                               (world-participant-designated (world-load configuration)
+                                                             (participant-name inferred)))
+                              first-id)
+                       "the inferred handle is at once the one mentions use")
+          (let ((replayed (world--record->participant
+                           #P"world.sexp" (world--participant-record inferred))))
+            (test-assert (and (eq (participant-name-source replayed) ':generated)
+                              (equal (participant-name replayed) (participant-name inferred)))
+                         "world records keep an inferred name and where it came from"))
+          (test-assert (equal (participant-name
+                               (world-participant-rename configuration first-id "another-name"
+                                                         :source             ':generated
+                                                         :expected-residence "bfirst1"))
+                              (participant-name inferred))
+                       "an agent is named for its work once"))
+        (let* ((workspace   (namestring (config :working-directory configuration)))
+               (destination (world-channel-create configuration
+                                                  :owner     (participant-identifier human)
+                                                  :workspace workspace))
+               (moving      (world-participant-create configuration
+                                                      :kind        ':agent
+                                                      :name        "moving-agent"
+                                                      :name-source ':initial
+                                                      :home        (list :workspace workspace)))
+               (residence   (participant-residence moving)))
+          (world-participant-move configuration (participant-identifier moving)
+                                  (channel-identifier destination))
+          (let ((unchanged (world-participant-rename configuration (participant-identifier moving)
+                                                     "new-task-name"
+                                                     :source             ':generated
+                                                     :expected-residence residence)))
+            (test-assert (and (equal (participant-name unchanged) "moving-agent")
+                              (eq (participant-name-source unchanged) ':initial))
+                         "a name inferred in one channel does not follow an agent that moved to another"))))))
   nil)
 
 (-> test-world-composer-mentions () null)

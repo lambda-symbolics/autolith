@@ -1478,14 +1478,18 @@ and transfer failures are 1. Both command groups provide =--help=.
 ** Session titles and resume
 
 A session gets an immediate local title from its first prompt or image. Its agent
-starts with a readable two-word name, such as =hygienic-macro=, and keeps it: only
-=(rename "NAME")= changes an agent's name, so a mention never goes stale while a
-conversation is underway. After the third actual user turn, Autolith may ask the
-active model for a concise title, which is saved durably. =(channel-id)= shows
-the ID of the channel the terminal is in, and returns it when called from Lisp.
+starts with a readable two-word name, such as =hygienic-macro=. After the third
+actual user turn, Autolith may ask the active model for a concise title. The
+same inference gives the agent a name that describes its work, once the agent
+has worked for three user turns or 25 tool calls, whichever comes first. Both
+are saved durably. Automatic naming replaces only the starting name, and only
+once. Use =(rename "NAME")= to assign a name yourself; a name you assigned is
+never replaced. =(channel-id)= shows the ID of the channel the terminal is in,
+and returns it when called from Lisp.
 
-Provider-generated refreshes are enabled by default. Use =(titles)=, =(titles t)=,
-or =(titles nil)= to inspect or change the durable global preference.
+Provider-generated titles and names are enabled by default. Use =(titles)=,
+=(titles t)=, or =(titles nil)= to inspect or change the durable global
+preference.
 
 =(open)= picks a channel: the inbox, then each workspace's channels by their
 agents' names, children under their parents. Type to search; the Delete key

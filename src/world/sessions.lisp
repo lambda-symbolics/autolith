@@ -724,9 +724,8 @@ parent is never left behind its retired children."
   "Return the readable handle the agent of channel IDENTIFIER starts with, one no participant of WORLD has.
 
 The channel fixes the handle, so it is the same on every call while it is
-free. An agent keeps it until someone renames it, so a mention never goes
-stale while a conversation is underway. SEEN lists handles a batch already
-gave out."
+free. An agent keeps it until it is named for its work or someone renames
+it. SEEN lists handles a batch already gave out."
   (prezdivka:unique-name
    identifier
    (lambda (name)

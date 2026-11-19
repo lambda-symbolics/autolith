@@ -1908,7 +1908,7 @@
      (let* ((agent          (application-agent application))
             (primary        (agent-test-result "extension" (list (agent-test-message "Extension result."))))
             (note-original  (symbol-function 'application--note-goal-turn))
-            (title-original (symbol-function 'application--maybe-refresh-conversation-title)))
+            (title-original (symbol-function 'application--maybe-name-session)))
        (change-class agent 'compaction-owner-values-agent :return-values nil)
        (dolist (returned (list nil (list primary) (list primary :secondary)))
          (setf (slot-value agent 'return-values) returned)
@@ -1918,8 +1918,10 @@
                         (lambda (owner value)
                           (setf noted value)
                           (when value (funcall note-original owner value))))
-                  (list 'application--maybe-refresh-conversation-title
-                        (lambda (owner) (incf titles) (funcall title-original owner))))
+                  (list 'application--maybe-name-session
+                        (lambda (owner &rest arguments)
+                          (incf titles)
+                          (apply title-original owner arguments))))
             (lambda ()
               (handler-case (setf result (multiple-value-list (application--run-turn application "Extension input.")))
                 (error (condition) (setf failure condition)))))
@@ -1956,7 +1958,7 @@
 (-> test-compaction-owner-finalization-errors () null)
 (defun test-compaction-owner-finalization-errors ()
   "Keep goal, title and terminal presentation failures outside the inference refusal catch."
-  (dolist (target '(application--note-goal-turn application--maybe-refresh-conversation-title application-render-records))
+  (dolist (target '(application--note-goal-turn application--maybe-name-session application-render-records))
     (compaction-owner-test--fixture
      (lambda (application provider)
        (declare (ignore provider))
