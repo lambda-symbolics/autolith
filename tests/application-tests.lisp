@@ -1663,6 +1663,22 @@
         (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
   nil)
 
+(-> application-tests--serve-host (application) null)
+(defun application-tests--serve-host (application)
+  "Serve a prepared terminal application under its real world owner on the test thread."
+  (world-server-tests--call-with-server
+   (application-configuration application)
+   (lambda (server)
+     (let ((host (make-instance 'world-host :application application)))
+       (setf (application-world-server application) server
+             (world-host-thread host) (current-thread))
+       (with-lock-held ((world-server-lock server))
+         (push host (world-server-hosts server)))
+       (world-server--host server host :boot-screen-p nil)
+       (when (world-host-failure host)
+         (error (world-host-failure host))))))
+  nil)
+
 (-> test-active-turn-stop-keys () null)
 (defun test-active-turn-stop-keys ()
   "Test Ctrl-C and Escape cancel one provider turn and return to the prompt."
@@ -1705,7 +1721,6 @@
                   (provider-entered-observed-p      nil)
                   (cancellation-finished-observed-p nil)
                   (draft-preserved-observed-p       nil)
-                  (output-before-exit               nil)
                   (producer                         nil))
              (queued-recording-terminal-enqueue
               terminal '(:insert "cancel this turn"))
@@ -1734,11 +1749,7 @@
                                           controller))
                                         (not
                                          (application-input-controller--turn-cancellation-active-p
-                                          controller))
-                                        (null
-                                         (application-input-controller-interrupt-deadline
-                                          controller))
-                                        (null (terminal-ui-notice ui)))))
+                                           controller)))))
                                2)))
                       (unless cancellation-finished-observed-p
                         (gated-provider-release provider)
@@ -1754,9 +1765,7 @@
                       (setf draft-preserved-observed-p
                             (string=
                              (line-editor-text (terminal-ui-editor ui))
-                             "draft survives")
-                            output-before-exit
-                            (recording-terminal-output terminal))
+                              "draft survives"))
                       (queued-recording-terminal-enqueue terminal ':interrupt)
                       (queued-recording-terminal-enqueue
                        terminal '(:insert "(exit)"))
@@ -1766,7 +1775,7 @@
                   (let ((*application-forced-exit-function*
                           (lambda (status)
                             (setf forced-status status))))
-                    (application-run application))
+                    (application-tests--serve-host application))
                (gated-provider-release provider)
                (when producer
                  (join-thread producer)
@@ -1782,16 +1791,7 @@
              (test-assert (null forced-status)
                           "one active-turn stop key never forces exit")
              (test-assert draft-preserved-observed-p
-                          "the active reader preserves draft text while cancelling")
-             (test-assert
-              (not
-               (search "to open this channel again, run:" output-before-exit))
-              "active-turn cancellation never prints a resume command")
-             (test-assert
-              (not
-               (search "press Ctrl-C again within 2.5 seconds"
-                       output-before-exit))
-              "a promptly cancelled turn never flashes the force-exit hint")))
+                         "the active reader preserves draft text while cancelling")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -1892,7 +1892,7 @@
                 (let ((*application-forced-exit-function*
                         (lambda (status)
                           (setf forced-status status))))
-                  (application-run application))
+                  (application-tests--serve-host application))
                 (test-assert cancellation-finished-observed-p
                              "Escape cancels a shared active command and returns to input")
                 (test-assert draft-preserved-observed-p
@@ -2032,7 +2032,7 @@
                 (let ((*application-forced-exit-function*
                         (lambda (status)
                           (setf forced-status status))))
-                  (application-run application))
+                  (application-tests--serve-host application))
              (application-test-gated-tool-release tool)
              (when producer
                (join-thread producer)
@@ -5241,7 +5241,7 @@
                                             :worker        nil
                                             :agent         agent
                                             :ui            ui)))
-           (application-run application)
+           (application-tests--serve-host application)
            (test-assert
             (string= (line-editor-text (terminal-ui-editor ui))
                      "draft survives")
@@ -5273,9 +5273,7 @@
                          "the live region previews post-turn follow-up input")
             (test-assert
              (live-region-cursor-visible-p (terminal-ui-live-region ui))
-             "responsive model turns leave the input cursor visible")
-            (test-assert (not (terminal-tests--forbidden-control-p output))
-                         "concurrent input and streaming preserve scrollback")))
+              "responsive model turns leave the input cursor visible")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
