@@ -130,17 +130,17 @@ across changed snapshots and is not reset by retries or restarts."
                  :name "reviewer" :source ':programmatic
                  :description  "Independent mission checkpoint reviewer"
                  :instructions "Review only the supplied independent context. Identify concrete findings with stable unique IDs, severity, confidence and evidence. Findings are advice. Do not claim harness acceptance. Return a concise plain-text review with findings and summary."
-                 :tools nil :spawns nil :models (getf policy :models))
+                 :tools nil :spawns nil :models (getf policy :models)))
 
 (-> mission-review--run-task (mission-context list &key (:run list) (:background string) (:tool-context tool-context)) list)
 (defun mission-review--run-task (context policy &key run background tool-context)
-  "Invoke one actual contracted task under existing delegation and permissions."
+  "Run one independent review under existing delegation and permissions."
   (let* ((parent     (tool-context-agent tool-context))
          (runtime    (tool-context-execution-runtime tool-context))
-           (definition (mission-review--definition policy))
-           (item       (list :name (format nil "review-~A" (getf policy :id))
-                              :agent "reviewer" :context background
-                              :task "Perform the configured independent review. Return a concise plain-text review with findings and summary.")))
+         (definition (mission-review--definition policy))
+         (item       (list :name (format nil "review-~A" (getf policy :id))
+                           :agent "reviewer" :context background
+                           :task "Perform the configured independent review. Return a concise plain-text review with findings and summary.")))
     (unless (and (typep parent 'agent) (not (typep parent 'task-child-agent)))
       (mission--reject ':review-authority "Only the primary agent may request mission review."))
     (unless (typep runtime 'task-orchestrator)
@@ -172,7 +172,7 @@ across changed snapshots and is not reset by retries or restarts."
                    (with-open-file (stream path :external-format ':utf-8)
                      (let ((*read-eval* nil)) (read stream)))
                    result)))
-          (unless finished-p (task-run--cancel-synchronous-jobs jobs)))))))
+        (unless finished-p (task-run--cancel-synchronous-jobs jobs))))))
 
 (-> mission-review--findings (list) list)
 (defun mission-review--findings (result)
