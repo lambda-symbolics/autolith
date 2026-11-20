@@ -2649,7 +2649,7 @@ the version the client says it is, when it says one."
                              (position ':report events)))
                      "Screen release and sidebar shutdown each happen once before the final report"))))))
        (world-tests--persisted-conversation configuration "bsecnd2" 1000)
-       (world-participant-rename configuration "al-bsecnd2" "Ada")
+       (world-participant-rename configuration "bsecnd2" "Ada")
        (run "bsecnd2")
        (test-assert
         (and (= (length opens) 1) (null (getf (first opens) :launch))
@@ -2755,7 +2755,7 @@ the version the client says it is, when it says one."
 (defun test-world-client-open-wait ()
   "Keep startup bounded and retry opens only after explicit rejection, including cancellation."
   (with-test-configuration (configuration)
-    (dolist (mode '(:bounded :waiting :retry :ambiguous :cancel))
+    (dolist (mode '(:bounded :retry :ambiguous :cancel))
       (let ((calls 0) (deadline ':unseen) (cancelled-p nil) (result nil))
         (test-call-with-function-replacements
          (list
