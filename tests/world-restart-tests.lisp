@@ -229,8 +229,7 @@ skips the repository check."
                           :direction ':output :if-exists ':supersede
                           :external-format ':utf-8)
     (write-string "(setf (config :onboarding-p) nil
-      (config :telemetry-enabled-p) nil
-      *localgroup-first-attach-timeout-seconds* 0.2)
+        (config :telemetry-enabled-p) nil)
 (defmethod platform-supports-p :around (platform (capability (eql :restartable-image-saver)))
   (declare (ignore platform))
   t)

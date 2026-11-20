@@ -151,7 +151,7 @@ Each transcript event takes a line of its own."
 (-> test-localgroup-stop-retry () null)
 (defun test-localgroup-stop-retry ()
   "Attempt independent cleanup stages and retain endpoint ownership for retry."
-  (dolist (failing-stage '(:watchdog :runtime :registry))
+  (dolist (failing-stage '(:runtime :registry))
     (let* ((application (make-instance 'application))
            (session     (make-instance 'localgroup-session :application application))
            (cause       (make-condition 'simple-error :format-control "cleanup failed"))
@@ -163,9 +163,7 @@ Each transcript event takes a line of its own."
                (when (and fail-p (eq stage failing-stage))
                  (error cause))))
         (test-call-with-function-replacements
-         (list (list 'image-daemon:daemon-stop-thread
-                     (lambda (thread) (declare (ignore thread)) (attempt ':watchdog)))
-               (list 'image-daemon:daemon-runtime-stop
+         (list (list 'image-daemon:daemon-runtime-stop
                      (lambda (runtime) (declare (ignore runtime)) (attempt ':runtime)))
                (list 'localgroup--delete-owned-registry
                      (lambda (runtime) (declare (ignore runtime)) (attempt ':registry))))
@@ -175,14 +173,14 @@ Each transcript event takes a line of its own."
              (test-assert
               (and (typep failure 'localgroup-stop-error)
                    (eq session (application-localgroup-session application))
-                   (equal (reverse attempts) '(:watchdog :runtime :registry))
+                    (equal (reverse attempts) '(:runtime :registry))
                    (eq cause (second (first (localgroup-stop-error-failures failure)))))
               "cleanup preserves the original stage failure, attempts every stage, and retains ownership"))
            (setf fail-p nil attempts nil)
            (localgroup-stop application)
            (test-assert
             (and (null (application-localgroup-session application))
-                 (equal (reverse attempts) '(:watchdog :runtime :registry)))
+                  (equal (reverse attempts) '(:runtime :registry)))
             "retry completes owned cleanup before releasing the application slot"))))))
   nil)
 

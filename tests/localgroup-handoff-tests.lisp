@@ -306,7 +306,7 @@ With PERSISTED-P its conversation holds a message."
                             configuration (second (first launches)))))
                (test-assert
                 (null (getf (rest record) :attach-expected-p))
-                "an explicit detached spawn disables the first-attach watchdog")))
+                "an explicitly detached spawn does not expect a terminal")))
            (let* ((*localgroup-startup-record*
                     '(:localgroup-handoff
                       :rows 41 :columns 93 :styled-p t))

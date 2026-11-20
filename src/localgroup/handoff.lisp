@@ -361,7 +361,7 @@ CONVERSATION-ID resumes that conversation instead of starting a fresh
 one, PICK-CHANNEL-P lets the session pick one itself through the
 attached terminal, and RECOVERY-DIAGNOSIS preserves crash diagnosis
 across the client-first launch. When ATTACH-EXPECTED-P is false, the
-session is explicitly detached and its first-attach watchdog is disabled.
+session is explicitly detached.
 With WORLD-P the process is a world server instead of one session, and
 the identifier returned is the world endpoint's. Call READY-FUNCTION,
 when supplied, with the ready identifier before releasing startup
