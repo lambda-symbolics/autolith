@@ -1150,28 +1150,101 @@ request it conflicts with from one that says nothing."
   (format nil "could not switch to ~A: ~A"
           (conversation-identifier-display identifier) condition))
 
+(-> main--call-with-channel-wait (localgroup-screen function) t)
+(defun main--call-with-channel-wait (screen function)
+  "Wait for one interactive switch on its owner while a scoped pump serves the terminal.
+
+Escape and Ctrl-C unwind the request through normal transport cleanup. The
+pump is joined before returning; queued interrupts check their retired scope."
+  (let* ((terminal    (localgroup-screen-terminal screen))
+         (owner       (current-thread))
+         (lock        (make-lock "Autolith channel switch wait"))
+         (active-p    t)
+         (cancelled-p nil)
+         (resized-p   nil)
+         (watch       nil)
+         (pump        nil))
+    (labels ((active-p ()
+               (with-lock-held (lock) active-p))
+
+             (cancelled-p ()
+               (with-lock-held (lock) cancelled-p))
+
+             (wake-owner (condition)
+               (interrupt-thread owner
+                                 (lambda ()
+                                   (when active-p
+                                     (error condition)))))
+
+             (serve-terminal ()
+               (handler-case
+                   (loop while (active-p)
+                         do (when (terminal-input-ready-p terminal)
+                              (when (member (terminal-read-event terminal)
+                                            '(:escape :interrupt :abort :detach :eof))
+                                (with-lock-held (lock) (setf cancelled-p t))
+                                (wake-owner (make-condition 'localgroup-client-cancelled
+                                                            :operation ':switch
+                                                            :message "Channel switch cancelled."))
+                                (return)))
+                            (when (with-lock-held (lock) (shiftf resized-p nil))
+                              (multiple-value-bind (rows columns) (terminal-current-size)
+                                (terminal-set-dimensions terminal columns :rows rows))
+                              (localgroup-screen-resized screen))
+                            (localgroup-screen-tick screen)
+                            (sleep 0.025))
+                 (error (condition)
+                   (wake-owner condition)))))
+      (handler-case
+          (unwind-protect
+               (let ((*localgroup-client-cancelled-p* #'cancelled-p)
+                     (image-daemon:*daemon-connect-timeout-seconds* nil))
+                 (setf watch (platform-watch-terminal-resize
+                              *platform* (lambda ()
+                                           (with-lock-held (lock) (setf resized-p t))))
+                       pump (make-thread #'serve-terminal :name "Autolith channel switch terminal"))
+                 (multiple-value-prog1 (funcall function)
+                   (localgroup-client-check-cancellation)))
+            (with-lock-held (lock) (setf active-p nil))
+            (when pump (join-thread pump))
+            (when watch
+              ; mallet:suppress no-ignore-errors -- releasing the watch must not mask the switch result
+              (ignore-errors (platform-unwatch-terminal-resize *platform* watch))))
+        (error (condition)
+          (if (cancelled-p)
+              (error 'localgroup-client-cancelled :operation ':switch :message "Channel switch cancelled.")
+              (error condition)))))))
+
 (-> main--call-with-channel-loading
     (localgroup-screen string function
-     &key (:start-p boolean) (:boot-p boolean) (:agent-name (option string))) t)
-(defun main--call-with-channel-loading (screen title function &key start-p boot-p agent-name)
-  "Call FUNCTION while displaying its channel-opening milestones and AGENT-NAME on SCREEN."
-  (localgroup-screen-show-loading screen title :start-p start-p :boot-p boot-p :agent-name agent-name)
-  (handler-bind
-      ((channel-loading-progress
-         (lambda (progress)
-           (localgroup-screen-show-loading
-            screen title :step        (channel-loading-progress-step progress)
-                         :description (channel-loading-progress-description progress)
-                         :agent-name  agent-name))))
-    (funcall function)))
+     &key (:start-p boolean) (:boot-p boolean) (:agent-name (option string)) (:cancellable-p boolean)) t)
+(defun main--call-with-channel-loading
+    (screen title function &key start-p boot-p agent-name cancellable-p)
+  "Call FUNCTION with loading milestones, optionally serving a cancellable switch wait."
+  (flet ((description (text)
+           (if cancellable-p (format nil "~A (Esc: return)" text) text)))
+    (localgroup-screen-show-loading screen title :start-p start-p :boot-p boot-p
+                                                :agent-name agent-name
+                                                :description (description "Connecting to world"))
+    (handler-bind
+        ((channel-loading-progress
+           (lambda (progress)
+             (localgroup-client-check-cancellation)
+             (localgroup-screen-show-loading
+              screen title :step        (channel-loading-progress-step progress)
+                           :description (description (channel-loading-progress-description progress))
+                           :agent-name  agent-name))))
+      (if cancellable-p
+          (main--call-with-channel-wait screen function)
+          (funcall function)))))
 
 (-> main--attach-world-channel
     (configuration string keyword
      &key (:screen localgroup-screen) (:notice (option string)) (:client-version (option string))
-          (:attached-function (option function)))
+          (:attached-function (option function)) (:wait-p boolean))
     list)
 (defun main--attach-world-channel
-    (configuration identifier mode &key screen notice client-version attached-function)
+    (configuration identifier mode &key screen notice client-version attached-function wait-p)
   "Show channel IDENTIFIER on SCREEN until this terminal leaves it, and return why it left.
 
 The terminal follows the channel as a client that renders it: a view applies
@@ -1184,6 +1257,9 @@ still shows the boot panel keeps it until the user starts the session."
                     :notice            notice
                     :client-version    client-version
                     :boot-p            (not (null (localgroup-screen-boot-ui screen)))
+                    :wait-function     (when wait-p
+                                         (lambda (function)
+                                           (main--call-with-channel-wait screen function)))
                     :attached-function attached-function))
 
 (-> main--welcome-agent-counts (world string) (values integer integer))
@@ -1342,7 +1418,7 @@ still shows the boot panel keeps it until the user starts the session."
         &key (permission-mode ':ask) immutable-p conversation-id (attachment-mode ':control)
         pick-channel-p inbox-p latest-p welcome-p recovery-diagnosis launch)
   "Serve one terminal across channel switches, committing navigation after attachment acknowledgment.
-Discovery, endpoint refresh and the attach handshake share a bounded switch transaction.
+Interactive switches wait for discovery and attachment until completion or cancellation.
 A failed switch restores its source, or reports a disconnected terminal if that source disappeared.
 Return success and bounded secondary cleanup metadata without replacing a primary condition or exit."
   (let* ((panel            (world-sidebar-create configuration))
@@ -1401,6 +1477,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                           :screen screen :notice
                                                           (shiftf notice nil) :client-version
                                                           (shiftf client-version nil)
+                                                          :wait-p switching-p
                                                           :attached-function
                                                           (lambda ()
                                                             (setf (world-sidebar-current panel)
@@ -1467,6 +1544,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                      :permission-mode permission-mode
                                                      :immutable-p     immutable-p
                                                      :switch-p        (not (null target))))
+                                :cancellable-p t
                                 :agent-name (when target (world-sidebar-agent-name panel target))))
                             (setf origin left switching-p t))
                            (error (condition)

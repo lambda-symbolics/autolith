@@ -150,8 +150,8 @@
                 (push arguments opened)
                 (values identifier started-p)))
         (list 'channel-view-run
-              (lambda (view &key attached-function notice client-version boot-p)
-                (declare (ignore notice client-version boot-p))
+                (lambda (view &key attached-function notice client-version boot-p wait-function)
+                  (declare (ignore notice client-version boot-p wait-function))
                 (let ((channel (channel-subscription-identifier view)))
                   (test-assert (member channel (list identifier "c6uouHJ") :test #'string=)
                                "the client attaches to the channel the server opened")

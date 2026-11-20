@@ -866,16 +866,17 @@ leaves the channel running and gives the terminal back."
 
 (-> channel-view-run
     (channel-view &key (:attached-function (option function)) (:notice (option string))
-                  (:client-version (option string)) (:boot-p boolean))
+                  (:client-version (option string)) (:boot-p boolean) (:wait-function (option function)))
     list)
-(defun channel-view-run (view &key attached-function notice client-version boot-p)
+(defun channel-view-run (view &key attached-function notice client-version boot-p wait-function)
   "Attach VIEW to its channel and serve its terminal until it ends, returning why.
 
 The result is what the client's main loop reads: (:SWITCH :SESSION-ID ID) to
 move to another channel, (:ATTACHMENT-LOST ...) when the channel went away,
 the exited channel's (:STATUS N :MESSAGE TEXT :DETAILS PLIST), or NIL after a
 detach, which leaves the channel running. ATTACHED-FUNCTION is called once
-the channel accepted the view.
+the channel accepted the view. WAIT-FUNCTION, when supplied, calls an attachment
+thunk while the caller serves its cancellable loading screen.
 NOTICE and a CLIENT-VERSION that differs from the server's are shown below
 the transcript once the channel has replayed it. With BOOT-P the client's boot screen stays until the user
 starts the session."
@@ -891,7 +892,9 @@ starts the session."
     (unwind-protect
          (progn
            (setf (channel-view-notes view) (list :notice notice :client-version client-version))
-           (channel-subscription-attach view)
+           (if wait-function
+               (funcall wait-function (lambda () (channel-subscription-attach view)))
+               (channel-subscription-attach view))
            (unless (channel-view--server-version view)
              (channel-view--present-notes view))
            ;; The terminal reads keys one at a time from here on, and says when its size changes.

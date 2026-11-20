@@ -787,6 +787,7 @@
  test-world-server-person-unread test-world-server-open-before-checkpoint
  test-world-client-joins-winner test-world-client-switch-navigates
  test-world-client-refusal-ends-start test-world-client-switch-failures
+ test-world-client-switch-wait test-world-client-open-wait
  test-world-host-health
  test-world-host-cleanup-retry
  test-localgroup-client-accepted-setup-failure

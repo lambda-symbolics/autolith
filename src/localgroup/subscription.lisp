@@ -145,20 +145,23 @@
 
 (-> channel-subscription--connect (channel-subscription) localgroup-client-connection)
 (defun channel-subscription--connect (subscription)
-  "Find SUBSCRIPTION's channel and connect to it within one handshake deadline.
+  "Find SUBSCRIPTION's channel with a bounded handshake, or a cancellable switch wait.
 
 An endpoint that was replaced while this client connected is discovered again
 and tried once. No channel command has been sent by then."
   (let ((identifier (channel-subscription-identifier subscription))
-        (deadline   (+ (get-internal-real-time)
-                       (ceiling (* internal-time-units-per-second
-                                   image-daemon:*daemon-connect-timeout-seconds*)))))
+        (deadline   (when image-daemon:*daemon-connect-timeout-seconds*
+                      (+ (get-internal-real-time)
+                         (ceiling (* internal-time-units-per-second
+                                     image-daemon:*daemon-connect-timeout-seconds*))))))
     (flet ((discover ()
              "Find the channel's endpoint in what is left of the deadline."
+             (localgroup-client-check-cancellation)
              (handler-case
                  (sb-sys:with-deadline
-                     (:seconds (max 0 (/ (- deadline (get-internal-real-time))
-                                         internal-time-units-per-second)))
+                    (:seconds (and deadline
+                                   (max 0 (/ (- deadline (get-internal-real-time))
+                                             internal-time-units-per-second))))
                    (localgroup--find-record (channel-subscription-configuration subscription)
                                             identifier))
                (sb-sys:deadline-timeout (condition)
@@ -170,20 +173,24 @@ and tried once. No channel command has been sent by then."
 
            (connect (entry)
              "Subscribe to the channel at ENTRY."
+             (localgroup-client-check-cancellation)
              (localgroup-client-connect
               entry
               :name           (channel-subscription-name subscription)
               :approves-p     (channel-subscription-approves-p subscription)
               :evaluates-p    (channel-subscription-evaluates-p subscription)
               :arguments      (channel-subscription-arguments subscription)
+              :cancelled-p    *localgroup-client-cancelled-p*
               :initialize-function
               (lambda (connection) (channel-subscription-initialize-connection subscription connection))
               :event-function (lambda (event) (channel-subscription-receive-event subscription event)))))
       (let ((entry (discover)))
         (handler-case (connect entry)
           (error (condition)
+            (localgroup-client-check-cancellation)
             (let ((replacement (discover)))
-              (when (or (equal replacement entry) (>= (get-internal-real-time) deadline))
+              (when (or (equal replacement entry)
+                        (and deadline (>= (get-internal-real-time) deadline)))
                 (error condition))
               (connect replacement))))))))
 

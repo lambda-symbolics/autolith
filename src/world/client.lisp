@@ -47,7 +47,7 @@ A server publishes its endpoint again after a checkpoint, and a channel
 opens once the checkpoint is over.")
 
 (-> world-client--entry
-    (configuration &key (:permission-mode keyword) (:immutable-p boolean) (:deadline real)
+    (configuration &key (:permission-mode keyword) (:immutable-p boolean) (:deadline (option real))
                         (:attach-expected-p boolean))
     cons)
 (defun world-client--entry
@@ -55,12 +55,13 @@ opens once the checkpoint is over.")
   "Return the world server's endpoint entry: the one answering, or a new server's.
 
 A server that holds the world without answering, as during a checkpoint, is
-waited for until DEADLINE, an internal real time, rather than doubled. Two
-clients that find no server start one each; the launch that loses the
-world's lease fails, and its client then waits for the winner like any
-other."
+waited for until DEADLINE, an internal real time, rather than doubled. NIL
+allows a cancellable interactive switch to wait. If two clients start a
+server each, the launch that loses the world's lease fails, and its client
+then waits for the winner like any other."
   (loop
     (let ((entry (world-client-entry configuration)))
+      (localgroup-client-check-cancellation)
       (cond
         (entry
          (return entry))
@@ -75,7 +76,7 @@ other."
              ;; Another client's server took the lease meanwhile: join it.
              (unless (world-server-running-p configuration)
                (error condition)))))
-        ((>= (get-internal-real-time) deadline)
+        ((and deadline (>= (get-internal-real-time) deadline))
          (error 'localgroup-error
                 :message   "World server response timeout"
                 :operation ':open))
@@ -113,11 +114,13 @@ Return the opened channel's session identifier, whose endpoint answers by
 then, and whether the server started the channel for this open rather than
 sharing one it already served."
   (channel-loading-report 1 "Connecting to world")
-  (let ((deadline (+ (get-internal-real-time)
-                     (* *world-client-wait-seconds* internal-time-units-per-second))))
+  (let ((deadline (unless *localgroup-client-cancelled-p*
+                    (+ (get-internal-real-time)
+                       (* *world-client-wait-seconds* internal-time-units-per-second)))))
     (multiple-value-bind (rows columns)
         (terminal-current-size)
       (loop
+        (localgroup-client-check-cancellation)
         (let* ((entry    (world-client--entry configuration
                                               :permission-mode   permission-mode
                                               :immutable-p       immutable-p
@@ -129,9 +132,10 @@ sharing one it already served."
                      ;; The first open can be slow because it migrates every
                      ;; conversation, and a second open could start another channel.
                      (let ((image-daemon:*daemon-connect-timeout-seconds*
-                             (max image-daemon:*daemon-connect-timeout-seconds*
-                                  (/ (- deadline (get-internal-real-time))
-                                     internal-time-units-per-second))))
+                            (when deadline
+                              (max image-daemon:*daemon-connect-timeout-seconds*
+                                   (/ (- deadline (get-internal-real-time))
+                                      internal-time-units-per-second)))))
                        (channel-loading-report 2 "Selecting an available channel")
                        (localgroup-query-record
                         entry ':open
@@ -157,12 +161,11 @@ sharing one it already served."
                                       :columns            columns
                                       :styled-p           (not (null (terminal-environment-styling-p)))))))
                    (localgroup-error (condition)
-                     ;; A checkpoint refuses opens until the channels resume,
-                     ;; and drops connections while the endpoint is away.
-                     (if (and (< (get-internal-real-time) deadline)
-                              (or (localgroup-error-retry-p condition)
-                                  (and (image-daemon:daemon-error-cause condition)
-                                       (world-server-running-p configuration))))
+                     ;; Only an explicit rejection establishes that retrying is safe.
+                     ;; A transport failure may follow an accepted mutating open.
+                     (localgroup-client-check-cancellation)
+                     (if (and (or (null deadline) (< (get-internal-real-time) deadline))
+                              (localgroup-error-retry-p condition))
                          nil
                          (error condition))))))
           (if response

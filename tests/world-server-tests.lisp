@@ -2562,8 +2562,8 @@ the version the client says it is, when it says one."
                               (declare (ignore candidate arguments))
                               (values "bfirst1" nil)))
                       (list 'channel-view-run
-                            (lambda (view &key attached-function notice client-version boot-p)
-                              (declare (ignore boot-p))
+                            (lambda (view &key attached-function notice client-version boot-p wait-function)
+                              (declare (ignore boot-p wait-function))
                               (let ((identifier (channel-subscription-identifier view)))
                                 (push identifier attaches)
                                 (push client-version client-versions)
@@ -2682,11 +2682,121 @@ the version the client says it is, when it says one."
         "A switched channel's nonlocal final report follows the same single cleanup"))))
   nil)
 
+(-> test-world-client-switch-wait () null)
+(defun test-world-client-switch-wait ()
+  "Serve resize and cancellation during one wait, retire its pump, and reject late completion."
+  (dolist (mode '(:finish :cancel :interrupt :late-cancel :pump-failure))
+    (let* ((terminal (make-instance 'recording-terminal :columns 80 :rows 24))
+           (screen (localgroup-screen-create :terminal terminal))
+           (interrupt (symbol-function 'interrupt-thread))
+           (paints 0) (resizes 0) (watch nil) (released-p nil) (cleaned-p nil)
+           (deferred nil) (result nil))
+      (test-call-with-function-replacements
+       (list
+        (list 'platform-watch-terminal-resize
+              (lambda (platform function) (declare (ignore platform)) (setf watch function) ':watch))
+        (list 'platform-unwatch-terminal-resize
+              (lambda (platform token) (declare (ignore platform token)) (setf released-p t)))
+        (list 'terminal-current-size (lambda () (values 23 81)))
+        (list 'localgroup-screen-resized
+              (lambda (candidate) (declare (ignore candidate)) (incf resizes)))
+        (list 'localgroup-screen-tick
+              (lambda (candidate)
+                (declare (ignore candidate))
+                (incf paints)
+                (when (= paints 1) (funcall watch))
+                (when (and (eq mode ':pump-failure) (= paints 2))
+                  (error "Injected terminal pump failure."))))
+        (list 'terminal-input-ready-p
+              (lambda (candidate)
+                (declare (ignore candidate))
+                (and (member mode '(:cancel :interrupt :late-cancel)) (>= paints 2))))
+        (list 'terminal-read-event
+              (lambda (candidate) (declare (ignore candidate))
+                (if (eq mode ':interrupt) ':interrupt ':escape)))
+        (list 'interrupt-thread
+              (lambda (thread function &rest arguments)
+                (if (eq mode ':late-cancel)
+                    (setf deferred function)
+                    (apply interrupt thread function arguments)))))
+       (lambda ()
+         (let ((image-daemon:*daemon-connect-timeout-seconds* 0.01))
+           (setf result
+                 (handler-case
+                     (sb-sys:with-deadline (:seconds 1)
+                       (multiple-value-list
+                        (main--call-with-channel-wait
+                         screen
+                         (lambda ()
+                           (unwind-protect
+                                (progn
+                                  (test-assert (null image-daemon:*daemon-connect-timeout-seconds*)
+                                               "the interactive wait has no endpoint deadline")
+                                  (loop until (or (>= paints 3)
+                                                  (funcall *localgroup-client-cancelled-p*))
+                                        do (sleep 0.01))
+                                  (values ':ready t))
+                             (setf cleaned-p t))))))
+                   (localgroup-client-cancelled () ':cancelled)
+                   (simple-error () ':pump-failed)))
+           (test-assert (= 0.01 image-daemon:*daemon-connect-timeout-seconds*)
+                        "returning restores the caller's endpoint deadline"))
+         (when deferred (funcall deferred))))
+      (test-assert (and released-p cleaned-p (= resizes 1) (>= paints 2))
+                   "painting, resizing and request/watch cleanup complete before return")
+      (test-assert (equal result (case mode
+                                  (:finish '(:ready t))
+                                  (:pump-failure ':pump-failed)
+                                  (otherwise ':cancelled)))
+                   "completion, cancellation and terminal failure settle the wait once")))
+  nil)
+
+(-> test-world-client-open-wait () null)
+(defun test-world-client-open-wait ()
+  "Keep startup bounded and retry opens only after explicit rejection, including cancellation."
+  (with-test-configuration (configuration)
+    (dolist (mode '(:bounded :waiting :retry :ambiguous :cancel))
+      (let ((calls 0) (deadline ':unseen) (cancelled-p nil) (result nil))
+        (test-call-with-function-replacements
+         (list
+          (list 'world-client--entry
+                (lambda (candidate &key ((:deadline limit)) &allow-other-keys)
+                  (declare (ignore candidate)) (setf deadline limit) '("world")))
+          (list 'terminal-current-size (lambda () (values 24 80)))
+          (list 'localgroup-query-record
+                (lambda (entry operation arguments)
+                  (declare (ignore entry operation arguments))
+                  (incf calls)
+                  (when (= calls 1)
+                    (case mode
+                      (:ambiguous
+                       (error 'localgroup-error :operation ':open :message "Lost reply."
+                                               :cause (make-condition 'simple-error :format-control "Lost reply.")))
+                      ((:retry :cancel)
+                       (setf cancelled-p (eq mode ':cancel))
+                       (error 'localgroup-error :operation ':open :message "Checkpoint busy." :retry-p t))))
+                  '(:ok :session-id "bsecnd2"))))
+         (lambda ()
+           (let ((*localgroup-client-cancelled-p*
+                   (unless (eq mode ':bounded) (lambda () cancelled-p))))
+             (setf result (handler-case (world-client-open configuration :channel "bsecnd2")
+                            (localgroup-client-cancelled () ':cancelled)
+                            (localgroup-error () ':ambiguous))))))
+        (test-assert (if (eq mode ':bounded) (realp deadline) (null deadline))
+                     "only an interactive cancellable open omits the total deadline")
+        (test-assert (and (= calls (if (eq mode ':retry) 2 1))
+                          (equal result (case mode
+                                          (:cancel ':cancelled)
+                                          (:ambiguous ':ambiguous)
+                                          (otherwise "bsecnd2"))))
+                     "explicit rejection permits retry; cancellation and ambiguous opens do not"))))
+  nil)
+
 (-> test-world-client-switch-failures () null)
 (defun test-world-client-switch-failures ()
   "Exercise discovery and pre-acknowledgment failures, source loss, and guarded unattached cleanup."
   (with-test-configuration (configuration)
-    (dolist (failure '(:discover :target-dies :source-dies :transport-error))
+    (dolist (failure '(:discover :target-dies :source-dies :transport-error :cancel-open :cancel-attach))
       (let ((attaches nil)
             (reported nil)
             (current  nil)
@@ -2702,6 +2812,8 @@ the version the client says it is, when it says one."
           (list 'world-client-open
                 (lambda (&rest arguments)
                   (declare (ignore arguments))
+                  (when (eq failure ':cancel-open)
+                    (error 'localgroup-client-cancelled :operation ':switch :message "Cancelled."))
                   (values "bsecnd2" (eq failure ':source-dies))))
           (list 'world-client-entry
                 (lambda (&rest arguments)
@@ -2718,11 +2830,13 @@ the version the client says it is, when it says one."
           (list 'localgroup-client-screen-release
                 (lambda (screen) (funcall release screen)))
           (list 'channel-view-run
-                (lambda (view &key attached-function notice client-version boot-p)
-                  (declare (ignore client-version boot-p))
+                (lambda (view &key attached-function notice client-version boot-p wait-function)
+                  (declare (ignore client-version boot-p wait-function))
                   (let ((identifier (channel-subscription-identifier view))
                         (panel      (localgroup-screen-panel (channel-view-screen view))))
                     (push identifier attaches)
+                    (when (and (string= identifier "bsecnd2") (eq failure ':cancel-attach))
+                      (error 'localgroup-client-cancelled :operation ':switch :message "Cancelled."))
                     ;; A view discovers its channel's endpoint before it connects.
                     (when (or (and left-p (string= identifier "bfirst1")
                                    (eq failure ':source-dies))

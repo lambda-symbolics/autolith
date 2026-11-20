@@ -2,6 +2,20 @@
 
 ;;;; -- Localgroup Discovery Client --
 
+(defparameter *localgroup-client-cancelled-p* nil
+  "The scoped interactive switch cancellation predicate, or NIL for bounded clients.")
+
+(define-condition localgroup-client-cancelled (localgroup-error)
+  ()
+  (:documentation "The person cancelled an interactive channel switch."))
+
+(-> localgroup-client-check-cancellation () null)
+(defun localgroup-client-check-cancellation ()
+  "Stop a cancelled interactive switch before another endpoint operation."
+  (when (and *localgroup-client-cancelled-p* (funcall *localgroup-client-cancelled-p*))
+    (error 'localgroup-client-cancelled :operation ':switch :message "Channel switch cancelled."))
+  nil)
+
 (-> localgroup--record-session-id (list) string)
 (defun localgroup--record-session-id (record)
   "Return RECORD's session identifier."
