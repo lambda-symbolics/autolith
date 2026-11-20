@@ -432,12 +432,27 @@ The validator applies recovery's stricter checks to each manifest."
   "Return true when GENERATION has a plausible core for this exact SBCL host."
   (sbcl-generations:generation-compatible-p generation))
 
+(serapeum:-> recovery-generation-world-entry-p (recovery-generation) boolean)
+(defun recovery-generation-world-entry-p (generation)
+  "Return true when GENERATION can start as a world server."
+  (eql (recovery-generation-property generation :world-entry) 1))
+
+(serapeum:-> recovery-require-generation-world-entry (recovery-generation) null)
+(defun recovery-require-generation-world-entry (generation)
+  "Refuse cores without the world entry point before starting any process."
+  (unless (recovery-generation-world-entry-p generation)
+    (error "Cannot boot generation ~A as a world server. Use the Autolith version matching source ~A to recover it."
+           (recovery-sanitize-text (recovery-generation-identifier generation))
+           (recovery-sanitize-text (recovery-generation-git-commit generation))))
+  nil)
+
 (serapeum:-> recovery-generation-bootable-p
     (recovery-generation &key (:source-commit (or null string)))
     boolean)
 (defun recovery-generation-bootable-p (generation &key source-commit)
-  "Return true when GENERATION is compatible and matches SOURCE-COMMIT if given."
-  (and (recovery-generation-compatible-p generation)
+  "Return true when GENERATION supports world entry and matches this runtime and source."
+  (and (recovery-generation-world-entry-p generation)
+       (recovery-generation-compatible-p generation)
        (or (null source-commit)
            (string= (recovery-generation-git-commit generation)
                     source-commit))
@@ -509,6 +524,8 @@ The validator applies recovery's stricter checks to each manifest."
                       "Could not load the selected generation: ~A~%"
                       (recovery-sanitize-text condition))
               nil))))
+    (when selected
+      (recovery-require-generation-world-entry selected))
     (if (and selected
              (recovery-generation-bootable-p
               selected
@@ -560,9 +577,13 @@ The validator applies recovery's stricter checks to each manifest."
                   "~A  ~A  source ~A~@[~%  image ~A~]~@[~%  history ~A~]~@[~%  replay ~A~]~%"
                   (recovery-sanitize-text
                    (recovery-generation-identifier generation))
-                  (if (recovery-generation-compatible-p generation)
-                      "compatible"
-                      "incompatible")
+                  (cond
+                    ((not (recovery-generation-world-entry-p generation))
+                     "requires matching Autolith version")
+                    ((recovery-generation-compatible-p generation)
+                     "compatible")
+                    (t
+                     "incompatible"))
                   (recovery-sanitize-text
                    (recovery-generation-git-commit generation))
                   (and (recovery-generation-image-commit-identifier generation)
@@ -1207,6 +1228,7 @@ Colocation lets older committed source use its original Git provenance code."
     integer)
 (defun recovery-boot-generation (context generation forwarded-arguments)
   "Boot GENERATION with FORWARDED-ARGUMENTS and return its process status."
+  (recovery-require-generation-world-entry generation)
   (unless (recovery-generation-compatible-p generation)
     (error "Generation ~A is incompatible with this SBCL runtime."
            (recovery-sanitize-text
@@ -1355,6 +1377,8 @@ Colocation lets older committed source use its original Git provenance code."
 (defun recovery-boot-with-source-fallback
     (context selected forwarded-arguments &key capsule source-commit)
   "Boot retained state when selected, otherwise boot pristine committed source."
+  (when selected
+    (recovery-require-generation-world-entry selected))
   (if selected
       (handler-case
           (recovery-boot-with-fallback context

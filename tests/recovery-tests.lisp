@@ -77,9 +77,9 @@ exit 64
      :current-pathname (merge-pathnames "current-generation.sexp" state-root))))
 
 (-> recovery-tests--generation
-    (pathname string &key (:commit string) (:created-at integer))
+    (pathname string &key (:commit string) (:created-at integer) (:world-entry (or null integer)))
     recovery-generation)
-(defun recovery-tests--generation (root identifier &key commit created-at)
+(defun recovery-tests--generation (root identifier &key commit created-at (world-entry 1))
   "Return a synthetic retained generation below ROOT."
   (let ((directory
           (merge-pathnames (format nil "~A/" identifier) root)))
@@ -91,11 +91,12 @@ exit 64
      :temporary-core-pathname
      (merge-pathnames ".autolith.core.tmp" directory)
      :manifest-pathname (merge-pathnames "manifest.sexp" directory)
-     :metadata          (list :git-commit               commit
-                              :sbcl-version             (lisp-implementation-version)
-                              :operating-system         (software-type)
-                              :operating-system-version (software-version)
-                              :architecture             (machine-type))
+     :metadata          (append (when world-entry (list :world-entry world-entry))
+                                (list :git-commit               commit
+                                      :sbcl-version             (lisp-implementation-version)
+                                      :operating-system         (software-type)
+                                      :operating-system-version (software-version)
+                                      :architecture             (machine-type)))
      :created-at        created-at)))
 
 (-> recovery-tests--migration-record (list) list)
@@ -622,6 +623,9 @@ exit 64
            (recovery-tests--generation root "current-a" :commit current-commit :created-at 20))
          (current-b
            (recovery-tests--generation root "current-b" :commit current-commit :created-at 10))
+         (legacy
+           (recovery-tests--generation root "legacy" :commit current-commit :created-at 15
+                                        :world-entry nil))
          (selected       stale)
          (generations    (list stale current-a current-b)))
     (unwind-protect
@@ -790,7 +794,7 @@ exit 64
                       (null boot-source))
                  "explicit generation selection bypasses automatic revision policy"))))
            (let ((booted      nil)
-                 (generations (list stale current-a current-b)))
+                  (generations (list stale current-a legacy current-b)))
              (test-call-with-function-replacements
               (list
                (list 'recovery-generation-compatible-p
@@ -830,7 +834,18 @@ exit 64
                  "same-revision retained fallback may reach a healthy core")
                 (test-assert
                  (equal (nreverse booted) '("current-a" "current-b"))
-                 "retained fallback never tries a cross-revision generation")))))
+                  "retained fallback skips cross-revision and pre-world generations"))))
+             (dolist (generation (list legacy
+                                       (recovery-tests--generation
+                                        root "unknown-entry" :commit current-commit :created-at 5
+                                        :world-entry 2)))
+               (dolist (boot (list #'recovery-boot-generation #'recovery-boot-with-source-fallback))
+                 (let ((condition (handler-case (funcall boot context generation nil)
+                                    (error (condition) condition))))
+                   (test-assert
+                    (and (typep condition 'error)
+                         (search current-commit (princ-to-string condition)))
+                    "old or unsupported entry is refused with its source revision")))))
       (platform-delete-directory-tree *platform* root
                                       :validate          t
                                       :if-does-not-exist ':ignore)))
