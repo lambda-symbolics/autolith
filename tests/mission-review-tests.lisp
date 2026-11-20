@@ -2,7 +2,7 @@
 
 ;;;; -- Independent Reviewer Boundary Tests --
 
-(defclass mission-review-test-provider (scripted-provider) ()
+(defclass mission-review-test-provider (gated-provider) ()
   (:documentation "Scripted provider whose ordinary children inherit reference history."))
 
 (defmethod provider-with-configuration
@@ -16,23 +16,13 @@
   (declare (ignore provider))
   t)
 
-(-> mission-review-test--data (&key (:findings boolean)) json-object)
-(defun mission-review-test--data (&key (findings t))
-  "Return one native reviewer response with identified evidence."
-  (json-object "summary" "Observed advisory risk"
-               "findings" (if findings
-                              (vector (json-object "id" "risk" "severity" "critical"
-                                                   "confidence" "high" "summary" "Missing validation"
-                                                   "evidence" #("artifact.lisp:1")))
-                              #())))
-
-(-> mission-review-test--result (json-object) provider-result)
-(defun mission-review-test--result (data)
-  "Return an actual yield invocation with exact reported usage."
+(-> mission-review-test--result (string) provider-result)
+(defun mission-review-test--result (text)
+  "Return ordinary reviewer text with exact reported usage."
   (agent-test-result
    (make-identifier)
-   (list (agent-test-call :call-id "review-yield" :namespace "yield" :name "submit"
-                          :arguments (json-encode (json-object "status" "success" "data" data))))
+   (list (agent-test-message text))
+   :turn-completion ':end
    :usage (json-object "input_tokens" 2 "output_tokens" 3)))
 
 (-> mission-review-test--policy (&key (:turns integer) (:tokens integer) (:runs integer) (:phase keyword)) list)
@@ -50,6 +40,7 @@
   (ensure-directories-exist (merge-pathnames "artifact.lisp" (config :working-directory configuration)))
   (let* ((application (mission-test--application configuration))
          (provider    (make-instance 'mission-review-test-provider :results results)))
+    (setf (gated-provider-released-p provider) t)
     (setf (application-provider application) provider
           (agent-provider (application-agent application)) provider)
     (task-augment-tool-registry (application-tool-registry application))
@@ -70,20 +61,15 @@
   "Invoke an independent real task, retain decisions and suppress unchanged work."
   (with-test-configuration (configuration)
     (let* ((application (mission-review-test--prepare
-                         configuration (list (mission-review-test--result (mission-review-test--data)))))
+                         configuration (list (mission-review-test--result "Missing validation in artifact.lisp."))))
            (provider    (application-provider application)))
       (unwind-protect
            (progn
              (application-mission-review-configure application (mission-review-test--policy))
              (application-mission-verify application)
-             (let* ((policy  (first (getf (application-goal application) :reviews)))
-                    (run     (first (getf policy :runs)))
-                    (finding (first (getf run :findings))))
-               (test-assert (eq (getf run :status) ':completed) "a real contracted reviewer completes")
-               (test-assert (and (equal "critical" (getf finding :severity))
-                                 (equal "high" (getf finding :confidence))
-                                 (equal '("artifact.lisp:1") (getf finding :evidence)))
-                            "identified severity/confidence/evidence survive the task artifact")
+             (let* ((policy (first (getf (application-goal application) :reviews)))
+                    (run    (first (getf policy :runs))))
+               (test-assert (eq (getf run :status) ':completed) "a real independent reviewer completes")
                (test-assert (eq ':active (getf (application-goal application) :status))
                             "pending advice prevents final acceptance without claiming failed gates")
                (test-assert (= 1 (getf policy :turns-used)) "reviewer has a separately charged call allowance")
@@ -100,16 +86,16 @@
                             "unchanged checkpoint is not billed or reviewed again")
                (test-assert
                 (handler-case
-                    (progn (application-mission-review-decide application "checkpoint" "risk"
+                    (progn (application-mission-review-decide application "checkpoint" "review-summary"
                                                              :agent (make-instance 'agent :configuration configuration)
                                                              :decision ':reject :reason "untrusted") nil)
                   (mission-error (condition) (eq ':review-authority (mission-error-reason condition))))
                 "another agent cannot adjudicate primary findings")
-               (application-mission-review-decide application "checkpoint" "risk"
+               (application-mission-review-decide application "checkpoint" "review-summary"
                                                   :decision ':resolve :reason "Validated by the primary")
                (test-assert (application-mission-review-checkpoint application ':final-acceptance)
                             "adjudicated findings allow checkpoint passage")
-               (application-mission-review-decide application "checkpoint" "risk"
+               (application-mission-review-decide application "checkpoint" "review-summary"
                                                   :decision ':reject :reason "Primary retained counter-evidence")
                (let* ((conversation (application-conversation application))
                       (identifier   (conversation-identifier conversation)))
@@ -136,11 +122,14 @@
   (with-test-configuration (configuration)
     (let* ((application         (mission-review-test--prepare
                                  configuration
-                                 (list (mission-review-test--result (mission-review-test--data :findings nil)))))
+                                 (list (mission-review-test--result "No additional risks observed."))))
            (original-checkpoint (symbol-function 'application-mission-review-checkpoint)))
       (unwind-protect
            (progn
              (application-mission-review-configure application (mission-review-test--policy :runs 1))
+             (application-mission-review-trigger application "checkpoint")
+             (application-mission-review-decide application "checkpoint" "review-summary"
+                                                :decision ':resolve :reason "Primary verified the review")
              (test-assert (application-mission-review-checkpoint application ':final-acceptance)
                           "the original completed independent review permits acceptance")
              (let* ((policy               (mission-review--policy (mission-review--context application) "checkpoint"))
@@ -189,8 +178,13 @@
   "Keep checkpoint budgets separate and reuse failed/changed durable outcomes."
   (with-test-configuration (configuration)
     (let* ((application (mission-review-test--prepare
-                         configuration (list (mission-test--result "No yield yet")
-                                             (mission-review-test--result (mission-review-test--data :findings nil)))))
+                         configuration
+                         (list (agent-test-result
+                                (make-identifier)
+                                (list (agent-test-message "Review is still in progress."))
+                                :turn-completion ':continue
+                                :usage (json-object "input_tokens" 2 "output_tokens" 3))
+                               (mission-review-test--result "Review completed."))))
            (provider    (application-provider application)))
       (unwind-protect
            (progn
@@ -231,19 +225,37 @@
 
 (-> test-mission-review-cancellation-and-authority () null)
 (defun test-mission-review-cancellation-and-authority ()
-  "Retain reviewer aborts and enforce the primary tool/decision boundary."
+  "Cancel a real reviewer task and enforce the primary tool/decision boundary."
   (with-test-configuration (configuration)
-    (let* ((response    (agent-test-result
-                         (make-identifier)
-                         (list (agent-test-call :call-id "review-abort" :namespace "yield" :name "submit"
-                                                :arguments "{\"status\":\"aborted\",\"error\":\"review cancelled\"}"))
-                         :usage (json-object "input_tokens" 2 "output_tokens" 3)))
-           (application (mission-review-test--prepare configuration (list response))))
+    (let* ((application (mission-review-test--prepare configuration nil))
+           (provider    (application-provider application))
+           (runtime     (tool-registry-runtime-binding
+                         (application-tool-registry application) 'task-orchestrator))
+           (cancelled-p nil)
+           (producer    nil))
       (unwind-protect
            (progn
              (application-mission-review-configure application (mission-review-test--policy))
+             (setf (gated-provider-released-p provider) nil
+                   producer
+                   (make-thread
+                    (lambda ()
+                      (unwind-protect
+                           (when (task-tests--wait-until
+                                  (lambda ()
+                                    (with-lock-held ((gated-provider-lock provider))
+                                      (gated-provider-entered-p provider)))
+                                  10)
+                             (let ((job (first (task-orchestrator-list-jobs runtime))))
+                               (setf cancelled-p (and job (task-job-cancel job ':test-cancel)))))
+                        (gated-provider-release provider)))
+                    :name "Autolith mission reviewer cancellation test"))
              (let ((run (application-mission-review-trigger application "checkpoint")))
-               (test-assert (eq ':cancelled (getf run :status)) "reviewer abort is explicit and durable")
+               (join-thread producer)
+               (setf producer nil)
+               (test-assert cancelled-p "the running reviewer accepts cancellation")
+               (test-assert (eq ':cancelled (getf run :status))
+                            "reviewer abort is explicit and durable")
                (test-assert (not (application-mission-review-checkpoint application ':final-acceptance))
                             "cancelled reviewer cannot prove final acceptance"))
              (mission-review-augment-tool-registry (application-tool-registry application))
@@ -255,5 +267,7 @@
                (test-assert (handler-case (progn (tool-execute tool context (json-object)) nil)
                               (mission-error (condition) (eq ':review-authority (mission-error-reason condition))))
                             "unrelated agent cannot use mission reviewer tools")))
+        (gated-provider-release provider)
+        (when producer (join-thread producer))
         (mission-review-test--close application))))
   nil)
