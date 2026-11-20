@@ -473,67 +473,32 @@
 
 (-> test-application-banner-policy () null)
 (defun test-application-banner-policy ()
-  "Test startup mode, recovery, and safety notice policy without layout snapshots."
-  (let* ((configuration   (test-configuration))
-         (root            (test-configuration-root configuration))
-         (conversation
-           (conversation-create configuration :identifier "banner-policy"))
-         (application
-           (make-instance 'application
-                          :configuration configuration
-                          :conversation  conversation
-                          :ui            (terminal-ui-create
-                                          :terminal (make-instance 'recording-terminal
-                                                                   :columns 80))))
-         (saved-recovered (uiop:getenv "AUTOLITH_RECOVERED")))
-    (unwind-protect
-         (progn
-           (platform-unsetenv "AUTOLITH_RECOVERED")
-           (let* ((immutable-configuration
-                    (configuration-copy configuration :immutable-p t))
-                  (immutable-application
-                    (make-instance 'application
-                                   :configuration immutable-configuration
-                                   :conversation  conversation
-                                   :ui            (application-ui application)))
-                  (text
-                    (format nil "~{~A~}"
-                            (mapcar #'terminal-span-text
-                                    (application-banner
-                                     immutable-application)))))
-             (test-assert
-              (search "mode          immutable" text)
-              "the startup banner identifies immutable mode"))
-           (platform-setenv "AUTOLITH_RECOVERED" "1")
-           (let* ((spans (application-banner application))
-                  (recovery-styles
-                    (loop for span in spans
-                          for style = (terminal-span-style span)
-                          when (member style
-                                       *application-recovery-gradient-styles*)
-                            collect style)))
-             (test-assert
-              (equal recovery-styles *application-recovery-gradient-styles*)
-              "a recovered startup banner styles every logo row as recovered"))
-           (platform-unsetenv "AUTOLITH_RECOVERED")
-           (let* ((text
-                    (format nil "~{~A~}"
-                            (mapcar #'terminal-span-text
-                                    (application-banner application))))
-                  (notice-start (search "autolith executes" text))
-                  (tip-start    (search "· tip: " text)))
-             (test-assert
-              (and notice-start
-                   tip-start
-                   (< notice-start tip-start)
-                   (= (terminal-tests--substring-count
-                       "autolith executes" text)
-                      1))
-              "one security notice appears before the startup command tip")))
-      (if saved-recovered
-          (platform-setenv "AUTOLITH_RECOVERED" saved-recovered)
-          (platform-unsetenv "AUTOLITH_RECOVERED"))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  "Test startup mode and safety notice policy without layout snapshots."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration :identifier "banner-policy"))
+           (application  (make-instance 'application
+                                        :configuration configuration
+                                        :conversation  conversation
+                                        :ui            (terminal-ui-create
+                                                        :terminal (make-instance 'recording-terminal
+                                                                                 :columns 80))))
+           (immutable-application
+             (make-instance 'application
+                            :configuration (configuration-copy configuration :immutable-p t)
+                            :conversation  conversation
+                            :ui            (application-ui application)))
+           (immutable-text
+             (format nil "~{~A~}" (mapcar #'terminal-span-text
+                                          (application-banner immutable-application))))
+           (text         (format nil "~{~A~}" (mapcar #'terminal-span-text
+                                                     (application-banner application))))
+           (notice-start (search "autolith executes" text))
+           (tip-start    (search "· tip: " text)))
+      (test-assert (search "mode          immutable" immutable-text)
+                   "the startup banner identifies immutable mode")
+      (test-assert (and notice-start tip-start (< notice-start tip-start)
+                        (= (terminal-tests--substring-count "autolith executes" text) 1))
+                   "one security notice appears before the startup command tip")))
   nil)
 
 (-> test-startup-update-choice () null)
@@ -3584,15 +3549,13 @@
          (session-pathname
            (merge-pathnames
             "recovery-session-pointers/diagnosis.sexp" state-root))
-         (recovered-name    "AUTOLITH_RECOVERED")
          (pointer-name      "AUTOLITH_CRASH_POINTER")
          (session-name      "AUTOLITH_RECOVERY_SESSION_POINTER")
          (conversation-name "AUTOLITH_RECOVERY_CONVERSATION_ID")
          (sequence-name     "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
          (floor-name        "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
          (environment-names
-           (list recovered-name pointer-name session-name conversation-name
-                 sequence-name floor-name))
+           (list pointer-name session-name conversation-name sequence-name floor-name))
          (previous-environment
            (loop for name in environment-names
                  collect (cons name (uiop:getenv name)))))
@@ -3627,7 +3590,6 @@
                                    :if-does-not-exist ':create
                                    :external-format   ':utf-8)
              (write-line (namestring capsule-pathname) stream))
-           (platform-setenv recovered-name "1")
            (platform-setenv pointer-name (namestring pointer-pathname))
            (platform-setenv session-name (namestring session-pathname))
            (let ((prompt

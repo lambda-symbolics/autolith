@@ -198,10 +198,8 @@ a relaying terminal publishes the capsule its detached session reports."
 (defun application--recovery-crash-capsule-pathname (configuration)
   "Return this recovered launcher's contained crash capsule, when available."
   (handler-case
-      (let ((recovered     (uiop:getenv "AUTOLITH_RECOVERED"))
-            (pointer-value (uiop:getenv "AUTOLITH_CRASH_POINTER")))
-        (when (and (non-empty-string-p recovered)
-                   (non-empty-string-p pointer-value))
+      (let ((pointer-value (uiop:getenv "AUTOLITH_CRASH_POINTER")))
+        (when (non-empty-string-p pointer-value)
           (let* ((pointer-pathname (pathname pointer-value))
                  (pointer-root
                    (merge-pathnames "crash-pointers/"
@@ -335,8 +333,8 @@ a relaying terminal publishes the capsule its detached session reports."
 (defun application-recovery-state (configuration)
   "Return trustworthy conversation and cursor state for recovered startup."
   (let ((crash-pointer (uiop:getenv "AUTOLITH_CRASH_POINTER")))
-    (if (and (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))
-             (non-empty-string-p crash-pointer)
+    (if (and (non-empty-string-p crash-pointer)
+             (application--recovery-conversation-id)
              (null (application--recovery-crash-capsule-record configuration)))
         (application--recovery-session-state configuration)
         (values (application--recovery-conversation-id)

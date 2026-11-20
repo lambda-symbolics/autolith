@@ -11,11 +11,6 @@
     (:brand-gradient-6 . " YMM   \"\"` \"\"\"\"YUMMM"))
   "The AL mark generated with FIGlet's Cosmic font, paired with row styles.")
 
-(defparameter *application-recovery-gradient-styles*
-  '(:recovery-gradient-1 :recovery-gradient-2 :recovery-gradient-3
-    :recovery-gradient-4 :recovery-gradient-5 :recovery-gradient-6)
-  "The distinct row styles used after recovery starts Autolith.")
-
 (defparameter *application-banner-gap* "   "
   "Horizontal space between the startup mark and session data.")
 
@@ -24,13 +19,8 @@
 
 (-> application--banner-logo-lines () list)
 (defun application--banner-logo-lines ()
-  "Return startup-mark rows colored for an ordinary or recovered process."
-  (if (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))
-      (mapcar (lambda (entry style)
-                (cons style (rest entry)))
-              *application-banner-logo-lines*
-              *application-recovery-gradient-styles*)
-      *application-banner-logo-lines*))
+  "Return the startup mark's styled rows."
+  *application-banner-logo-lines*)
 
 (-> application--banner-logo-width () (integer 1))
 (defun application--banner-logo-width ()
@@ -1004,9 +994,8 @@ state, including an empty list after successful or pristine startup."
               (application--command-sandbox-unavailable-message))
       (force-output *error-output*))
     (when (and (main--client-session-p
-                :handoff-record   handoff-record
-                :pristine-p       pristine-p
-                :simulate-crash-p (not (null (getopt* command ':simulate-crash))))
+                :handoff-record handoff-record
+                :pristine-p     pristine-p)
                (if (main--interactive-input-p)
                    (main--run-world-client
                     configuration
@@ -1054,16 +1043,6 @@ state, including an empty list after successful or pristine startup."
                            (when image-state-loaded-p
                              (list :image-replay-failures image-replay-failures)))))
       (application--clear-recovery-environment)
-      (when (and (getopt* command ':simulate-crash)
-                 (not (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))))
-        (let ((capsule
-                (application-write-crash-capsule
-                 *active-application*
-                 (make-condition 'simple-error
-                                 :format-control   "Intentional recovery test."
-                                 :format-arguments nil))))
-          (format *error-output* "Intentional crash capsule: ~A~%" capsule)
-          (uiop:quit *main-fatal-recovery-status*)))
       (handler-case
           ;; A detached session's launcher only logs this exit, so tell the
           ;; attached terminals before the session unwinds and closes them.
@@ -1092,20 +1071,13 @@ state, including an empty list after successful or pristine startup."
   nil)
 
 (-> main--client-session-p
-    (&key (:handoff-record (option list)) (:pristine-p boolean) (:simulate-crash-p boolean))
+    (&key (:handoff-record (option list)) (:pristine-p boolean))
     boolean)
-(defun main--client-session-p (&key handoff-record pristine-p simulate-crash-p)
-  "Return true when this start should open a channel in the world server and attach.
-
-A client-first start keeps this terminal a client whose detach is
-immediate and never interrupts session work, so resumes, crash recovery,
-startup images, the session after authentication and input piped from
-another program take it too. Replacements, crash simulation, hosts without
-detached sessions, and a booted generation's resume, under
-*MAIN-DIRECT-START-P*, keep the direct path."
+(defun main--client-session-p (&key handoff-record pristine-p)
+  "Return true when this start should attach to the world server.
+Replacements, pristine starts, and booted generations use the direct path."
   (and (null handoff-record)
        (not pristine-p)
-       (not simulate-crash-p)
        (not *main-direct-start-p*)
        (platform-supports-p *platform* ':detached-sessions)
        t))
@@ -1354,8 +1326,7 @@ still shows the boot panel keeps it until the user starts the session."
              (localgroup-screen-show-frame
               screen (main--welcome-frame
                       screen directory :total total :local local :immutable-p immutable-p
-                      :recovered-p (not (null (or recovery-diagnosis
-                                               (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED")))))
+                       :recovered-p (not (null recovery-diagnosis))
                       :tip tip :recovery-conversation-id recovery-conversation-id :notice notice)
               :cursor-visible-p nil)
              (localgroup-screen-tick screen)
@@ -1596,13 +1567,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                 :parameter   "FILE"
                 :persistent  t
                 :hidden      t
-                :description "claim an internal localgroup handoff record")
-   (make-option ':flag
-                :long-name   "simulate-crash"
-                :key         ':simulate-crash
-                :persistent  t
-                :hidden      t
-                :description "write a crash capsule and exit into recovery")))
+                :description "claim an internal localgroup handoff record")))
 
 (-> main--single-selection (clingon:command string) (option string))
 (defun main--single-selection (command description)

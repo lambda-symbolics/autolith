@@ -74,7 +74,6 @@
          (list "XDG_STATE_HOME" (namestring (merge-pathnames "state/" root)))
          (list "XDG_CACHE_HOME" (namestring (merge-pathnames "cache/" root)))
          (list "AUTOLITH_SITE_CONFIG_ROOT" nil)
-         (list "AUTOLITH_RECOVERED" nil)
          (list "AUTOLITH_SBCL" (lisp-worker-sbcl-command)))
    function))
 

@@ -29,7 +29,6 @@ exit 64
 ")
         (with-test-environment (("AUTOLITH_TRACEPARENT" nil) ("AUTOLITH_RUN_ATTEMPT" nil)
                                 ("AUTOLITH_SOURCE_ROOT" (uiop:getenv "AUTOLITH_SOURCE_ROOT"))
-                                ("AUTOLITH_RECOVERED" (uiop:getenv "AUTOLITH_RECOVERED"))
                                 ("AUTOLITH_PROJECT_SETUP" (uiop:getenv "AUTOLITH_PROJECT_SETUP")))
           (uiop:run-program command :ignore-error-status t :output nil :error-output nil)
           (let* ((first       (uiop:read-file-line log))

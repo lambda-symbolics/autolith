@@ -245,9 +245,7 @@ With PERSISTED-P its conversation holds a message."
                     ((:handoff-record (:localgroup-handoff :version 1)) nil
                      "the spawned session itself runs direct")
                     ((:pristine-p t)                                       nil
-                     "a pristine rescue session runs apart from the world server")
-                    ((:simulate-crash-p t)                                 nil
-                     "a simulated crash runs direct")))
+                     "a pristine rescue session runs apart from the world server")))
       (destructuring-bind (arguments expected label) case
         (test-assert (eq (apply #'main--client-session-p arguments) expected) label))))
   nil)

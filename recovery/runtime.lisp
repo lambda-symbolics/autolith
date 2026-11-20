@@ -1214,7 +1214,6 @@ Colocation lets older committed source use its original Git provenance code."
   "Point recovered children at SOURCE-ROOT and the original dependency store."
   (autolith-script-advance-run-attempt)
   (sb-posix:setenv "AUTOLITH_SOURCE_ROOT" (namestring source-root) 1)
-  (sb-posix:setenv "AUTOLITH_RECOVERED" "1" 1)
   (let ((project-setup (recovery-project-setup context)))
     (if project-setup
         (sb-posix:setenv "AUTOLITH_PROJECT_SETUP"
