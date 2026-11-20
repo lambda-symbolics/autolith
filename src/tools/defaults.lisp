@@ -428,9 +428,6 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
      (make-instance 'context-object-resolver :scheme "context"))
     (resource-registry-register
      resource-registry
-     (make-instance 'conversation-resolver :scheme "conversation"))
-    (resource-registry-register
-     resource-registry
      (make-instance 'channel-resolver :scheme "channel"))
     (resource-registry-register
      resource-registry
@@ -455,13 +452,13 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
              "byte-count" (tool-integer-property
                            "Raw bytes in a shell-log: range; default and maximum 4096. Larger values return 4096 bytes with a note; continue from the reported next byte offset.")
              "start-sequence" (tool-integer-property
-                               "The first durable record sequence a conversation: window returns; without it the window ends at the newest record.")
+                                "The first durable record sequence a channel history window returns; without it the window ends at the newest record.")
              "record-count" (tool-integer-property
-                             "How many records a conversation: window returns; default 20, maximum 200.")
+                              "How many records a channel history window returns; default 20, maximum 200.")
              "query" (tool-string-property
-                       "Optional lexical memory/conversation query, or literal shell-log: text search.")
+                        "Optional lexical memory or channel history query, or literal shell-log: text search.")
              "max-results" (tool-integer-property
-                            "Optional memory, conversation, or shell-log: search result limit, capped at 50."))
+                             "Optional memory, channel history, or shell-log: search result limit, capped at 50."))
             '("uri"))
            :resource-registry resource-registry)
           (list

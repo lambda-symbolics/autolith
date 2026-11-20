@@ -353,7 +353,7 @@
   "Test bounded prefixes, notice capacity, omission counts and invalid limits."
   (dolist (source (mapcar (lambda (size) (make-string size :initial-element #\x))
                           '(1000 5000)))
-    (dolist (uri (list nil "conversation:current" (make-string 200 :initial-element #\u)))
+    (dolist (uri (list nil "channel:current" (make-string 200 :initial-element #\u)))
       (let ((notice-size (length (bounded-string--notice (length source) uri))))
         (dolist (limit (list 0 1 40 100 (1- notice-size) notice-size (1+ notice-size)))
           (let* ((saved nil)

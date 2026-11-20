@@ -2,12 +2,6 @@
 
 ;;;; -- Conversation History Resources --
 
-(defparameter *conversation-resource-current-identifier* "current"
-  "The reserved identifier naming the requesting conversation.")
-
-(defparameter *conversation-resource-identifier-prefix* "id/"
-  "The identifier prefix naming another conversation by its identifier.")
-
 (defparameter *conversation-resource-default-record-count* 20
   "The number of records one conversation window returns by default.")
 
@@ -43,55 +37,10 @@ to a readable context object rather than truncated.")
     :documentation "The conversation whose durable history this resource reads."))
   (:documentation "The read-only durable history of one conversation."))
 
-(defclass conversation-resolver (resource-resolver)
-  ()
-  (:documentation
-   "Resolve the requesting conversation, or another one named by identifier."))
-
-
-;;;; -- URI Resolution --
-
-(defmethod resource-resolver-read-documentation ((resolver conversation-resolver))
-  "Document conversation: reads."
-  (declare (ignore resolver))
-  "conversation:current exposes the requesting conversation's complete durable history, including records removed from model context by compaction. Page with start-sequence and record-count, or search with query. conversation:id/<id> names another conversation; searches never span conversations.")
-
-(defmethod resource-resolver-resolve
-    ((resolver conversation-resolver) identifier (context tool-context))
-  "Resolve conversation:current or one named conversation:id/<id>."
-  (let ((prefix *conversation-resource-identifier-prefix*))
-    (cond
-      ((string= identifier *conversation-resource-current-identifier*)
-       (make-instance 'conversation-resource
-                      :uri          (format nil "~A:~A"
-                                            (resource-resolver-scheme resolver)
-                                            identifier)
-                      :conversation (tool-context-conversation context)))
-      ((and (> (length identifier) (length prefix))
-            (string= prefix identifier :end2 (length prefix)))
-       (let ((conversation
-               (conversation-replay-load (tool-context-configuration context)
-                                         (subseq identifier (length prefix)))))
-         (make-instance 'conversation-resource
-                        :uri          (format nil "~A:~A~A"
-                                              (resource-resolver-scheme resolver)
-                                              prefix
-                                              (conversation-identifier conversation))
-                        :conversation conversation)))
-      (t
-       (error 'resource-operation-unsupported
-              :uri       (format nil "~A:~A"
-                                 (resource-resolver-scheme resolver)
-                                 identifier)
-              :operation ':resolve)))))
-
-(defmethod resource-capabilities
-    ((resource conversation-resource) (context tool-context))
-  "Expose conversation history as read-only."
-  (declare (ignore resource context))
+(defmethod resource-capabilities ((resource conversation-resource) (context tool-context))
+  "Allow the channel reader to read its internal history resource."
+  (declare (ignore context))
   '(:read))
-
-
 ;;;; -- Model-Facing Reads --
 
 (defmethod resource-tool-read
@@ -102,7 +51,7 @@ to a readable context object rather than truncated.")
   (when (or (nth-value 1 (gethash "start-line" arguments))
             (nth-value 1 (gethash "line-count" arguments)))
     (error 'tool-error
-           :message   "conversation: resources page by start-sequence and record-count, not line windows."
+           :message   "Channel history pages by start-sequence and record-count, not line windows."
            :code      ':line-windows-unsupported
            :tool-name "resource.read"))
   (let ((query          (tool-argument arguments "query"))

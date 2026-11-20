@@ -7,7 +7,7 @@
   "Preview principal arguments without control characters or unbounded titles."
   (dolist (case (list (list "lisp.eval" (json-object "compile" t "forms" #("(load-it)" "(+ 1 2)")) "(load-it) (+ 1 2)")
                      (list "shell.run" (json-object "async" t "command" "git status") "git status")
-                     (list "resource.read" (json-object "uri" "conversation:current") "conversation:current")
+                     (list "resource.read" (json-object "uri" "channel:current") "channel:current")
                      (list "custom" (json-object "z" 9 "a" #(1 2)) "2 items")
                      (list "custom" (json-object "flag" (argo:json-false)) "false")))
     (destructuring-bind (name arguments preview) case

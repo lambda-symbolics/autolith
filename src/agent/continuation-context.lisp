@@ -280,7 +280,7 @@ the record stays reachable from a conversation that adopts the checkpoint."
   (destructuring-bind (&key conversation sequence text call-id tool status &allow-other-keys)
       evidence
     (let ((identity (list :conversation conversation :sequence sequence))
-          (address  (format nil "conversation:id/~A sequence ~D" conversation sequence)))
+          (address  (format nil "channel:id/~A sequence ~D" conversation sequence)))
       (if call-id
           (continuation--reference
            ':tool-result

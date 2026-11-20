@@ -2656,10 +2656,6 @@ A frame sends its shared views and its task as consecutive user messages."
     (resource-registry-register
      (tool-registry-resource-registry registry)
      (make-instance 'context-object-resolver :scheme "context"))
-    (resource-registry-register
-     (tool-registry-resource-registry registry)
-     (make-instance 'conversation-resolver :scheme "conversation"))
-    (conversation-append-user-message conversation "A message the view should carry.")
     (flet ((run (view &key (calls 3))
              (tool-execute
               (rlm-infer-tool-create
@@ -2682,9 +2678,6 @@ A frame sends its shared views and its task as consecutive user messages."
       (test-assert (tool-result-success-p
                     (run (json-object "uri" "workspace:README.org")))
                    "resource uris materialize through the resource protocol")
-      (test-assert (tool-result-success-p
-                    (run (json-object "uri" "conversation:current")))
-                   "conversation history materializes whole as a view")
       (test-assert (let ((*resource-readable-schemes* (list "scratchpad")))
                      (not (tool-result-success-p
                            (run (json-object "uri" "workspace:README.org")))))
@@ -2716,15 +2709,16 @@ A frame sends its shared views and its task as consecutive user messages."
            (first-text   (concatenate 'string (make-string 2000 :initial-element #\界)
                                       "first-record-end"))
            (last-text    "last-record-end"))
-      (dolist (resolver (list (make-instance 'conversation-resolver :scheme "conversation")
-                             (make-instance 'context-object-resolver :scheme "context")))
+      (dolist (resolver (list (make-instance 'channel-resolver :scheme "channel")
+                              (make-instance 'context-object-resolver :scheme "context")))
         (resource-registry-register (tool-registry-resource-registry registry) resolver))
       (conversation-append-user-message conversation first-text)
       (dotimes (index 3)
         (conversation-append-user-message conversation (format nil "middle ~D" index)))
       (conversation-append-user-message conversation last-text)
+      (world-server--reconcile configuration)
       (let* ((*conversation-resource-maximum-record-count* 2)
-             (content                                      (rlm--tool-resource-content context "conversation:current"))
+             (content                                      (rlm--tool-resource-content context "channel:current"))
              (object                                       (rlm-context-intern configuration "ž界")))
         (test-assert (and (search first-text content) (search last-text content))
                      "whole conversation views include untruncated records across pages")
@@ -2735,7 +2729,7 @@ A frame sends its shared views and its task as consecutive user messages."
                      (rlm--tool-complete-object
                       context (json-object "object" (rlm-context-object-digest object)))))
            "stored root contexts use the root limit rather than the frame-view limit"))
-        (dolist (case (list (list "conversation:current" content)
+        (dolist (case (list (list "channel:current" content)
                            (list (format nil "context:~A" (rlm-context-object-digest object))
                                  "ž界")))
           (destructuring-bind (uri expected) case

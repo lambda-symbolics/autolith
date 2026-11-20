@@ -84,8 +84,8 @@
 (-> conversation-resource-tests--read (tool-context string &rest t) string)
 (defun conversation-resource-tests--read (context identifier &rest arguments)
   "Read conversation IDENTIFIER under CONTEXT with ARGUMENTS and return its text."
-  (let* ((resolver (make-instance 'conversation-resolver :scheme "conversation"))
-         (resource (resource-resolver-resolve resolver identifier context))
+  (let* ((resource (make-instance 'conversation-resource :uri (format nil "channel:~A" identifier)
+                                  :conversation (tool-context-conversation context)))
          (result   (resource-tool-read resource
                                        (conversation-resource-tests--read-tool)
                                        context
@@ -151,12 +151,6 @@
                 (search (heading :answer) found)
                 (not (search (heading :question) found)))
            "max-results keeps only the newest matches"))
-        (test-assert (search "Where did we put"
-                             (conversation-resource-tests--read
-                              context
-                              (format nil "id/~A" (conversation-identifier conversation))
-                              "query" "decoder"))
-                     "a named conversation is searched by its identifier")
         (test-assert
          (and (conversation-resource-tests--rejected-p context "current" "query" " ")
               (conversation-resource-tests--rejected-p context "current"
@@ -234,20 +228,7 @@
                                                        "record-count" 201)
               (conversation-resource-tests--rejected-p context "current"
                                                        "start-sequence" 0))
-         "line windows and out-of-range record windows are rejected")
-        (test-assert
-         (handler-case
-             (progn
-               (resource-resolver-resolve
-                (make-instance 'conversation-resolver :scheme "conversation")
-                "resource-windows" context)
-               nil)
-           (resource-operation-unsupported ()
-             t))
-         "a bare identifier is not a conversation resource")
-        (test-assert
-         (conversation-resource-tests--rejected-p context "id/missing-conversation")
-         "an unknown named conversation is reported"))))
+         "line windows and out-of-range record windows are rejected"))))
   nil)
 
 (-> test-conversation-resource-segment-prefilter () null)

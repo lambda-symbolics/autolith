@@ -3,7 +3,7 @@
 ;;;; -- Channel Resources --
 
 ;;; channel:current describes the channel of the requesting conversation and
-;;; reads its history the way conversation:current does. channel:id/<id>
+;;; reads its durable history. channel:id/<id>
 ;;; names another channel, and channel:list surveys every channel with its
 ;;; residents and subscribers. Reads never subscribe the reader.
 
@@ -345,3 +345,13 @@ names contain it, ignoring case."
                         tool context arguments)))
           (tool-success (format nil "~A~A" state (tool-result-content history))))
         (tool-success (format nil "~AChannel history is unavailable.~%" state)))))
+
+(defmethod resource-whole-text
+    ((resource channel-resource) (context tool-context) &key maximum-bytes tool-name)
+  "Read the channel history subject to the caller's whole-text byte limit."
+  (let ((conversation (channel-resource-conversation resource)))
+    (unless conversation
+      (error 'tool-error :tool-name tool-name :message "Channel history is unavailable."))
+    (resource-whole-text (make-instance 'conversation-resource
+                                        :uri (resource-uri resource) :conversation conversation)
+                         context :maximum-bytes maximum-bytes :tool-name tool-name)))

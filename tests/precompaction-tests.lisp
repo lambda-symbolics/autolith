@@ -208,7 +208,7 @@
                      "projected output obeys the character limit")
         (test-assert (and (search "begin-evidence" bounded) (search "end-evidence" bounded))
                      "both ends of the evidence are retained")
-        (test-assert (and (search "conversation:id/precompaction-large" bounded)
+        (test-assert (and (search "channel:id/precompaction-large" bounded)
                           (search "large" bounded))
                      "the excerpt identifies the retrievable conversation and call")
         (test-assert (equal output (getf (rest record) :output))

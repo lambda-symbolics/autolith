@@ -215,17 +215,17 @@ variant must therefore declare its object type explicitly."
     (resource-registry-register
      registry (make-instance 'workspace-file-resolver :scheme "workspace"))
     (resource-registry-register
-     registry (make-instance 'conversation-resolver :scheme "conversation"))
+     registry (make-instance 'channel-resolver :scheme "channel"))
     (test-assert (uiop:string-prefix-p "Read a model-addressable resource. "
                                        (tool-description read))
                  "the read description keeps its lead sentence")
     (test-assert (and (search "workspace:src/main.lisp" (tool-description read))
-                      (search "conversation:current" (tool-description read)))
+                      (search "channel:current" (tool-description read)))
                  "the read description documents every registered scheme")
     (test-assert (not (search "agenda:" (tool-description read)))
                  "the read description omits unregistered schemes")
     (test-assert (and (search "workspace: files accept" (tool-description edit))
-                      (not (search "conversation:" (tool-description edit))))
+                      (not (search "channel:" (tool-description edit))))
                  "the edit description documents only editable schemes")
     (resource-registry-register
      registry (make-instance 'agenda-resolver :scheme "agenda"))

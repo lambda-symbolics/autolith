@@ -200,7 +200,7 @@
                             (equal (conversation-identifier conversation) (getf result :conversation))
                             (= (getf result :sequence) (- (conversation-next-sequence conversation) 2)))
                        "a tool result is named by its conversation, sequence and call")
-          (test-assert (search (format nil "conversation:id/~A sequence ~D"
+          (test-assert (search (format nil "channel:id/~A sequence ~D"
                                        (conversation-identifier conversation)
                                        (getf result :sequence))
                                (getf result :label))

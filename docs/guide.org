@@ -1086,10 +1086,10 @@ Reports match by an identical title, or by substantial overlap in the title and
 body with a report from the last day. A conversation re-filing its own report
 within an hour uses a looser match to catch rewritten repeats.
 
-Conversation history uses read-only resource URIs:
+Channel history uses read-only resource URIs:
 
-- =conversation:current= is the current conversation's complete durable
-  history, including the records compaction removed from the model context.
+- =channel:current= describes the current channel and reads its durable history,
+  including records compaction removed from the model context.
   A plain read returns the newest records; =start-sequence= and
   =record-count= (default 20, maximum 200) page by durable record sequence.
   A window holds at most 7,000 characters and shortens long records, so read
@@ -1100,15 +1100,8 @@ Conversation history uses read-only resource URIs:
   =max-results= defaults to 20 and is capped at 50. Messages, assistant
   replies, reasoning summaries, tool call arguments and outputs, web searches,
   and compaction checkpoints are searched.
-- =conversation:id/<id>= reads or searches another conversation by its
-  identifier. Searches never span several conversations.
-
-Channels use read-only resource URIs with the same history arguments:
-
-- =channel:current= describes the current channel, its residents,
-  subscribers, workspace and owner, then reads its history like
-  =conversation:current=.
-- =channel:id/<id>= describes and reads another channel.
+- =channel:id/<id>= describes and reads another channel. Searches never span
+  several channels.
 - =channel:list= surveys every channel with its residents and subscribers.
   Reading a channel never subscribes the reader.
 
@@ -1869,8 +1862,8 @@ may subscribe to others. You reside in your inbox, a channel of your own
 named =inbox= where no agent ever lives; viewing or controlling another
 channel moves nobody. Every durable conversation is kept in step with a
 channel of the same identifier, initially with an agent participant residing there,
-owned by the one human participant, so =conversation:id/X= and =channel:id/X=
-name the same history. A conversation newer than its channel is migrated
+owned by the one human participant. Read its history at =channel:id/X=.
+A conversation newer than its channel is migrated
 again onto the same identities, and a deleted conversation retires its channel
 and agent. The world lives in =world/= below the data root. One world server
 process hosts the open channels, each with its own endpoint for terminals;
@@ -2439,7 +2432,7 @@ agree with what stays after the checkpoint. Each has a short handle. A note
 cites the handles that support it and the checkpoint keeps the cited
 references. A completed note that cites nothing reads =(unsubstantiated)=.
 
-A record reference gives its =conversation:id/<id>= address and sequence, and
+A record reference gives its =channel:id/<id>= address and sequence, and
 a fact reference its =memory:claim/<id>= address, so the evidence can be read
 again, also from a conversation that adopted the checkpoint. When a cited plan
 step, mission gate or fact changes after the checkpoint, the next turn says

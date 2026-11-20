@@ -144,7 +144,7 @@ The copy shows the same durable record as ITEM."
          (call-id   (json-get item "call_id"))
          (limit     *conversation-precompaction-output-maximum-characters*)
          (reference (format nil
-                            "[Full evidence: read conversation:id/~A with query ~S. Result: ~A; external effects unknown.]"
+                             "[Full evidence: read channel:id/~A with query ~S. Result: ~A; external effects unknown.]"
                             (conversation-identifier conversation) call-id
                             (if (gethash call-id (conversation-failed-call-ids conversation))
                                 "failed"
