@@ -931,9 +931,7 @@ state, including an empty list after successful or pristine startup."
                   authentication-selection authentication-method)
   "Start one interactive Autolith session from COMMAND's parsed options."
   (main--register-local-source-trees)
-  (main--validate-detached-options command :open-requested-p open-requested-p)
-  (let* ((detached-p               (not (null (getopt* command ':detached))))
-         (pristine-p               (not (null (getopt* command ':pristine))))
+  (let* ((pristine-p               (not (null (getopt* command ':pristine))))
          (read-only-p              (and open-requested-p (getopt command ':read-only)))
          (attachment-mode          (if read-only-p ':read-only ':control))
          (immutable-p              (or pristine-p
@@ -976,7 +974,7 @@ state, including an empty list after successful or pristine startup."
              (open-id
               (main-resolve-conversation configuration open-id))))
          (recovery-state
-           (if (or handoff-record detached-p)
+           (if handoff-record
                (list nil nil)
                (multiple-value-list
                 (application-recovery-state configuration))))
@@ -984,8 +982,7 @@ state, including an empty list after successful or pristine startup."
          (recovery-diagnosis
            (if handoff-record
                (getf (rest handoff-record) :recovery-diagnosis)
-               (and (not detached-p)
-                    (null effective-open-id)
+               (and (null effective-open-id)
                     (application-recovery-diagnosis-prompt configuration))))
          (conversation-id          (or effective-open-id recovery-conversation-id))
          (latest-p                 (and effective-open-requested-p (null conversation-id)))
@@ -1022,17 +1019,6 @@ state, including an empty list after successful or pristine startup."
         (error 'configuration-error :message "--read-only cannot be combined with --permissions."))
       (when image-values
         (error 'configuration-error :message "--read-only cannot be combined with --image.")))
-    (when detached-p
-      (main--start-detached configuration
-                            :permission-mode (if pristine-p
-                                                 (or explicit-permission-mode permission-mode)
-                                                 permission-mode)
-                            :immutable-p     immutable-p
-                            :pristine-p      pristine-p
-                            :conversation-id effective-open-id
-                            :launch          (main--launch-options
-                                              command :permission-mode explicit-permission-mode))
-      (return-from main--start-session nil))
     (when (and (string-equal (software-type) "Linux")
                (not (application--command-sandbox-available-p)))
       (format *error-output* "~&Autolith: ~A~%"
@@ -1649,11 +1635,6 @@ Return success and bounded secondary cleanup metadata without replacing a primar
 (defun main--session-options ()
   "Return the persistent session options shared with every sub-command."
   (list
-   (make-option ':flag
-                :long-name   "detached"
-                :key         ':detached
-                :persistent  t
-                :description "start without attaching; print conversation ID and session PID")
    (make-option ':string
                 :long-name   "model"
                 :key         ':model
@@ -2139,10 +2120,6 @@ autolith uninstall removes the installation and keeps user data."
                (error (condition)
                  (format *error-output* "~&~A~%" condition)
                  (uiop:quit 64)))))
-       (when (and (getopt* command ':detached)
-                  (not (string= (command-name command) "autolith")))
-         (error 'configuration-error
-                :message "--detached is supported only when starting a new channel."))
        (funcall (command-handler command) command))))
   nil)
 

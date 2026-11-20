@@ -1772,12 +1772,9 @@
 (define-test-suite session-cli
   test-cli-resume-prefixes
   test-cli-startup-failure-line
-  test-cli-detached-dispatch
-  test-cli-detached-receipt-cleanup
   test-cli-world-client-start
   test-client-welcome-layout
-  test-client-welcome-input
-  test-cli-detached-process)
+  test-client-welcome-input)
 
 (when (test-fixture-available-p *platform* ':posix-shell)
   (define-test-suite release-script

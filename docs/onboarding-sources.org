@@ -467,7 +467,6 @@ If it has closed or left memory, you resume its saved conversation.
 
 The old =autolith resume= command is now =autolith open=.
 Inside Autolith, use =(open)= for either case.
-Add =--detached= with an ID to open it without attaching a terminal.
 
 * Detached sessions
 :PROPERTIES:

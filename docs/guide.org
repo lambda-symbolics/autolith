@@ -1630,10 +1630,6 @@ switch, or =q= to detach. Each retry has a bounded connection deadline.
 Reattachment does not open a new channel or resubmit work. Attachment refusals
 and failures after acceptance are reported separately from an application exit.
 
-Use =--detached= to open a new channel in the server without attaching a
-terminal. With =--pristine=, =--detached= starts a rescue session in a
-process of its own instead.
-
 For a new channel, specify =--model=, =--permissions=, =--immutable=,
 =--fullscreen=, or =--plain= at startup. Supply =--provider= only together
 with =--model=. An existing channel accepts an explicit
@@ -1734,19 +1730,16 @@ the distinct observer PIDs. The endpoint's =:pid= identifies its hosting process
 
 =idle= means that the process is at input with no active work of any kind.
 
-Start an unattended session, or open a channel by agent name, path or ID:
+Open a channel by agent name, path or ID:
 
 #+BEGIN_SRC sh
-autolith --detached
 autolith open b-6
 autolith open researcher --read-only
 autolith open /researcher/reviewer
 autolith open
 #+END_SRC
 
-Use =autolith --detached= to start a new unattended channel and print its full
-conversation ID and session PID. This works with closed stdin. Open an existing
-channel in this terminal with =autolith open TARGET=, using its agent's name
+Open an existing channel in this terminal with =autolith open TARGET=, using its agent's name
 with or without =@=, an exact channel path, or its ID. Omit the target to open
 the latest top-level channel in the current workspace. Use =--read-only= to
 observe without taking control, including after switching channels. Exact channel IDs take precedence over bare
@@ -1784,8 +1777,7 @@ Launch-only overrides such as =--model= are rejected when resuming a
 running conversation. For hosted channels, =--permissions= may be used when
 no terminal is attached, as described under Checkpoints and launch options.
 Otherwise, change the permission mode inside the conversation with
-=(permissions ...)=. =--image= and =--simulate-crash= cannot be combined with
-=--detached=.
+=(permissions ...)=.
 
 Control a channel with the following commands:
 
