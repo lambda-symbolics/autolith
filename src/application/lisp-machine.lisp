@@ -172,13 +172,7 @@ journaling or provider conversation projection."
                  (lambda ()
                    (when application
                      (application-operation-install-bindings application))
-                   (let* ((form (self-read-form source))
-                          (close-operation
-                            (and application
-                                 (application-operation--top-level-close application form))))
-                     (if close-operation
-                         (application-operation-call application (application-operation-name close-operation))
-                         (eval form))))
+                   (eval (self-read-form source)))
                  :application      application
                  :source           source
                  :operation-kind   ':lisp

@@ -441,7 +441,7 @@ Closing the terminal also leaves the channel working.
 =autolith tell ID "message"=         send a message
 =autolith open ID --read-only=       watch a channel
 
-Use =(close)= to close your current channel.
+Use =(exit)= to close your current channel.
 Use =autolith stop= to stop the server and every channel it hosts.
 
 * Give Autolith an objective

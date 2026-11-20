@@ -3894,11 +3894,10 @@ pristine or recovery session runs apart from it."
     (world-server--dispatch server ':stop nil))
   ':continue)
 
-(define-application-command application--builtin-close-command
-    (:name              "/close"
+(define-application-command application--builtin-exit-command
+    (:name              "/exit"
      :help-topic        :runtime
      :help-order        16
-     :aliases           ("/exit")
      :argument          nil
      :description       "leave Autolith"
      :tip               "exits cleanly; Ctrl-C also prints the exact resume command."

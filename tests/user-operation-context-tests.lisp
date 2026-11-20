@@ -644,8 +644,8 @@
                            "aborting from a responsive command error returns to the prompt")
                           (test-assert
                            (eq (application-input-controller--run-responsive-lisp
-                                controller "(close)") ':quit)
-                           "responsive close preserves its successful loop action")))
+                                controller "(exit)") ':quit)
+                           "responsive exit preserves its successful loop action")))
                       (let* ((records
                                (conversation-user-operation-snapshot
                                 (application-conversation application)))
@@ -657,7 +657,7 @@
                                          (getf record :source))
                                        properties)
                                '("(operation-abort)" "(operation-abort)"
-                                 "(operation-failure)" "(close)"))
+                                  "(operation-failure)" "(exit)"))
                               (equal
                                (mapcar (lambda (record)
                                          (getf record :status))

@@ -65,7 +65,7 @@
                      "native Lisp publishes its result and correlated idle completion"))
                   (let* ((conversation (application-conversation application))
                          (items        (conversation-input-items conversation)))
-                    (dolist (text '("/close" "//escaped"))
+                    (dolist (text '("/exit" "//escaped"))
                       (let ((submission (submission)))
                         (localgroup-client-call connection ':submit :text text :submission submission)
                         (test-assert

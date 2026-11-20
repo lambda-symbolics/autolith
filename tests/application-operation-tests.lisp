@@ -293,7 +293,7 @@
 (-> test-application-operation-binding-conflicts () null)
 (defun test-application-operation-binding-conflicts ()
   "Test canonical operation conflicts fail registration and never break evaluation."
-  (dolist (name '("/search" "/close"))
+  (dolist (name '("/search" "/reverse"))
     (let* ((command
              (application-command-create
               :definition-name   'application-operation-tests--conflicting-function
@@ -332,7 +332,7 @@
       (test-assert
        (eq (fdefinition symbol) existing)
        "skipped operation bindings preserve the existing function")))
-  (dolist (alias '("/search" "/close"))
+  (dolist (alias '("/search" "/reverse"))
     (let ((snapshot (application-command--registry-snapshot))
           (command  (application-command-create
                      :definition-name 'application-operation-tests--conflicting-alias
@@ -524,9 +524,8 @@
              (test-assert (and (find "(help" entry-names :test #'string=)
                                (notany (lambda (name) (uiop:string-prefix-p "/" name)) entry-names))
                           "the prompt catalog only offers native operations")
-             (test-assert (and (member "(close)" entry-names :test #'string=)
-                               (null (application-command-find "/quit")))
-                          "completion offers the renamed no-argument Lisp command")
+             (test-assert (member "(exit)" entry-names :test #'string=)
+                          "completion offers the no-argument exit command")
              (test-assert
               (and (member "(ste t)" entry-names :test #'string=)
                    (member "(ste nil)" entry-names :test #'string=))
@@ -543,9 +542,7 @@
                      (null (primary-of "(domestic)")))
                 "finite option entries stay behind their canonical command rows")
                (test-assert
-                  (and (equal (primary-of "(exit)") "(close)")
-                       (equal (primary-of "(usage)") "(status)")
-                       (null (primary-of "(close)")))
+                  (equal (primary-of "(usage)") "(status)")
                 "alias entries stay behind their canonical command rows"))
              (test-assert
               (and resource-entry
@@ -579,10 +576,8 @@
                        ("(channel.send :text \"text\")" :execute)
                        ("(channel.send :text (read-file \"/tmp/example\"))" :execute)
                        ("(goal \"pause\")" :hold)
-                       ("(close)" :cancel)
-                       ("(close nil)" :hold)
-                       ("(close (make-string-output-stream))" :hold)
-                       ("(progn (close))" :hold)
+                        ("(exit)" :cancel)
+                        ("(progn (exit))" :hold)
                        ("(update)" :hold)
                        ("(compact)" :hold)
                        ("(resource.read :uri \"workspace:.\")" :execute)
@@ -719,37 +714,16 @@
                    (equal (application-lisp-evaluation-values evaluation)
                           '(":FINISHED"))
                    (search "(help" output)
-                  (search "(resource.read" output)
-                  (search "(close)" output))
+                    (search "(resource.read" output)
+                   (search "(exit)" output))
               "nested help can present the full registered operation reference"))
            (let ((evaluation
-                   (application-lisp-evaluate "(close)" :application application)))
+                    (application-lisp-evaluate "(exit)" :application application)))
              (test-assert
               (and (eq (application-lisp-evaluation-status evaluation) ':ok)
                    (eq (application-lisp-evaluation-loop-action evaluation) ':quit)
                    (null (application-lisp-evaluation-values evaluation)))
-              "a canonical close operation transfers control to the application loop"))
-           (let ((stream-close (fdefinition 'cl:close)))
-             (test-assert (eq (find-symbol "CLOSE" :autolith) 'cl:close)
-                          "the channel command uses the inherited Common Lisp symbol")
-             (dolist (case '(("(close (make-string-output-stream))" ("T"))
-                             ("(let ((stream (make-string-output-stream))) (close stream) (open-stream-p stream))" ("NIL"))))
-               (destructuring-bind (source expected-values) case
-                 (let ((evaluation (application-lisp-evaluate source :application application)))
-                   (test-assert (and (eq (application-lisp-evaluation-status evaluation) ':ok)
-                                     (null (application-lisp-evaluation-loop-action evaluation))
-                                     (equal (application-lisp-evaluation-values evaluation) expected-values))
-                                "top-level stream closing and nested stream forms use Common Lisp"))))
-             (test-assert (eq stream-close (fdefinition 'cl:close))
-                          "operation installation preserves the stream CLOSE function"))
-           (let ((evaluation
-                   (application-lisp-evaluate
-                    "(progn (close))" :application application
-                    :restart-selector              (lambda (condition restarts)
-                                                     (declare (ignore condition restarts)) nil))))
-             (test-assert (and (eq (application-lisp-evaluation-status evaluation) ':aborted)
-                               (null (application-lisp-evaluation-loop-action evaluation)))
-                          "a nested zero-argument CLOSE is an ordinary Lisp arity error"))
+               "exit transfers control to the application loop"))
            (let ((*update-check-fetch-function* (lambda () "v99.0.0")))
              (setf (application-installation-provenance application)
                    (make-instance

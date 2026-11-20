@@ -480,7 +480,7 @@
          ((fix-skipped-definitions) :hold)
          ((vault-restore) :execute)
          ((vault-discard) :execute)
-         ((close) :cancel)))
+         ((exit) :cancel)))
     (destructuring-bind (form expected) case
       (let* ((invocation (application-command-tests--invocation form))
              (command    (application-command-invocation-command invocation)))
@@ -493,7 +493,7 @@
          ((effort "high") nil)
          ((open "K-8vQ2mp") nil)
          ((compact) nil)
-         ((close) nil)))
+         ((exit) nil)))
     (destructuring-bind (form expected) case
       (let* ((invocation (application-command-tests--invocation form))
              (command    (application-command-invocation-command invocation)))
@@ -524,7 +524,7 @@
          ("/hurry-up" (&optional (mode ':status)))
          ("/papercut" (&optional identifier))
          ("/papercut-close" (&optional identifier))
-         ("/close" nil)))
+         ("/exit" nil)))
     (destructuring-bind (name lambda-list) case
       (let ((command (application-command-find name)))
         (test-assert

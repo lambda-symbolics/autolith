@@ -399,12 +399,9 @@
          t))
      "missing and blank command tips fail during macro expansion"))
   (test-assert
-   (and (string= (application-command-name
-                  (application-command-find "/EXIT"))
-                 "/close")
-        (string= (application-command-name
-                  (application-command-find "/usage"))
-                 "/status"))
+   (string= (application-command-name
+             (application-command-find "/usage"))
+            "/status")
    "declared aliases resolve through their canonical command definitions")
   (test-assert
    (eq
@@ -412,7 +409,7 @@
      (application-command-find "/EXIT")
      (application-operation--command-invocation (application-command-find "/EXIT") nil))
     ':cancel)
-   "close aliases inherit the command's cancellation policy")
+   "exit cancels active work before ending the listener")
   (dolist (case '(("/settings" "(settings :onboarding-p nil)"
                               "(settings :boot-screen-seconds 2)"
                               "(settings :terminal-theme)")
@@ -1152,7 +1149,7 @@
                      for position = (search substring text :start2 start)
                      while position count position)))
       (dolist (case '((:interrupt (:interrupt))
-                      (:quit ((:insert "(close)") :submit))
+                      (:quit ((:insert "(exit)") :submit))
                       (:end-of-input (:end-of-input))))
         (destructuring-bind (reason events) case
           (let* ((durable (conversation-create configuration
@@ -1798,7 +1795,7 @@
                             (recording-terminal-output terminal))
                       (queued-recording-terminal-enqueue terminal ':interrupt)
                       (queued-recording-terminal-enqueue
-                       terminal '(:insert "(close)"))
+                       terminal '(:insert "(exit)"))
                       (queued-recording-terminal-enqueue terminal ':submit))
                     :name "Autolith active-turn stop-key test"))
              (unwind-protect
@@ -2064,7 +2061,7 @@
                              (setf producer-condition condition)))
                       (queued-recording-terminal-enqueue terminal ':interrupt)
                       (queued-recording-terminal-enqueue
-                       terminal '(:insert "(close)"))
+                       terminal '(:insert "(exit)"))
                       (queued-recording-terminal-enqueue terminal ':submit)))
                   :name "Autolith active tool stop-key test"))
            (unwind-protect
@@ -5469,7 +5466,7 @@
                     ("/goal" (:pause) :hold) ("/mcp" () :execute)
                     ("/hurry-up" () :execute) ("/model" () :apply-interactive)
                     ("/effort" () :apply-interactive) ("/permissions" () :apply-interactive)
-                    ("/status" () :execute) ("/compact" () :hold) ("/close" () :cancel)))
+                    ("/status" () :execute) ("/compact" () :hold) ("/exit" () :cancel)))
       (destructuring-bind (name arguments expected) case
         (test-assert (eq (busy-action name arguments) expected)
                      (format nil "busy ~A ~S resolves to ~A" name arguments expected)))))

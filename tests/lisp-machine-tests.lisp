@@ -797,15 +797,15 @@
                               (conversation-input-items
                                (application-conversation application))))
                   "local work shows exact source and values outside ordinary provider history")))
-             (let ((close-controller
+             (let ((exit-controller
                      (lisp-machine-tests--controller application)))
                (application-input-controller--run-work
-                close-controller '(:lisp "(close)"))
+                exit-controller '(:lisp "(exit)"))
                (test-assert
-                (and (application-input-controller-stopping-p close-controller)
-                     (eq (application-input-controller-exit-reason close-controller)
+                (and (application-input-controller-stopping-p exit-controller)
+                     (eq (application-input-controller-exit-reason exit-controller)
                          ':quit))
-                "a Lisp close operation exits through the responsive controller")))
+                "exit stops the responsive controller")))
         (ignore-errors (terminal-ui-stop ui))
         (ignore-errors
           (tool-registry-close-runtime-state
@@ -986,7 +986,7 @@
                (terminal-ui-finish-prompt-block ui 0)
                (terminal-ui-open-prompt-block ui)
                (recording-terminal-reset terminal)
-               (run-lisp-work "(close)")
+                (run-lisp-work "(exit)")
                (let ((output (recording-terminal-output terminal)))
                  (test-assert
                   (and (application-input-controller-stopping-p controller)
