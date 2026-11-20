@@ -397,8 +397,6 @@ only a direct terminal includes the command in this prepared notice."
             (case reason
               (:turn-cancellation
                (application-input-controller--forced-exit-text))
-              (:localgroup-abandoned
-               "The attached terminal disconnected without detaching; Autolith is exiting.")
               (:localgroup-kill
                "A localgroup kill request is stopping Autolith.")
               (otherwise

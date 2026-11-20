@@ -11,15 +11,6 @@
            (checkpoint-reconnect-id :initarg :checkpoint-reconnect-id :initform nil :accessor
             localgroup-session-checkpoint-reconnect-id :type (option string) :documentation
             "The checkpoint transition that created this endpoint.")
-           (detached-explicitly-p :initarg :detached-explicitly-p :initform nil :accessor
-            localgroup-session-detached-explicitly-p :type boolean :documentation
-            "Whether the controlling terminal left through an explicit detach.")
-           (controller-seen-p :initform nil :accessor localgroup-session-controller-seen-p :type
-            boolean :documentation
-            "Whether any controlling client has ever attached to this endpoint.")
-           (linger-p :initarg :linger-p :initform nil :accessor localgroup-session-linger-p :type
-            boolean :documentation
-            "Whether the session outlives every client, as a world server's channels do.")
            (owner-thread :initform (current-thread) :reader localgroup-session-owner-thread
             :documentation "The serving thread that published this endpoint."))
           (:documentation "One authenticated local control endpoint for a primary application."))
@@ -282,34 +273,6 @@ conversation transaction can roll back before releasing either lease."
 ;;;; -- Localgroup Terminal Ownership --
 
 
-(-> localgroup--attach-expected-p (list) boolean)
-(defun localgroup--attach-expected-p (startup-values)
-  "Return true when a controlling client is expected to attach at startup."
-  (or (not (null (getf startup-values :attach-expected-p)))
-      (eq (getf startup-values :mode) ':take-over)))
-
-(-> localgroup--initially-detached-p (list) boolean)
-(defun localgroup--initially-detached-p (startup-values)
-  "Return true when STARTUP-VALUES describe a deliberately detached launch."
-  (and (not (null startup-values))
-       (eq (getf startup-values :mode) ':detach)
-       (not (localgroup--attach-expected-p startup-values))))
-
-(-> localgroup--mark-explicit-detach (localgroup-session) null)
-(defun localgroup--mark-explicit-detach (session)
-  "Record that SESSION's controlling terminal is leaving on purpose."
-  (with-lock-held ((image-daemon:daemon-runtime-lock session))
-    (setf (localgroup-session-detached-explicitly-p session) t))
-  nil)
-
-(-> localgroup--note-controller-attached (localgroup-session) null)
-(defun localgroup--note-controller-attached (session)
-  "Record that a controlling client owns SESSION's terminal from now on."
-  (with-lock-held ((image-daemon:daemon-runtime-lock session))
-    (setf (localgroup-session-controller-seen-p session) t
-          (localgroup-session-detached-explicitly-p session) nil))
-  nil)
-
 (-> localgroup-session-endpoint-live-p (localgroup-session) boolean)
 (defun localgroup-session-endpoint-live-p (session)
   "Return whether SESSION owns a healthy listener and has not committed to close.
@@ -347,28 +310,6 @@ between that check and the close."
        (not (localgroup-session-closing-p session))
        (localgroup-session-serving-p session)))
 
-(-> localgroup--exit-abandoned-session (localgroup-session) null)
-(defun localgroup--exit-abandoned-session (session)
-  "Stop SESSION because the terminal it was serving is gone for good."
-  (let ((controller (application-input-controller
-                     (localgroup-session-application session))))
-    (when controller
-      (application-input-controller--request-exit
-       controller ':localgroup-abandoned)))
-  nil)
-
-(-> localgroup--controller-lost (localgroup-session) boolean)
-(defun localgroup--controller-lost (session)
-  "Exit SESSION after controller loss unless explicitly detached, stopping, or hosted to linger.
-Persist pending input and cancel any active turn when exiting. Return true on exit."
-  (let ((exit-p
-         (with-lock-held ((image-daemon:daemon-runtime-lock session))
-           (not (or (localgroup-session-detached-explicitly-p session)
-                    (localgroup-session-linger-p session)
-                    (image-daemon:daemon-runtime-stopping-p session))))))
-    (when exit-p (localgroup--exit-abandoned-session session))
-    exit-p))
-
 
 (-> localgroup--terminal-event-p (t) boolean)
 (defun localgroup--terminal-event-p (event)
@@ -382,22 +323,14 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
 
 (-> localgroup--detach-terminal (localgroup-session) list)
 (defun localgroup--detach-terminal (session)
-  "Tell the terminal client that controls SESSION's channel to leave it running.
-
-A session on its own terminal cannot leave it."
+  "Tell the controlling terminal client to leave SESSION's channel running."
   (let ((application (localgroup-session-application session))
         (identifier  (image-daemon:daemon-runtime-identifier session)))
-    (unless (application-presentation application)
-      (error 'localgroup-error
-             :message    "This foreground process cannot detach. Open a supervised session first."
-             :operation  ':detach
-             :session-id identifier))
     (unless (application-client-tell application ':detach)
       (error 'localgroup-error
              :message    "No terminal shows this channel."
              :operation  ':detach
              :session-id identifier))
-    (localgroup--mark-explicit-detach session)
     (list :ok :operation :detach :scheduled-p nil :session-id identifier)))
 
 (-> localgroup-finish-attachments
@@ -461,41 +394,29 @@ clients present it; one that already left costs nothing."
 (-> localgroup-start
     (application
      &key (:token (option string)) (:created-at (option integer))
-       (:detached-explicitly-p t) (:checkpoint-reconnect-id (option string))
-       (:linger-p boolean))
+          (:checkpoint-reconnect-id (option string)))
     localgroup-session)
 (defun localgroup-start
-    (application &key token created-at detached-explicitly-p checkpoint-reconnect-id
-                      linger-p)
-  "Publish APPLICATION's active conversation with its product startup choreography.
-
-With LINGER-P the session outlives its clients instead of exiting when the
-last controlling client vanishes."
-  (let* ((restart-p      (not (null token)))
-         (startup-values (and *localgroup-startup-record* (rest *localgroup-startup-record*)))
-         (configuration  (application-configuration application))
-         (session        nil)
-         (completed-p    nil))
+    (application &key token created-at checkpoint-reconnect-id)
+  "Publish APPLICATION's hosted channel endpoint independently of terminal lifetime."
+  (let ((configuration (application-configuration application))
+        (session       nil)
+        (completed-p   nil))
     (unwind-protect
          (progn
            (setf session
                  (image-daemon:daemon-runtime-create
                   :directory        (localgroup-registry-directory configuration)
                   :identifier       (conversation-identifier (application-conversation application))
-                  :token            (or token (getf startup-values :token))
-                  :created-at       (or created-at (getf startup-values :created-at))
+                  :token            token
+                  :created-at       created-at
                   :class            'localgroup-session
-                  :initargs         (list :application             application
-                                          :detached-explicitly-p
-                                          (or detached-explicitly-p
-                                              (localgroup--initially-detached-p startup-values))
-                                          :checkpoint-reconnect-id checkpoint-reconnect-id
-                                          :linger-p                linger-p)
+                  :initargs         (list :application application
+                                          :checkpoint-reconnect-id checkpoint-reconnect-id)
                   :request-function #'localgroup--handle-request
                   :error-function   (lambda (condition)
                                       (localgroup--endpoint-failed session condition)))
                  (application-localgroup-session application) session)
-           (unless restart-p (localgroup-handoff-assert-startup-active))
            (let ((hub (application-client-hub application)))
              (with-lock-held ((client-hub-lock hub))
                (setf (client-hub-admitting-p hub) t)))
@@ -503,7 +424,6 @@ last controlling client vanishes."
            (localgroup--publish-registry session)
            (application-mission-schedules-host application session)
            (setf completed-p t)
-           (unless restart-p (localgroup-handoff-finish-startup application))
            session)
       (unless completed-p
         (setf (application-localgroup-session application) nil)

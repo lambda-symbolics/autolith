@@ -1709,7 +1709,6 @@
 
 (define-test-suite localgroup-handoff
   test-localgroup-handoff-site-arguments
-  test-localgroup-abandoned-session-exit
   test-localgroup-lingering-session
   test-localgroup-fresh-session-spawn
   test-localgroup-world-spawn)

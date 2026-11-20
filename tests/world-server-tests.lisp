@@ -1971,7 +1971,7 @@ the version the client says it is, when it says one."
            (test-assert (and (not (eq restarted-a session-a))
                              (string= (image-daemon:daemon-runtime-token restarted-a)
                                       (image-daemon:daemon-runtime-token session-a))
-                             (localgroup-session-linger-p restarted-a))
+                             )
                         "every endpoint restarts under its token and keeps lingering"))
          (test-assert (eql 42 (world-server-tests--run-job other))
                       "the other channel's jobs run again after the checkpoint")

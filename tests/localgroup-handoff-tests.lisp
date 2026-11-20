@@ -70,15 +70,15 @@ With PERSISTED-P its conversation holds a message."
   nil)
 
 (-> test-localgroup--abandonment-fixture
-    (configuration &key (:persisted-p boolean) (:linger-p boolean))
+    (configuration &key (:persisted-p boolean))
     (values application application-input-controller localgroup-session))
-(defun test-localgroup--abandonment-fixture (configuration &key persisted-p linger-p)
+(defun test-localgroup--abandonment-fixture (configuration &key persisted-p)
   "Return a started application without a terminal of its own, its controller and its session."
   (configuration-ensure-directories configuration)
   (multiple-value-bind (application controller)
       (test-localgroup--leased-application configuration :persisted-p persisted-p)
     (terminal-ui-start (application-ui application))
-    (values application controller (localgroup-start application :linger-p linger-p))))
+    (values application controller (localgroup-start application))))
 
 (-> test-localgroup-lingering-session () null)
 (defun test-localgroup-lingering-session ()
@@ -89,14 +89,13 @@ With PERSISTED-P its conversation holds a message."
          (controller    nil))
     (unwind-protect
         (multiple-value-bind (fixture-application fixture-controller session)
-            (test-localgroup--abandonment-fixture configuration :persisted-p t :linger-p t)
+            (test-localgroup--abandonment-fixture configuration :persisted-p t)
           (setf application fixture-application
                 controller fixture-controller)
           (application-input-controller--enqueue controller ':message "queued input")
           (localgroup-client-close (test-localgroup--present session))
           (test-assert
            (and (test-localgroup--await-served session)
-                (not (localgroup--controller-lost session))
                 (null (application-input-controller-exit-reason controller)))
            "a lingering session outlives a client that vanished without detaching")
           (application-call-with-localgroup-quiesced application (lambda () nil))
@@ -104,8 +103,6 @@ With PERSISTED-P its conversation holds a message."
             (test-assert
              (and restarted
                   (not (eq restarted session))
-                  (localgroup-session-linger-p restarted)
-                  (not (localgroup--controller-lost restarted))
                   (null (application-input-controller-exit-reason controller)))
              "a checkpoint restart keeps the session lingering")))
       (test-localgroup--abandonment-cleanup application controller root)))
@@ -124,113 +121,6 @@ With PERSISTED-P its conversation holds a message."
   (when application
     (terminal-ui-stop (application-ui application)))
   (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)
-  nil)
-
-(-> test-localgroup-abandoned-session-exit () null)
-(defun test-localgroup-abandoned-session-exit ()
-  "Test sessions exiting when their last controlling client vanishes without an explicit detach."
-  (flet ((call-with-fixture (function &rest arguments)
-           "Call FUNCTION with a started application without a terminal, its controller and its session."
-           (let* ((configuration (test-configuration))
-                  (root          (test-configuration-root configuration))
-                  (application   nil)
-                  (controller    nil))
-             (unwind-protect
-                  (multiple-value-bind (fixture-application fixture-controller session)
-                      (apply #'test-localgroup--abandonment-fixture configuration arguments)
-                    (setf application fixture-application
-                          controller  fixture-controller)
-                    (funcall function application controller session))
-               (test-localgroup--abandonment-cleanup application controller root))))
-
-         (abandoned-p (controller)
-           "Wait for CONTROLLER to be asked to exit as abandoned and return whether it was."
-           (task-tests--wait-until
-            (lambda ()
-              (eq (application-input-controller-exit-reason controller) ':localgroup-abandoned))
-            10))
-
-         (detached-explicitly-p (session)
-           "Return whether SESSION's controlling terminal left on purpose."
-           (with-lock-held ((image-daemon:daemon-runtime-lock session))
-             (localgroup-session-detached-explicitly-p session))))
-    (call-with-fixture
-     (lambda (application controller session)
-       (setf (application-goal application)
-             (list :objective "keep working" :status ':active :continuations 0))
-       (application-input-controller--enqueue controller ':message "queued input")
-       (let ((watcher (test-localgroup--present session :watches-p t))
-             (earlier (test-localgroup--present session))
-             (later   (test-localgroup--present session)))
-         (unwind-protect
-              (progn
-                (localgroup-client-close earlier)
-                (test-assert (and (test-localgroup--await-served session 2)
-                                  (= 2 (length (application-clients application)))
-                                  (null (application-input-controller-exit-reason controller)))
-                             "a session another controlling client still shows keeps running")
-                (localgroup-client-close later)
-                (test-assert (and (abandoned-p controller)
-                                  (not (localgroup-client-connection-closed-p watcher)))
-                             "losing the last controlling client without a detach exits a persisted busy session, whoever still watches it"))
-           (localgroup-client-close watcher))))
-     :persisted-p t)
-    (call-with-fixture
-     (lambda (application controller session)
-       (let ((watcher (test-localgroup--present session :watches-p t)))
-         (localgroup-client-close watcher)
-         (test-assert (and (test-localgroup--await-served session)
-                           (null (application-input-controller-exit-reason controller)))
-                      "a client that only watched is no lost terminal"))
-       (let ((connection (test-localgroup--present session)))
-         (test-assert (and (application-terminal-attached-p application)
-                           (eq (getf (rest (localgroup-status-snapshot session)) :terminal-attachment)
-                               ':remote))
-                      "a controlling client shows the session")
-         (localgroup-client-call connection ':detach)
-         (localgroup-client-close connection))
-       (test-assert
-        (and (test-localgroup--await-served session)
-             (detached-explicitly-p session)
-             (eq (getf (rest (localgroup-status-snapshot session)) :terminal-attachment) ':detached)
-             (null (application-input-controller-exit-reason controller)))
-        "an explicit detach lets a client-less session linger")
-       (let ((connection (test-localgroup--present session)))
-         (test-assert (not (detached-explicitly-p session))
-                      "a later controlling client consumes the detach")
-         (localgroup-client-close connection))
-       (test-assert (abandoned-p controller)
-                    "the loss of a later client exits the session")))
-    (call-with-fixture
-     (lambda (application controller session)
-       (dolist (leaving '(:detach :switch))
-         (world-server-tests--call-with-terminal-client
-          (application-configuration application) (image-daemon:daemon-runtime-identifier session)
-          (lambda (type await-exit view)
-            (declare (ignore view))
-            (if (eq leaving ':detach)
-                (funcall type ':detach)
-                (application-client-tell application ':switch :session-id "bnext1"))
-            (test-assert (equal (multiple-value-list (funcall await-exit))
-                                (list (when (eq leaving ':switch)
-                                        '(:switch :session-id "bnext1"))
-                                      t))
-                         (format nil "a terminal client ends its view of the session by ~(~A~)" leaving))))
-         (test-assert
-          (and (test-localgroup--await-served session)
-               (detached-explicitly-p session)
-               (null (application-input-controller-exit-reason controller)))
-          (format nil "a terminal client that leaves by ~(~A~) says so, and the session keeps running"
-                  leaving))))))
-  (test-assert
-   (and (localgroup--initially-detached-p '(:mode :detach))
-        (not (localgroup--initially-detached-p '(:mode :detach :attach-expected-p t)))
-        (not (localgroup--initially-detached-p '(:mode :take-over)))
-        (not (localgroup--initially-detached-p nil))
-        (localgroup--attach-expected-p '(:mode :detach :attach-expected-p t))
-        (localgroup--attach-expected-p '(:mode :take-over))
-        (not (localgroup--attach-expected-p '(:mode :detach))))
-   "only a detach handoff starts deliberately detached")
   nil)
 
 (-> test-localgroup-fresh-session-spawn () null)

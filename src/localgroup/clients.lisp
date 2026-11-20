@@ -102,7 +102,6 @@
            (application-clients-note-controller application client)
            (when (channel-client-controls-p client)
              ;; A terminal shows the channel from now on.
-             (localgroup--note-controller-attached session)
              (application-sync-window-title application)
              (application-world-attached application))
            ;; A client of another version may send what this one cannot read:
@@ -117,11 +116,7 @@
                                                       :client client
                                                       :inputs inputs))))
       (client-input-queue-close inputs)
-      (channel-client-close client)
-      ;; A session that serves one terminal ends when nobody is left at it.
-      (when (and (channel-client-controls-p client)
-                 (not (application-clients-controlled-p application :except client)))
-        (localgroup--controller-lost session))))
+      (channel-client-close client)))
   nil)
 
 (-> localgroup--queued-input-p (list) boolean)
@@ -386,7 +381,6 @@ whatever would change the channel."
          (localgroup--client-geometry application arguments)
          nil)
         (:detach
-         (localgroup--mark-explicit-detach session)
          nil)
         (:event
          (let ((event        (getf arguments :event))

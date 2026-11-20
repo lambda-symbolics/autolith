@@ -11,7 +11,7 @@
              (configuration-ensure-directories configuration)
              (terminal-ui-start (application-ui application))
              (funcall function configuration application
-                      (localgroup-start application :linger-p t)))
+                      (localgroup-start application)))
         (localgroup-stop application)
         (application-input-controller-stop controller)
         (terminal-ui-stop (application-ui application))

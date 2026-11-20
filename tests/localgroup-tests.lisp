@@ -686,7 +686,7 @@ Each transcript event takes a line of its own."
                (configuration-ensure-directories configuration)
                (terminal-ui-start ui)
                (multiple-value-bind (client seen await)
-                   (test-localgroup--present (localgroup-start application :linger-p t))
+                   (test-localgroup--present (localgroup-start application))
                  (declare (ignore seen))
                  (setf connection    client
                        picker-thread (make-thread
@@ -725,8 +725,6 @@ Each transcript event takes a line of its own."
   (with-test-configuration (configuration)
     (multiple-value-bind (application controller)
         (test-localgroup--application configuration :presented-p t)
-      (multiple-value-bind (direct direct-controller)
-          (test-localgroup--application configuration)
         (flet ((refusal (session)
                  "Return the message a detach of SESSION is refused with, or NIL when it is taken."
                  (handler-case (progn (localgroup--detach-terminal session) nil)
@@ -740,16 +738,6 @@ Each transcript event takes a line of its own."
                         (identifier (image-daemon:daemon-runtime-identifier session))
                         (entry      (cons (image-daemon:daemon-runtime-registry-pathname session)
                                           (localgroup--registry-record session))))
-                   (test-assert (search "cannot detach"
-                                        (refusal (make-instance 'localgroup-session
-                                                                :application       direct
-                                                                :identifier        "remote-detach"
-                                                                :token             "token"
-                                                                :listener          nil
-                                                                :port              1
-                                                                :registry-pathname #P"remote-detach.sexp"
-                                                                :created-at        (local-time:now))))
-                                "a session on its own terminal cannot leave it")
                    (test-assert (search "No terminal shows" (refusal session))
                                 "a channel nobody shows has no terminal to detach")
                    (let ((watcher (test-localgroup--present session :watches-p t)))
@@ -757,9 +745,6 @@ Each transcript event takes a line of its own."
                           (test-assert (search "No terminal shows" (refusal session))
                                        "a client that only watches is no terminal to detach")
                        (localgroup-client-close watcher)))
-                   (test-assert (not (with-lock-held ((image-daemon:daemon-runtime-lock session))
-                                       (localgroup-session-detached-explicitly-p session)))
-                                "a refused detach marks nothing")
                    (world-server-tests--call-with-terminal-client
                     configuration identifier
                     (lambda (type await-exit view)
@@ -785,8 +770,7 @@ Each transcript event takes a line of its own."
                                 "a session whose terminal was told to leave keeps running without it")))
             (localgroup-stop application)
             (application-input-controller-stop controller)
-            (application-input-controller-stop direct-controller)
-            (terminal-ui-stop (application-ui application)))))))
+            (terminal-ui-stop (application-ui application))))))
   nil)
 
 (-> test-localgroup-session-identifiers () null)
@@ -1470,7 +1454,7 @@ Each transcript event takes a line of its own."
              (multiple-value-setq (application controller)
                (test-localgroup--application configuration :presented-p t))
              (terminal-ui-start (application-ui application))
-             (setf session (localgroup-start application :linger-p t))
+             (setf session (localgroup-start application))
              (multiple-value-bind (client seen await)
                  (test-localgroup--present session)
                (declare (ignore seen))
@@ -1618,7 +1602,7 @@ Each transcript event takes a line of its own."
                (progn
                  (configuration-ensure-directories configuration)
                  (terminal-ui-start (application-ui application))
-                 (setf session (localgroup-start application :linger-p t))
+                 (setf session (localgroup-start application))
                  (await-report nil nil ':detached)
                  (let ((watcher (attach :watches-p t :client-pid 1201)))
                    (await-report nil '(1201) ':detached)
@@ -1739,9 +1723,7 @@ Each transcript event takes a line of its own."
                      (test-assert (search "only watches" (apply #'refusal watcher command))
                                   (format nil "a watching client's ~(~A~) command is refused" (first command))))
                    (test-assert (and (null (work-items))
-                                     (= (terminal-columns terminal) 80)
-                                     (not (with-lock-held ((image-daemon:daemon-runtime-lock session))
-                                            (localgroup-session-detached-explicitly-p session))))
+                                    (= (terminal-columns terminal) 80))
                                 "what a watching client was refused changed nothing")
                    (test-assert (and (eq (first (getf (localgroup-client-call watcher ':state) :state))
                                          ':localgroup-status)

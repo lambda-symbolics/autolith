@@ -369,27 +369,11 @@ controller, only the update check and the endpoint are quiesced."
           (application-input-controller-call-with-reader-paused controller #'quiesced)
           (quiesced)))))
 
-(-> application--direct-quiescer (application) function)
-(defun application--direct-quiescer (application)
-  "Return the checkpoint quiescer of a direct session owning APPLICATION's process.
-
-It stops the session threads, the management REPL and Slynk around the
-checkpoint work."
-  (lambda (function)
-    (application-call-with-session-quiesced
-     application
-     (lambda ()
-       (management-repl-call-quiesced
-        application
-        (lambda ()
-          (slynk-call-quiesced function)))))))
-
 (-> application-serve
     (application &key (:initial-command (option string))
                       (:initial-input (option user-message-input))
                       (:recovery-diagnosis (option string))
                       (:adaptation-offer-p boolean)
-                      (:hosted-p boolean)
                       (:quiescer (option function))
                       (:ready-function (option function))
                       (:resume-p boolean)
@@ -399,18 +383,14 @@ checkpoint work."
     (option keyword))
 (defun application-serve
     (application &key initial-command initial-input recovery-diagnosis
-                      adaptation-offer-p hosted-p quiescer ready-function
+                      adaptation-offer-p quiescer ready-function
                       resume-p localgroup-identity notice (boot-screen-p t))
-  "Serve APPLICATION's session on this thread until it exits, then release its resources.
+  "Serve APPLICATION's world-owned channel on this thread until it exits.
 
-A direct session owns its process: APPLICATION-RUN wraps this function with
-the terminal resize watch, and this function starts and stops the management
-REPL, Slynk and telemetry with the session. With HOSTED-P the application is
-one of several a world server hosts, each on its own thread: its endpoint
-lingers without clients, the process services stay with the server, and
-QUIESCER, a function of one thunk, runs checkpoint work with every hosted
-session stopped. READY-FUNCTION, when supplied, is called with APPLICATION
-once its endpoint is published.
+The world server owns process services and final resource cleanup. QUIESCER,
+a function of one thunk, runs checkpoint work with every hosted channel
+stopped. READY-FUNCTION, when supplied, is called with APPLICATION once its
+endpoint is published.
 
 A session that exits for a checkpoint keeps its resources: its endpoint
 stops, so its thread can end for the fork, and the same application is
@@ -421,11 +401,8 @@ the session shows again. Without BOOT-SCREEN-P the session opens without
 the boot screen, as for a terminal that switched to it. Return the
 controller's exit reason."
   (let* ((ui                     (application-ui application))
-         (worker                 (application-worker application))
          (input-controller       nil)
          (exit-reason            nil)
-         (tool-runtimes-closed-p nil)
-         (worker-stopped-p       nil)
          (recovery-startup-p     (application-recovery-startup-p application))
          (recovery-input-storage-ready-p
            (or (not recovery-startup-p)
@@ -446,40 +423,12 @@ controller's exit reason."
                nil)
 
              (close-runtime-resources ()
-               "Close APPLICATION's external runtimes at most once, or only pause them for a checkpoint."
+               "Pause for a checkpoint or leave final cleanup to the owning world server."
                (when (eq exit-reason ':checkpoint)
                  (return-from close-runtime-resources (pause-resources)))
                (application-assignment-finish application :stop-p t)
-               ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
+               ; mallet:suppress no-ignore-errors -- the owner retries mandatory cleanup
                (ignore-errors (localgroup-stop application))
-               (unless hosted-p
-                 ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-                 (ignore-errors (management-repl-stop application))
-                 ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-                 (ignore-errors (slynk-stop)))
-               ;; A hosted application's owner retries mandatory cleanup before lease release.
-               (when hosted-p
-                 (return-from close-runtime-resources nil))
-               (unless tool-runtimes-closed-p
-                 (unwind-protect
-                      ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-                      (ignore-errors
-                        (tool-registry-close-runtime-state
-                         (application-tool-registry application)))
-                   ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-                   (ignore-errors
-                     (application-disconnect-task-presentation application))
-                   (setf tool-runtimes-closed-p t)))
-               (unless worker-stopped-p
-                 (unwind-protect
-                      (when worker
-                        (lisp-worker-manager-stop worker))
-                   (setf worker-stopped-p t)))
-               (unless hosted-p
-                 ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-                 (ignore-errors (rlm-environment-pool-flush))
-                 (telemetry--call-safely #'telemetry-shutdown))
-               (application-release-conversation-lease application)
                nil)
 
              (finish-shutdown ()
@@ -496,9 +445,6 @@ controller's exit reason."
                   (progn
                     (application-sync-window-title application)
                     (unless resume-p
-                      (unless hosted-p
-                        (application-present application
-                                             (application-banner application)))
                       (let ((update-notice
                               (application--update-notice application)))
                         (when update-notice
@@ -550,7 +496,7 @@ controller's exit reason."
                        application)
                       (application-present-generation-health-warning
                        application))
-                    (apply #'localgroup-start application :linger-p hosted-p localgroup-identity)
+                    (apply #'localgroup-start application localgroup-identity)
                     (when ready-function
                       (funcall ready-function application))
                     (if resume-p
@@ -567,10 +513,6 @@ controller's exit reason."
                     (when (and (not resume-p) (null initial-command)
                                (null initial-input) (null recovery-diagnosis))
                       (application--offer-startup-update application))
-                    (unless hosted-p
-                      (management-repl-start application)
-                      (slynk-start (application-configuration application)
-                                   :background-p t))
                     (application-input-controller--open-prompt-if-ready
                      input-controller)
                     (application-input-controller--start-reader
@@ -579,17 +521,15 @@ controller's exit reason."
                     (application-conversation-maintenance-start application :resume-p resume-p)
                     ;; A channel served for a message, or opened while
                     ;; messages waited, reads them now.
-                    (when hosted-p
-                      (handler-case (application-world-deliver application)
-                        (error (cause)
-                          (warn 'world-session-warning
-                                :pathname (configuration-world-path
-                                           (application-configuration application))
-                                :cause    cause))))
+                    (handler-case (application-world-deliver application)
+                      (error (cause)
+                        (warn 'world-session-warning
+                              :pathname (configuration-world-path
+                                         (application-configuration application))
+                              :cause    cause)))
                     ;; Entering the interactive debugger would hang the raw
                     ;; terminal, so debugger entry becomes fatal recovery.
-                    (let ((*checkpoint-thread-quiescer*
-                            (or quiescer (application--direct-quiescer application)))
+                    (let ((*checkpoint-thread-quiescer* quiescer)
                           (*debugger-hook*
                             (lambda (condition hook)
                               (declare (ignore hook))
@@ -638,33 +578,6 @@ controller's exit reason."
                (finish-shutdown)))
         (finish-shutdown)))
     exit-reason))
-
-(-> application-run
-    (application &key (:initial-command (option string))
-                      (:initial-input (option user-message-input))
-                      (:recovery-diagnosis (option string))
-                      (:adaptation-offer-p boolean))
-    null)
-(defun application-run
-    (application &key initial-command initial-input recovery-diagnosis
-                      adaptation-offer-p)
-  "Run APPLICATION as this process's direct session, always restoring the terminal.
-
-The kernel's resize signal is watched for the session's lifetime; everything
-else about the session is APPLICATION-SERVE's."
-  (let ((resize-watch
-          (platform-watch-terminal-resize
-           *platform*
-           (lambda ()
-             (setf *terminal-resize-pending-p* t)))))
-    (unwind-protect
-         (application-serve application
-                            :initial-command    initial-command
-                            :initial-input      initial-input
-                            :recovery-diagnosis recovery-diagnosis
-                            :adaptation-offer-p adaptation-offer-p)
-      (platform-unwatch-terminal-resize *platform* resize-watch)))
-  nil)
 
 
 ;;;; -- Command-Line Entry --

@@ -1725,7 +1725,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
                   (application-serve application :initial-command
                                      initial-command :recovery-diagnosis
                                      recovery-diagnosis :adaptation-offer-p
-                                     adaptation-offer-p :hosted-p t :resume-p
+                                     adaptation-offer-p :resume-p
                                      resume-p :notice notice :boot-screen-p
                                      boot-screen-p :localgroup-identity
                                      (and reconnect-id
