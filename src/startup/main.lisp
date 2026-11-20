@@ -512,8 +512,9 @@ controller's exit reason."
                   (progn
                     (application-sync-window-title application)
                     (unless resume-p
-                      (application-present application
-                                           (application-banner application))
+                      (unless hosted-p
+                        (application-present application
+                                             (application-banner application)))
                       (let ((update-notice
                               (application--update-notice application)))
                         (when update-notice

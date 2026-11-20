@@ -1199,6 +1199,17 @@ the version the client says it is, when it says one."
 
 (-> test-world-server-hosting () null)
 (defun test-world-server-hosting ()
+  "Exercise hosted startup and reopening without requesting the process startup banner."
+  (test-call-with-function-replacements
+   (list (list 'application-banner
+               (lambda (application)
+                 (declare (ignore application))
+                 (error "A hosted channel requested the process startup banner."))))
+   #'world-server-tests--hosting-lifecycle)
+  nil)
+
+(-> world-server-tests--hosting-lifecycle () null)
+(defun world-server-tests--hosting-lifecycle ()
   "Test opening, sharing, closing and resuming channels through a world server."
   (world-server-tests--call
    (lambda (server configuration root)
