@@ -1091,7 +1091,7 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
              the current tracked source already provides. Otherwise rewrite ~
              the override on top of the current tracked definition, keeping ~
              its intent while following the current calling conventions, ~
-             install it with self.redefine, and check that it works. When every ~
+             install it with self.define, and check that it works. When every ~
              definition is handled, publish the result with self.commit, even ~
              if all skipped overrides were dropped, so the next start replays ~
              only the retained overrides. Explain which overrides were dropped. ~

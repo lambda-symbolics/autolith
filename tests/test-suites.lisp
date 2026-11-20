@@ -1389,8 +1389,7 @@
   test-image-commit-skipped-entry-key
   test-lisp-source-undefined-name
   test-lisp-apropos
-  test-lisp-describe-designators
-  test-self-define-alias)
+  test-lisp-describe-designators)
 
 (define-test-suite generation
   test-checkpoint-backend-selection

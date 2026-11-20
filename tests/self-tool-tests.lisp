@@ -71,11 +71,11 @@
           action))
 
 (defvar *test-self-definition-reader-side-effect-p* nil
-  "Whether a self.redefine test payload executed during reading.")
+  "Whether a self.define test payload executed during reading.")
 
 (-> test-self-definition-reader-boundary () null)
 (defun test-self-definition-reader-boundary ()
-  "Test self.redefine rejects reader evaluation before mutation state exists."
+  "Test self.define rejects reader evaluation before mutation state exists."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (records-before
@@ -92,7 +92,7 @@
                   nil)
               (reader-error ()
                 t))
-            "self.redefine rejects read-time evaluation")
+            "self.define rejects read-time evaluation")
            (test-assert
             (null *test-self-definition-reader-side-effect-p*)
             "rejected reader evaluation has no active-image side effect")
@@ -819,13 +819,13 @@
                    nil
                    nil)
                   ':quit)
-              "self.redefine installs replacement command behavior")
+              "self.define installs replacement command behavior")
              (test-assert
               (eq (application-command-definition-name
                    (application-command-find
                     "/self-command-existing-alias"))
                   'test-self-command-existing)
-              "self.redefine publishes replacement command metadata")
+              "self.define publishes replacement command metadata")
              (self-discard-mutation configuration nil)
              (test-assert
               (eq (fdefinition 'test-self-command-existing)
@@ -852,7 +852,7 @@
                   (application-command-definition-name
                    (application-command-find "/self-command-new"))
                   'test-self-command-new))
-            "self.redefine installs a new command and registration")
+            "self.define installs a new command and registration")
            (self-discard-mutation configuration nil)
            (test-assert
             (and (not (fboundp 'test-self-command-new))
@@ -2263,19 +2263,6 @@
                           (search "self-resolve-symbol" message))
                      "an undefined name fails and names the closest defined symbols"))))
   nil)
-
-(-> test-self-define-alias () null)
-(defun test-self-define-alias ()
-  "Register self.define as the same tool class and schema as self.redefine."
-  (let* ((registry (make-default-tool-registry))
-         (redefine (tool-registry-find registry "self" "redefine"))
-         (define   (tool-registry-find registry "self" "define")))
-    (test-assert (and (typep redefine 'self-redefine-tool)
-                      (typep define 'self-redefine-tool))
-                 "self.define is a second self-redefine-tool")
-    (test-assert (equalp (tool-parameters redefine) (tool-parameters define))
-                 "self.define accepts the same arguments as self.redefine")
-    nil))
 
 (-> test-image-commit-skipped-entry-key () null)
 (defun test-image-commit-skipped-entry-key ()

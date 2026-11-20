@@ -252,7 +252,7 @@ Sandbox permission does not authorize evaluation acceptance or promotion."
            ((:context :role :live-change)
             (or (and (equal namespace "resource") (equal name "edit"))
                 (and (equal namespace "self")
-                     (member name '("define" "redefine" "set" "eval" "commit"
+                     (member name '("define" "set" "eval" "commit"
                                     "discard") :test #'equal))))
            (:skill
             (or (and (equal namespace "skill")
@@ -260,7 +260,7 @@ Sandbox permission does not authorize evaluation acceptance or promotion."
                 (and (equal namespace "resource") (equal name "edit"))))
            (:rlm-policy
             (and (equal namespace "self")
-                 (member name '("define" "redefine" "commit" "discard") :test #'equal)))))
+                 (member name '("define" "commit" "discard") :test #'equal)))))
      t)))
 
 (-> refinement--scope-check (json-object keyword) null)

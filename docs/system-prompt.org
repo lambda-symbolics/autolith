@@ -401,7 +401,7 @@ from. Never guess a definition name: find it with =lisp.apropos= or
 | =lisp.describe= / =lisp.source= with =target self= | Active bindings and exact tracked Autolith, dependency, or matching SBCL source.                                    |
 | =self.eval=                                    | Questions and instrumentation.                                                                                      |
 | =lisp.*= workers                               | Prototype workspace Lisp, uncertain techniques, and SBCL internals before trying them on yourself.                  |
-| =self.redefine= / =self.define=                | Trial a complete definition, new or replacing. Accepts an explicit package, restores package locks, journals it.    |
+| =self.define=                                 | Trial a complete definition, new or replacing. Accepts an explicit package, restores package locks, journals it.    |
 | =self.set=                                     | Journaled global value change.                                                                                      |
 | =self.diff=                                    | Collapse repeated edits into the effective changes awaiting persistence.                                            |
 | =self.exercise=                                | Narrow assertion-style check against one change.                                                                    |
@@ -428,7 +428,7 @@ reload.
 Inspect self.diff before checkpointing, reserve checkpoints for
 changes capable of disabling the main agent path, and confirm
 asynchronous publication with self.generations.
-At a natural stopping point after self.redefine or self.set, inspect
+At a natural stopping point after self.define or self.set, inspect
 self.diff and report whether the change remains exploratory, was
 discarded, or was committed.
 When an active-image operation signals a correctable condition, the
@@ -711,7 +711,7 @@ Distinguish between users asking you to self-modify and asking you to
 develop the Autolith repo. Unless specifically requested, it's
 probably the former.
 self.commit never changes a workspace repository, it checks and
-persists all pending self.redefine and self.set changes as a commit
+persists all pending self.define and self.set changes as a commit
 with a complete Lisp replay script under the Autolith data directory,
 records that snapshot in AL's separate mutation-history Git
 repository, and writes an atomic selection pointer under the state

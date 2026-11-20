@@ -4704,7 +4704,7 @@
                 (and (search "skipped 2 private definitions" prompt)
                      (search "commit c3ec5281, published against 07f0e1b8; this image runs 8631cede"
                              prompt)
-                     (search "self.redefine" prompt)
+                     (search "self.define" prompt)
                      (search "self.commit" prompt)
                      (search "Do not edit tracked source files." prompt))
                 "the request states the situation and the expected tools")

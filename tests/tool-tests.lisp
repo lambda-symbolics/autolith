@@ -421,7 +421,7 @@
               (and (tool-registry-find immutable-registry "lisp" "describe")
                    (tool-registry-find immutable-registry "lisp" "source"))
               "immutable mode retains active-image inspection through Lisp targets")
-             (dolist (name '("eval" "redefine" "set"
+             (dolist (name '("eval" "define" "set"
                              "discard" "exercise" "commit" "checkpoint"
                              "rollback"))
                (test-assert

@@ -630,7 +630,7 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
                                           :arguments (json-object "secret" "private-argument")))
             (telemetry-note-report :report-id report-id :tool "shell.run" :issue-kind ':broken-tool
                                  :summary-function (lambda () (incf reads) "raw-summary-fixture"))
-            (telemetry-note-repair :report-id report-id :target "self.redefine" :repair-kind "redefine_function" :outcome "applied")))
+            (telemetry-note-repair :report-id report-id :target "self.define" :repair-kind "redefine_function" :outcome "applied")))
          (telemetry-call-with-run configuration
                                   (lambda () (telemetry-note-repair :target "self.set" :outcome "proposed"))))
        (test-assert (zerop reads) "Metadata-only consent never reads a summary.")
@@ -767,7 +767,7 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
             (loop repeat 4
                   do (telemetry-note-tool :tool "shell.run" :arguments (json-object) :outcome "error"))
             (telemetry-note-report :summary-function (lambda () (incf reads) "private summary"))
-            (telemetry-note-repair :target "self.redefine" :repair-kind "redefine_function" :outcome "failed"
+            (telemetry-note-repair :target "self.define" :repair-kind "redefine_function" :outcome "failed"
                                    :summary-function (lambda () (incf reads) "private replacement")))))
        (test-assert (= reads redactions 2) "Each diagnostic goes through native redaction.")
        (test-assert (not (search "autolith.diagnostic.summary" body)) "Redactor failure never falls back to text.")

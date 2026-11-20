@@ -1029,7 +1029,7 @@ them."
          (properties (json-get (fifth specification) "properties")))
     (when (subtypep class 'mutable-self-tool)
       (setf (gethash "diagnostic" properties) (default-tools--diagnostic-property)))
-    (when (member class '(self-eval-tool self-redefine-tool self-set-tool
+    (when (member class '(self-eval-tool self-define-tool self-set-tool
                           self-exercise-tool))
       (setf (gethash "incident" properties)
             (tool-string-property "The exact active papercut identifier for this repair; omit for a standalone mutation.")
@@ -1068,22 +1068,9 @@ them."
              "restart-value" (tool-restart-value-property))
             '("forms")))
           (list
-           'self-redefine-tool
-           "self" "redefine"
-           "Compile and install one complete exploratory top-level definition in the active image, including Lisp-level SBCL implementation packages."
-           (tool-object-schema
-            (json-object
-             "definition" (tool-string-property
-                           "A complete defining Common Lisp form.")
-             "package" (tool-string-property
-                        "The active package in which to read and install the definition; defaults to AUTOLITH.")
-             "restart" (tool-restart-property)
-             "restart-value" (tool-restart-value-property))
-            '("definition")))
-          (list
-           'self-redefine-tool
+           'self-define-tool
            "self" "define"
-           "The same tool as self.redefine under a second name. The definition's name does not need to exist yet."
+           "Compile and install a complete new or replacement top-level definition in the active image, including Lisp-level SBCL implementation packages."
            (tool-object-schema
             (json-object
              "definition" (tool-string-property
@@ -1132,12 +1119,12 @@ them."
           (list
            'self-diff-tool
            "self" "diff"
-           "Show the effective self.redefine and self.set changes not yet persisted by self.commit, collapsing repeated edits to each target."
+           "Show the effective self.define and self.set changes not yet persisted by self.commit, collapsing repeated edits to each target."
            empty-schema)
           (list
            'self-commit-tool
            "self" "commit"
-           "Check and persist all pending self.redefine and self.set mutations as an immutable private image commit and complete Lisp replay script, then retain the snapshot in Autolith's private mutation-history Git repository. This never changes a workspace repository."
+           "Check and persist all pending self.define and self.set mutations as an immutable private image commit and complete Lisp replay script, then retain the snapshot in Autolith's private mutation-history Git repository. This never changes a workspace repository."
            (tool-object-schema
             (json-object
              "title" (tool-string-property

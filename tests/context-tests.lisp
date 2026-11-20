@@ -77,7 +77,7 @@
       (unwind-protect
            (progn
              (test-assert (definition-form-p definition)
-                          "self.redefine accepts context contributor definitions")
+                          "self.define accepts context contributor definitions")
              (self--install-definition definition source)
              (test-assert
               (and (fboundp name)

@@ -286,7 +286,7 @@
                 (telemetry-call-with-run
                  configuration
                  (lambda ()
-                   (let ((*telemetry-tool-name* "self.redefine"))
+                   (let ((*telemetry-tool-name* "self.define"))
                      (dolist (result '(:pending :installed :passed :failed :discarded :committed))
                        (telemetry-note-mutation-journal
                         (list :mutation :kind (if (member result '(:passed :failed)) ':exercise ':definition)

@@ -20,7 +20,7 @@ NAME is accepted as written or upcased, so lowercase names resolve too."
       (error 'source-mutation-error
              :message   (format nil "No active Common Lisp package is named ~S."
                                 name)
-             :tool-name "self.redefine"
+             :tool-name "self.define"
              :pathname  nil))
     package))
 
@@ -613,7 +613,7 @@ generic function and are not skipped merely because its ownership changed."
     (definition-irreversible (condition)
       (error 'source-mutation-error
              :message   (surgeon-error-message condition)
-             :tool-name "self.redefine"
+             :tool-name "self.define"
              :pathname  nil))))
 
 (-> self--definition-state-undo-action
@@ -848,8 +848,8 @@ authoritative; entries without the record are judged by source revision."
           (package-name (package-name package)))
       (unless (definition-form-p definition)
         (error 'source-mutation-error
-               :message   "self.redefine accepts one complete supported definition."
-               :tool-name "self.redefine"
+               :message   "self.define accepts one complete supported definition."
+               :tool-name "self.define"
                :pathname  nil))
       (let ((identifier   (make-identifier))
             (home-package (definition-home-package-name definition))
@@ -915,7 +915,7 @@ authoritative; entries without the record are judged by source revision."
                      :condition    (princ-to-string reported-condition)))
               (error reported-condition))))))))
 
-(defmethod tool-execute ((tool self-redefine-tool)
+(defmethod tool-execute ((tool self-define-tool)
                          (context tool-context)
                          (arguments hash-table))
   "Install one exploratory top-level definition in CONTEXT's active image."

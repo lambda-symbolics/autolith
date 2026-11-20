@@ -132,11 +132,11 @@
   (declare (ignore tool))
   "forms")
 
-(defclass self-redefine-tool (lisp-source-input mutable-self-tool)
+(defclass self-define-tool (lisp-source-input mutable-self-tool)
   ()
-  (:documentation "Compile and install one exploratory top-level definition."))
+  (:documentation "Compile and install a new or replacement top-level definition."))
 
-(defmethod tool-source-argument ((tool self-redefine-tool))
+(defmethod tool-source-argument ((tool self-define-tool))
   "Name the definition an exploratory installation compiles."
   (declare (ignore tool))
   "definition")

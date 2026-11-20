@@ -2994,11 +2994,10 @@ aliases use a leading =/= in this metadata only.
 
 ** Live definitions
 
-Use =self.redefine= to add or replace loaded Lisp definitions, including
-functions and methods outside the Autolith package. =self.define= names the
-same tool. Qualify the target symbol in the source, or supply the =package=
-argument to select its reader package. Use qualified symbols with =self.set=
-for foreign global bindings.
+Use =self.define= to add or replace loaded Lisp definitions, including
+functions and methods outside the Autolith package. Qualify the target symbol
+in the source, or supply the =package= argument to select its reader package.
+Use qualified symbols with =self.set= for foreign global bindings.
 
 =self.eval= runs its forms in the active image, which in a world is the
 server's. With =target= set to =client= they run in the attached client's
@@ -3035,7 +3034,7 @@ retain or drop:
 #+END_SRC
 
 The comment takes precedence over the default repair policy. By default, the
-model rebuilds each override on the current source with =self.redefine= and
+model rebuilds each override on the current source with =self.define= and
 drops any the tracked source already covers. It publishes the result with
 =self.commit=, including when all skipped overrides are dropped. During an
 active turn, the command waits in the idle queue.

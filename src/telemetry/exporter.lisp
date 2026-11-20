@@ -6,7 +6,7 @@
   '("resource.read" "resource.edit" "search.content" "search.files" "search.glob" "shell.run"
     "lisp.eval" "lisp.load-system" "lisp.run-tests" "lisp.source" "lisp.apropos" "lisp.describe"
     "lisp.scratchpad-run" "lisp.repls" "lisp.images" "lisp.reset" "lisp.start" "lisp.stop"
-    "lisp.save-image" "lisp.paren-check" "self.eval" "self.redefine" "self.define" "self.set"
+    "lisp.save-image" "lisp.paren-check" "self.eval" "self.define" "self.set"
     "self.exercise" "self.commit" "self.diff" "self.discard" "self.status" "self.checkpoint"
     "self.generations"
     "self.refine" "self.rollback" "child.spawn" "child.roles" "job.get" "job.wait"
