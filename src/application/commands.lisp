@@ -326,7 +326,10 @@ notice preference is on, so enabling it mid-session takes effect immediately."
     (when baseline
       (setf (application-prompt-cache-baseline application) baseline))
     (when (and miss (application-cache-miss-notices-p application))
-      (application-present application (application--prompt-cache-miss-notice miss))))
+      (with-recursive-lock-held ((application-render-lock application))
+        (application-render-records application)
+        (application-side-status-present
+         application "prompt-cache" (application--prompt-cache-miss-notice miss)))))
   nil)
 
 (-> application--window-label ((option integer) string) string)
