@@ -746,8 +746,6 @@ admission offers no such thing on purpose."
           :status                      status
           :output                      output
           :error                       error
-          :structured-output-present-p nil
-          :structured-output           nil
           :label                       nil
           :request-count               1
           :usage                       nil

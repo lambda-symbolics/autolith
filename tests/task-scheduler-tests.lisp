@@ -1173,7 +1173,6 @@ pool must reject the cancelled parent without creating a descendant."
                  :status                      ':success
                  :output                      "Recovered durable child output."
                  :error                       nil
-                 :structured-output-present-p nil
                  :duration-ms                 17
                  :model                       "test-model"
                  :detached                    t)))
@@ -2587,7 +2586,6 @@ pool must reject the cancelled parent without creating a descendant."
                        (and (eq state (getf result :status))
                             (string= model (getf result :model))
                             (equal expected (getf result :usage))
-                            (null (getf result :structured-output-present-p)))
                        "failure and cancellation share execution metadata and accounting")))
                   (let* ((empty      (task-tests--register-job
                                       orchestrator primary definition :name "no-result"))

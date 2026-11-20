@@ -339,8 +339,8 @@ the root's cache key. Siblings with matching prefixes still share one key."
            '(:id :name :agent :assignment :error :label :model :conversation-file))
    (mapcar (lambda (key)
              (list :indicator key :validate (lambda (value) (typep value 'boolean))))
-           '(:structured-output-present-p :detached))))
 
+             '(:detached))))
 (-> task--read-result-artifact
     ((or pathname string) &key (:maximum-octets (integer 1))) list)
 (defun task--read-result-artifact
@@ -475,8 +475,6 @@ the root's cache key. Siblings with matching prefixes still share one key."
                                          ':failed)
          :output                      (task--result-output completion (task-job-progress job) provider-result)
          :error                       (task-completion-error completion)
-         :structured-output-present-p nil
-         :structured-output           nil
          :label                       (task-completion-label completion))))
 
 (-> task--failed-result (task-job keyword (option string)) list)
@@ -492,8 +490,6 @@ the root's cache key. Siblings with matching prefixes still share one key."
                                             (task--bounded-output tail)
                                             "(no output)")
            :error                       message
-           :structured-output-present-p nil
-           :structured-output           nil
            :label                       nil))))
 
 (-> task-child-inherit-reference-history

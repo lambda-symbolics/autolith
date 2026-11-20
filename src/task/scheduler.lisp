@@ -28,7 +28,7 @@
           (loop for field in
                   '(:id :name :agent :agent-source :assignment :status
                     :output :error
-                    :structured-output-present-p :structured-output :label
+                    :label
                     :request-count :usage :unknown-usage :duration-ms :model
                     :reservation-charged-tokens :reservation-charge-requests
                     :conversation-file :detached :output-path
@@ -59,15 +59,6 @@
       (compact-string :label            *task-result-label-maximum-characters*
                       :storage-field    ':label-storage
                       :characters-field ':label-characters))
-    (when (getf retained :structured-output-present-p)
-      (let* ((value      (getf retained :structured-output))
-             (serialized (task--write-readable-sexp value)))
-        (when (> (length serialized)
-                 *task-retained-structured-output-limit*)
-          (setf (getf retained :structured-output) nil
-                (getf retained :structured-output-storage) storage
-                (getf retained :structured-output-characters)
-                (length serialized)))))
     (setf (getf retained :usage)
           (task-progress--usage-summary (getf retained :usage)))
     retained))
