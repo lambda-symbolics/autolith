@@ -1048,6 +1048,40 @@
                    :ui                 (terminal-ui-create :terminal terminal)
                    :recovery-startup-p recovery-startup-p)))
 
+(-> recovery-input-vault-tests--serve-startup
+    (application &key (:recovery-diagnosis (option string))
+                      (:initial-input (option user-message-input)))
+    null)
+(defun recovery-input-vault-tests--serve-startup
+    (application &key recovery-diagnosis initial-input)
+  "Serve the prepared vault application as an owned world host through startup and shutdown."
+  (when initial-input
+    (terminal-ui-set-input (application-ui application) initial-input))
+  (world-server-tests--call-with-server
+   (application-configuration application)
+   (lambda (server)
+     (test-call-with-function-replacements
+      (list (list 'application--build
+                  (lambda (&rest arguments)
+                    (declare (ignore arguments))
+                    application)))
+      (lambda ()
+        (let ((host (world-server--build-host
+                     server
+                     :conversation-id (conversation-identifier
+                                       (application-conversation application))
+                     :directory (namestring (config :working-directory
+                                                   (application-configuration application)))
+                     :arguments (list :recovery-diagnosis recovery-diagnosis
+                                      :switch-p t))))
+          (test-assert
+           (task-tests--wait-until
+            (lambda () (not (thread-alive-p (world-host-thread host)))) 30)
+           "the owned vault startup host finishes its scheduler and cleanup")
+          (when (world-host-failure host)
+            (error (world-host-failure host))))))))
+  nil)
+
 (-> test-recovery-input-vault-startup-notice () null)
 (defun test-recovery-input-vault-startup-notice ()
   "Test startup notice message counts, severity, and Lisp-form controls."
@@ -1192,17 +1226,9 @@
                   (setf (application-input-controller-stopping-p controller) t)
                   (sb-thread:condition-broadcast
                    (application-input-controller-condition-variable controller)))
-                nil))
-             (list 'localgroup-start
-                   (lambda (run-application &key linger-p)
-                     (declare (ignore run-application linger-p))
-                     nil))
-             (list 'localgroup-stop
-                   (lambda (run-application)
-                     (declare (ignore run-application))
-                     nil)))
+                 nil)))
             (lambda ()
-              (application-run
+              (recovery-input-vault-tests--serve-startup
                application :recovery-diagnosis "diagnose recovered crash")))
            (let ((captures
                    (application-recovery-input-vault-captures application)))
@@ -1368,17 +1394,9 @@
                   (setf (application-input-controller-stopping-p controller) t)
                   (sb-thread:condition-broadcast
                    (application-input-controller-condition-variable controller)))
-                nil))
-             (list 'localgroup-start
-                   (lambda (run-application &key linger-p)
-                     (declare (ignore run-application linger-p))
-                     nil))
-             (list 'localgroup-stop
-                   (lambda (run-application)
-                     (declare (ignore run-application))
-                     nil)))
+                 nil)))
             (lambda ()
-              (application-run
+              (recovery-input-vault-tests--serve-startup
                application :recovery-diagnosis "diagnose corrupt recovery")))
            (test-assert
             (and (null observed-load-pending-p)
@@ -1472,17 +1490,9 @@
                   (setf (application-input-controller-stopping-p controller) t)
                   (sb-thread:condition-broadcast
                    (application-input-controller-condition-variable controller)))
-                nil))
-             (list 'localgroup-start
-                   (lambda (run-application &key linger-p)
-                     (declare (ignore run-application linger-p))
-                     nil))
-             (list 'localgroup-stop
-                   (lambda (run-application)
-                     (declare (ignore run-application))
-                     nil)))
+                 nil)))
             (lambda ()
-              (application-run
+              (recovery-input-vault-tests--serve-startup
                application
                :initial-input (user-message-input-create :text "draft"))))
            (test-assert
