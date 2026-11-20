@@ -14,7 +14,7 @@
     "skill.edit" "agenda.transport" "mcp.status" "mcp.refresh" "mcp.resources" "mcp.read-resource"
     "mcp.prompts" "mcp.get-prompt" "yield.note" "yield.submit" "tool_search.tool_search_tool"
     "multi_tool_use.parallel" "web.run" "web_extra.gist" "rlm.infer" "rlm.map" "rlm.complete"
-    "rlm.distill" "papercut.report" "fs.view-image" "skill.load")
+    "papercut.report" "fs.view-image" "skill.load")
   "Exact Seismograph schema-1 named tools, excluding absence and external categories.")
 
 (defparameter *telemetry-field-catalogs*

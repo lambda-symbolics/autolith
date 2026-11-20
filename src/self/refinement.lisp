@@ -260,9 +260,8 @@ Sandbox permission does not authorize evaluation acceptance or promotion."
                     (member name '("load" "edit") :test #'equal))
                 (and (equal namespace "resource") (equal name "edit"))))
            (:rlm-policy
-            (or (and (equal namespace "rlm") (equal name "distill"))
-                (and (equal namespace "self")
-                     (member name '("define" "redefine" "commit" "discard") :test #'equal))))))
+            (and (equal namespace "self")
+                 (member name '("define" "redefine" "commit" "discard") :test #'equal)))))
      t)))
 
 (-> refinement--scope-check (json-object keyword) null)

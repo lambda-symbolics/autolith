@@ -267,9 +267,7 @@ The root context never enters a prompt, but its environment holds it in memory."
   "Register the rlm namespace in REGISTRY, nesting under BUDGET in frames.
 
 COMPLETE-P is refused inside frames: rlm.complete starts an
-environment evaluating arbitrary Lisp with user privileges, and
-rlm.distill proposes durable policy methods, so both stay with the
-primary agent."
+environment evaluating arbitrary Lisp with user privileges."
   (tool-registry-register registry
                           (rlm-infer-tool-create :provider provider
                                                  :budget   budget))
@@ -279,10 +277,7 @@ primary agent."
   (when complete-p
     (tool-registry-register registry
                             (rlm-complete-tool-create :provider provider
-                                                      :budget   budget))
-    (tool-registry-register registry
-                            (rlm-distill-tool-create :provider provider
-                                                     :budget   budget)))
+                                                      :budget   budget)))
   registry)
 
 (-> rlm--frame-registry (tool-registry model-provider rlm-budget) tool-registry)

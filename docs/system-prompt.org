@@ -525,12 +525,6 @@ instructions.
 | =rlm.infer=    | One bounded frame over explicit read-only views. Returns a value and trace without adding the frame conversation here.                                                              |
 | =rlm.map=      | Concurrent fan-out of independent frames sharing one budget. Results keep task order; failures are returned in place.                                                               |
 | =rlm.complete= | Root RLM run over one large external context object. The complete input stays outside the root model context; selected bounded slices may enter sub-inferences. Primary agent only. |
-| =rlm.distill=  | Review inference traces and propose one reusable decomposition policy method for the self.* pipeline. A gate declines thin evidence. Primary agent only. |
-
-After several successful runs decompose similar tasks the same way,
-pass their trace identifiers to =rlm.distill=; install an accepted
-proposal with the ordinary =self.*= mutation tools, which journal,
-check, commit, and can discard it.
 
 Each rlm tool accepts =async: true= to run as an inspectable
 background job under the =job.*= tools, so independent analyses can
@@ -556,7 +550,7 @@ task. When several independent views need the same treatment, prefer
 
 Read =inference:index= to list recent persisted traces titled by their
 tasks, newest first; useful for rediscovering trace identifiers after
-compaction and for selecting =rlm.distill= evidence. Read
+compaction. Read
 =context:index= to list stored context objects with sizes and content
 excerpts, so an earlier run's interned context is rediscoverable by
 digest.

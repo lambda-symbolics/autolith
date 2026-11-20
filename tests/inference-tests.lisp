@@ -115,8 +115,7 @@
            (dolist (specification
                     '((rlm-infer-tool-create infer :completed)
                       (rlm-map-tool-create rlm-map :failed)
-                      (rlm-complete-tool-create rlm-complete :aborted)
-                      (rlm-distill-tool-create rlm-distill :completed)))
+                      (rlm-complete-tool-create rlm-complete :aborted)))
              (destructuring-bind (constructor operation expected-state) specification
                (let* ((lock       (make-lock "RLM activity test"))
                       (condition  (make-condition-variable))
@@ -133,8 +132,6 @@
                            (json-object "tasks" (json-array
                                                  (json-object "task" "private task"))
                                         "async" t))
-                          ((eq operation 'rlm-distill)
-                           (json-object "traces" (json-array "private trace") "async" t))
                           (t
                            (json-object "task" "private task" "async" t
                                         "context" (json-object "text" "private source"))))))
@@ -151,11 +148,7 @@
                                  (task--condition-broadcast condition))))))
                    (list operation
                          (lambda (&rest arguments)
-                           (setf reporter
-                                 (getf (if (eq operation 'rlm-distill)
-                                           arguments
-                                           (rest arguments))
-                                       :activity-callback))
+                           (setf reporter (getf (rest arguments) :activity-callback))
                            ;; Map and root frames may invoke this on another worker.
                            (bordeaux-threads:join-thread
                             (make-thread
@@ -168,10 +161,7 @@
                                    do (condition-wait condition lock :timeout 2)))
                            (if (eq expected-state ':failed)
                                (error 'rlm-inference-error :message "Scripted failure.")
-                               (values (if (eq operation 'rlm-distill)
-                                           '(:status :declined)
-                                           "answer")
-                                       "trace" 0)))))
+                               (values "answer" "trace" 0)))))
                   (lambda ()
                     (unwind-protect
                          (progn
@@ -2400,211 +2390,6 @@ A frame sends its shared views and its task as consecutive user messages."
         (test-assert (and (search ":RLM-CALL" trace)
                           (search ":CHILD-TRACE" trace))
                      "the root trace carries the run's invocation ledger"))))
-  nil)
-
-(-> test-rlm-distill-validation () null)
-(defun test-rlm-distill-validation ()
-  "Test distilled method proposals are structurally validated."
-  (let ((valid "(defmethod rlm-decompose-inference-task ((policy (eql ':chunked)) (task string) (views list) (budget rlm-budget)) nil)"))
-    (test-assert (listp (rlm-distill-validate-method ':chunked valid))
-                 "a well-formed distilled method validates"))
-  (flet ((rejection (policy source)
-           "Return the rejection message SOURCE draws for POLICY, or NIL."
-           (handler-case
-               (progn
-                 (rlm-distill-validate-method policy source)
-                 nil)
-             (rlm-inference-error (condition)
-               (rlm-inference-error-message condition)))))
-    (test-assert
-     (search "exactly one form"
-             (rejection ':chunked
-                        "(defmethod rlm-decompose-inference-task ((policy (eql ':chunked)) (task string) (views list) (budget rlm-budget)) nil) (list 1)"))
-     "a second form is rejected")
-    (test-assert (search "one defmethod"
-                         (rejection ':chunked "(defun sneaky ())"))
-                 "a non-defmethod form is rejected")
-    (test-assert
-     (search "specialize rlm-decompose-inference-task"
-             (rejection ':chunked
-                        "(defmethod tool-execute ((policy (eql ':chunked)) (task string) (views list) (budget rlm-budget)) nil)"))
-     "another generic function is rejected")
-    (test-assert
-     (search "not editable"
-             (rejection ':direct
-                        "(defmethod rlm-decompose-inference-task ((policy (eql ':direct)) (task string) (views list) (budget rlm-budget)) nil)"))
-     "the base policy is not editable")
-    (test-assert
-     (search "does not match"
-             (rejection ':chunked
-                        "(defmethod rlm-decompose-inference-task ((policy (eql ':other)) (task string) (views list) (budget rlm-budget)) nil)"))
-     "a mismatched eql specializer is rejected")
-    (test-assert
-     (search "keep the generic's specializers"
-             (rejection ':chunked
-                        "(defmethod rlm-decompose-inference-task ((policy (eql ':chunked)) (task t) (views list) (budget rlm-budget)) nil)"))
-     "loosened parameter specializers are rejected")
-    (test-assert (search "unreadable"
-                         (rejection ':chunked "(defmethod"))
-                 "unreadable source is rejected"))
-  nil)
-
-(-> test-rlm-distill () null)
-(defun test-rlm-distill ()
-  "Test gate-declined and validated distillation reviews over a trace."
-  (let ((configuration (test-configuration)))
-    (multiple-value-bind (seed-value trace-identifier)
-        (infer "Say seed."
-               :provider      (make-instance
-                               'rlm-inference-test-provider
-                               :results (list (rlm-inference-test-result
-                                               "seed" "seed answer" 10)))
-               :configuration configuration)
-      (declare (ignore seed-value))
-      (let* ((provider
-               (make-instance
-                'rlm-inference-test-provider
-                :results
-                (list (rlm-inference-test-result
-                       "gate"
-                       "{\"worth\": false, \"rationale\": \"one-off noise\"}"
-                       10))))
-             (result (rlm-distill :traces        (list trace-identifier)
-                                  :provider      provider
-                                  :configuration configuration)))
-        (test-assert (and (null (getf result ':worth))
-                          (search "noise" (getf result ':rationale))
-                          (non-empty-string-p (getf result ':gate-trace)))
-                     "a declined gate returns its rationale and trace")
-        (test-assert (null (rlm-inference-test-provider-results provider))
-                     "a declined gate spends no planner request"))
-      (let* ((valid-method
-               "(defmethod rlm-decompose-inference-task ((policy (eql ':chunked-count)) (task string) (views list) (budget rlm-budget)) nil)")
-             (approval
-               "{\"worth\": true, \"rationale\": \"repeated chunked pattern\"}")
-             (plan     (json-encode
-                        (json-object "policy" "chunked-count"
-                                     "title" "Chunked counting"
-                                     "rationale" "Traces show chunked counting."
-                                     "method-source" valid-method)))
-             (bad-plan (json-encode
-                        (json-object "policy" "chunked-count"
-                                     "title" "Chunked counting"
-                                     "rationale" "Traces show chunked counting."
-                                     "method-source" "(defun sneaky ())")))
-             (provider
-               (make-instance
-                'rlm-inference-test-provider
-                :results
-                (list (rlm-inference-test-result "gate" approval 10)
-                      (rlm-inference-test-result "plan-1" bad-plan 10)
-                      (rlm-inference-test-result "plan-2" plan 10))))
-             (result   (rlm-distill :traces        (list trace-identifier)
-                                    :instructions  "Focus on counting."
-                                    :provider      provider
-                                    :configuration configuration)))
-        (test-assert (and (eq (getf result ':worth) t)
-                          (eq (getf result ':policy) ':chunked-count)
-                          (string= (getf result ':method-source) valid-method)
-                          (non-empty-string-p (getf result ':plan-trace)))
-                     "an approved review returns the validated proposal")
-        (test-assert (null (rlm-inference-test-provider-results provider))
-                     "a rejected plan is re-asked with the rejection reason"))
-      (let ((provider
-              (make-instance
-               'rlm-inference-test-provider
-               :results
-               (list (rlm-inference-test-result
-                      "gate"
-                      "{\"worth\": true, \"rationale\": \"pattern\"}" 10)
-                     (rlm-inference-test-result
-                      "plan-1"
-                      (json-encode
-                       (json-object "policy" "chunked-count"
-                                    "title" "Bad" "rationale" "Bad"
-                                    "method-source" "(defun sneaky ())"))
-                      10)
-                     (rlm-inference-test-result
-                      "plan-2"
-                      (json-encode
-                       (json-object "policy" "chunked-count"
-                                    "title" "Bad" "rationale" "Bad"
-                                    "method-source" "(defun sneaky ())"))
-                      10)))))
-        (test-assert
-         (handler-case
-             (progn
-               (rlm-distill :traces        (list trace-identifier)
-                            :provider      provider
-                            :configuration configuration)
-               nil)
-           (rlm-inference-error (condition)
-             (search "Distillation planning failed"
-                     (rlm-inference-error-message condition))))
-         "exhausted planner attempts fail with the last rejection"))
-      (test-assert
-       (handler-case
-           (progn
-             (rlm-distill :traces        (list "missing-trace-identifier")
-                          :provider      (make-instance
-                                          'rlm-inference-test-provider
-                                          :results nil)
-                          :configuration configuration)
-             nil)
-         (rlm-inference-error (condition)
-           (search "No inference trace"
-                   (rlm-inference-error-message condition))))
-       "an unknown trace identifier is refused before any frame runs")))
-  nil)
-
-(-> test-rlm-distill-tool () null)
-(defun test-rlm-distill-tool ()
-  "Test rlm.distill reviews traces from tool arguments and reports refusals."
-  (let* ((configuration (test-configuration))
-         (source        (make-instance 'tool-registry))
-         (conversation  (conversation-create configuration
-                                             :identifier "rlm-distill-tool"))
-         (context       (make-instance 'tool-context
-                                       :configuration configuration
-                                       :worker        nil
-                                       :conversation  conversation
-                                       :registry      source)))
-    (multiple-value-bind (seed-value trace-identifier)
-        (infer "Say seed."
-               :provider      (make-instance
-                               'rlm-inference-test-provider
-                               :results (list (rlm-inference-test-result
-                                               "seed" "seed answer" 10)))
-               :configuration configuration)
-      (declare (ignore seed-value))
-      (let* ((provider
-               (make-instance
-                'rlm-inference-test-provider
-                :results (list (rlm-inference-test-result
-                                "gate"
-                                "{\"worth\": false, \"rationale\": \"noise\"}"
-                                10))))
-             (tool   (rlm-distill-tool-create :provider provider))
-             (result (tool-execute
-                      tool context
-                      (json-object "traces"
-                                   (json-array trace-identifier)))))
-        (test-assert (tool-result-success-p result)
-                     "rlm.distill returns the gate decision")
-        (let ((fields (let ((*read-eval* nil))
-                        (read-from-string (tool-result-content result)))))
-          (test-assert (and (null (getf fields ':worth))
-                            (search "noise" (getf fields ':rationale))
-                            (integerp (getf fields ':calls-remaining)))
-                       "a declined review reports its rationale and budget")))
-      (let ((tool (rlm-distill-tool-create
-                   :provider (make-instance 'rlm-inference-test-provider
-                                            :results nil))))
-        (test-assert (not (tool-result-success-p
-                           (tool-execute tool context
-                                         (json-object "traces"
-                                                      (json-array)))))
-                     "an empty traces array is refused"))))
   nil)
 
 (-> rlm-environment-reuse--provider (string) rlm-litmus-provider)

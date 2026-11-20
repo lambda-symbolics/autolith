@@ -1305,7 +1305,7 @@ continue also requests an automatic continuation after a detached job completes.
 (-> tool-recursive-inference-p (string) boolean)
 (defun tool-recursive-inference-p (name)
   "Return true when canonical tool NAME denotes recursive inference work."
-  (not (null (member name '("rlm.infer" "rlm.map" "rlm.complete" "rlm.distill")
+  (not (null (member name '("rlm.infer" "rlm.map" "rlm.complete")
                      :test #'string=))))
 
 (defgeneric tool-execution-activity-callback (runtime)
