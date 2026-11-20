@@ -72,19 +72,20 @@
         (test-assert (string= (world-repository-tests--git clone-a '("remote" "get-url" "origin"))
                               (world-repository-tests--git clone-b '("remote" "get-url" "origin")))
                      "clone separation holds even with identical origin URLs"))
-      (let ((describe-function   (symbol-function 'world-repository--describe))
-            (main-entry-function (symbol-function 'world-repository--main-entry))
-            (descriptions        (make-hash-table :test #'equal))
-            (main-entries        0))
+      (let ((describe-function (symbol-function 'world-repository--describe))
+            (git-output        (symbol-function 'world-repository--git-output))
+            (descriptions      (make-hash-table :test #'equal))
+            (main-entries      0))
         (test-call-with-function-replacements
          (list (list 'world-repository--describe
                      (lambda (directory)
                        (incf (gethash directory descriptions 0))
                        (funcall describe-function directory)))
-               (list 'world-repository--main-entry
-                     (lambda (directory)
-                       (incf main-entries)
-                       (funcall main-entry-function directory))))
+               (list 'world-repository--git-output
+                     (lambda (directory arguments)
+                       (when (equal arguments '("worktree" "list" "--porcelain" "-z"))
+                         (incf main-entries))
+                       (funcall git-output directory arguments))))
          (lambda ()
            (let ((groups (world-repository-groups
                           (loop for id in '("one" "two" "three")

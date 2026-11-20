@@ -52,43 +52,27 @@ process-global environment change participates in presentation discovery."
     (error ()
       nil)))
 
-(-> world-repository--path-output (string list) (option string))
-(defun world-repository--path-output (directory arguments)
-  "Canonicalize one existing directory returned by a Git path query."
-  (let ((output (world-repository--git-output directory arguments)))
-    (when (and output (plusp (length output))
-               (char= (char output (1- (length output))) #\Newline))
-      (handler-case
-          (let* ((end  (1- (length output)))
-                 (path (platform-pathname (subseq output 0 end))))
-            (when (and (uiop:absolute-pathname-p path) (uiop:directory-exists-p path))
-              (workspace-directory-name path)))
-        (error ()
-          nil)))))
+(-> world-repository--canonical-directory (string) (option string))
+(defun world-repository--canonical-directory (directory)
+  "Return the platform's canonical name for an existing absolute directory."
+  (handler-case
+      (let ((path (platform-pathname directory)))
+        (when (and (uiop:absolute-pathname-p path) (uiop:directory-exists-p path))
+          (workspace-directory-name path)))
+    (error () nil)))
 
 (-> world-repository--describe (string) list)
 (defun world-repository--describe (directory)
-  "Return available local administrative identity and worktree root for DIRECTORY."
-  (when (uiop:directory-exists-p (platform-pathname directory))
-    (let ((common (world-repository--path-output
-                   directory '("rev-parse" "--path-format=absolute" "--git-common-dir"))))
-      (when common
-        (list :common  common
-              :private (world-repository--path-output
-                        directory '("rev-parse" "--absolute-git-dir"))
-              :root    (world-repository--path-output
-                        directory '("rev-parse" "--show-toplevel")))))))
+  "Describe DIRECTORY using the bounded runner and platform path adapter."
+  (cl-worktree:describe-repository directory #'world-repository--git-output
+                                   :canonicalize #'world-repository--canonical-directory))
 
-(-> world-repository--main-entry (string) list)
-(defun world-repository--main-entry (directory)
-  "Read the first NUL-delimited worktree record without unquoting path text."
-  (let* ((output (world-repository--git-output directory '("worktree" "list" "--porcelain" "-z")))
-         (fields (and output (uiop:split-string output :separator '(#\Null))))
-         (end    (position "" fields :test #'string=))
-         (first  (first fields)))
-    (when (and end first (uiop:string-prefix-p "worktree " first))
-      (list :directory (subseq first 9)
-            :bare-p    (not (null (member "bare" (subseq fields 0 end) :test #'string=)))))))
+(-> world-repository--origin (string list &key (:describe function)) (option string))
+(defun world-repository--origin (directory metadata &key (describe #'world-repository--describe))
+  "Resolve a verified origin, allowing the gather to reuse cached descriptions."
+  (cl-worktree:repository-origin directory metadata #'world-repository--git-output
+                                 :canonicalize #'world-repository--canonical-directory
+                                 :describe     describe))
 
 (-> world-repository-current-groups (list (option string)) list)
 (defun world-repository-current-groups (groups current)
@@ -135,39 +119,28 @@ function never writes the world store or changes the supplied channel objects."
                            (handler-case (world-repository--describe directory)
                              (error () nil))))))
 
-             (origin (directory common)
-               "Validate the main worktree record, including bare origins."
-               (or (gethash common origins)
-                   (multiple-value-bind (value present-p) (gethash common origins)
-                     (declare (ignore value))
-                     (unless present-p
+             (origin (directory metadata)
+               "Memoize origin discovery, including failed observations."
+               (let ((common (getf metadata :common)))
+                 (multiple-value-bind (value present-p) (gethash common origins)
+                   (if present-p
+                       value
                        (setf (gethash common origins)
                              (handler-case
-                                 (let* ((entry (world-repository--main-entry directory))
-                                        (path  (getf entry :directory))
-                                        (path  (and path (world-workspace-name path))))
-                                   (when path
-                                     (if (getf entry :bare-p)
-                                         (and (string= path common) path)
-                                        (let ((metadata (description path)))
-                                           (and (equal common (getf metadata :common))
-                                                (equal common (getf metadata :private))
-                                                (equal path (getf metadata :root))
-                                                path)))))
+                                 (world-repository--origin directory metadata :describe #'description)
                                (error () nil))))))))
       ;; An observed main checkout is authoritative even when --separate-git-dir
       ;; makes worktree-list name the administrative directory instead.
       (dolist (channel channels)
         (let* ((metadata (description (channel-workspace channel)))
-               (common   (getf metadata :common))
-               (root     (getf metadata :root)))
-          (when (and common root (equal common (getf metadata :private)))
-            (setf (gethash common origins) root))))
+               (root     (cl-worktree:repository-primary-checkout metadata)))
+          (when root
+            (setf (gethash (getf metadata :common) origins) root))))
       ;; Complete the verified origin memo before saved members choose headings.
       (dolist (channel channels)
         (let* ((directory (channel-workspace channel))
-               (common    (getf (description directory) :common)))
-          (when common (origin directory common))))
+               (metadata  (description directory)))
+          (when metadata (origin directory metadata))))
       (dolist (channel channels)
         (let* ((directory       (channel-workspace channel))
                (common          (getf (description directory) :common))
@@ -199,13 +172,13 @@ function never writes the world store or changes the supplied channel objects."
 (-> world-repository-resolve-directory (string) list)
 (defun world-repository-resolve-directory (directory)
   "Resolve DIRECTORY to a verified Git key and originating folder, or NIL."
-  (let* ((channel (make-instance 'channel :identifier "repository-observation"
-                                        :owner        "repository-observation"
-                                        :workspace directory :created-at 0 :updated-at 0))
-         (group   (first (world-repository-groups (list channel) nil)))
-         (key     (world-repository-group-key group)))
-    (when (uiop:string-prefix-p "git:" key)
-      (list :key key :directory (world-repository-group-directory group)))))
+  (handler-case
+      (let* ((directory (world-workspace-name directory))
+             (metadata  (world-repository--describe directory))
+             (origin    (world-repository--origin directory metadata)))
+        (when origin
+          (list :key (concatenate 'string "git:" (getf metadata :common)) :directory origin)))
+    (error () nil)))
 
 (defparameter *world-repository-artifact-limit* 4096
   "Maximum task metadata files considered in one legacy attribution pass.")
