@@ -1799,6 +1799,10 @@ Ambiguous targets report candidate paths, with IDs and metadata for legacy
 conversations that have no durable channel. Names and paths work for unloaded
 agents too; opening their channel loads it.
 
+Each channel has its own unsent input draft within one terminal client. Return
+to a channel to continue editing its draft. Drafts are held in that client's
+memory until it closes.
+
 Use the same addresses with =(open "researcher")=, =(open "/researcher/reviewer")=,
 =(tell "/researcher/reviewer" "Review this change")= and =channel.send=. Read
 =channel:list= or open the channel and agent pickers to find current paths. Agent

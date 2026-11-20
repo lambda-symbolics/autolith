@@ -807,6 +807,7 @@
 
 (define-test-suite client-route-lifecycle
   test-client-input-queue-lifecycle
+  test-channel-view-drafts
   test-channel-view-history-delivery
   test-channel-view-event-backpressure
   test-channel-view-bounded-detach

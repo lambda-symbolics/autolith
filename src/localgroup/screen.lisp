@@ -133,6 +133,11 @@ switches. The default methods leave the choice local to each screen."))
     :accessor      localgroup-screen-frame
     :type          (option clinedi:frame-snapshot)
     :documentation "The pane's frame, or NIL before the first one.")
+   (channel-drafts
+    :initform      (make-hash-table :test #'equal)
+    :reader        localgroup-screen-channel-drafts
+    :type          hash-table
+    :documentation "Unsent input and cursor positions by channel, private to this terminal client.")
 
    (boot-ui
     :initform      nil

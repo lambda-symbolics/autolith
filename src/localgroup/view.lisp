@@ -829,6 +829,42 @@ leaves the channel running and gives the terminal back."
         (localgroup-client--disconnect connection))))
   nil)
 
+(-> channel-view--save-draft (channel-view) null)
+(defun channel-view--save-draft (view)
+  "Keep VIEW's actual unsent editor input on its client screen before releasing the UI."
+  (let ((ui     (channel-view-ui view))
+        (screen (channel-view-screen view)))
+    (with-terminal-ui-locked (ui)
+      (let* ((modal-p (channel-view-modal-p view))
+             (editor  (terminal-ui-editor ui))
+             (input   (if modal-p
+                          (or (channel-view-stashed-draft view) "")
+                          (terminal-ui--submission-input ui (copy-seq (line-editor-text editor)))))
+             (draft   (list :input input :cursor (unless modal-p (line-editor-cursor editor)))))
+        (with-lock-held ((localgroup-screen-lock screen))
+          (setf (gethash (channel-subscription-identifier view) (localgroup-screen-channel-drafts screen))
+                draft)))))
+  nil)
+
+(-> channel-view--restore-draft (channel-view) null)
+(defun channel-view--restore-draft (view)
+  "Restore this client's draft after VIEW attached, without carrying history between channels."
+  (let* ((screen (channel-view-screen view))
+         (draft  (with-lock-held ((localgroup-screen-lock screen))
+                   (gethash (channel-subscription-identifier view) (localgroup-screen-channel-drafts screen))))
+         (ui     (channel-view-ui view)))
+    (when draft
+      (with-terminal-ui-locked (ui)
+        (if (channel-view-modal-p view)
+            (setf (channel-view-stashed-draft view) (getf draft :input))
+            (progn
+              (terminal-ui--set-draft-input ui (getf draft :input))
+              (let* ((editor (terminal-ui-editor ui))
+                     (text   (line-editor-text editor)))
+                (line-editor-set-text editor text :cursor (or (getf draft :cursor) (length text))))
+              (terminal-ui--paint-live ui))))))
+  nil)
+
 (-> channel-view-run
     (channel-view &key (:attached-function (option function)) (:notice (option string))
                   (:client-version (option string)) (:boot-p boolean))
@@ -844,9 +880,10 @@ the channel accepted the view.
 NOTICE and a CLIENT-VERSION that differs from the server's are shown below
 the transcript once the channel has replayed it. With BOOT-P the client's boot screen stays until the user
 starts the session."
-  (let* ((ui           (channel-view-ui view))
-         (terminal     (localgroup-screen-terminal (channel-view-screen view)))
-         (resize-watch nil))
+  (let* ((ui            (channel-view-ui view))
+         (terminal      (localgroup-screen-terminal (channel-view-screen view)))
+         (resize-watch  nil)
+         (draft-ready-p nil))
     (unless (terminal--terminal-mode-or-nil terminal)
       (error 'localgroup-error
              :message    "Opening a channel requires an interactive terminal."
@@ -871,6 +908,8 @@ starts the session."
            (if boot-p
                (channel-view--boot view)
                (terminal-ui-start ui))
+           (channel-view--restore-draft view)
+           (setf draft-ready-p t)
            (loop until (with-lock-held ((channel-view-state-lock view))
                          (channel-view-exit view))
                  do (channel-view--step view))
@@ -884,6 +923,8 @@ starts the session."
                 (rest exit))
                (otherwise
                 exit))))
+      (when draft-ready-p
+        (channel-view--save-draft view))
       (channel-view--finish view (list ':detached))
       (channel-view--close-events view)
       (when resize-watch
