@@ -1181,19 +1181,22 @@ are legitimate lifecycle states, not evidence of owner failure."
 (defun world-server--host-for (server arguments)
   "Return the host selected by ARGUMENTS, whether it was started now, and the channels passed over.
 
-For a named channel, reuse its host or start one. For a directory, try its
-top-level channels by latest activity. Reuse an unattached compatible host,
-or start an unhosted channel whose conversation is free. Create a channel
-if none qualifies, or at once when ARGUMENTS ask for a new one with :new-p.
+For a named channel or :INBOX-P, reuse its host or start one. With :LATEST-P,
+select the directory's latest durable top-level channel and open it by name.
+Before the first message makes a new channel durable, reuse an available
+workspace host. Other directory opens try available channels by latest activity.
+Create a channel if none qualifies, or at once with :NEW-P.
 The channels passed over are (IDENTIFIER . MESSAGE) pairs for workspace
 channels whose conversation could not be loaded. The caller waits for the
 host to publish its endpoint."
-  (let ((channel   (getf arguments :channel))
-        (directory (getf arguments :directory)))
+  (let* ((configuration (world-server-configuration server))
+         (channel       (or (getf arguments :channel)
+                           (when (getf arguments :inbox-p)
+                             (channel-identifier (world-session-inbox configuration)))))
+         (directory     (getf arguments :directory)))
     (cond
      ((stringp channel)
-      (let* ((configuration (world-server-configuration server))
-             (identifier
+       (let* ((identifier
               (conversation-identifier-migration-resolve configuration
                                                          channel))
              (host          (world-server--find-host server identifier)))
@@ -1218,6 +1221,11 @@ host to publish its endpoint."
                (format nil "The directory ~A does not exist." directory)
                :operation ':open))
       (let ((workspace (world-workspace-name directory)))
+         (when (and (getf arguments :latest-p) (not (getf arguments :new-p)))
+           (let ((latest (world-session-latest-channel configuration workspace)))
+             (when latest
+               (return-from world-server--host-for
+                 (world-server--host-for server (list* :channel latest arguments))))))
         (multiple-value-bind (host started-p skipped)
             (if (getf arguments :new-p)
                 (values nil nil nil)

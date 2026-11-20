@@ -778,10 +778,11 @@ initial handle, so every participant can be mentioned by name."
 
 (-> world-reconcile-sessions
     (configuration &key (:identities list) (:prune-p boolean) (:now timestamp)
-                        (:create-inbox-p boolean))
+                        (:create-inbox-p boolean) (:ensure-inbox-p boolean))
     (values world (integer 0)))
-(defun world-reconcile-sessions (configuration &key (identities nil identities-p) (prune-p t)
-                                                   (now (get-universal-time)) (create-inbox-p t))
+(defun world-reconcile-sessions
+    (configuration &key (identities nil identities-p) (prune-p t) (now (get-universal-time))
+                        (create-inbox-p t) ensure-inbox-p)
   "Reconcile conversation mappings and return the world and change count.
 
 IDENTITIES limits the work to those conversation identity pathnames; otherwise
@@ -791,7 +792,8 @@ PRUNE-P, mappings whose conversation no longer exists retire their
 participant and, once empty, their channel. A world that has anything in it
 gets the person's inbox: the first reconciliation without one examines every
 conversation and, with CREATE-INBOX-P, creates an inbox conversation when none
-is found. Private task registration can defer that public conversation."
+is found. Private task registration can defer that public conversation.
+ENSURE-INBOX-P requests an inbox even on the first start of an empty world."
   (with-recursive-lock-held (*world-sessions-lock*)
     (let* ((discovery  (world-load configuration))
            (mappings   (world-session--current-mappings configuration))
@@ -817,7 +819,7 @@ is found. Private task registration can defer that public conversation."
                                                               t))))))
             (multiple-value-bind (changes vanished) (changes identities)
               (if (and create-inbox-p all-p
-                       (or changes (world-human-participant discovery))
+                       (or ensure-inbox-p changes (world-human-participant discovery))
                        (null (world-inbox-channel discovery))
                        (notany (lambda (change)
                                  (world-session--inbox-header-p (getf change :header)))
@@ -868,6 +870,29 @@ is found. Private task registration can defer that public conversation."
                              (not (equal (sort (world-session--placement next) #'string< :key #'first)
                                          (sort (world-session--placement current) #'string< :key #'first)))))))
                 (values committed (+ (length changes) (length vanished))))))))))
+
+(-> world-session-inbox (configuration) channel)
+(defun world-session-inbox (configuration)
+  "Return the durable inbox, reconciling or creating it only if absent."
+  (or (world-inbox-channel (world-load configuration))
+      (world-inbox-channel (world-reconcile-sessions configuration :ensure-inbox-p t))
+      (error 'world-error :operation ':open :message "The inbox could not be opened.")))
+
+(-> world-session-latest-channel (configuration string) (option string))
+(defun world-session-latest-channel (configuration workspace)
+  "Return the latest touched durable top-level channel in WORKSPACE."
+  (let ((world (world-load configuration))
+        (latest nil)
+        (latest-write -1))
+    (dolist (channel (world-channels world) latest)
+      (when (and (world-channel-top-level-p world channel)
+                 (string= workspace (channel-workspace channel)))
+        (let* ((identifier (channel-identifier channel))
+               (written (conversation-storage-write-date
+                         (conversation-pathname-for-id configuration identifier))))
+          (when (or (> written latest-write)
+                    (and (= written latest-write) (string< identifier latest)))
+            (setf latest identifier latest-write written)))))))
 
 (-> world-session--inbox-header-p (list) boolean)
 (defun world-session--inbox-header-p (header)

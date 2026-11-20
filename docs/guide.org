@@ -12,21 +12,11 @@ Launch Autolith from your terminal:
 autolith
 #+END_SRC
 
-An interactive launch without a channel selection opens the welcome view. Read
-its centered startup banner beside the sidebar: =workspace= is the directory
-from which you launched the client, and =agents= shows all durable agents as
-=N (M here)=, with =M= counting agents whose current residence is in that
-workspace. Parked agents count toward the total.
-
-Select a channel in the sidebar to open it, or press Enter in the welcome pane
-to create a channel in the launch directory. Press Ctrl-C to quit. Recovery
-information includes an explicit =autolith open ID= hint; choose when to reopen
-that channel. With =autolith open ID= or =autolith open=, open the selected
-channel or the conversation picker directly.
-
-The startup banner belongs to the client welcome view. When you select, reopen,
-or switch channels, read the channel's conversation without another startup
-banner.
+An interactive =autolith= launch opens your home channel (=inbox=). In
+fullscreen mode, the Autolith mascot appears during loading if the boot screen
+is enabled. Use the sidebar to switch channels, or run =autolith open= to
+open the most recently touched top-level channel in the current workspace.
+Use =autolith open ID= to open a specific channel.
 
 If you haven't authenticated yet, follow the [[file:../README.org][README]] instructions.
 
@@ -1612,11 +1602,12 @@ Use a terminal for colored output; redirected output is plain text. Set
 
 *** Starting and switching channels
 
-One background server hosts your channels. Run =autolith= in a directory to
-connect to it, starting the server if needed. The client opens the channel
-in that workspace whose conversation file changed last and that no other
-terminal controls, or creates a channel if none qualifies. Use =autolith open ID= to open a
-specific channel.
+One background server hosts your channels. An interactive =autolith= launch
+connects to it, starting the server if needed, and opens your inbox.
+=autolith open= opens the top-level channel in the current workspace whose
+conversation file changed last, or creates one if the workspace has none.
+Use =autolith open TARGET= to open a specific channel. If another terminal
+controls that channel, use =--read-only= to observe it.
 
 If the server cannot be started or does not answer, the start ends with the
 reason. No session runs in the terminal's own process instead.
@@ -1791,9 +1782,9 @@ autolith open
 Use =autolith --detached= to start a new unattended channel and print its full
 conversation ID and session PID. This works with closed stdin. Open an existing
 channel in this terminal with =autolith open TARGET=, using its agent's name
-with or without =@=, an exact channel path, or its ID. Omit the target for the
-=(open)= channel picker. Use =--read-only= to observe without taking control,
-including after switching channels. Exact channel IDs take precedence over bare
+with or without =@=, an exact channel path, or its ID. Omit the target to open
+the latest top-level channel in the current workspace. Use =--read-only= to
+observe without taking control, including after switching channels. Exact channel IDs take precedence over bare
 agent names. Unique ID fragments and legacy saved or live IDs also work.
 Ambiguous targets report candidate paths, with IDs and metadata for legacy
 conversations that have no durable channel. Names and paths work for unloaded

@@ -88,14 +88,18 @@ other."
                         (:pick-channel-p boolean)
                         (:recovery-diagnosis (option string)) (:launch list) (:new-p boolean)
                          (:images list) (:mcp-servers list) (:switch-p boolean)
+                         (:inbox-p boolean) (:latest-p boolean)
                          (:attach-expected-p boolean))
     (values string boolean))
 (defun world-client-open
     (configuration &key directory channel (permission-mode ':ask) immutable-p
                         pick-channel-p recovery-diagnosis launch new-p images mcp-servers
+                        inbox-p latest-p
                         switch-p (attach-expected-p t))
   "Open CHANNEL, or a channel for DIRECTORY, in CONFIGURATION's world server.
 
+INBOX-P opens the person's inbox. LATEST-P selects the latest durable
+channel for DIRECTORY regardless of residency or attachment status.
 NEW-P opens a new channel for DIRECTORY instead of its latest one. IMAGES,
 absolute namestrings of local images, become the opened channel's composer
 draft. MCP-SERVERS, an editor's server declarations in portable form, join
@@ -136,6 +140,8 @@ sharing one it already served."
                                   (list :channel channel))
                                 (when directory
                                   (list :directory (namestring directory)))
+                                 (when inbox-p (list :inbox-p t))
+                                 (when latest-p (list :latest-p t))
                                 (when launch
                                   (list :launch launch))
                                 (when new-p
@@ -240,16 +246,18 @@ after it until the form closes or the input ends."
 
 (-> world-client-run-script
     (configuration &key (:input stream) (:output stream) (:conversation-id (option string))
-                        (:permission-mode keyword) (:immutable-p boolean) (:launch list))
+                         (:permission-mode keyword) (:immutable-p boolean) (:launch list)
+                         (:latest-p boolean))
     null)
 (defun world-client-run-script
     (configuration &key (input *standard-input*) (output *standard-output*) conversation-id
-                        (permission-mode ':ask) immutable-p launch)
+                        (permission-mode ':ask) immutable-p launch latest-p)
   "Run INPUT's submissions, waiting for each submission's own completion."
   (multiple-value-bind (channel started-p)
       (world-client-open configuration :directory       (config :working-directory configuration)
                                        :channel         conversation-id
-                                       :new-p           (null conversation-id)
+                                       :new-p           (and (null conversation-id) (not latest-p))
+                                       :latest-p        latest-p
                                        :permission-mode permission-mode
                                        :immutable-p     immutable-p
                                        :launch          launch)

@@ -994,13 +994,10 @@ state, including an empty list after successful or pristine startup."
                (and (not detached-p)
                     (null effective-open-id)
                     (application-recovery-diagnosis-prompt configuration))))
-         (pick-channel-p
-           (or (and handoff-record
-                    (getf (rest handoff-record) :pick-channel-p))
-               (and effective-open-requested-p
-                    (or (not (null effective-open-id))
-                        (and (null recovery-conversation-id)
-                             (null recovery-diagnosis))))))
+         (conversation-id (or effective-open-id recovery-conversation-id))
+         (latest-p        (and effective-open-requested-p (null conversation-id)))
+         (inbox-p         (not (or effective-open-requested-p conversation-id handoff-record)))
+         (pick-channel-p  (and handoff-record (getf (rest handoff-record) :pick-channel-p)))
          (image-state-loaded-p
            (and authenticate-p
                 (or pristine-p fresh-handoff-p
@@ -1057,23 +1054,23 @@ state, including an empty list after successful or pristine startup."
                     configuration
                     :permission-mode    permission-mode
                     :immutable-p        immutable-p
-                     :welcome-p         (not (or effective-open-requested-p effective-open-id
-                                                 handoff-record image-values))
-                    :conversation-id    (or effective-open-id recovery-conversation-id)
-                    :attachment-mode    attachment-mode
-                    :pick-channel-p     (and effective-open-requested-p
-                                               (null effective-open-id))
-                    :recovery-diagnosis recovery-diagnosis
+                     :conversation-id    conversation-id
+                     :attachment-mode    attachment-mode
+                     :inbox-p            inbox-p
+                     :latest-p           latest-p
+                     :welcome-p          (and inbox-p (not (null recovery-diagnosis)))
+                     :recovery-diagnosis recovery-diagnosis
                     :launch             (main--launch-options
                                          command :permission-mode explicit-permission-mode)
                     :images             (mapcar #'namestring (main--image-pathnames image-values)))
                    (progn
-                     (world-client-run-script
-                      configuration
-                      :conversation-id (or effective-open-id recovery-conversation-id)
-                      :permission-mode permission-mode
-                      :immutable-p     immutable-p
-                      :launch          (main--launch-options command :permission-mode explicit-permission-mode))
+                      (apply #'world-client-run-script configuration
+                             :conversation-id conversation-id
+                             :permission-mode permission-mode
+                             :immutable-p     immutable-p
+                             :launch          (main--launch-options
+                                               command :permission-mode explicit-permission-mode)
+                             (when latest-p (list :latest-p t)))
                      t)))
       (return-from main--start-session nil))
     (when read-only-p
@@ -1083,7 +1080,12 @@ state, including an empty list after successful or pristine startup."
       (setf *active-application*
             (apply #'main--connect-application
                    :configuration        configuration
-                   :conversation-id      effective-open-id
+                    :conversation-id      (or effective-open-id
+                                              (when latest-p
+                                                (world-session-latest-channel
+                                                 configuration
+                                                 (world-workspace-name
+                                                  (config :working-directory configuration)))))
                    :immutable-p          immutable-p
                    :pristine-p           pristine-p
                    :permission-mode      (if pristine-p
@@ -1161,6 +1163,7 @@ detached sessions, and a booted generation's resume, under
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
                         (:pick-channel-p boolean)
+                        (:inbox-p boolean) (:latest-p boolean)
                         (:recovery-diagnosis (option string))
                         (:launch list)
                         (:new-p boolean)
@@ -1168,7 +1171,7 @@ detached sessions, and a booted generation's resume, under
     (values string boolean))
 (defun main--open-world-channel
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        pick-channel-p recovery-diagnosis launch new-p images)
+                        pick-channel-p recovery-diagnosis launch new-p images inbox-p latest-p)
   "Open this terminal's channel in the world server and return its session identifier.
 
 CONVERSATION-ID opens that channel; otherwise the launch directory selects
@@ -1184,6 +1187,8 @@ the reason; no session runs in this terminal's own process instead."
                          :permission-mode    permission-mode
                          :immutable-p        immutable-p
                          :pick-channel-p     pick-channel-p
+                         :inbox-p            inbox-p
+                         :latest-p           latest-p
                          :recovery-diagnosis recovery-diagnosis
                          :launch             launch
                          :new-p              new-p
@@ -1471,13 +1476,13 @@ only rediscovers the same endpoint; choosing another channel is explicit."
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
      (:conversation-id (option string)) (:attachment-mode (member :control :read-only))
-     (:pick-channel-p boolean) (:welcome-p boolean)
+     (:pick-channel-p boolean) (:inbox-p boolean) (:latest-p boolean) (:welcome-p boolean)
      (:recovery-diagnosis (option string)) (:launch list) (:images list))
     (values boolean list))
 (defun main--run-world-client
        (configuration
         &key (permission-mode ':ask) immutable-p conversation-id (attachment-mode ':control)
-        pick-channel-p welcome-p recovery-diagnosis launch images)
+        pick-channel-p inbox-p latest-p welcome-p recovery-diagnosis launch images)
   "Serve one terminal across channel switches, committing navigation after attachment acknowledgment.
 Discovery, endpoint refresh and the attach handshake share a bounded switch transaction.
 A failed switch restores its source, or reports a disconnected terminal if that source disappeared.
@@ -1493,31 +1498,26 @@ Return success and bounded secondary cleanup metadata without replacing a primar
         (progn
          (world-sidebar-start panel)
          (multiple-value-bind (session-id started-p)
-             (if welcome-p
-                 (values nil nil)
-              (main--call-with-channel-loading screen "Opening channel"
-                                               (lambda ()
-                                                 (main--open-world-channel configuration
-                                                                           :permission-mode
-                                                                           permission-mode
-                                                                           :immutable-p immutable-p
-                                                                           :conversation-id
-                                                                           conversation-id
-                                                                           :pick-channel-p
-                                                                           pick-channel-p
-                                                                           :recovery-diagnosis
-                                                                           recovery-diagnosis
-                                                                           :launch launch :images
-                                                                           images))
-                                               :start-p
-                                               (and (config :fullscreen-p configuration)
-                                                    (not
-                                                     (null
-                                                      (terminal--terminal-mode-or-nil
-                                                       (localgroup-screen-terminal screen)))))
-                                               :boot-p
-                                               (and (config :fullscreen-p configuration)
-                                                    (config :boot-screen-p configuration))))
+              (if welcome-p
+                  (values nil nil)
+                  (main--call-with-channel-loading
+                   screen "Opening channel"
+                   (lambda ()
+                     (main--open-world-channel configuration
+                                               :permission-mode    permission-mode
+                                               :immutable-p        immutable-p
+                                               :conversation-id    conversation-id
+                                               :pick-channel-p     pick-channel-p
+                                               :inbox-p            inbox-p
+                                               :latest-p           latest-p
+                                               :recovery-diagnosis recovery-diagnosis
+                                               :launch             launch
+                                               :images             images))
+                   :start-p (and (config :fullscreen-p configuration)
+                                 (not (null (terminal--terminal-mode-or-nil
+                                             (localgroup-screen-terminal screen)))))
+                   :boot-p  (and (config :fullscreen-p configuration)
+                                 (config :boot-screen-p configuration))))
            (loop with origin = nil
                  with switching-p = nil
                  with restoring-p = nil
@@ -1730,7 +1730,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
   "Return the open sub-command definition."
   (make-command
    :name        "open"
-   :description "open a channel in this terminal, or pick one"
+   :description "open a channel, defaulting to the latest in this workspace"
    :usage       "[TARGET] [--read-only]"
    :options     (list (make-option ':flag
                                    :long-name   "read-only"
