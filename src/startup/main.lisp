@@ -158,7 +158,7 @@
     ((:plain "Visit ")
      (:code "https://almightylisp.com/")
      (:plain " for almighty tools for almighty programmers, and try ")
-     (:code "autolith --almighty")
+     (:code "(settings :terminal-theme :almighty)")
      (:plain " to wear its colors.")))
   "Startup advice supplementing registered command tips, as styled span specifications.")
 
@@ -948,21 +948,14 @@ state, including an empty list after successful or pristine startup."
                                        (main--model-arguments command)))))
               ;; The command line beats the saved preference; provider
               ;; validation stays deferred until executable user init.
-              (when (and (getopt* command ':plain)
-                         (or (getopt* command ':fullscreen) (getopt* command ':almighty)))
-                (error 'configuration-error
-                       :message (format nil "--plain cannot be combined with ~:[--almighty~;--fullscreen~]."
-                                        (getopt* command ':fullscreen))))
+             (when (and (getopt* command ':plain) (getopt* command ':fullscreen))
+               (error 'configuration-error
+                      :message "--plain cannot be combined with --fullscreen."))
               (when (getopt* command ':fullscreen)
                 (configuration-set base (configuration-setting base :fullscreen-p) t
                                    :source ':override))
               (when (getopt* command ':plain)
                 (configuration-set base (configuration-setting base :fullscreen-p) nil
-                                   :source ':override))
-              (when (getopt* command ':almighty)
-                (configuration-set base (configuration-setting base :terminal-theme)
-                                   ':almighty :source ':override)
-                (configuration-set base (configuration-setting base :fullscreen-p) t
                                    :source ':override))
               (terminal-theme-install (config :terminal-theme base))
               base))
@@ -1229,12 +1222,10 @@ request it conflicts with from one that says nothing."
             (list :permission-mode permission-mode))
           (when (getopt* command ':immutable)
             (list :immutable-p t))
-          (when (or (getopt* command ':fullscreen) (getopt* command ':almighty))
+          (when (getopt* command ':fullscreen)
             (list :fullscreen-p t))
           (when (getopt* command ':plain)
-            (list :plain-p t))
-          (when (getopt* command ':almighty)
-            (list :theme ':almighty))))
+            (list :plain-p t))))
 
 (-> main--switch-failure (string condition) string)
 (defun main--switch-failure (identifier condition)
@@ -1685,11 +1676,6 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                 :key         ':plain
                 :persistent  t
                 :description "keep the transcript in the terminal's own scrollback instead of fullscreen")
-   (make-option ':flag
-                :long-name   "almighty"
-                :key         ':almighty
-                :persistent  t
-                :description "force fullscreen with the Almighty Lisp yellow-on-blue theme")
    (make-option ':flag
                 :long-name   "immutable"
                 :key         ':immutable

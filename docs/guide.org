@@ -688,19 +688,15 @@ Skip the boot screen entirely with =(setf (config :boot-screen-p) nil)= or
 
 ** Almighty theme
 
-#+BEGIN_SRC sh
-autolith --almighty
-#+END_SRC
-
-forces the fullscreen viewport and presents the Almighty Lisp theme from
-[[https://almightylisp.com/][almightylisp.com]]: near-white text on the site's
-blue, yellow for everything emphasized, cyan for code and strings, and an
+Select the Almighty Lisp theme with =(settings :terminal-theme :almighty)=.
+It uses the palette from [[https://almightylisp.com/][almightylisp.com]]:
+near-white text on the site's blue, yellow for emphasis, cyan for code and strings, and an
 ALMIGHTY LITH boot mark. Terminals that advertise true color through
 =COLORTERM= get the exact colors; others get the nearest indexed or basic
 ones. The theme sets the terminal's default colors only while the viewport is
 active and restores them on exit. Save it for future launches with
 =(setf (config :terminal-theme) :almighty)=; =:autolith= restores the default
-presentation. Detached sessions carry the theme across handoff.
+presentation.
 
 * Install, update, and uninstall
 
@@ -1640,8 +1636,8 @@ terminal. With =--pristine=, =--detached= starts a rescue session in a
 process of its own instead.
 
 For a new channel, specify =--model=, =--permissions=, =--immutable=,
-=--fullscreen=, =--plain=, or =--almighty= at startup. Supply =--provider=
-only together with =--model=. An existing channel accepts an explicit
+=--fullscreen=, or =--plain= at startup. Supply =--provider= only together
+with =--model=. An existing channel accepts an explicit
 =--permissions= override only when no terminal controls it. Other launch
 options are rejected, with the option named in the error. When opening a
 workspace, those other options create a new channel instead of reusing a

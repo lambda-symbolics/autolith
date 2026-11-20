@@ -308,8 +308,6 @@ before any shell is involved."
    (if (config :fullscreen-p configuration)
        (list "--fullscreen")
        (list "--plain"))
-   (when (eq (config :terminal-theme configuration) ':almighty)
-     (list "--almighty"))
    (let ((site-config-root (config :site-config-root configuration)))
      (when site-config-root
        (list "--site-config-root" (namestring site-config-root))))

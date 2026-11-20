@@ -1339,15 +1339,14 @@ opening. Return NIL for the host when no channel qualifies."
 (defun world-server--launch-conflict (host launch)
   "Return the option of LAUNCH that channel HOST runs differently and cannot change, or NIL.
 
-The model, provider, immutable mode, fullscreen or plain presentation and
-theme are fixed when a channel's application is built. The permission mode
+The model, provider, immutable mode, and fullscreen or plain presentation
+are fixed when a channel's application is built. The permission mode
 changes only while the channel is not working: a turn or a job already
 running keeps the mode it started under."
   (let* ((application   (world-host-application host))
          (configuration (application-configuration application))
          (model         (getf launch :model))
          (provider      (getf launch :provider))
-         (theme         (getf launch :theme))
          (mode          (getf launch :permission-mode)))
     (cond
       ((and mode
@@ -1364,8 +1363,6 @@ running keeps the mode it started under."
        "--fullscreen")
       ((and (getf launch :plain-p) (config :fullscreen-p configuration))
        "--plain")
-      ((and theme (not (eq theme (config :terminal-theme configuration))))
-       "--almighty")
       (t
        nil))))
 
@@ -1648,9 +1645,7 @@ forgotten again when no thread could start."
                     (list :model (getf launch :model) :model-provider
                           (or (getf launch :provider) "")
                           :model-selection-override-p t))
-                  (when (getf launch :immutable-p) (list :immutable-p t))
-                  (when (getf launch :theme)
-                    (list :terminal-theme (getf launch :theme))))))
+                  (when (getf launch :immutable-p) (list :immutable-p t)))))
          (application
           (application--build configuration :conversation-id conversation-id
                               :permission-mode
