@@ -962,3 +962,88 @@
                       (localgroup-screen-close other))))
              (localgroup-screen-close screen)))))))
   nil)
+
+(-> test-channel-view-interleaved-history () null)
+(defun test-channel-view-interleaved-history ()
+  "Restore command results and notices by durable boundary, including older pages."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((identifier   (getf (rest (world-server-tests--open
+                                       (world-client-entry configuration)
+                                       (world-tests--workspace root "interleaved-history")))
+                               :session-id))
+            (application  (world-host-application (world-server--find-host server identifier)))
+            (conversation (application-conversation application))
+            (screen       (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
+            (view         (channel-view-create configuration identifier screen))
+            (markers      '("chronology-empty-channel" "chronology-earlier-input" "(permissions :full)"
+                            "chronology-command-result" "chronology-later-input"
+                            "chronology-relevant-memories" "chronology-shell-result" "chronology-assistant")))
+       (labels ((ordered ()
+                  "Check visible chronological positions without pinning presentation wording."
+                  (let ((text (client-history-tests--text view)))
+                    (loop for (earlier later) on markers while later
+                          do (let ((left (search earlier text)) (right (search later text)))
+                               (test-assert (and left right (< left right))
+                                            "Local and durable output retain their relative positions."))))
+                  nil)
+
+                (reattach ()
+                  "Return to the same channel with a new frontend and another pane width."
+                  (channel-subscription-close view)
+                  (setf view (channel-view-create configuration identifier screen))
+                  (channel-subscription-attach view)
+                  nil))
+         (unwind-protect
+              (progn
+                (application-present application "chronology-empty-channel")
+                (channel-subscription-attach view)
+                (test-assert (search "chronology-empty-channel" (client-history-tests--text view))
+                             "A channel with only local output replays its boundary-zero publication.")
+                ;; Use the same persisted second for every durable event.
+                (sb-ext:without-package-locks
+                  (test-call-with-function-replacements
+                   (list (list 'get-universal-time (constantly 4000000000)))
+                   (lambda ()
+                     (conversation-append-user-message conversation "chronology-earlier-input")
+                     (application-render-records application)
+                     (application-run-lisp-input application "(permissions :full)")
+                     (application-present application "chronology-command-result")
+                     (conversation-append-user-message conversation "chronology-later-input")
+                     (application-render-records application)
+                     (application-present application "chronology-relevant-memories")
+                     (conversation-append-tool-result conversation "chronology-call" :tool-name "shell.run"
+                                                     :output                                    "chronology-shell-result")
+                     (conversation-append-provider-item conversation (agent-test-message "chronology-assistant"))
+                     (application-render-records application))))
+                (client-history-tests--settle view)
+                (ordered)
+                (channel-presentation-set-geometry (application-presentation application) :columns 72)
+                (reattach)
+                (ordered)
+                (test-call-with-function-replacements
+                 (list (list 'application--history-page-size (constantly 2)))
+                 (lambda ()
+                   (reattach)
+                   (test-assert (not (search "(permissions :full)" (client-history-tests--text view)))
+                                "A retained command older than the newest page waits for its own page.")
+                   (let ((reply (channel-subscription-call
+                                 view ':transcript-history
+                                 :conversation    (channel-view-transcript-history-conversation view)
+                                 :before-sequence (channel-view-transcript-history-floor view))))
+                     (channel-view--apply-history-page view reply)
+                     (channel-view--apply-history-page view reply)
+                     (ordered)
+                     (let ((text (client-history-tests--text view)))
+                       (dolist (marker markers)
+                         (test-assert (= 1 (client-history-tests--occurrences marker text))
+                                      "Overlapping history pages do not duplicate local or durable output."))))))
+                (let ((cut (application-client-history--cut application)))
+                  (multiple-value-bind (events fields)
+                      (application-client-history-page application cut :character-limit 1)
+                    (test-assert (and (null events) (= cut (getf fields :before-sequence))
+                                      (getf fields :more-p))
+                                 "An overflow notice that cannot fit preserves the no-progress cursor."))))
+           (channel-subscription-close view)
+           (localgroup-screen-close screen))))))
+  nil)

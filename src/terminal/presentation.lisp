@@ -486,6 +486,11 @@ channel, the client sends its events, and they are read here."))
     :accessor      channel-presentation-history-function
     :type          (option function)
     :documentation "The function returning the newest durable inputs, the offset of the first, and whether the rest pages in.")
+   (record-boundary-function
+    :initform      nil
+    :accessor      channel-presentation-record-boundary-function
+    :type          (option function)
+    :documentation "The function returning the durable conversation identity and sequence preceding local output.")
    (window-title
     :initform      nil
     :accessor      channel-presentation-window-title
@@ -754,14 +759,17 @@ compose."
 (defun channel-presentation--log (ui event &key presentations retention-group)
   "Keep transcript EVENT for a client that attaches later and return its log cell.
 
-A cell holds (EVENT CHARACTERS PRESENTATIONS RETENTION-GROUP SUPERSEDED-P).
-Source presentations permit layout at another width. Cells of one logical
-publication share RETENTION-GROUP and leave the log together."
+  A cell holds (EVENT CHARACTERS PRESENTATIONS RETENTION-GROUP SUPERSEDED-P BOUNDARY).
+  BOUNDARY identifies the durable record preceding this publication. Source
+  presentations permit layout at another width. Cells of one logical publication
+  share RETENTION-GROUP and leave the log together."
   (let ((cell (list event
                     (if presentations
                         (channel-presentation--record-weight event presentations)
                         (presentation--weight event))
-                    presentations retention-group nil))
+                    presentations retention-group nil
+                    (when (channel-presentation-record-boundary-function ui)
+                      (funcall (channel-presentation-record-boundary-function ui)))))
         (log  (channel-presentation-transcript-log ui)))
     (deque-push-back log cell)
     (incf (channel-presentation-log-characters ui) (second cell))
@@ -1232,10 +1240,12 @@ with a notice. Keep its source presentation for later layout and history."
          (cells
            (loop for cell in (deque->list log)
                  append (if (third cell)
-                          (channel-presentation--record-cells
-                           ui (third cell) :lay-out-p t
-                           :retention-group           (channel-presentation--cell-group cell))
-                          (list cell)))))
+                            (mapcar (lambda (replacement)
+                                      (append replacement (list (fifth cell) (sixth cell))))
+                                    (channel-presentation--record-cells
+                                     ui (third cell) :lay-out-p t
+                                     :retention-group           (channel-presentation--cell-group cell)))
+                            (list cell)))))
     (deque-clear log)
     (setf (channel-presentation-log-characters ui) 0)
     (dolist (cell cells)

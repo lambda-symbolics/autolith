@@ -27,7 +27,8 @@
                  (listp events)
                  (every (lambda (event)
                           (and (consp event) (eq (first event) ':ui)
-                               (eq (getf (rest event) :operation) ':records))) events))
+                               (member (getf (rest event) :operation)
+                                       '(:records :append :mark :markdown :stream)))) events))
       (error 'channel-subscription-unavailable :message "The channel returned an invalid transcript history page."))
     (let* ((ui   (channel-view-ui view))
            (page (terminal-ui-create :terminal (terminal-ui-terminal ui) :fullscreen-p t
@@ -36,11 +37,20 @@
                           :rows (terminal-rows (terminal-ui-terminal ui)))
       (with-terminal-ui-locked (ui)
         (dolist (event events)
-          (let ((records (remove-if
-                          (lambda (record) (terminal-ui--finalized-p ui (first record)))
-                          (remove nil (mapcar #'presentation-wire->record
-                                              (getf (rest event) :presentations))))))
-            (terminal-ui-present-records page records)))
+          (let* ((fields    (rest event))
+                 (operation (getf fields :operation)))
+            (case operation
+              (:records
+               (terminal-ui-present-records
+                page (remove-if
+                      (lambda (record) (terminal-ui--finalized-p ui (first record)))
+                      (remove nil (mapcar #'presentation-wire->record
+                                          (getf fields :presentations))))))
+              ((:append :mark)
+               (unless (terminal-ui--finalized-p ui (getf fields :identifier))
+                 (apply #'presentation-apply page operation fields)))
+              (otherwise
+               (apply #'presentation-apply page operation fields)))))
         (when (plusp (clinedi:transcript-viewport-chunk-count (fullscreen-terminal-ui-viewport page)))
           (terminal-ui-fullscreen-prepend-history ui page))))
     (channel-view-apply view ':transcript-history
