@@ -199,8 +199,6 @@
       (terpri stream)
       (paragraph "Disk" ':strong)
       (field "Logical bytes, union" (usage--bytes (usage-report-disk-bytes report)))
-      (when (usage-report-disk-partial-p report)
-        (paragraph "Disk totals are partial: some entries were inaccessible." ':notice))
       (usage--storage stream (usage-report-storage report) :columns columns :styled-p styled-p)
       (paragraph "Root sizes can overlap; the union deduplicates files." ':dim)
       (terpri stream)

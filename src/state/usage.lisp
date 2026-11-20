@@ -207,9 +207,7 @@ channel identities separately from process IDs and retain missing measurements."
                     (incf unknown)))))
           (setf (usage-report-channels report) (hash-table-count channels))
           (when (plusp unknown)
-            (setf roots-complete-p nil)
-            (push "Some registered channel or world endpoints were unavailable"
-                  (usage-report-warnings report))))
+            (setf roots-complete-p nil)))
       (error ()
         (push "Channel and world discovery" (usage-report-warnings report))
         (return-from usage--collect-processes nil)))
