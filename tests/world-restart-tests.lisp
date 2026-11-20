@@ -122,6 +122,12 @@
                              (world-restart-tests--record-state pathname '(:version :identifier :created-at)))
                            (limited (directory (merge-pathnames "restart-pointers/*.sexp"
                                                                 (config :state-root configuration)))))))
+          :boot-stages
+          (probe (lambda ()
+                   (mapcar (lambda (pathname)
+                             (world-restart-tests--record-state pathname '(:pid :phase)))
+                           (limited (directory (merge-pathnames "restart-boot/*.sexp"
+                                                                (config :state-root configuration)))))))
           :generation-files
           (probe (lambda ()
                    (mapcar (lambda (directory)
@@ -246,7 +252,44 @@ skips the repository check."
                 (when (and symbol (fboundp symbol)) (symbol-function symbol)))
               "The original timer teardown, retained to check each saved heap.")
            :stream stream :readably t)
-    (terpri stream))
+    (terpri stream)
+    (write `(defparameter *world-restart-test-boot-root*
+              ,(namestring (merge-pathnames "restart-boot/" (config :state-root configuration))))
+           :stream stream :readably t)
+    (terpri stream)
+    (dolist (form '((defun world-restart-test-boot-stage (phase)
+                      (handler-case
+                          (let* ((pid (current-process-id))
+                                 (path (merge-pathnames (format nil "~D.sexp" pid)
+                                                        *world-restart-test-boot-root*)))
+                            (ensure-directories-exist path)
+                            (with-open-file (file path :direction :output :if-exists :supersede)
+                              (write (list :autolith-test-boot :pid pid :phase phase)
+                                     :stream file :readably t)))
+                        (error () nil)))
+                    (defun world-restart-test-boot-before-hooks ()
+                      (world-restart-test-boot-stage "init hooks entered"))
+                    (defun world-restart-test-boot-after-hooks ()
+                      (world-restart-test-boot-stage "init hooks completed"))
+                    (setf sb-ext:*init-hooks*
+                          (list* 'world-restart-test-boot-before-hooks
+                                 (append sb-ext:*init-hooks*
+                                         '(world-restart-test-boot-after-hooks))))
+                    (dolist (name '(world-server-restart-claim
+                                    world-server--restart-reclaim-leases
+                                    world-server--runtime-start
+                                    management-repl-start
+                                    slynk-start
+                                    world-server--attach-telemetry
+                                    world-server--restart-unmark
+                                    world-server--resume-channels))
+                      (let ((function (symbol-function name)))
+                        (setf (symbol-function name)
+                              (lambda (&rest arguments)
+                                (world-restart-test-boot-stage (symbol-name name))
+                                (apply function arguments)))))))
+      (write form :stream stream :readably t)
+      (terpri stream)))
   (test-call-with-function-replacements
    (list (list 'platform-session-launch-command
                (lambda (platform source-root)
@@ -466,6 +509,10 @@ skips the repository check."
           (world-restart-tests--submit
            entry
            "(progn
+  (with-open-file (stream (merge-pathnames (format nil \"~D.sexp\" (current-process-id))
+                                           *world-restart-test-boot-root*))
+    (let ((*read-eval* nil))
+      (assert (equal (getf (rest (read stream)) :phase) \"WORLD-SERVER--RESUME-CHANNELS\"))))
   (let ((symbol (find-symbol \"ITIMER-EMULATION-DEINIT\" \"SB-IMPL\")))
     (assert (if (and symbol (fboundp symbol))
                 (and (functionp *world-restart-test-native-itimer*)
