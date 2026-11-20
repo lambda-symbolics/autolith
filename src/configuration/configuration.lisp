@@ -212,12 +212,12 @@ Ordinary native defaults remain lazy and follow the current environment."
   :default                        nil)
 
 (define-setting :extra-skill-roots (setting)
-  :label                         "Extra skill roots"
-  :group                         :paths
-  :documentation                 "The additional skill directories are scanned in order after standard and bundled roots."
-  :scope                         :durable
-  :type                          '(satisfies skill-root-list-p)
-  :default                       nil)
+  :label                           "Extra skill roots"
+  :group                           :paths
+  :documentation                   "The additional skill directories are scanned in order after standard and bundled roots."
+  :scope                           :durable
+  :type                            '(satisfies skill-root-list-p)
+  :default                         nil)
 
 (define-setting :data-root (directory-setting)
   :label                   "Data root"

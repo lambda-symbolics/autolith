@@ -3627,6 +3627,7 @@ thread."
 (defmethod terminal-ui--refresh-completions ((ui terminal-ui))
   "A directly rendered terminal has no catalog to publish."
   nil)
+
 (-> terminal-ui-refresh-status (terminal-ui) boolean)
 (defun terminal-ui-refresh-status (ui)
   "Repaint changed live timing without waiting for a contended presentation lock."

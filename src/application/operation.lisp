@@ -505,8 +505,8 @@ never returned. Refresh an unchanged query after two seconds without blocking in
     (when (typep ui 'terminal-ui)
        (let ((entries    nil)
              (generation nil)
-              (registry   nil)
-              (revision   nil))
+             (registry   nil)
+             (revision   nil))
          (setf (terminal-ui-completion-function ui)
                (lambda ()
                  ;; Painting holds the UI lock. A registry writer may need that UI,
@@ -523,7 +523,7 @@ never returned. Refresh an unchanged query after two seconds without blocking in
                              generation current-generation
                               registry current-registry
                               revision (cons nil nil)))))
-                  (values entries revision))))
+                 (values entries revision))))
       (setf (terminal-ui-path-search-function ui)
             (application-path--completion-provider
              (lambda (query) (application-path-search-files application query))

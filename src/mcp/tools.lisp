@@ -536,8 +536,8 @@
     server-configuration configuration
     :notification-handler    notification-handler
     :exchange-scope-function exchange-scope-function)
-   :name    "autolith"
-   :version *autolith-version*
+   :name          "autolith"
+   :version       *autolith-version*
    :protocol-mode ':auto
    :startup-timeout
    (mcp-server-configuration-startup-timeout-seconds server-configuration)
@@ -992,7 +992,7 @@ retained value is credential-redacted or projected."
                            :registration-source
                            (mcp-server-registration-source registration)
                            :provider-namespace                (gethash name namespace-map)
-                           :watch-tool-changes-p t
+                           :watch-tool-changes-p              t
                            :client-factory
                            (lambda (runtime notification-handler)
                              (mcp-tools--client server configuration

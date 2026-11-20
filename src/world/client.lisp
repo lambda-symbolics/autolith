@@ -140,8 +140,8 @@ sharing one it already served."
                                   (list :channel channel))
                                 (when directory
                                   (list :directory (namestring directory)))
-                                 (when inbox-p (list :inbox-p t))
-                                 (when latest-p (list :latest-p t))
+                                (when inbox-p (list :inbox-p t))
+                                (when latest-p (list :latest-p t))
                                 (when launch
                                   (list :launch launch))
                                 (when new-p

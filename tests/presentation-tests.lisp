@@ -26,7 +26,7 @@
         (let* ((registry       (make-default-tool-registry))
                (application    (make-instance 'application :configuration configuration
                                               :tool-registry registry :ui ui
-                                              :conversation (conversation-create configuration)))
+                                              :conversation               (conversation-create configuration)))
                (build          #'application-operation-completion-entries)
                (normalize      #'channel-presentation--completion-entries)
                (builds         0)
@@ -72,14 +72,14 @@
       (let* ((publisher   (channel-presentation-publish-function ui))
              (application (make-instance 'application :configuration configuration :ui ui
                                          :tool-registry (make-default-tool-registry)
-                                         :conversation (conversation-create configuration)))
+                                         :conversation  (conversation-create configuration)))
              (failure     (make-condition 'simple-error :format-control "Incomplete catalog send"))
              (fail-p      t))
         (setf (channel-presentation-publish-function ui) publisher)
         (dolist (warm-p '(nil t))
           (let* ((entered (sb-thread:make-semaphore))
                  (release (sb-thread:make-semaphore))
-                 (before (channel-presentation-published-completion-revision ui))
+                 (before  (channel-presentation-published-completion-revision ui))
                  (worker
                    (make-thread
                     (lambda ()
@@ -140,7 +140,7 @@
 (-> test-presentation-idle-status-phases () null)
 (defun test-presentation-idle-status-phases ()
   "Acknowledge each hosted phase while allowing animation and notice expiry."
-  (let ((ui (channel-presentation-create))
+  (let ((ui    (channel-presentation-create))
         (clock 0))
     (setf (slot-value ui 'clock-function) (lambda () clock))
     (terminal-ui-set-status ui "working")

@@ -171,8 +171,8 @@ submit."
     ;; before children are made relative to it: a Windows temporary root spelt
     ;; with an 8.3 short name never prefixes its own long-named children.
     (setf root (uiop:ensure-directory-pathname (platform-truename *platform* root)))
-    (let* ((relative         (terminal-path--relative token))
-           (slash            (position #\/ relative :from-end t))
+    (let* ((relative (terminal-path--relative token))
+           (slash    (position #\/ relative :from-end t))
            (directory-relative
              (if slash
                  (subseq relative 0 (1+ slash))

@@ -2259,16 +2259,16 @@
                (terminal-ui-set-input active-ui "/docs/docu")
                (test-assert (null (terminal-ui--matching-completions active-ui))
                             "/docs/docu without @ is not a file mention")
-                (terminal-ui-set-input active-ui "read @docs/gde and stop")
-                (line-editor-set-text
-                 (terminal-ui-editor active-ui)
-                 "read @docs/gde and stop"
-                 :cursor 13)
+               (terminal-ui-set-input active-ui "read @docs/gde and stop")
+               (line-editor-set-text
+                (terminal-ui-editor active-ui)
+                "read @docs/gde and stop"
+                :cursor 13)
                (test-assert
                 (equal '("docs/guide.org")
                        (mapcar (lambda (entry) (getf entry :name))
                                (terminal-ui--matching-completions active-ui)))
-                 "non-contiguous @ paths complete in the middle of a draft")
+                "non-contiguous @ paths complete in the middle of a draft")
                (terminal-ui-process-event active-ui :complete)
                (test-assert
                 (string= (line-editor-text (terminal-ui-editor active-ui))
@@ -2276,7 +2276,7 @@
                 "accepting an @ mention drops @ and keeps the rest")
                (terminal-ui--end-completion active-ui)
                (selector-set-items (terminal-ui-completion-selector active-ui) nil)
-                (let ((source "(channel.send :text \"read @docs/gde\")"))
+               (let ((source "(channel.send :text \"read @docs/gde\")"))
                 (line-editor-set-text
                  (terminal-ui-editor active-ui)
                  source
@@ -2298,11 +2298,11 @@
                                       :validate          t
                                       :if-does-not-exist ':ignore)))
   (let* ((application (application-tests--ui-application))
-         (terminal (make-instance 'recording-terminal :columns 72))
-         (ui (terminal-ui-create
-              :terminal terminal
-              :path-search-function (lambda (query)
-                                      (application-path-search-files application query)))))
+         (terminal    (make-instance 'recording-terminal :columns 72))
+         (ui          (terminal-ui-create
+                       :terminal             terminal
+                       :path-search-function (lambda (query)
+                                               (application-path-search-files application query)))))
     (test-call-with-function-replacements
      (list (list 'search-worker-request
                  (lambda (&rest arguments)

@@ -881,15 +881,15 @@ ENSURE-INBOX-P requests an inbox even on the first start of an empty world."
 (-> world-session-latest-channel (configuration string) (option string))
 (defun world-session-latest-channel (configuration workspace)
   "Return the latest touched durable top-level channel in WORKSPACE."
-  (let ((world (world-load configuration))
-        (latest nil)
+  (let ((world        (world-load configuration))
+        (latest       nil)
         (latest-write -1))
     (dolist (channel (world-channels world) latest)
       (when (and (world-channel-top-level-p world channel)
                  (string= workspace (channel-workspace channel)))
         (let* ((identifier (channel-identifier channel))
-               (written (conversation-storage-write-date
-                         (conversation-pathname-for-id configuration identifier))))
+               (written    (conversation-storage-write-date
+                            (conversation-pathname-for-id configuration identifier))))
           (when (or (> written latest-write)
                     (and (= written latest-write) (string< identifier latest)))
             (setf latest identifier latest-write written)))))))

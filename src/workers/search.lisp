@@ -61,7 +61,6 @@ which may no longer exist."
                             (config :working-directory configuration))
              :cause     (or (clifff-error-cause condition) condition)))))
 
-
 (defmethod tool-runtime-identity ((tool search-tool))
   "Return the isolated clifff worker shared by this search tool family."
   (search-tool-engine tool))

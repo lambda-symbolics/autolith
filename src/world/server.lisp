@@ -1196,25 +1196,25 @@ host to publish its endpoint."
          (directory     (getf arguments :directory)))
     (cond
      ((stringp channel)
-       (let* ((identifier
+      (let* ((identifier
               (conversation-identifier-migration-resolve configuration
                                                          channel))
              (host          (world-server--find-host server identifier)))
-        (if host
-            (progn
-             (world-server--check-host-opening host)
-             (when (getf arguments :mcp-servers)
-               (error 'world-error :message
-                      (format nil
-                              "Channel ~A is already running, so its tools cannot take the editor's MCP servers. Open it without them, or close it elsewhere first."
-                              (conversation-identifier-display identifier))
-                      :operation ':open :identifier identifier))
-             (values host nil))
-            (world-server--start-host server :conversation-id identifier
-                                      :directory
-                                      (world-server--channel-workspace server
-                                                                       identifier)
-                                      :arguments              arguments))))
+       (if host
+           (progn
+            (world-server--check-host-opening host)
+            (when (getf arguments :mcp-servers)
+              (error 'world-error :message
+                     (format nil
+                             "Channel ~A is already running, so its tools cannot take the editor's MCP servers. Open it without them, or close it elsewhere first."
+                             (conversation-identifier-display identifier))
+                     :operation ':open :identifier identifier))
+            (values host nil))
+           (world-server--start-host server :conversation-id identifier
+                                     :directory
+                                     (world-server--channel-workspace server
+                                                                      identifier)
+                                     :arguments              arguments))))
      ((stringp directory)
       (unless (uiop/filesystem:directory-exists-p directory)
         (error 'world-error :message

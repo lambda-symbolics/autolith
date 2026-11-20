@@ -994,10 +994,10 @@ state, including an empty list after successful or pristine startup."
                (and (not detached-p)
                     (null effective-open-id)
                     (application-recovery-diagnosis-prompt configuration))))
-         (conversation-id (or effective-open-id recovery-conversation-id))
-         (latest-p        (and effective-open-requested-p (null conversation-id)))
-         (inbox-p         (not (or effective-open-requested-p conversation-id handoff-record)))
-         (pick-channel-p  (and handoff-record (getf (rest handoff-record) :pick-channel-p)))
+         (conversation-id          (or effective-open-id recovery-conversation-id))
+         (latest-p                 (and effective-open-requested-p (null conversation-id)))
+         (inbox-p                  (not (or effective-open-requested-p conversation-id handoff-record)))
+         (pick-channel-p           (and handoff-record (getf (rest handoff-record) :pick-channel-p)))
          (image-state-loaded-p
            (and authenticate-p
                 (or pristine-p fresh-handoff-p
@@ -1052,17 +1052,17 @@ state, including an empty list after successful or pristine startup."
                (if (main--interactive-input-p)
                    (main--run-world-client
                     configuration
-                    :permission-mode    permission-mode
-                    :immutable-p        immutable-p
+                    :permission-mode     permission-mode
+                    :immutable-p         immutable-p
                      :conversation-id    conversation-id
                      :attachment-mode    attachment-mode
                      :inbox-p            inbox-p
                      :latest-p           latest-p
                      :welcome-p          (and inbox-p (not (null recovery-diagnosis)))
                      :recovery-diagnosis recovery-diagnosis
-                    :launch             (main--launch-options
-                                         command :permission-mode explicit-permission-mode)
-                    :images             (mapcar #'namestring (main--image-pathnames image-values)))
+                    :launch              (main--launch-options
+                                          command :permission-mode explicit-permission-mode)
+                    :images              (mapcar #'namestring (main--image-pathnames image-values)))
                    (progn
                       (apply #'world-client-run-script configuration
                              :conversation-id conversation-id
@@ -1080,12 +1080,12 @@ state, including an empty list after successful or pristine startup."
       (setf *active-application*
             (apply #'main--connect-application
                    :configuration        configuration
-                    :conversation-id      (or effective-open-id
-                                              (when latest-p
-                                                (world-session-latest-channel
-                                                 configuration
-                                                 (world-workspace-name
-                                                  (config :working-directory configuration)))))
+                    :conversation-id     (or effective-open-id
+                                             (when latest-p
+                                               (world-session-latest-channel
+                                                configuration
+                                                (world-workspace-name
+                                                 (config :working-directory configuration)))))
                    :immutable-p          immutable-p
                    :pristine-p           pristine-p
                    :permission-mode      (if pristine-p

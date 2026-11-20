@@ -842,7 +842,7 @@ state that did not change is not sent again."))
   (loop with remaining = (length entries)
         for tail = entries then (nthcdr 32 tail)
         for first-p = t then nil
-        collect (list :ui :operation ':completions
+        collect (list :ui      :operation ':completions
                       :entries (subseq tail 0 (min 32 remaining))
                       :reset-p first-p :complete-p (<= remaining 32))
         while (> remaining 32)
@@ -861,7 +861,7 @@ state that did not change is not sent again."))
   "Poll the provider and publish a changed catalog, retrying failed publication."
   (multiple-value-bind (snapshot revision) (terminal-ui--completion-snapshot ui)
     (unless (and revision (eq revision (channel-presentation-published-completion-revision ui)))
-      (let ((entries (channel-presentation--completion-entries snapshot))
+      (let ((entries   (channel-presentation--completion-entries snapshot))
             (published (channel-presentation-published-state ui)))
         (multiple-value-bind (previous present-p) (gethash ':completions published)
           (unless (and present-p (equal previous entries))

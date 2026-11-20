@@ -31,19 +31,25 @@
 
 (-> acp-mcp-test--handler (string) function)
 (defun acp-mcp-test--handler (echo)
-  "Return an endpoint echoing ECHO in discovery metadata and tool results."
+  "Return a modern endpoint echoing ECHO in discovery metadata and tool results."
   (lambda (transport request)
     (let ((method (json-get request "method")))
       (cond
+        ((equal method "server/discover")
+         (test-mcp--rpc-result
+          request (json-object "resultType" "complete"
+                               "supportedVersions" (vector "2026-07-28")
+                               "capabilities" (json-object "tools" (json-object)))))
         ((equal method "tools/list")
          (test-mcp--rpc-result
-          request (json-object "tools"
-                               (vector (test-mcp--tool-definition
-                                        "echo" :description echo :read-only-p t
-                                        :destructive-p nil)))))
+          request (json-object "resultType" "complete"
+                               "tools" (vector (test-mcp--tool-definition
+                                                "echo" :description echo :read-only-p t
+                                                :destructive-p nil)))))
         ((equal method "tools/call")
          (test-mcp--rpc-result
-          request (json-object "content" (vector (json-object "type" "text" "text" echo)))))
+          request (json-object "resultType" "complete"
+                               "content" (vector (json-object "type" "text" "text" echo)))))
         (t
          (test-mcp--handler transport request))))))
 

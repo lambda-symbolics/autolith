@@ -7045,26 +7045,31 @@
 (-> test-conversation-picker () null)
 (defun test-conversation-picker ()
   "Test saved-conversation picker items and interactive selection."
-  (let ((observed-initial-command nil)
+  (let ((observed-conversation-id nil)
+        (observed-initial-command :unobserved)
         (*active-application*     nil))
     (test-call-with-function-replacements
      (list
-      (list
-       'application-create
-       (lambda (configuration &key conversation-id permission-mode)
-         (declare (ignore configuration conversation-id permission-mode))
-         (make-instance 'application)))
-      (list
-       'application-run
-       (lambda (application &key initial-command &allow-other-keys)
-         (declare (ignore application))
-         (setf observed-initial-command initial-command))))
+      (list 'world-session-latest-channel
+            (lambda (configuration workspace)
+              (declare (ignore configuration workspace))
+              "latest-workspace-channel"))
+      (list 'application-create
+            (lambda (configuration &key conversation-id permission-mode)
+              (declare (ignore configuration permission-mode))
+              (setf observed-conversation-id conversation-id)
+              (make-instance 'application)))
+      (list 'application-run
+            (lambda (application &key initial-command &allow-other-keys)
+              (declare (ignore application))
+              (setf observed-initial-command initial-command))))
      (lambda ()
        (let ((*main-direct-start-p* t))
          (main-dispatch '("open")))))
     (test-assert
-     (string= observed-initial-command "(open)")
-     "plain command-line resume starts the channel picker"))
+     (and (equal observed-conversation-id "latest-workspace-channel")
+          (null observed-initial-command))
+     "direct command-line open resumes the latest workspace channel without the picker"))
   (test-assert
    (string= (application--selected-conversation-id
              "explicit" "recovered")
