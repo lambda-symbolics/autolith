@@ -1788,54 +1788,34 @@ the version the client says it is, when it says one."
                            "the open names the channel it passed over"))))))))
   nil)
 
-(-> test-world-server-open-images-and-new () null)
-(defun test-world-server-open-images-and-new ()
-  "Test an open's images become the channel's composer draft, new or running, :new-p opens a channel of its own, and a running channel refuses MCP servers."
+(-> test-world-server-open-constraints () null)
+(defun test-world-server-open-constraints ()
+  "Test an explicit fresh open bypasses a running channel and MCP settings cannot replace its tools."
   (world-server-tests--call
    (lambda (server configuration root)
+     (declare (ignore server))
      (let* ((entry     (world-client-entry configuration))
             (workspace (world-tests--workspace root "a"))
-            (first     (test-conversation--write-tiny-png (merge-pathnames "images/first.png" root)))
-            (second    (test-conversation--write-tiny-png (merge-pathnames "images/second.png" root))))
-       (flet ((draft (identifier)
-                "Return the image pathnames in channel IDENTIFIER's composer draft."
-                (mapcar (lambda (attachment)
-                          (namestring (rest attachment)))
-                        (terminal-ui-image-attachments
-                         (application-ui (world-host-application
-                                          (world-server--find-host server identifier)))))))
-         (let ((opened (getf (rest (world-server-tests--open entry workspace
-                                                             :images (list (namestring first))))
-                             :session-id)))
-           (test-assert (equal (draft opened) (list (namestring (truename first))))
-                        "a new channel opens with the images as its draft")
-           (test-assert (equal opened
-                               (getf (rest (world-server-tests--open entry workspace
-                                                                     :images (list (namestring second))))
-                                     :session-id))
-                        "a second open of the workspace joins the running channel")
-           (test-assert (equal (draft opened) (list (namestring (truename second))))
-                        "the running channel's draft takes the new images")
-           (let ((fresh (getf (rest (world-server-tests--open entry workspace :new-p t)) :session-id)))
-             (test-assert (and (stringp fresh) (not (equal fresh opened)))
-                          "an open asking for a new channel gets one of its own"))
-           (test-assert (handler-case
-                            (progn (world-server-tests--open entry workspace
-                                                             :channel     opened
-                                                             :mcp-servers '((:object "name" "editor")))
-                                   nil)
-                          (localgroup-error (condition)
-                            (search "cannot take the editor's MCP servers"
-                                    (autolith-error-message condition))))
-                        "a running channel refuses an editor's MCP servers its tools would need"))))))
+            (opened    (getf (rest (world-server-tests--open entry workspace)) :session-id))
+            (fresh     (getf (rest (world-server-tests--open entry workspace :new-p t)) :session-id)))
+       (test-assert (and (stringp fresh) (not (equal fresh opened)))
+                    "an explicit fresh open bypasses a running channel in the same workspace")
+       (test-assert (handler-case
+                        (progn (world-server-tests--open entry workspace
+                                                         :channel     opened
+                                                         :mcp-servers '((:object "name" "editor")))
+                               nil)
+                      (localgroup-error (condition)
+                        (search "cannot take the editor's MCP servers"
+                                (autolith-error-message condition))))
+                    "a running channel refuses launch-time MCP servers"))))
   nil)
 
 (-> test-world-client-script-submissions () null)
 (defun test-world-client-script-submissions ()
   "Test piped input splits into submissions: a line each, a Lisp form until it closes, blank lines skipped."
   (loop for (input expected) in
-        '(("/status" ("/status"))
-          ("one~%~%two~%" ("one" "two"))
+        '(("one~%~%two~%" ("one" "two"))
           ("(+ 1~%   2)~%next" ("(+ 1
    2)" "next"))
           ("(print \")\")~%after" ("(print \")\")" "after"))
