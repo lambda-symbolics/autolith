@@ -1738,15 +1738,22 @@
                         "Find the current copy-on-write presentation record."
                         (gethash key (fullscreen-terminal-ui-presentation-records active)))
 
-                      (reflow (needle)
+                      (reflow (needle &key join-source-rows-p)
                         "Exercise width changes without decoding or highlighting retained source again."
                         (setf decodes 0 renders 0)
                         (dolist (width '(32 90 120))
                           (terminal-ui-resize active width :rows 24)
-                          (test-assert (search needle (clinedi:transcript-viewport-chunk-text viewport 0))
-                                       "the retained source remains available across widths"))
-                        (test-assert (and (zerop decodes) (zerop renders))
-                                     "width-only reflow reuses decoded values and source-preview spans")))
+                          (let* ((text   (clinedi:transcript-viewport-chunk-text viewport 0))
+                                 (source (if join-source-rows-p
+                                             (format nil "~{~A~}"
+                                                     (loop for row in (uiop:split-string text :separator '(#\Newline))
+                                                           when (uiop:string-prefix-p "  │ " row)
+                                                             collect (subseq row 4)))
+                                             text)))
+                            (test-assert (search needle source)
+                                         (format nil "the retained source contains ~S at width ~D" needle width))))
+                       (test-assert (and (zerop decodes) (zerop renders))
+                                    "width-only reflow reuses decoded values and source-preview spans")))
                (reflow ":value")
                (test-assert (not (search ":last-source 11" (clinedi:transcript-viewport-chunk-text viewport 0)))
                             "the original publication keeps the bounded input preview")
@@ -1764,7 +1771,8 @@
                               "expanded cached source rows increase the actual viewport charge")
                  (test-assert (find ':syntax-keyword entry :key #'terminal-span-style)
                               "cached previews retain semantic syntax styles rather than themed ANSI")
-                 (reflow ":last-source 11")
+                  ;; Soft wraps may split the keyword; the rail is not part of the source.
+                 (reflow ":last-source 11" :join-source-rows-p t)
                  (with-terminal-ui-locked (active)
                    (terminal-ui-fullscreen--toggle-tool-input active key))
                  (test-assert (and (zerop renders)
