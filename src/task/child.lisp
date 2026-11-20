@@ -112,53 +112,6 @@ Runtimes in RETAIN belong to another registry."
     (dolist (tool (tool-registry-tools parent-registry))
       (when (task--role-tool-p definition tool :spawn-p spawn-p)
         (tool-registry-register registry tool)))
-    (let ((output (task-agent-definition-output definition)))
-      (tool-registry-describe-namespace
-       registry "yield"
-       "Required terminal result submission for child agents.")
-      (tool-registry-register
-       registry
-       (make-instance
-        'task-yield-tool
-        :namespace "yield"
-        :name      "submit"
-        :description
-        "Submit the required terminal child result. Call exactly once when the assignment is complete or cannot continue."
-        :parameters
-        (tool-object-schema
-         (json-object
-          "status"
-          (json-object "type" "string"
-                       "description" "Terminal result status."
-                       "enum" (json-array "success" "failed" "aborted"))
-          "text"
-          (tool-string-property
-           "Human-readable result for the parent; include concrete findings or changes.")
-          "data"
-          (if output
-              (task-output-schema->json output)
-              (json-object
-               "description"
-               "Optional structured result when the agent has no output contract."))
-          "error"
-          (tool-string-property
-           "Failure or abort explanation when status is not success.")
-          "label"
-          (tool-string-property "Optional short result label."))
-         '("status"))))
-      (tool-registry-register
-       registry
-       (make-instance
-        'task-note-tool
-        :namespace "yield"
-        :name      "note"
-        :description
-        "Post one bounded interim progress note to the parent agent without ending this assignment; the parent reads it at its next turn boundary. Keep notes rare and load-bearing. yield.submit remains the required terminal result."
-        :parameters
-        (tool-object-schema
-         (json-object
-          "note" (tool-string-property "The interim note text."))
-         '("note")))))
     (let ((manager (mcp-tool-registry-manager parent-registry)))
       (when
           (and manager
