@@ -3888,6 +3888,11 @@ NIL after delivering any other action."
        nil)
       ((and (eq (first action) ':submit) (stringp (second action)))
        (second action))
+      ((and (eq (first action) ':transcript-history)
+            (terminal-ui-fullscreen-p ui))
+       (let ((function (fullscreen-terminal-ui-history-function ui)))
+         (when function (funcall function (rest action))))
+       nil)
       (t
        (terminal-ui-activate ui action)
        nil))))

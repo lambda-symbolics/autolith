@@ -228,14 +228,16 @@
                                                 :message-header-prefixes
                                                 *application-message-header-prefixes*)))
              (with-terminal-ui (active ui)
-               (terminal-ui-append-finalized-batch
-                active
-                (loop for index below 4
-                      append (list (list (list :user index)
-                                         (format nil "❯ you~%question ~D" index))
-                                   (list (list :status index) entry)
-                                   (list (list :agent index)
-                                         (format nil "● autolith~%answer ~D" index)))))
+                (terminal-ui-present-records
+                 active
+                 (loop for index below 4
+                       append (list (list (list :user index)
+                                          (format nil "❯ you~%question ~D" index)
+                                          '(:entry-kind :message))
+                                    (list (list :status index) entry '(:entry-kind :side-status))
+                                    (list (list :agent index)
+                                          (format nil "● autolith~%answer ~D" index)
+                                          '(:entry-kind :message)))))
                (terminal-ui-process-event active ':scroll-bottom)
                (let ((tail-top (fullscreen-test--top active)))
                  (terminal-ui-process-event active ':previous-section)
@@ -253,8 +255,9 @@
                    (test-assert (eql top (fullscreen-test--top active))
                                 "Ctrl-PgDn returns to the replayed side-output message"))
                  (terminal-ui-process-event active ':next-section)
-                 (test-assert (eql tail-top (fullscreen-test--top active))
-                              "the following assistant message returns navigation to the tail")))))
+                (terminal-ui-process-event active ':next-section)
+                (test-assert (eql tail-top (fullscreen-test--top active))
+                             "jumping past the newest assistant message resumes tail following")))))
       (platform-delete-directory-tree *platform* root :validate t
                                       :if-does-not-exist        ':ignore)))
   nil)

@@ -14,6 +14,14 @@ When output exceeds the limit, older output is evicted and can be loaded with (h
    (evicted-sequences :initform      (make-hash-table :test #'equal)
                       :reader        fullscreen-terminal-ui-evicted-sequences
                       :documentation "The newest evicted durable sequence by conversation identifier.")
+   (history-function :initform      nil
+                     :accessor      fullscreen-terminal-ui-history-function
+                     :type          (option function)
+                     :documentation "Load an earlier durable page outside the presentation lock.")
+   (history-more-p :initform      t
+                   :accessor      fullscreen-terminal-ui-history-more-p
+                   :type          boolean
+                   :documentation "Whether the durable cursor advertises an older page.")
    (active-p :initform nil :accessor fullscreen-terminal-ui-active-p :type boolean
              :documentation "Whether this UI has entered the alternate buffer.")
    (platform-token :initform nil :accessor fullscreen-terminal-ui-platform-token
@@ -98,11 +106,11 @@ When output exceeds the limit, older output is evicted and can be loaded with (h
    :evict-function  (lambda (identifiers)
                       (terminal-ui-fullscreen--forget-evicted ui identifiers))))
 
-(-> terminal-ui-fullscreen--forget-sequence (fullscreen-terminal-ui t) null)
-(defun terminal-ui-fullscreen--forget-sequence (ui identifier)
-  "Forget IDENTIFIER and advance its conversation's evicted history floor."
+(-> terminal-ui-fullscreen--forget-sequence (fullscreen-terminal-ui t &key (:older-p boolean)) null)
+(defun terminal-ui-fullscreen--forget-sequence (ui identifier &key (older-p t))
+  "Forget IDENTIFIER, advancing its disk cursor only for eviction at the older edge."
   (terminal-ui--forget-finalized ui identifier)
-  (when (and (consp identifier) (eq (first identifier) ':conversation)
+  (when (and older-p (consp identifier) (eq (first identifier) ':conversation)
              (integerp (third identifier)))
     (let ((owner (second identifier)))
       (setf (gethash owner (fullscreen-terminal-ui-evicted-sequences ui))
@@ -110,8 +118,8 @@ When output exceeds the limit, older output is evicted and can be loaded with (h
                  (gethash owner (fullscreen-terminal-ui-evicted-sequences ui) 0)))))
   nil)
 
-(-> terminal-ui-fullscreen--forget-evicted (fullscreen-terminal-ui list) null)
-(defun terminal-ui-fullscreen--forget-evicted (ui identifiers)
+(-> terminal-ui-fullscreen--forget-evicted (fullscreen-terminal-ui list &key (:older-p boolean)) null)
+(defun terminal-ui-fullscreen--forget-evicted (ui identifiers &key (older-p t))
   "Forget evicted chunks, their associated outcomes and all resident identity aliases."
   (let ((index (fullscreen-terminal-ui-presentation-records ui)))
     (dolist (identifier identifiers)
@@ -125,8 +133,8 @@ When output exceeds the limit, older output is evicted and can be loaded with (h
             (when (and key (eq record (gethash key index)))
               (remhash key index)))
           (dolist (outcome (getf record :identifiers))
-            (terminal-ui-fullscreen--forget-sequence ui outcome))))
-      (terminal-ui-fullscreen--forget-sequence ui identifier)))
+            (terminal-ui-fullscreen--forget-sequence ui outcome :older-p older-p))))
+      (terminal-ui-fullscreen--forget-sequence ui identifier :older-p older-p)))
   nil)
 
 (defmethod terminal-ui--note-finalized-output ((ui fullscreen-terminal-ui) identifiers)
@@ -490,11 +498,76 @@ row that still overruns instead of scrolling."
                            :whole-screen-p   whole-screen-p))
   nil)
 
+(-> terminal-ui-fullscreen-prepend-history (fullscreen-terminal-ui fullscreen-terminal-ui) null)
+(defun terminal-ui-fullscreen-prepend-history (ui page)
+  "Prepend PAGE's rendered records, preserving sources and the visible row anchor.
+
+The pinned Clinedi viewport has no prepend API. Keep its chunk access here;
+all construction, layout and publication use its public viewport operations.
+Retain the older edge when the resident character budget requires eviction."
+  (let* ((previous (fullscreen-terminal-ui-viewport ui))
+         (prefix   (fullscreen-terminal-ui-viewport page))
+         (width    (clinedi:transcript-viewport-width previous))
+         (height   (clinedi:transcript-viewport-height previous))
+         (top      (or (clinedi:transcript-viewport-top previous)
+                       (clinedi:transcript-viewport-maximum-top previous)))
+         (viewport (terminal-ui-fullscreen--make-viewport ui width))
+         (index    (fullscreen-terminal-ui-presentation-records ui))
+         (added    0)
+         (weight   0)
+         (full-p   nil))
+    (maphash (lambda (identifier record)
+               (unless (gethash identifier index)
+                 (setf (gethash identifier index) record)))
+             (fullscreen-terminal-ui-presentation-records page))
+    (dolist (source (list prefix previous))
+      (loop for chunk across (clinedi::transcript-viewport--chunks source)
+            for size = (clinedi::viewport-chunk-weight chunk)
+            do (cond
+                 ((or full-p
+                      (and (plusp weight)
+                           (> (+ weight size) *fullscreen-transcript-character-limit*)))
+                  (setf full-p t)
+                  (terminal-ui-fullscreen--forget-evicted
+                   ui (clinedi::viewport-chunk-tag chunk) :older-p nil))
+                 (t
+                  (incf weight size)
+                  (clinedi:transcript-viewport-append
+                   viewport (clinedi::viewport-chunk-text chunk)
+                   (clinedi::viewport-chunk-display chunk)
+                   :regions           (clinedi::viewport-chunk-regions chunk)
+                   :tag               (clinedi::viewport-chunk-tag chunk)
+                   :layout-function   (clinedi::viewport-chunk-layout-function chunk)
+                   :source-characters (clinedi::viewport-chunk-source-characters chunk))
+                  (terminal-ui--remember-finalized
+                   ui (clinedi::viewport-chunk-tag chunk) :note-output-p nil))))
+      (when (eq source prefix)
+        (setf added (clinedi:transcript-viewport-row-count viewport))))
+    (setf (fullscreen-terminal-ui-viewport ui) viewport
+          (clinedi:transcript-viewport-top viewport) (+ top added))
+    (clinedi:transcript-viewport-layout viewport height)
+    (terminal-ui--paint-live ui))
+  nil)
+
+(-> terminal-ui-fullscreen--request-history (fullscreen-terminal-ui list) boolean)
+(defun terminal-ui-fullscreen--request-history (ui navigation)
+  "Defer NAVIGATION until the UI owner has loaded an earlier durable page."
+  (when (and (fullscreen-terminal-ui-history-function ui)
+             (or (fullscreen-terminal-ui-history-more-p ui)
+                 (plusp (hash-table-count (fullscreen-terminal-ui-evicted-sequences ui)))))
+    (setf (terminal-ui-pending-action ui) (cons ':transcript-history navigation))
+    t))
+
 (-> terminal-ui-fullscreen-scroll (fullscreen-terminal-ui integer) null)
 (defun terminal-ui-fullscreen-scroll (ui delta)
-  "Move DELTA rows through history; positive values move towards the latest output."
-  (clinedi:transcript-viewport-scroll (fullscreen-terminal-ui-viewport ui) delta)
-  (terminal-ui--paint-live ui)
+  "Move DELTA rows through history, loading an earlier page at the resident edge."
+  (let* ((viewport (fullscreen-terminal-ui-viewport ui))
+         (top      (or (clinedi:transcript-viewport-top viewport)
+                       (clinedi:transcript-viewport-maximum-top viewport))))
+    (unless (and (minusp delta) (< (+ top delta) 0)
+                 (terminal-ui-fullscreen--request-history ui (list ':scroll delta)))
+      (clinedi:transcript-viewport-scroll viewport delta)
+      (terminal-ui--paint-live ui)))
   nil)
 
 (-> terminal-ui-fullscreen-bottom (fullscreen-terminal-ui) null)
@@ -526,22 +599,61 @@ indented timestamp line directly above one, as in the REPL transcript style."
                     (prefixed-p (1+ newline)))))
          t)))
 
+(-> terminal-ui-fullscreen--message-ranges (fullscreen-terminal-ui) list)
+(defun terminal-ui-fullscreen--message-ranges (ui)
+  "Return message row ranges from the pinned viewport's source-backed chunks.
+
+Only opening lines of text messages and side status are targets. Body quotations
+and other activity chunks do not introduce messages or extend their bounds."
+  (let* ((viewport (fullscreen-terminal-ui-viewport ui))
+         (chunks   (clinedi::transcript-viewport--chunks viewport))
+         (rows     (clinedi::transcript-viewport--rows viewport))
+         (base     (clinedi::transcript-viewport--chunk-base viewport))
+         (index    (fullscreen-terminal-ui-presentation-records ui))
+         (ranges   nil))
+    (loop for chunk across chunks
+          for number from base
+          for text = (clinedi::viewport-chunk-text chunk)
+          for opening = (position-if-not (lambda (character) (char= character #\Newline)) text)
+          for record = (loop for identifier in (clinedi::viewport-chunk-tag chunk)
+                             thereis (gethash identifier index))
+          when (and opening
+                      (member (getf record :entry-kind) '(nil :message :side-status))
+                    (terminal-ui-fullscreen--message-start-p ui text opening))
+            do (let ((start nil) (end nil))
+                 (loop for row across rows
+                       for row-number from 0
+                       when (= (clinedi::viewport-row-chunk row) number)
+                         do (unless start (setf start row-number))
+                            (unless (zerop (length (clinedi:transcript-viewport-row-text viewport row-number)))
+                              (setf end row-number)))
+                 (when (and start end) (push (cons start end) ranges))))
+    (nreverse ranges)))
+
 (-> terminal-ui-fullscreen-jump-message (fullscreen-terminal-ui (member -1 1)) null)
 (defun terminal-ui-fullscreen-jump-message (ui direction)
-  "Scroll to the neighboring message in DIRECTION, ending it on the bottom row.
-
-DIRECTION -1 moves to the message before the one on the bottom row and 1 to
-the one after it. The message ends where the reader's eyes already are, next
-to the composer; one taller than the window shows its header on top. A
-message inside the final window follows the tail again. Without a message in
-that direction the viewport does not move."
-  (when (clinedi:transcript-viewport-jump
-         (fullscreen-terminal-ui-viewport ui)
-         direction
-         (lambda (text offset)
-           (terminal-ui-fullscreen--message-start-p ui text offset))
-         :align ':end)
-    (terminal-ui--paint-live ui))
+  "End the neighboring text message or side status on the last transcript row."
+  (let* ((viewport (fullscreen-terminal-ui-viewport ui))
+         (height   (clinedi:transcript-viewport-height viewport))
+         (top      (or (clinedi:transcript-viewport-top viewport)
+                       (clinedi:transcript-viewport-maximum-top viewport)))
+         (bottom   (min (1- (clinedi:transcript-viewport-row-count viewport))
+                        (+ top height -1)))
+         (ranges   (terminal-ui-fullscreen--message-ranges ui))
+         (current  (position-if (lambda (range) (<= (first range) bottom)) ranges :from-end t))
+         (next     (if current (+ current direction) (when (= direction 1) 0)))
+         (target   (and next (<= 0 next) (nth next ranges))))
+    (cond
+      (target
+       (let ((position (max 0 (1+ (- (rest target) height)))))
+          (if (= (rest target) (1- (clinedi:transcript-viewport-row-count viewport)))
+             (clinedi:transcript-viewport-follow viewport)
+             (setf (clinedi:transcript-viewport-top viewport) position)))
+       (terminal-ui--paint-live ui))
+      ((= direction -1)
+       (terminal-ui-fullscreen--request-history ui (list ':jump direction)))
+      ((= direction 1)
+       (terminal-ui-fullscreen-bottom ui))))
   nil)
 
 (-> terminal-ui-fullscreen--click-action

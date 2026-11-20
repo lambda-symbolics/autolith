@@ -10,6 +10,9 @@
     (error 'channel-subscription-unavailable :message "The channel sent an invalid transcript history cursor."))
   (setf (channel-view-transcript-history-conversation view) conversation
         (channel-view-transcript-history-floor view) before-sequence)
+  (setf (fullscreen-terminal-ui-history-function (channel-view-ui view))
+        (lambda (navigation) (channel-view--navigate-history view navigation))
+        (fullscreen-terminal-ui-history-more-p (channel-view-ui view)) (not (null more-p)))
   (when (and page-p (not more-p))
     (terminal-ui-set-notice (channel-view-ui view) "no earlier transcript history remains"
                             :duration-seconds 4))
@@ -26,8 +29,20 @@
                           (and (consp event) (eq (first event) ':ui)
                                (eq (getf (rest event) :operation) ':records))) events))
       (error 'channel-subscription-unavailable :message "The channel returned an invalid transcript history page."))
-    (dolist (event events)
-      (channel-subscription-present-event view event))
+    (let* ((ui   (channel-view-ui view))
+           (page (terminal-ui-create :terminal (terminal-ui-terminal ui) :fullscreen-p t
+                                     :message-header-prefixes (terminal-ui-message-header-prefixes ui))))
+      (terminal-ui-resize page (clinedi:transcript-viewport-width (fullscreen-terminal-ui-viewport ui))
+                          :rows (terminal-rows (terminal-ui-terminal ui)))
+      (with-terminal-ui-locked (ui)
+        (dolist (event events)
+          (let ((records (remove-if
+                          (lambda (record) (terminal-ui--finalized-p ui (first record)))
+                          (remove nil (mapcar #'presentation-wire->record
+                                              (getf (rest event) :presentations))))))
+            (terminal-ui-present-records page records)))
+        (when (plusp (clinedi:transcript-viewport-chunk-count (fullscreen-terminal-ui-viewport page)))
+          (terminal-ui-fullscreen-prepend-history ui page))))
     (channel-view-apply view ':transcript-history
                         :conversation    (getf reply :conversation)
                         :before-sequence (getf reply :before-sequence)
@@ -53,15 +68,40 @@ shared history rendering. A declined built-in identity follows normal input."
           (unless (and (eq (getf reply :history-page-p) t)
                        (member (getf reply :builtin-p ':missing) '(t nil)))
             (error 'channel-subscription-unavailable :message "The channel did not return a transcript history page."))
-          (when (eq (getf reply :builtin-p) t)
-            (channel-view--drain-events view)
-            (channel-view--apply-history-page view reply)
-            t)))
+          (if (eq (getf reply :builtin-p) t)
+              (progn
+                (channel-view--drain-events view)
+                (channel-view--apply-history-page view reply)
+                t)
+              (progn
+                (setf (fullscreen-terminal-ui-history-function (channel-view-ui view)) nil)
+                nil))))
     (autolith-error (condition)
       (terminal-ui-append-finalized
        (channel-view-ui view) (list ':view-history-failure (make-identifier))
        (application-failure-line (bounded-string (princ-to-string condition) :limit 500)))
       t)))
+
+(-> channel-view--navigate-history (channel-view list) null)
+(defun channel-view--navigate-history (view navigation)
+  "Load earlier disk pages and retry NAVIGATION outside the presentation lock."
+  (let ((ui (channel-view-ui view)))
+    (loop
+      for before = (channel-view-transcript-history-floor view)
+      do (channel-view--load-transcript-history view)
+         (with-terminal-ui-locked (ui)
+           (setf (terminal-ui-pending-action ui) nil)
+           (ecase (first navigation)
+             (:scroll
+              (terminal-ui-fullscreen-scroll ui (second navigation)))
+             (:jump
+              (terminal-ui-fullscreen-jump-message ui (second navigation)))))
+      while (and (< (channel-view-transcript-history-floor view) before)
+                 (with-terminal-ui-locked (ui)
+                   (eq (first (terminal-ui-pending-action ui)) ':transcript-history))))
+    (with-terminal-ui-locked (ui)
+      (setf (terminal-ui-pending-action ui) nil)))
+  nil)
 
 (defmethod input-port-apply :around ((view channel-view) action &optional payload)
   "Probe the advertised history endpoint for this exact canonical form."
