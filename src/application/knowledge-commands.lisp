@@ -475,20 +475,3 @@ matches of an ambiguous prefix."
        (application-knowledge-rule-transition-entry application identifier ':retire)
        (application-failure-line "usage: (retire-rule \"ID\"); (rules) lists rules")))
   ':continue)
-
-(define-application-command application--builtin-reset-contracts-command
-    (:name              "/reset-contracts"
-     :argument          nil
-     :description       "abandon all contracts and saved diagnosis probes"
-     :tip               "recover even when contract replay fails; archive the original log and preserve other knowledge."
-     :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t)
-    (application)
-  (multiple-value-bind (removed archive)
-      (knowledge-reset-contracts (application-configuration application))
-    (application-present
-     application
-     (format nil "Abandoned ~D contract and diagnosis records.~@[ Original log archived at ~A.~]"
-             removed archive)))
-  ':continue)

@@ -117,37 +117,6 @@
                    "failed recovery leaves its existing contracts usable")))
   nil)
 
-(-> test-contract-reset-command () null)
-(defun test-contract-reset-command ()
-  "Invoke registered recovery through the canonical command with malformed knowledge."
-  (with-test-configuration (configuration)
-    (multiple-value-bind (removed archive) (knowledge-reset-contracts configuration)
-      (test-assert (and (zerop removed) (null archive))
-                   "recovery handles a store without a knowledge log"))
-    (let* ((application (make-instance 'application :configuration configuration
-                                      :tool-registry               (make-default-tool-registry)))
-           (pathname    (configuration-knowledge-path configuration))
-           (operation   (application-operation-find application "reset-contracts"))
-           (presented-p nil))
-      (test-assert operation "the canonical recovery command is registered")
-      (test-assert (equal (getf (application-operation-completion-entry operation) :name) "(reset-contracts)")
-                   "the registered recovery command participates in completion")
-      (sexp-store:log-append pathname '(:contract-defined :version 1 :contract nil)
-                            :repair-tail-p nil)
-      (test-call-with-function-replacements
-       (list (list 'application-present
-                   (lambda (target content &rest options)
-                     (declare (ignore content options))
-                     (test-assert (eq application target)
-                                  "the recovery report reaches the requesting application")
-                     (setf presented-p t))))
-       (lambda () (application-operation-call application "reset-contracts")))
-      (test-assert presented-p "canonical command invocation completes without semantic replay")
-      (test-assert (zerop (hash-table-count
-                           (knowledge-base-contracts-table (knowledge-base-read configuration))))
-                   "command invocation publishes a readable store")))
-  nil)
-
 (-> test-contract-reset-reader-failure () null)
 (defun test-contract-reset-reader-failure ()
   "Keep the operational log intact when unrelated persisted data cannot be read safely."

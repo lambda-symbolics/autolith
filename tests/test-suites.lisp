@@ -678,7 +678,6 @@
   test-contract-replacement-replay
   test-contract-reset-unreadable
   test-contract-reset-publication-failure
-  test-contract-reset-command
   test-contract-reset-reader-failure
   test-contract-record-supersession)
 
