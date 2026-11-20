@@ -75,7 +75,7 @@
 (defun task-worktree-tests--publish (job status)
   "Finalize a terminal child and publish its real durable task result."
   (let ((result (task-worktree-finalize-result
-                 job (list :status status :id (job-identifier job) :yielded-p (eq status ':success)))))
+                 job (list :status status :id (job-identifier job)))))
     (task--write-result-artifact job result)
     result))
 
