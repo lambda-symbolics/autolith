@@ -61,23 +61,6 @@ which may no longer exist."
                             (config :working-directory configuration))
              :cause     (or (clifff-error-cause condition) condition)))))
 
-(-> search-worker-file-count (worker configuration string) (integer 0))
-(defun search-worker-file-count (worker configuration glob)
-  "Return the number of indexed files matching GLOB in CONFIGURATION's workspace."
-  (handler-case
-      (worker-file-count
-       worker glob
-       :library-path    (search--validated-library-path configuration)
-       :base-path       (config :working-directory configuration)
-       :cache-directory (search-worker--cache-directory configuration)
-       :log-pathname    (search-worker--log-path configuration))
-    (clifff-error (condition)
-      (error 'search-error
-             :message   (princ-to-string condition)
-             :operation (clifff-error-operation condition)
-             :pathname  (or (clifff-error-pathname condition)
-                            (config :working-directory configuration))
-             :cause     (or (clifff-error-cause condition) condition)))))
 
 (defmethod tool-runtime-identity ((tool search-tool))
   "Return the isolated clifff worker shared by this search tool family."
@@ -181,20 +164,13 @@ which may no longer exist."
             (error 'tool-error
                    :message   "search.content patterns must be non-empty literal strings without newlines."
                    :tool-name "search.content"))
-          (multiple-value-bind (constraints note)
-              (search-tool--check-constraints tool (tool-context-configuration context)
-                                              constraints)
-            (tool-success
-             (search-tool--with-note
-              (search-worker-request
-               (search-tool-engine tool)
-               (tool-context-configuration context)
-               :operation ':multi-content
-               :arguments
-               (append (list patterns
-                             :constraints (search-tool--fff-constraints constraints))
-                       (search-tool--common-content-options arguments)))
-              note))))
+          (tool-success
+           (search-worker-request
+            (search-tool-engine tool)
+            (tool-context-configuration context)
+            :operation ':structured-multi-content
+            :arguments (append (list patterns :constraints constraints)
+                               (search-tool--common-content-options arguments)))))
         (let* ((query     (search-tool--string-argument tool arguments "query"
                                                         :required t))
                (constraints
@@ -213,18 +189,10 @@ which may no longer exist."
                                     :message
                                     "search.content mode must be plain, regex, or fuzzy."
                                     :tool-name "search.content")))))
-          (multiple-value-bind (constraints note)
-              (search-tool--check-constraints tool (tool-context-configuration context)
-                                              constraints)
-            (tool-success
-             (search-tool--with-note
-              (search-worker-request
-               (search-tool-engine tool)
-               (tool-context-configuration context)
-               :operation ':content
-               :arguments (append (list (search-tool--query-with-constraints
-                                         (search-tool--escape-earmuffed-names query)
-                                         (search-tool--fff-constraints constraints))
-                                        :mode mode)
-                                  (search-tool--common-content-options arguments)))
-              note)))))))
+          (tool-success
+           (search-worker-request
+            (search-tool-engine tool)
+            (tool-context-configuration context)
+            :operation ':structured-content
+            :arguments (append (list query :constraints constraints :mode mode)
+                               (search-tool--common-content-options arguments))))))))

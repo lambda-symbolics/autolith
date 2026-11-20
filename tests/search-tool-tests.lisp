@@ -43,34 +43,6 @@
 (-> test-search-tools () null)
 (defun test-search-tools ()
   "Exercise the clifff adapter and all three indexed workspace operations."
-    (test-assert
-     (and (string= (search-tool--query-with-constraints "symbol" "")
-                   "symbol")
-          (string= (search-tool--query-with-constraints "symbol" "   ")
-                   "symbol")
-          (string= (search-tool--query-with-constraints "symbol" "*.lisp src/")
-                   "*.lisp src/ symbol"))
-     "query constraints prepend as fff path filters")
-  (test-assert
-   (and (equal (search-tool--constraint-tokens (format nil "  *.lisp~Csrc/ !tests/ " #\Tab)) '("*.lisp" "src/" "!tests/"))
-        (equal (mapcar #'search-tool--directory-constraint-p '("src/" "!tests/" "*/" "/"))
-               '(t nil nil nil))
-        (equal (mapcar #'search-tool--file-path-constraint-p
-                       '("src/main.lisp" "main.lisp" "*.lisp" "!main.lisp" "v2.0" "src/"))
-               '(t t nil nil nil nil)))
-   "search constraints classify directory and file path filters as fff does")
-  (test-assert
-   (and (string= (search-tool--escape-earmuffed-names "src/  *limit* (setf *x*")
-                 "src/  \\*limit* (setf \\*x*")
-        (string= (search-tool--escape-earmuffed-names "*.lisp *test.* * ** *a/b* symbol")
-                 "*.lisp *test.* * ** *a/b* symbol"))
-   "query special variable names are escaped while path globs are kept")
-  (test-assert
-   (and (string= (search-tool--fff-constraints "*.lisp src/ docs/a,b.org !tests/ /lib/")
-                 "*.lisp !tests/ {**/src/**,**/docs/a\\,b.org,**/lib/**}")
-        (string= (search-tool--fff-constraints "*.lisp src/ !tests/")
-                 "*.lisp src/ !tests/"))
-   "several directories and file paths become one alternative glob")
   (let* ((default-configuration
            (configuration-create
             :source-root       (asdf:system-source-directory :autolith)

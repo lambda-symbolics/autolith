@@ -642,7 +642,6 @@
                 #:fff-library-locate
                 #:make-worker
                 #:worker
-                #:worker-file-count
                 #:worker-close
                 #:worker-detach
                 #:worker-process
