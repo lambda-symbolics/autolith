@@ -886,10 +886,7 @@ pool must reject the cancelled parent without creating a descendant."
                        :output (make-string 3000 :initial-element #\O)))
                     (publication-result    nil)
                     (publication-condition nil))
-               (setf (getf result :publication-barrier) barrier
-                     (getf result :structured-output-present-p) t
-                     (getf result :structured-output)
-                     (make-string 3000 :initial-element #\S))
+               (setf (getf result :publication-barrier) barrier)
                (let ((thread
                        (make-thread
                         (lambda ()
@@ -929,10 +926,6 @@ pool must reject the cancelled parent without creating a descendant."
                              (or
                               (eq (getf terminal-result :output-storage)
                                   :artifact)
-                              (eq
-                               (getf terminal-result
-                                     :structured-output-storage)
-                               :artifact)
                               (eq (getf terminal-result :error-storage)
                                   :artifact))))
                        (zerop
@@ -2585,7 +2578,7 @@ pool must reject the cancelled parent without creating a descendant."
                       (test-assert
                        (and (eq state (getf result :status))
                             (string= model (getf result :model))
-                            (equal expected (getf result :usage))
+                            (equal expected (getf result :usage)))
                        "failure and cancellation share execution metadata and accounting")))
                   (let* ((empty      (task-tests--register-job
                                       orchestrator primary definition :name "no-result"))

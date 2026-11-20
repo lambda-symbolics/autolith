@@ -16,11 +16,11 @@
            (orchestrator  (task-run-tool-orchestrator run-tool))
            (definition    (task-agent-definition-create
                            :name "task" :description "continuity fixture"
-                           :instructions "Return the result through yield.submit." :tools ':all))
+                           :instructions "Return the result." :tools ':all))
            (job           (task-tests--make-job
                            orchestrator :identifier "orphan" :parent-agent parent
                            :definition definition :detached-p t
-                           :item (list :agent "task" :task "Return the result." :async t)))
+                           :item (list :agent "task" :task "Return the result.")))
            (context       (make-instance 'tool-context :configuration configuration
                                          :agent parent :registry registry :worker nil
                                          :conversation                (agent-conversation parent)

@@ -83,7 +83,7 @@
 
 (-> test-telemetry-tool-failure-categories () null)
 (defun test-telemetry-tool-failure-categories ()
-  "Export real worker, missing-resource and yield failures through agent completion."
+  "Export real worker and missing-resource failures through agent completion."
   (test-telemetry--call
    (lambda (configuration)
      (let* ((registry                                (task-augment-tool-registry (make-default-tool-registry)))
@@ -93,8 +93,7 @@
             (cases                                   '(("lisp" "eval" "{\"forms\":[\"(/ 1 0)\"]}" "division-by-zero")
                                                        ("lisp" "eval" "{\"forms\":[\"(error \\\"boom-custom\\\")\"]}" "simple-error")
                                                        ("lisp" "eval" "{\"forms\":[\"(+ 1 \\\"two\\\")\"]}" "type-error")
-                                                       ("resource" "read" "{\"uri\":\"workspace:private-missing-file.txt\"}" "not-found")
-                                                       ("yield" "submit" "{\"status\":\"success\"}" "invalid-yield")))
+                                                       ("resource" "read" "{\"uri\":\"workspace:private-missing-file.txt\"}" "not-found")))
             (provider                                (make-instance
                                                       'scripted-provider :configuration configuration
                                                       :results                          (append
@@ -109,12 +108,6 @@
             (agent                                   (agent-create :configuration configuration :provider provider
                                                                    :conversation (conversation-create configuration)
                                                                    :tool-registry registry :worker worker)))
-       (tool-registry-register
-        registry (make-instance 'task-yield-tool :namespace "yield" :name "submit"
-                                :description "Test terminal yield."
-                                :parameters  (tool-object-schema
-                                              (json-object "status" (tool-string-property "Yield status."))
-                                              '("status"))))
        (unwind-protect
             (let* ((bodies (test-telemetry-hooks--capture
                             configuration (lambda () (agent-run-user-turn agent "Exercise failures."))))
