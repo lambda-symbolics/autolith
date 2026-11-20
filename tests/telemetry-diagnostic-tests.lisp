@@ -129,7 +129,7 @@
 
 (-> test-telemetry-resource-diagnostics () null)
 (defun test-telemetry-resource-diagnostics ()
-  "Resource reports, assessments and closure use explicit text and preserve event phases."
+  "Resource assessments and closure use explicit text and preserve event phases."
   (test-telemetry--call
    (lambda (configuration)
      (setf (config :telemetry-enabled-p configuration) t
@@ -164,13 +164,8 @@
          (telemetry-call-with-run
           configuration
           (lambda ()
-            (test-assert
-             (tool-result-success-p
-              (edit "papercut:current" (json-object "op" "papercut-report" "title" "Resource diagnostic fixture"
-                                                    "content" "PRIVATE_RESOURCE_CONTENT"
-                                                    "diagnostic" "Observed a resource failure; the cause is unknown.")))
-             "Resource reporting accepts its explicit diagnostic field.")
-            (let* ((report (first (papercut-list configuration)))
+             (let* ((report (papercut-report configuration :title "Resource diagnostic fixture"
+                                             :content "PRIVATE_RESOURCE_CONTENT"))
                    (uri    (resource-item-uri "papercut" (papercut-identifier report))))
               (test-assert
                (not (tool-result-success-p

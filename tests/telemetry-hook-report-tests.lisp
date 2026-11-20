@@ -267,36 +267,18 @@
                                         "content" "Fixture command authorization fails."
                                         "issue-kind" "authorization" "tool" "shell.run")))
                      "The direct report tool accepts explicit metadata.")
-                    (let* ((read     (papercut-resource-tests--call registry context
-                                                                  :namespace "resource"
-                                                                  :name      "read"
-                                                                  :arguments (list "uri" "papercut:current")))
-                           (revision (papercut-resource-tests--field (tool-result-content read) "Revision: "))
-                           (report   (papercut-resource-tests--call
-                                      registry context
-                                      :namespace "resource"
-                                      :name      "edit"
-                                      :arguments
-                                      (list "uri" "papercut:current"
-                                            "base-revision" revision "operations"
-                                            (vector (json-object "op" "papercut-report"
-                                                                 "title" "Image renderer returns blank pixels"
-                                                                 "content" "Fixture raster decoding loses every pixel."
-                                                                 "issue-kind" "broken_tool" "tool" "fs.view-image"))))))
-                      (test-assert (tool-result-success-p report) "Resource reporting accepts metadata.")
-                      (let ((papercut (find "fs.view-image" (papercut-list configuration)
-                                            :key #'papercut-tool :test #'equal)))
-                        (test-assert (eq (papercut-issue-kind papercut) ':broken-tool)
-                                     "The structured category survives reading the durable store.")
+                    (let ((papercut (papercut-report configuration :title "Image renderer returns blank pixels"
+                                                    :content "Fixture raster decoding loses every pixel."
+                                                    :issue-kind ':broken-tool :tool "fs.view-image")))
                         (papercut-assess configuration (papercut-identifier papercut)
                                          :verdict ':improved :note "Private fixture assessment.")
                         (papercut-mark-closed configuration (papercut-identifier papercut)
-                                              :resolution "Private fixture closure."))))))))
+                                              :resolution "Private fixture closure.")))))))
             (reports    (test-telemetry-hooks--kind (first bodies) "report"))
             (assessment (first (test-telemetry-hooks--kind (first bodies) "assessment")))
             (closure    (first (test-telemetry-hooks--kind (first bodies) "closure"))))
         (test-assert (equal (mapcar (lambda (span) (test-telemetry--attribute span "autolith.issue.kind")) reports)
-                            '("authorization" "broken_tool")) "Both real entry points emit classified reports.")
+                            '("authorization" "broken_tool")) "Reports emit their classified issue kinds.")
         (test-assert (equal (mapcar (lambda (span) (test-telemetry--attribute span "gen_ai.tool.name")) reports)
                             '("shell.run" "fs.view-image")) "Affected tools reach the wire.")
         (test-assert (equal (test-telemetry--attribute assessment "autolith.repair.outcome") "improved")

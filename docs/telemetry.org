@@ -251,8 +251,7 @@ No correction is inferred from private text. External tool arguments are not
 changed by this convention.
 
 Reports and repairs carry fixed issue/repair enums and public tool categories.
-=papercut.report= and the =papercut-report= operation of =resource.edit= accept
-optional =issue-kind= and =tool= fields. Categories are =broken_tool=,
+=papercut.report= accepts optional =issue-kind= and =tool= fields. Categories are =broken_tool=,
 =misleading_success=, =authorization=, =performance= and =other=. Missing categories
 default to =other=; missing or external tool names become =unknown=.
 When a report names a catalog tool, its telemetry ID is attached to the latest

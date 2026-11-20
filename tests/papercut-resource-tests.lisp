@@ -122,11 +122,6 @@
                       (papercut-resource-tests--field
                        (tool-result-content result) "Revision: "))
 
-                    (exact-uri (result)
-                      "Return RESULT's canonical exact URI."
-                      (papercut-resource-tests--field
-                       (tool-result-content result) "Exact URI: "))
-
                     (edit-resource (context uri base operation &rest more)
                       "Edit URI at BASE with OPERATION and optional extras."
                       (call context "resource" "edit"
@@ -186,50 +181,9 @@
                 (not (tool-result-success-p
                       (read-resource child-context "papercut:current")))
                 "task children cannot resolve papercut resources")
-               (let* ((report-operation
-                        (papercut-resource-tests--operation
-                         "papercut-report"
-                         "title" "Resource papercut"
-                         "content" "Complete resource report content."))
-                      (reported
-                        (edit-resource first-context
-                                       "papercut:current"
-                                       empty-revision
-                                       report-operation))
-                      (uri      (exact-uri reported))
-                      (papercut (first (papercut-list configuration))))
-                 (test-assert (tool-result-success-p reported)
-                              "papercut:current creates a report")
-                 (test-assert (string= uri
-                                      (resource-item-uri
-                                       "papercut"
-                                       (papercut-identifier papercut)))
-                              "papercut report edits return the canonical exact URI")
-                 (test-assert
-                  (string= (papercut-source-conversation papercut)
-                           (conversation-identifier first-conversation))
-                  "papercut resource reports preserve source-conversation provenance")
-                 (test-assert
-                  (not (tool-result-success-p
-                        (edit-resource first-context
-                                       "papercut:current"
-                                       empty-revision
-                                       report-operation)))
-                  "collection edits reject stale snapshots")
-                 (test-assert
-                  (not (tool-result-success-p
-                        (edit-resource second-context
-                                       "papercut:current"
-                                       empty-revision
-                                       report-operation)))
-                  "papercut revisions are confined to their observing conversation")
-                 (test-assert
-                  (not (tool-result-success-p
-                        (edit-resource moved-context
-                                       "papercut:current"
-                                       empty-revision
-                                       report-operation)))
-                  "papercut revisions are confined to their observed workspace")
+               (let* ((papercut (papercut-report configuration :title "Resource papercut"
+                                                 :content "Complete resource report content."))
+                      (uri      (resource-item-uri "papercut" (papercut-identifier papercut))))
                  (let* ((item-read     (read-resource first-context uri))
                         (item-revision (revision item-read)))
                    (test-assert
@@ -239,13 +193,6 @@
                          (search "assessment: unassessed"
                                  (tool-result-content item-read)))
                     "exact papercut reads expose complete reports and assessment state")
-                   (test-assert
-                    (not (tool-result-success-p
-                          (edit-resource first-context
-                                         uri
-                                         item-revision
-                                         report-operation)))
-                    "exact papercut items reject collection report operations")
                    (test-assert
                     (not (tool-result-success-p
                           (edit-resource
@@ -383,32 +330,17 @@
                       (tool-result-success-p read)
                       (search (papercut-title fixture) (tool-result-content read)))
                  "canonical papercut item URIs percent-encode and decode arbitrary IDs"))
-              (let* ((collection-read
-                       (read-resource first-context "papercut:current"))
-                     (collection-revision (revision collection-read))
+              (let* ((item     (first (papercut-list configuration)))
+                     (uri      (resource-item-uri "papercut" (papercut-identifier item)))
+                     (base     (revision (read-resource first-context uri)))
+                     (assess   (papercut-resource-tests--operation "papercut-assess"
+                                                                  "verdict" "worse" "note" "Fixture"))
                      (invalid-extra
-                       (edit-resource
-                        first-context
-                        "papercut:current"
-                        collection-revision
-                        (papercut-resource-tests--operation
-                         "papercut-report"
-                         "title" "Invalid"
-                         "content" "Invalid extra field."
-                         "resolution" "Not accepted.")))
-                     (invalid-count
-                       (edit-resource
-                        first-context
-                        "papercut:current"
-                        collection-revision
-                        (papercut-resource-tests--operation
-                         "papercut-report"
-                         "title" "One"
-                         "content" "One body.")
-                        (papercut-resource-tests--operation
-                         "papercut-report"
-                         "title" "Two"
-                         "content" "Two body."))))
+                      (edit-resource first-context uri base
+                                     (papercut-resource-tests--operation "papercut-assess"
+                                                                         "verdict" "worse" "note" "Fixture"
+                                                                         "resolution" "Not accepted.")))
+                     (invalid-count (edit-resource first-context uri base assess assess)))
                 (test-assert
                  (and (not (tool-result-success-p invalid-extra))
                       (not (tool-result-success-p invalid-count)))
@@ -444,8 +376,7 @@
                          "verdict"
                          (gethash "properties" assessment-variant)))))
                 (test-assert
-                 (and (member "papercut-report" names :test #'string=)
-                      (member "papercut-assess" names :test #'string=)
+                 (and (member "papercut-assess" names :test #'string=)
                       (member "papercut-close" names :test #'string=)
                       (equalp verdicts
                               #("improved" "worse" "unchanged" "too-early"))

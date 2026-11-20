@@ -1518,7 +1518,7 @@
                      (every (lambda (operation)
                               (member operation operations :test #'equal))
                             '("replace-lines" "scratchpad-delete" "agenda-add"
-                              "memory-remember" "papercut-report")))
+                               "memory-remember" "papercut-close")))
                    "resource.edit exposes workspace, scratchpad, agenda, memory, and papercut operations")
                   (test-assert
                    (every (lambda (variant)

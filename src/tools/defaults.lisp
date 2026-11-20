@@ -374,19 +374,6 @@ KNOWLEDGE-P adds structured knowledge operations on memory:facts."
         (json-object)
         nil)
        (operation-schema
-        "papercut-report"
-        (json-object
-         "issue-kind" (cl-llm-provider-api:provider-enum-schema
-                       '("broken_tool" "misleading_success" "authorization" "performance" "other")
-                       "Explicit issue category; omit when unknown.")
-         "tool" (tool-string-property "Affected builtin tool name; omit when unknown.")
-         "title" (tool-string-property
-                  (format nil "Complete papercut title, at most ~:D characters." *papercut-title-limit*))
-         "content" (tool-string-property
-                    (format nil "Complete private local papercut report, at most ~:D characters." *papercut-content-limit*))
-         "diagnostic" (default-tools--diagnostic-property))
-        '("title" "content"))
-       (operation-schema
         "papercut-assess"
         (json-object
          "verdict" (json-object

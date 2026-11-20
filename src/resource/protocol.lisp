@@ -61,7 +61,7 @@
   '(:replace-lines :delete-lines :insert-before :insert-after :replace-empty
     :agenda-add :agenda-update :agenda-remove
     :memory-remember :memory-replace :memory-forget
-    :papercut-report :papercut-close)
+    :papercut-close)
   "The operations a resource edit names with its op, each spelled as its lower-case name.")
 
 (-> resource-edit-kind (t) (option keyword))

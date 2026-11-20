@@ -139,7 +139,7 @@
 (defmethod resource-resolver-edit-documentation ((resolver papercut-resolver))
   "Document papercut: edits."
   (declare (ignore resolver))
-  "papercut:current accepts papercut-report, and canonical exact papercut:id/<percent-encoded-stable-id> resources accept papercut-assess or papercut-close. Papercuts are exclusively for concrete defects or repeated friction in the running Autolith harness or its tools. Project source bugs and test, build, or CI failures belong in the task plan or agenda, even when developing Autolith itself; use a project tracker only when authorized. A project failure alone is not evidence of a harness defect. Do not report routine progress or ordinary uncertainty as papercuts.")
+  "Canonical exact papercut:id/<percent-encoded-stable-id> resources accept papercut-assess or papercut-close. Use papercut.report to report harness defects.")
 
 (defmethod resource-resolver-resolve
     ((resolver papercut-resolver) identifier (context tool-context))
@@ -168,7 +168,7 @@
   "Expose read and edit only while RESOURCE matches CONTEXT's current workspace."
   (if (string= (papercut-resource-workspace resource)
                (papercut--workspace (tool-context-configuration context)))
-      '(:read :edit)
+      (if (typep resource 'papercut-item-resource) '(:read :edit) '(:read))
       nil))
 
 
@@ -393,22 +393,6 @@
              :message   "Papercut resource operation op must be a string."
              :tool-name "resource.edit"))
     (cond
-      ((string= name "papercut-report")
-       (resource-item-validate-operation-fields
-        "Papercut"
-        operation
-        :allowed  '("op" "title" "content" "issue-kind" "tool" "diagnostic")
-        :required '("op" "title" "content"))
-       (list :kind       ':report
-             :diagnostic (telemetry-diagnostic-text (tool-argument operation "diagnostic"))
-             :issue-kind (papercut--issue-kind (or (tool-argument operation "issue-kind") ':other))
-             :tool       (telemetry--tool (tool-argument operation "tool"))
-             :title      (papercut-resource--required-text
-                          operation "title" :field "title"
-                                            :limit *papercut-title-limit*)
-             :content    (papercut-resource--required-text
-                          operation "content" :field "content"
-                                              :limit *papercut-content-limit*)))
       ((string= name "papercut-assess")
        (resource-item-validate-operation-fields
         "Papercut"
@@ -439,26 +423,8 @@
       (t
        (error 'tool-error
               :message
-              "Papercut resource operation op must be papercut-report, papercut-assess, or papercut-close."
+               "Papercut resource operation op must be papercut-assess or papercut-close."
               :tool-name "resource.edit")))))
-
-(-> papercut-resource--validate-operation-target
-    (papercut-resource list)
-    null)
-(defun papercut-resource--validate-operation-target (resource operation)
-  "Require normalized OPERATION to match RESOURCE's collection or item kind."
-  (etypecase resource
-    (papercut-collection-resource
-     (unless (eq (getf operation :kind) ':report)
-       (error 'tool-error
-              :message   "papercut:current accepts only papercut-report."
-              :tool-name "resource.edit")))
-    (papercut-item-resource
-     (unless (member (getf operation :kind) '(:assess :close))
-       (error 'tool-error
-              :message   "Exact papercut item URIs accept papercut-assess or papercut-close."
-              :tool-name "resource.edit"))))
-  nil)
 
 (-> papercut-resource--closed-observation
     (papercut-item-resource papercut non-empty-string)
@@ -484,7 +450,7 @@
                    :snapshot   snapshot)))
 
 (defmethod resource-apply-operations
-    ((resource papercut-resource) (context tool-context)
+    ((resource papercut-item-resource) (context tool-context)
      &key base-revision operations)
   "Validate the revision and publish one papercut mutation in a single transaction."
   (unless (and (listp operations) (= (length operations) 1))
@@ -492,7 +458,6 @@
            :message   "papercut: resources require exactly one operation per resource.edit call."
            :tool-name "resource.edit"))
   (let ((operation (papercut-resource--normalize-operation (first operations))))
-    (papercut-resource--validate-operation-target resource operation)
     (let ((conversation  (tool-context-conversation context))
           (configuration (tool-context-configuration context)))
       (with-lock-held (*papercut-lock*)
@@ -524,16 +489,6 @@
                                  :expected-revision base-revision
                                  :actual-revision   (resource-observation-revision current))))
                       (ecase (getf operation :kind)
-                        (:report
-                         (papercut--report-unlocked
-                          configuration :title      (getf operation :title)
-                                        :diagnostic (getf operation :diagnostic)
-                                        :content    (getf operation :content)
-                                        :issue-kind (getf operation :issue-kind)
-                                        :tool       (getf operation :tool)
-                                        :source-conversation
-                                        (conversation-identifier conversation)
-                                        :active     active))
                         (:assess
                          (papercut--assess-unlocked
                           configuration (papercut-resource-identifier resource)
@@ -546,19 +501,6 @@
                           (getf operation :resolution) :active active
                           :diagnostic                          (getf operation :diagnostic))))))))
             (ecase (getf operation :kind)
-              (:report
-               (destructuring-bind (papercut duplicate-p) result
-                 (papercut--note-report papercut duplicate-p)
-                 (let ((item-resource
-                         (papercut-resource--make-item
-                          (papercut-identifier papercut) (papercut-workspace papercut))))
-                   (values
-                    (papercut-resource--item-observation-from-report item-resource papercut)
-                    (if duplicate-p
-                        (format nil "Papercut ~A already covers this problem; nothing new was recorded."
-                                (papercut-identifier papercut))
-                        (format nil "Reported papercut ~A." (papercut-identifier papercut)))
-                    (resource-uri item-resource)))))
               (:assess
                (papercut--note-repair result (getf operation :verdict) (getf operation :diagnostic))
                (values

@@ -1073,9 +1073,9 @@ uncertainty.
 
 Papercuts use current-workspace resource URIs:
 
-- =papercut:current= lists active reports and accepts =papercut-report=.
+- =papercut:current= lists active reports.
 - =papercut:id/<percent-encoded-stable-id>= reads one active report and accepts
-  =papercut-close= with a complete resolution.
+  =papercut-assess= or =papercut-close=.
 
 The existing =papercut.report= tool and =(papercuts)=, =(papercut "ID")=, and
 =(papercut-close "ID")= commands remain convenient direct interfaces.

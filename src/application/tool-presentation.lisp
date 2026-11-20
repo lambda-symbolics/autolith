@@ -1334,8 +1334,6 @@ structural discriminator as a readable heading instead."
                  "replace memory")
                 (:memory-forget
                  "forget memory")
-                (:papercut-report
-                 "report papercut")
                 (:papercut-close
                  "close papercut")
                 (otherwise
