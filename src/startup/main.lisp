@@ -1076,10 +1076,14 @@ state, including an empty list after successful or pristine startup."
 (defun main--client-session-p (&key handoff-record pristine-p)
   "Return true when this start should attach to the world server.
 Replacements, pristine starts, and booted generations use the direct path."
+  (when (and (null handoff-record)
+             (not (platform-supports-p *platform* ':detached-sessions)))
+    (error 'platform-capability-unavailable
+           :capability ':detached-sessions
+           :message "Starting a world server requires detached-session support."))
   (and (null handoff-record)
        (not pristine-p)
        (not *main-direct-start-p*)
-       (platform-supports-p *platform* ':detached-sessions)
        t))
 
 (-> main--interactive-input-p () boolean)
