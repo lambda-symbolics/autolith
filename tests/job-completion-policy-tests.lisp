@@ -4,7 +4,7 @@
 
 (-> test-job-completion-policy-normalization () null)
 (defun test-job-completion-policy-normalization ()
-  "Test policy defaults, explicit selections, batch inheritance, and rejection."
+  "Test policy defaults, explicit selections, and invalid selections."
   (dolist (case '((nil :continue) ("notify" :notify) ("continue" :continue)))
     (destructuring-bind (value expected) case
       (let ((arguments (json-object "task" "Return one result.")))
@@ -14,44 +14,14 @@
          (eq expected (getf (first (task-normalize-arguments arguments))
                             :completion-policy))
          "flat task policy is normalized to a keyword"))))
-  (let* ((arguments
-           (json-object
-            "context" "Shared test context."
-            "completion-policy" "notify"
-            "tasks" (vector
-                     (json-object "task" "Inherited policy.")
-                     (json-object "task" "Explicit continuation."
-                                  "completion-policy" "continue")
-                     (json-object "task" "Explicit notification."
-                                  "completion-policy" "notify"))))
-         (items (task-normalize-arguments arguments)))
-    (test-assert
-     (equal '(:notify :continue :notify)
-            (mapcar (lambda (item) (getf item :completion-policy)) items))
-     "batch items inherit the top policy and may override it"))
-  (test-assert
-   (eq ':continue
-       (getf (first
-              (task-normalize-arguments
-               (json-object "context" "Shared context."
-                            "tasks" (vector (json-object "task" "Default policy.")))))
-             :completion-policy))
-   "batch policy defaults to continue")
   (dolist (value '("poll" "CONTINUE" "" 1 t nil :notify))
-    (dolist (location '(:flat :batch :item))
-      (let* ((item (json-object "task" "Invalid policy."))
-             (arguments
-               (if (eq location ':flat)
-                   item
-                   (json-object "context" "Shared context." "tasks" (vector item)))))
-        (setf (gethash "completion-policy"
-                       (if (eq location ':item) item arguments))
-              value)
-        (test-assert
-         (handler-case
-             (progn (task-normalize-arguments arguments) nil)
-           (tool-error () t))
-         "invalid policy is rejected at every task input boundary"))))
+    (let ((arguments (json-object "task" "Invalid policy."
+                                  "completion-policy" value)))
+      (test-assert
+       (handler-case
+           (progn (task-normalize-arguments arguments) nil)
+         (tool-error () t))
+       "invalid policy is rejected at the task input boundary")))
   nil)
 
 (-> test-job-completion-policy-schema-invocation () null)
@@ -78,14 +48,10 @@
                                 '(:notify :continue))
                                "advertised completion selections are executable")))))))
            (test-assert (plusp count) "async schemas are exercised")
-           (let* ((properties (json-get (task-run-parameters-schema) "properties"))
-                  (item-properties
-                    (json-get (json-get (json-get properties "tasks") "items")
-                              "properties")))
+           (let ((properties (json-get (task-run-parameters-schema) "properties")))
              (test-assert
-              (and (gethash "completion-policy" properties)
-                   (gethash "completion-policy" item-properties))
-              "child.spawn exposes policy at flat and batch-item boundaries")))
+              (gethash "completion-policy" properties)
+              "child.spawn exposes the detached completion policy")))
       (tool-registry-close-runtime-state registry)))
   nil)
 
