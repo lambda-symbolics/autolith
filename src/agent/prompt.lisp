@@ -45,10 +45,6 @@ prompt instead of the full Autolith persona.")
 (defparameter *system-prompt-context-truncation-marker* "... [truncated]"
   "The suffix identifying a bounded dynamic system-prompt value.")
 
-(defparameter *system-prompt-relax-warning*
-  "Your own session, context, and token estimates are unreliable and often too small. Do not reduce scope, omit verification, rush, or end early because of perceived length; the harness compacts automatically, so complete and verify the task."
-  "Private warning delivered while the session's relax mode is enabled.")
-
 (defparameter *request-context-lisp-image-limit* 12000
   "The maximum characters of complete saved-image rows in request context.")
 
@@ -279,8 +275,6 @@ prompt instead of the full Autolith persona.")
           :simple-technical-english-p
           (config :simple-technical-english-p configuration)
           :hurry-up-p         hurry-up-p
-          :relax-p            (config :relax-p configuration)
-          :relax-warning      *system-prompt-relax-warning*
           :lisp-image-entries image-entries
           :agenda
           (request-context--bounded-complete-lines
@@ -304,18 +298,11 @@ prompt instead of the full Autolith persona.")
 (defun system-prompt (configuration)
   "Return the system prompt specialized for CONFIGURATION and this process's session date.
 
-Rebuild the prompt for each provider request, including after compaction.
-Append the enabled relax warning only to an overridden prompt; ordinary
-requests carry it in session state behind the history, so toggling it keeps
-the cached prefix."
-  (let ((prompt
-          (or *system-prompt-override*
-              (string-left-trim
-               '(#\Newline)
-               (system-prompt--drop-org-keyword-lines
-                (org-templater:render
-                 :template (system-prompt--template)
-                 :config   (system-prompt--config configuration)))))))
-    (if (and *system-prompt-override* (config :relax-p configuration))
-        (format nil "~A~2%WARNING: ~A" prompt *system-prompt-relax-warning*)
-        prompt)))
+Rebuild the prompt for each provider request, including after compaction."
+  (or *system-prompt-override*
+      (string-left-trim
+       '(#\Newline)
+       (system-prompt--drop-org-keyword-lines
+        (org-templater:render
+         :template (system-prompt--template)
+         :config   (system-prompt--config configuration))))))

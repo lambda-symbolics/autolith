@@ -1743,7 +1743,7 @@
              "a named setting changes through the command")
             (test-application--setting-value-entry
              configuration (first presented) ':cache-miss-notices-p)
-            (dolist (name '(:relax-p :model :boot-screen-seconds :terminal-theme))
+            (dolist (name '(:hurry-up-p :model :boot-screen-seconds :terminal-theme))
               (test-application--setting-value-entry
                configuration (application--setting-value-entry application name) name))
             (test-assert

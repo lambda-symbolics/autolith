@@ -560,12 +560,6 @@ Ordinary native defaults remain lazy and follow the current environment."
   :documentation            "Whether requests carry hurry-up guidance favoring direct work."
   :scope                    :session)
 
-(define-setting :relax-p (boolean-setting)
-  :label                 "Relax warning"
-  :group                 :behavior
-  :documentation         "Whether provider requests carry a warning not to shrink scope, skip verification, or rush because of perceived context pressure."
-  :scope                 :session)
-
 (define-setting :fullscreen-p (boolean-setting)
   :label                      "Fullscreen"
   :group                      :terminal

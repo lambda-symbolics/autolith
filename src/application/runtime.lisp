@@ -363,9 +363,6 @@ Clicking the rendered call's header inserts it into the composer.")
 (define-application-setting-accessor application-hurry-up-p :hurry-up-p
   "Return whether the session runs in hurry-up mode.")
 
-(define-application-setting-accessor application-relax-p :relax-p
-  "Return whether the session carries the relax warning in provider prompts.")
-
 (defvar *active-application* nil
   "The live application root retained in saved generations.")
 
@@ -1742,7 +1739,7 @@ changes also invalidate the cache. External files are sampled at these boundarie
     (list configuration
           (loop for setting in '(:working-directory :source-root :immutable-p
                                  :model :model-provider :provider-endpoint :reasoning-effort
-                                 :relax-p :web-search-mode :simple-technical-english-p)
+                                 :web-search-mode :simple-technical-english-p)
                 collect (config setting configuration))
           conversation
           (conversation-next-sequence conversation)

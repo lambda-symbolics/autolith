@@ -2561,8 +2561,6 @@ the settings page and commands use the same setters."
        (application-reload-mcp application))
       (:hurry-up-p
        (application-set-hurry-up application value))
-      (:relax-p
-       (application-set-relax application value))
       (:terminal-theme
        (application-set-terminal-theme application value))
       (:prompt-padding

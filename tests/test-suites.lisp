@@ -961,10 +961,6 @@
   test-complaint-editing
   test-complaint-command-aliases)
 
-(define-test-suite relax
-  test-relax-setting-and-command
-  test-relax-warning-rides-session-state)
-
 (define-test-suite interpreter-discipline
   test-interpreter-discipline)
 

@@ -484,7 +484,7 @@
          (setf (application-tool-registry application) (make-instance 'tool-registry))
          (application-set-activity application "new registry")
          (test-assert (= schema-calls 4) "registry replacement refreshes schema counts")
-         (setf (config :relax-p configuration) t)
+         (setf (config :simple-technical-english-p configuration) t)
          (application-set-activity application "new prompt setting")
          (test-assert (= prompt-calls 5) "in-place prompt settings invalidate the estimate")
          (setf (application-context-estimate-cache application) nil)
