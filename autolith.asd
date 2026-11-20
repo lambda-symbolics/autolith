@@ -579,7 +579,6 @@
                                           (:file "mission-schedule-tests")
                                           (:file "task-worktree-tests")
                                           (:file "task-agent-tests")
-                                          (:file "task-engineering-tests")
                                           (:file "task-execution-tests")
                                           (:file "task-scheduler-tests")
                                           (:file "shell-output-tests")

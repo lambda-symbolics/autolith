@@ -1008,8 +1008,8 @@
                                          :description      "All original fields."
                                          :pathname #P"roles/scout.md" :models ("@smol")
                                          :reasoning-effort :medium
-                                         :tools ("resource.read" "search.*") :spawns nil
-                                         :output-contract-p nil :blocking-p nil))) nil)
+                                           :tools ("resource.read" "search.*") :spawns nil
+                                           :blocking-p nil))) nil)
                       (list '(:goal :id "review" :objective "Retain native data"
                               :status :active :gates ((:id "output" :accepted-p nil))
                               :budget (:tokens 10000000 :calls 1000)) t)

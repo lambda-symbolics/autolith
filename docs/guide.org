@@ -3167,7 +3167,7 @@ A higher-precedence malformed role is reported, not silently replaced.
 A role is one bounded UTF-8 =*.sexp= property list:
 
 - required: =:name=, =:description=, =:instructions=
-- optional: =:tools=, =:spawns=, =:models=, =:reasoning-effort=, =:output=,
+- optional: =:tools=, =:spawns=, =:models=, =:reasoning-effort=,
   =:blocking-p=
 
 Roles cannot grant =self.*=, =task.*=, or =yield.*=. Grant =job.*= when a role
@@ -3181,8 +3181,6 @@ independent of permission to spawn another child.
 - =:reasoning-effort= names a supported effort. Omitting it or writing
   =:auto= selects =medium=, so routine delegated work does not inherit the
   parent's effort. Children never inherit Codex Fast mode.
-- =:output= is the native schema DSL. There, =nil= is JSON false and
-  =:null= is JSON null.
 
 Example:
 
@@ -3289,7 +3287,7 @@ inventory for a decision. Resuming does not replay the work.
 
 ** Engineering task artifacts
 
-Select the bundled =engineering= role or give a native role =:output :engineering=.
+Select the bundled =engineering= role for the standard engineering artifact contract.
 The version-1 contract requires =schemaVersion=, =baseline= (=kind=, =workspace=,
 =revision=), =change= (=kind=, =reference=), =paths=, =checks=, =evidence=, =issues=
 and =integrationNotes=. =symbols= is optional.
@@ -3299,13 +3297,6 @@ For each check, include the command, status (=passed=, =failed=, =skipped= or
 =unknown= when no revision is available and change kind =none= when no change
 was produced.
 
-Extend the common contract in a native role:
-
-#+BEGIN_SRC lisp
-:output (:type :engineering
-         :properties (("review" (:type :string)))
-         :required ("review"))
-#+END_SRC
 
 Common properties cannot be overridden. The usual structured =yield.submit= and
 durable result transport validate and retain these values. Checks and evidence

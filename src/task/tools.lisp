@@ -891,8 +891,6 @@ poll a job whose completion will wake it."
         :spawns
         (task--agent-policy-presentation
          (task-agent-definition-spawns definition))
-        :output-contract-p
-        (and (task-agent-definition-output definition) t)
         :blocking-p (and (task-agent-definition-blocking-p definition) t)))
 
 (-> task--agent-diagnostic-native-record (condition) list)

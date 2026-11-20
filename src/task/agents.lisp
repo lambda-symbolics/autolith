@@ -42,12 +42,6 @@
     :reader        task-agent-definition-reasoning-effort
     :type          (option keyword)
     :documentation "The optional child reasoning effort or :AUTO sentinel.")
-   (output
-    :initarg       :output
-    :initform      nil
-    :reader        task-agent-definition-output
-    :type          (option list)
-    :documentation "An optional validated native structured-output contract.")
    (blocking-p
     :initarg       :blocking-p
     :initform      nil
@@ -259,12 +253,12 @@
 
 (-> task-agent-definition-create
     (&key (:name t) (:description t) (:instructions t) (:tools t)
-          (:spawns t) (:models t) (:reasoning-effort t) (:output t)
+          (:spawns t) (:models t) (:reasoning-effort t)
           (:blocking-p t) (:source keyword) (:pathname (option pathname)))
     task-agent-definition)
 (defun task-agent-definition-create
     (&key name description instructions tools spawns models reasoning-effort
-          output blocking-p (source :programmatic) pathname)
+          blocking-p (source :programmatic) pathname)
   "Create and fully validate one native child-agent definition."
   (let ((normalized-name
           (and (stringp name) (string-downcase name)))
@@ -318,12 +312,6 @@
       reasoning-effort
       :pathname pathname :source source
       :definition-name normalized-name)
-     :output
-     (and output
-          (task-output-schema-normalize
-           output
-           :pathname pathname :source source
-           :definition-name normalized-name))
      :blocking-p   blocking-p
      :source       source
      :pathname     pathname)))
@@ -379,7 +367,6 @@
     :tools       ':all
     :spawns      ':all
     :models      '("@task")
-    :output      ':engineering
     :source      ':bundled)
    (task-agent-definition-create
     :name        "task"
@@ -524,7 +511,6 @@ walking, cycle detection, node limits, and string limits stay in sexp-config."
      :spawns           (rest (assoc :spawns pairs :test #'eq))
      :models           (rest (assoc :models pairs :test #'eq))
      :reasoning-effort (rest (assoc :reasoning-effort pairs :test #'eq))
-     :output           (rest (assoc :output pairs :test #'eq))
      :blocking-p       (rest (assoc :blocking-p pairs :test #'eq))
      :source           source
      :pathname         pathname)))

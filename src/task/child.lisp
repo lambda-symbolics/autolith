@@ -224,35 +224,26 @@ boundary cannot fit within that budget."
              (conversation--inherited-reference-wire-byte-length nil))
          limit)))
 
-(-> task-output-definition-text (task-agent-definition) (option string))
-(defun task-output-definition-text (definition)
-  "Return DEFINITION's output contract as prompt text, or NIL."
-  (let ((output (task-agent-definition-output definition)))
-    (and output
-         (task--write-readable-sexp output :pretty-p t))))
 
 (-> task-child-goal-context (task-job configuration) string)
 (defun task-child-goal-context (job child-configuration)
   "Build child instructions without replacing ordinary path authorization."
-  (let* ((definition (task-job-definition job))
-         (identity   (task-job-identity job))
-         (item       (task-job-item job))
+  (let* ((identity (task-job-identity job))
+         (item     (task-job-item job))
          (context
-          (if (getf item :worktree)
-              (format nil "~@[~A~2%~]This is an isolated modifying task at baseline ~A. Edit and test in ~A. Return your findings through yield; the parent will explicitly inspect and integrate your artifact. Do not modify or integrate into source workspace ~A. Stage new files before yielding so the complete patch can be extracted."
-                      (getf item :context)
-                      (getf (getf item :worktree) :baseline)
-                      (getf (getf item :worktree) :path)
-                      (getf (getf item :worktree) :source))
-              (getf item :context)))
-         (output     (task-output-definition-text definition)))
+           (if (getf item :worktree)
+               (format nil "~@[~A~2%~]This is an isolated modifying task at baseline ~A. Edit and test in ~A. Return your findings through yield; the parent will explicitly inspect and integrate your artifact. Do not modify or integrate into source workspace ~A. Stage new files before yielding so the complete patch can be extracted."
+                       (getf item :context)
+                       (getf (getf item :worktree) :baseline)
+                       (getf (getf item :worktree) :path)
+                       (getf (getf item :worktree) :source))
+               (getf item :context))))
     (format nil
-            "You are child agent ~A, depth ~D; the system prompt carries your role.~@[~2%Shared parent context:~%~A~]~@[~2%Your yield data must satisfy this native output contract:~%~A~]~2%Your initial workspace is ~A. Work within the assignment's scope. Paths outside the workspace use the ordinary tool path authorization; this initial directory is not an additional confinement policy. Complete the assignment in the user message. You MUST end by calling yield.submit exactly once. A normal assistant stop without yield is a failed child run. Put the useful parent-facing answer in yield.text and structured data in yield.data when requested."
+            "You are child agent ~A, depth ~D; the system prompt carries your role.~@[~2%Shared parent context:~%~A~]~2%Your initial workspace is ~A. Work within the assignment's scope. Paths outside the workspace use the ordinary tool path authorization; this initial directory is not an additional confinement policy. Complete the assignment in the user message. You MUST end by calling yield.submit exactly once. A normal assistant stop without yield is a failed child run. Put the useful parent-facing answer in yield.text and structured data in yield.data when requested."
             (getf identity :id)
             (1+ (task-parent-depth (task-job-parent-agent job)))
-            context output
-            (namestring
-             (config :working-directory child-configuration)))))
+            context
+            (namestring (config :working-directory child-configuration)))))
 
 (defmethod tool-execute
     ((tool task-yield-tool) (context tool-context) arguments)
@@ -265,9 +256,6 @@ boundary cannot fit within that budget."
              :tool-name "yield.submit"))
     (let* ((completion (task-child-agent-completion agent))
            (identifier (getf (task-child-agent-identity agent) :id))
-           (output
-             (task-agent-definition-output
-              (task-child-agent-definition agent))))
       (labels ((yield-error (message &key (code ':invalid-yield))
                  (error 'task-yield-error
                         :message   message
@@ -333,14 +321,6 @@ boundary cannot fit within that budget."
                                    (non-empty-string-p (task--trim (or text ""))))
                          (yield-error
                           "A successful yield requires non-empty text or explicit data."))
-                       (when (and output (not data-present-p))
-                         (yield-error
-                          "This role requires an explicit structured yield value."))
-                       (when (and output
-                                  (not (task-output-schema-valid-p data output)))
-                         (yield-error
-                          "The supplied yield data does not satisfy the role output contract."
-                          :code ':output-contract)))
                       ((:failed :aborted)
                        (unless (and failure-present-p
                                     (non-empty-string-p
@@ -378,7 +358,7 @@ boundary cannot fit within that budget."
                          :code ':yield-unavailable))
                       (tool-success
                        (task--write-readable-sexp
-                        '(:yield-submit :accepted-p t))))))))))))))
+                          '(:yield-submit :accepted-p t))))))))))))))))
 
 (-> task--utf8-length (string) (integer 0))
 (defun task--utf8-length (text)

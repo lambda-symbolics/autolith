@@ -113,8 +113,7 @@
 (-> task--agent-definition-summary (task-agent-definition) list)
 (defun task--agent-definition-summary (definition)
   "Return compact non-instruction metadata for DEFINITION."
-  (let ((pathname (task-agent-definition-pathname definition))
-        (output   (task-agent-definition-output definition)))
+    (let ((pathname (task-agent-definition-pathname definition)))
     (list :name              (task-agent-definition-name definition)
           :source            (task-agent-definition-source definition)
           :pathname          (and pathname (namestring pathname))
@@ -129,7 +128,6 @@
            (task-agent-definition-models definition) 1000)
           :reasoning-effort
           (task-agent-definition-reasoning-effort definition)
-          :output-contract-p (and output t)
           :blocking-p
           (and (task-agent-definition-blocking-p definition) t))))
 

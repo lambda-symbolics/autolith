@@ -34,22 +34,6 @@
               "one .sexp form creates a complete native role definition"))
            (let* ((pathname
                     (task-tests--write-text
-                     (merge-pathnames "deterministic.sexp" directory)
-                     "(:name \"deterministic\" :description \"Deterministic reader\" :instructions \"Ignore ambient reader state.\" :output (:type :number :enum (10 1.5)))"))
-                  (definition
-                    (let ((*read-base*                 16)
-                          (*read-suppress*             t)
-                          (*read-default-float-format* 'single-float)
-                          (*package*                   (find-package '#:common-lisp-user)))
-                      (task-parse-agent-file pathname :project)))
-                  (enum
-                    (getf (task-agent-definition-output definition) :enum)))
-             (test-assert
-              (and (= (first enum) 10)
-                   (typep (second enum) 'double-float))
-              "native role parsing ignores ambient package, base, suppression, and float bindings"))
-           (let* ((pathname
-                    (task-tests--write-text
                      (merge-pathnames "block-comment.sexp" directory)
                      "#| leading |#(:name\"block-comment\"#| outer #| nested |# comment |#:description\"Commented role\":instructions #| value |#\"Accept standard block comments.\")"))
                   (definition
@@ -470,9 +454,8 @@
                      (test-assert
                       (every
                        (lambda (field) (field-present-p allowed field))
-                       '(:description :source :pathname :models
-                         :reasoning-effort :tools :spawns
-                         :output-contract-p :blocking-p))
+                         '(:description :source :pathname :models
+                           :reasoning-effort :tools :spawns :blocking-p))
                       "role discovery exposes stable policy and source fields")
                      (test-assert
                       (and (not (field-present-p allowed :instructions))

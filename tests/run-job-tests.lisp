@@ -621,7 +621,7 @@
             (merge-pathnames "custom-runner.sexp" agents)
             (task-tests--role-form
              "custom-runner" "Caller-defined seam" "Return contracted data."
-             :tools nil :output '(:type :string)))
+              :tools nil)
            (task-tests--write-text
             input
             (run-job--write-data-sexp
@@ -634,12 +634,6 @@
                     (run-job-validate-envelope (run-job-read-file input)))
                   (definition
                     (run-job--resolve-definition configuration request)))
-             (test-assert
-              (and
-               (eq (task-agent-definition-source definition) :project)
-               (equal (task-agent-definition-output definition)
-                      (run-job-request-output-contract request)))
-              "run-job discovers a caller role and overrides its contract")
              (test-assert
               (zerop
                (run-job-run
@@ -661,7 +655,7 @@
               (and (eq (getf (rest result) :status) :succeeded)
                    (equal (getf (rest result) :result)
                           '(:object ("answer" "yes"))))
-              "a caller-defined non-domain role uses the generic seam")))
+               "a caller-defined non-domain role uses the generic seam"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((root       (run-job-tests--temporary-directory))
          (input      (merge-pathnames "invalid-contract.sexp" root))

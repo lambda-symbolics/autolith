@@ -144,7 +144,8 @@
                        "missing reviewer fields cannot complete the native output contract")))
       (let ((data (mission-review-test--data)))
         (setf (gethash "severity" (aref (gethash "findings" data) 0)) "invented")
-        (test-assert (not (task-output-schema-valid-p data (task-agent-definition-output definition)))
+          (test-assert (not (task-output-schema-valid-p data
+                                                        (task-output-schema-normalize *mission-review-output-schema*)))
                      "unidentified severity categories are rejected"))
       (let* ((data    (mission-review-test--data))
              (finding (aref (gethash "findings" data) 0)))

@@ -131,8 +131,7 @@ across changed snapshots and is not reset by retries or restarts."
                  :description  "Independent mission checkpoint reviewer"
                  :instructions "Review only the supplied independent context. Identify concrete findings with stable unique IDs, severity, confidence and evidence. Findings are advice. Do not claim harness acceptance. Submit your native contracted data through yield.submit."
                  :tools nil :spawns nil :models (getf policy :models)
-                 :blocking-p   t
-                 :output       (task-output-schema-normalize *mission-review-output-schema*)))
+                   :blocking-p   t))
 
 (-> mission-review--run-task (mission-context list &key (:run list) (:background string) (:tool-context tool-context)) list)
 (defun mission-review--run-task (context policy &key run background tool-context)
@@ -142,7 +141,7 @@ across changed snapshots and is not reset by retries or restarts."
          (definition (mission-review--definition policy))
          (item       (list :name (format nil "review-~A" (getf policy :id))
                            :agent "reviewer" :blocking t :context background
-                           :task "Perform the configured independent review. Return findings and summary through the required native output contract.")))
+                            :task "Perform the configured independent review. Return findings and summary through yield.submit."))
     (unless (and (typep parent 'agent) (not (typep parent 'task-child-agent)))
       (mission--reject ':review-authority "Only the primary agent may request mission review."))
     (unless (typep runtime 'task-orchestrator)
@@ -174,7 +173,7 @@ across changed snapshots and is not reset by retries or restarts."
                    (with-open-file (stream path :external-format ':utf-8)
                      (let ((*read-eval* nil)) (read stream)))
                    result)))
-        (unless finished-p (task-run--cancel-synchronous-jobs jobs))))))
+          (unless finished-p (task-run--cancel-synchronous-jobs jobs)))))))
 
 (-> mission-review--findings (list) list)
 (defun mission-review--findings (result)
