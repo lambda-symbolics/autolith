@@ -79,8 +79,8 @@ integers, pathnames, and quoted data directly:
 #+BEGIN_SRC lisp
 (settings :boot-screen-seconds 2)
 (settings :onboarding-p nil)
-(trace t)
-(trace nil)
+(settings :reasoning-traces-p t)
+(settings :reasoning-traces-p nil)
 (mcp :refresh)
 (permissions :ask)
 #+END_SRC
@@ -1478,9 +1478,9 @@ once. Use =(rename "NAME")= to assign a name yourself; a name you assigned is
 never replaced. =(channel-id)= shows the ID of the channel the terminal is in,
 and returns it when called from Lisp.
 
-Provider-generated titles and names are enabled by default. Use =(titles)=,
-=(titles t)=, or =(titles nil)= to inspect or change the durable global
-preference.
+Provider-generated titles and names are enabled by default. Inspect the setting
+with =(settings :session-title-generation-p)=, or pass a second argument of =t=
+or =nil= to change it.
 
 =(open)= picks a channel: the inbox, then each workspace's channels by their
 agents' names, children under their parents. Type to search; the Delete key
@@ -2545,8 +2545,8 @@ subscription route. Idle compaction uses the ordinary paid checkpoint path. It
 can reduce the context sent after a long pause, but neither a cache hit nor a
 net saving is guaranteed.
 
-Use =(cache-misses t)= to enable notices when cached reads fall by at least
-128 tokens, including accumulated smaller losses. Notices also appear when
+Use =(settings :cache-miss-notices-p t)= to enable notices when cached reads fall
+by at least 128 tokens, including accumulated smaller losses. Notices also appear when
 cached reads remain flat while shared request history grows by at least
 16,384 characters and at least one sixteenth of its reference size. Temporary
 context and newly offered history are excluded from shared growth.

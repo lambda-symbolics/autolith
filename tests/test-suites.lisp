@@ -903,8 +903,7 @@
   test-prompt-cache-request-observation
   test-prompt-cache-one-response-prefix
   test-prompt-cache-wire-plan
-  test-prompt-cache-miss-notices
-  test-cache-misses-command)
+  test-prompt-cache-miss-notices)
 
 (define-test-suite idle-compaction
   test-idle-compaction-policy
@@ -1785,7 +1784,6 @@
   test-application-git-branch
   test-startup-update-choice
   test-explicit-update-operation
-  test-session-titles-command
   test-hurry-up-mode
   test-command-permission-modes
   test-automatic-permission-presentation

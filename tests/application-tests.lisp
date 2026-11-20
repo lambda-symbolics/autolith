@@ -413,7 +413,6 @@
   (dolist (case '(("/settings" "(settings :onboarding-p nil)"
                               "(settings :boot-screen-seconds 2)"
                               "(settings :terminal-theme)")
-                  ("/trace" "(trace t)" "(trace nil)" "(effort)")
                   ("/help" "(help :workspace)" "(help 'open)")
                   ("/vault-store" "(setf (vault-contents 0) '(:message \"new task\"))")
                   ("/data.export" "(data.export pathname :workspace directory)")
@@ -5495,7 +5494,7 @@
               controller ':message "active turn")
              (application-input-controller--next-work controller)
              (application-input-controller--handle-submission
-              controller "(timestamps t)")
+               controller "(settings :turn-timestamps-p t)")
              (test-assert (zerop (length (line-editor-text (terminal-ui-editor ui))))
                           "a boundary application does not return source to the editor")
              (application-input-controller--handle-submission
@@ -5508,7 +5507,7 @@
                (equal (deque->list
                        (application-input-controller-pending-apply-items
                         controller))
-                      (list (list ':native-lisp "(timestamps t)")))
+                       (list (list ':native-lisp "(settings :turn-timestamps-p t)")))
               "state changes queue for the next safe boundary instead")
              (application-input-controller--apply-pending-commands controller)
              (test-assert
@@ -5585,18 +5584,18 @@
                          (list (list ':lisp "(compact)")))
                   "settings use the active boundary instead of joining the held follow-up")))
              (application-input-controller--handle-submission
-              controller "(timestamps nil)")
+               controller "(settings :turn-timestamps-p nil)")
              (test-assert
               (equal (deque->list
                       (application-input-controller-pending-apply-items controller))
-                     (list (list ':native-lisp "(timestamps nil)")))
+                      (list (list ':native-lisp "(settings :turn-timestamps-p nil)")))
               "canonical Lisp state changes queue for the next safe boundary")
              (application-input-controller--apply-pending-commands controller)
              (test-assert
               (not (application-turn-timestamps-p application))
               "canonical Lisp pending changes execute noninteractively")
              (application-input-controller--handle-submission
-              controller "(timestamps t)")
+               controller "(settings :turn-timestamps-p t)")
              (application-input-controller--finish-work controller)
              (test-assert
               (equal (application-input-controller--next-work controller)
@@ -6730,37 +6729,6 @@
           (join-thread waiter))
         (when controller
           (application-input-controller-stop controller)))))
-  nil)
-
-(-> test-session-titles-command () null)
-(defun test-session-titles-command ()
-  "Test native control of provider-generated session titles."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (application   (application-tests--ui-application :columns 60))
-         (ui            (application-ui application)))
-    (setf (application-configuration application) configuration)
-    (terminal-ui-start ui)
-    (unwind-protect
-         (progn
-           (test-assert
-            (null (application-operation-call application "titles" nil))
-            "(titles nil) completes without a loop action")
-           (test-assert
-            (not (config :session-title-generation-p configuration))
-            "(titles nil) persists disabled provider title generation")
-           (test-assert
-            (null (application-operation-call application "titles" t))
-            "the callable titles operation completes without a loop action")
-           (test-assert
-            (config :session-title-generation-p configuration)
-            "the callable titles operation persists enabled generation")
-           (test-assert
-            (search "session titles"
-                    (test-terminal-row-text (application-info-entry application)))
-            "application information exposes the session-title preference"))
-      (terminal-ui-stop ui)
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-application-conversation-title-refresh () null)

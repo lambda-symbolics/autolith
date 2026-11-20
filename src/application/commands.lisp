@@ -708,11 +708,6 @@ combination."
              (application--setting-source-text configuration setting))))
   nil)
 
-(-> application-trace-command (application &optional t) null)
-(defun application-trace-command (application &optional (argument ':status))
-  "Show or change APPLICATION's visible reasoning-summary setting."
-  (application--boolean-setting-command application ':reasoning-traces-p argument))
-
 (-> application-set-turn-timestamps (application boolean) null)
 (defun application-set-turn-timestamps (application enabled-p)
   "Persist and apply whether user and assistant headers show timestamps."
@@ -722,21 +717,11 @@ combination."
   (application-publish-recovery-session application)
   nil)
 
-(-> application-turn-timestamps-command (application &optional t) null)
-(defun application-turn-timestamps-command (application &optional (argument ':status))
-  "Show or change APPLICATION's optional turn-timestamp presentation."
-  (application--boolean-setting-command application ':turn-timestamps-p argument))
-
 (-> application-set-cache-miss-notices (application boolean) null)
 (defun application-set-cache-miss-notices (application enabled-p)
   "Persist and apply whether prompt-cache misses are reported after requests."
   (setf (application-cache-miss-notices-p application) enabled-p)
   nil)
-
-(-> application-cache-miss-notices-command (application &optional t) null)
-(defun application-cache-miss-notices-command (application &optional (argument ':status))
-  "Show or change APPLICATION's optional prompt-cache miss notices."
-  (application--boolean-setting-command application ':cache-miss-notices-p argument))
 
 (-> application-simple-technical-english-command
     (application &optional t)
@@ -744,16 +729,6 @@ combination."
 (defun application-simple-technical-english-command (application &optional (argument ':status))
   "Show or change APPLICATION's Simple Technical English response style."
   (application--boolean-setting-command application ':simple-technical-english-p argument))
-
-(-> application-session-titles-command (application &optional t) null)
-(defun application-session-titles-command (application &optional (argument ':status))
-  "Show or change automatic provider-generated session-title refreshes."
-  (application--boolean-setting-command application ':session-title-generation-p argument))
-
-(-> application-compact-tool-command (application &optional t) null)
-(defun application-compact-tool-command (application &optional (argument ':status))
-  "Persist and apply APPLICATION's compact tool presentation mode."
-  (application--boolean-setting-command application ':compact-view-p argument))
 
 (-> application--credentialed-provider-names (application) list)
 (defun application--credentialed-provider-names (application)
@@ -3342,36 +3317,6 @@ pristine or recovery session runs apart from it."
         (config :reasoning-effort (application-configuration application))))))
   ':continue)
 
-(define-application-command application--builtin-trace-command
-    (:name              "/trace"
-     :help-topic        :display
-     :help-order        3
-     :description       "show visible reasoning summaries"
-     :tip               "Use `(trace t)` to show reasoning summaries or `(trace nil)` to hide them. Change the reasoning budget with `(effort)`."
-     :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t
-     :slash-parser      application--parse-boolean-control
-     :static-options    (t nil))
-    (application &optional (mode ':status))
-  (application-trace-command application mode)
-  ':continue)
-
-(define-application-command application--builtin-turn-timestamps-command
-    (:name              "/timestamps"
-     :help-topic        :display
-     :help-order        4
-     :description       "show local timestamps beside user and assistant turns"
-     :tip               "Use `(timestamps t)` to show local-time labels beside user and assistant turns, or `(timestamps nil)` to hide them."
-     :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t
-     :slash-parser      application--parse-boolean-control
-     :static-options    (t nil))
-    (application &optional (mode ':status))
-  (application-turn-timestamps-command application mode)
-  ':continue)
-
 (define-application-command application--builtin-simple-technical-english-command
     (:name              "/ste"
      :help-topic        :display
@@ -3385,36 +3330,6 @@ pristine or recovery session runs apart from it."
      :static-options    (t nil))
     (application &optional (mode ':status))
   (application-simple-technical-english-command application mode)
-  ':continue)
-
-(define-application-command application--builtin-session-titles-command
-    (:name              "/titles"
-     :help-topic        :display
-     :help-order        6
-     :description       "allow provider-generated session-title refreshes"
-     :tip               "Use `(titles t)` to allow provider-generated title refreshes, or `(titles nil)` for locally derived titles."
-     :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t
-     :slash-parser      application--parse-boolean-control
-     :static-options    (t nil))
-    (application &optional (mode ':status))
-  (application-session-titles-command application mode)
-  ':continue)
-
-(define-application-command application--builtin-cache-misses-command
-    (:name              "/cache-misses"
-     :help-topic        :display
-     :help-order        7
-     :description       "notify when a request re-reads uncached context"
-     :tip               "Use `(cache-misses t)` to report uncached context and likely causes, or `(cache-misses nil)` to hide these notices."
-     :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t
-     :slash-parser      application--parse-boolean-control
-     :static-options    (t nil))
-    (application &optional (mode ':status))
-  (application-cache-miss-notices-command application mode)
   ':continue)
 
 (define-application-command application--builtin-hurry-up-command
@@ -3839,21 +3754,6 @@ pristine or recovery session runs apart from it."
      :slash-parser      application--skipped-definitions-slash-arguments)
     (application &optional (comment ""))
   (application-fix-skipped-definitions application comment)
-  ':continue)
-
-(define-application-command application--builtin-compact-tool-command
-    (:name              "/compact-tool"
-     :help-topic        :display
-     :help-order        8
-     :description       "collapse or expand tool call detail in the transcript"
-     :tip               "Use `(compact-tool t)` to collapse tool details or `(compact-tool nil)` to expand them."
-     :busy-behavior     :hold
-     :terminal-behavior :shared
-     :callable          t
-     :slash-parser      application--parse-boolean-control
-     :static-options    (t nil))
-    (application &optional (mode ':status))
-  (application-compact-tool-command application mode)
   ':continue)
 
 (define-application-command application--builtin-detach-command

@@ -517,10 +517,7 @@
        '(("/help" (&optional topic))
          ("/open" (&optional (designator nil designator-p)))
          ("/cwd" (&optional pathname))
-         ("/trace" (&optional (mode ':status)))
-         ("/timestamps" (&optional (mode ':status)))
          ("/ste" (&optional (mode ':status)))
-         ("/titles" (&optional (mode ':status)))
          ("/hurry-up" (&optional (mode ':status)))
          ("/papercut" (&optional identifier))
          ("/papercut-close" (&optional identifier))
@@ -581,8 +578,7 @@
                    (declare (ignore candidate entry))
                    t)))
           (lambda ()
-            (dolist (name '("cwd" "trace" "timestamps" "ste" "titles"
-                            "hurry-up" "papercut" "papercut-close"))
+             (dolist (name '("cwd" "ste" "hurry-up" "papercut" "papercut-close"))
                (test-assert
                 (null (application-operation-call application name))
                 (format nil "(~A) accepts its omitted optional argument" name)))))
@@ -794,10 +790,7 @@
            (*read-eval*   nil))
        (dolist
            (case
-            '(("trace" :reasoning-traces-p)
-              ("timestamps" :turn-timestamps-p) ("cache-misses" :cache-miss-notices-p)
-              ("ste" :simple-technical-english-p) ("titles" :session-title-generation-p)
-              ("hurry-up" :hurry-up-p) ("compact-tool" :compact-view-p)))
+            '(("ste" :simple-technical-english-p) ("hurry-up" :hurry-up-p)))
          (destructuring-bind (name setting) case
            (let* ((completions
                     (remove-if-not
@@ -867,7 +860,7 @@
 
 (-> test-application-compact-setting-transitions () null)
 (defun test-application-compact-setting-transitions ()
-  "Test command/settings parity for compact view pagination and recovery."
+  "Test compact view pagination and recovery when applying the setting."
   (test-call-with-typed-control-application
    (lambda (application root observations)
      (declare (ignore root observations))
@@ -885,27 +878,18 @@
                  (declare (ignore candidate))
                  (incf publications))))
         (lambda ()
-          (dolist (path '(:command :setting))
-            (dolist (transition '((nil t) (t nil) (t t) (nil nil)))
-              (destructuring-bind (before after) transition
-                (setf (config :compact-view-p configuration) before
-                      resets 0
-                      publications 0)
-                (ecase path
-                  (:command
-                   (application-operation-call application "compact-tool" after))
-                  (:setting
-                   (application-apply-setting application ':compact-view-p after)))
-                (test-assert (eq after (config :compact-view-p configuration))
-                             "both controls apply the compact view value")
-                (test-assert (= resets (if (eq before after) 0 1))
-                             "either compact view transition resets pagination exactly once")
-                (test-assert (= publications 1)
-                             "compact view mutations publish recovery once"))))
-          (setf resets 0 publications 0)
-          (application-operation-call application "compact-tool")
-          (test-assert (and (zerop resets) (zerop publications))
-                       "compact view status has no runtime side effects"))))))
+           (dolist (transition '((nil t) (t nil) (t t) (nil nil)))
+             (destructuring-bind (before after) transition
+               (setf (config :compact-view-p configuration) before
+                     resets 0
+                     publications 0)
+               (application-apply-setting application ':compact-view-p after)
+               (test-assert (eq after (config :compact-view-p configuration))
+                            "the setting applies the compact view value")
+               (test-assert (= resets (if (eq before after) 0 1))
+                            "a change in compact view resets pagination exactly once")
+               (test-assert (= publications 1)
+                            "applying compact view publishes recovery once"))))))))
   nil)
 
 (defclass application-authentication-test-provider (model-provider)

@@ -612,7 +612,7 @@
 (defun test-acp-session-busy-nonprose-prompts ()
   "Complete responsive input immediately and defer held or boundary input until execution."
   (dolist (case '(("" :inline) ("(status)" :inline)
-                  ("(timestamps t)" :apply) ("(+ 1 2)" :hold)))
+                  ("(settings :turn-timestamps-p t)" :apply) ("(+ 1 2)" :hold)))
     (destructuring-bind (text action) case
       (with-test-configuration (configuration root)
         (let ((provider (make-instance 'acp-session-test-gated-provider
