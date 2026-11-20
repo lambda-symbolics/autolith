@@ -665,35 +665,6 @@ Autolith diagnosis may propose validated executable recoveries."
         (format nil "~A~%loop action: ~(~A~)" rendered action)
         rendered)))
 
-(-> application-run-side-status-input
-    (application string &key (:interactive-p boolean)) keyword)
-(defun application-run-side-status-input (application source &key (interactive-p t))
-  "Evaluate a top-level status call without ordinary Lisp transcript or context."
-  (let* ((*application-local-user-evaluation-p*               t)
-         (*application-command-interactive-p*                 interactive-p)
-         (*application-user-operation-recording-suppressed-p* t)
-         (evaluation
-           (application-lisp-evaluate
-            source :application application
-            :restart-selector
-            (and interactive-p
-                 (lambda (condition restarts)
-                   (application-lisp--select-restart application condition restarts)))))
-         (status                                              (application-lisp-evaluation-status evaluation)))
-    (unless (eq status ':ok)
-      (application-side-status-present
-       application source
-       (append (list (terminal-span ':notice "◆ status")
-                     (terminal-span ':plain (string #\Newline)))
-               (application-lisp--result-entry evaluation))))
-    (case status
-      (:ok
-       ':continue)
-      (:aborted
-       ':aborted)
-      (:error
-       ':failed))))
-
 (-> application-run-lisp-input
     (application string &key (:interactive-p boolean))
     keyword)
@@ -704,9 +675,6 @@ INTERACTIVE-P permits command pickers and restart selection. Present completed
 evaluation results before durable retention so a persistence failure cannot
 conceal local side effects. The persistence failure still propagates to the
 caller."
-  (when (application-side-status-source-p application source)
-    (return-from application-run-lisp-input
-      (application-run-side-status-input application source :interactive-p interactive-p)))
   (application-present application (application-lisp--source-entry source))
   (application-set-local-activity application "evaluating local Lisp")
   (let* ((evaluation

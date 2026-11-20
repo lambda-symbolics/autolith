@@ -637,7 +637,6 @@
                                           (:file "data-transfer-command-tests")
                                           (:file "data-transfer-tests")
                                           (:file "user-operation-context-tests")
-                                          (:file "side-status-tests")
                                           (:file "application-operation-tests")
                                           (:file "help-tests")
                                           (:file "recovery-input-vault-tests")

@@ -2943,21 +2943,6 @@ Provider preference fields are sent as supplied, including =order=,
 
 ** Commands
 
-Use =(btw)= or =(side)= to inspect the running session without interrupting a
-turn. Select one field with =(btw :focus)=, =(btw :elapsed)=, =(btw :tasks)=,
-=(btw :queue)=, =(btw :step)=, or =(btw :eta)=.
-
-The colored =◆ status= entry shows the current objective or latest user input,
-elapsed and accumulated working time, queued/running task counts, pending input,
-and the current activity. Completion time is unknown. Status inspection uses
-live memory without tools or a model request. Ctrl-PgUp and Ctrl-PgDn include
-these entries among message jump points.
-
-Status output is durable display-only history. Resume and replay include it;
-rebuilt model input, compaction summaries, and recent-operation context exclude
-it. A status query advances the durable record sequence without adding a user
-turn.
-
 Put user commands in =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp=, or load
 a user-owned Lisp file from there. Autolith loads those definitions after the
 tracked system on each startup, including after a source update or an installed

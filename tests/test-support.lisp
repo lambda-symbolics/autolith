@@ -23,6 +23,17 @@
   "Return the plain text of a presented transcript ENTRY."
   (if (stringp entry) entry (terminal--spans-text entry)))
 
+(-> side-status-tests--records (conversation) list)
+(defun side-status-tests--records (conversation)
+  "Return the display records from the fixture's durable history."
+  (let ((records nil))
+    (conversation-replay--map-records
+     conversation
+     (lambda (record)
+       (when (eq (first record) ':side-status)
+         (push record records))))
+    (nreverse records)))
+
 (-> test-terminal-row-text (list) string)
 (defun test-terminal-row-text (row)
   "Return ROW's concatenated terminal span and widget label text."
