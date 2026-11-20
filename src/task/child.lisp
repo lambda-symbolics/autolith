@@ -57,7 +57,7 @@ Every role talks through channels, so any child can answer its parent."
            (tool-child-safe-p tool))
       (and spawn-p
            (string= (tool-namespace tool) "child")
-           (member (tool-name tool) '("spawn" "roles" "rename" "compact" "reset" "remove") :test #'string=)
+             (member (tool-name tool) '("spawn" "roles" "rename" "compact" "remove") :test #'string=)
            t)))
 
 (-> task-role-restrict-tool-registry (tool-registry configuration &key (:retain list)) tool-registry)

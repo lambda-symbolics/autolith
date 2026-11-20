@@ -2201,16 +2201,14 @@
                                                                                  "al-bkid11"))
                                        "keeper")
                               "a parent renames its child by its name")
-                 (test-assert (refused-p (lambda () (call 'child-reset-tool (json-object "child" "aide"))))
-                              "a grandchild is not the parent's to reset")
-                 (let ((lease (conversation-lease-acquire configuration "bkid11")))
-                   (unwind-protect
-                        (test-assert (and (refused-p (lambda ()
-                                                       (call 'child-reset-tool (json-object "child" "keeper"))))
-                                          (refused-p (lambda ()
-                                                       (call 'child-remove-tool (json-object "children" (vector "keeper"))))))
-                                     "a busy child is neither reset nor removed")
-                     (conversation-lease-release lease)))
+                   (let ((lease (conversation-lease-acquire configuration "bkid11")))
+                     (unwind-protect
+                          (test-assert
+                           (refused-p (lambda ()
+                                        (call 'child-remove-tool
+                                              (json-object "children" (vector "keeper"))))))
+                           "a busy child cannot be removed")
+                       (conversation-lease-release lease)))
                  (let ((compacted nil))
                    (test-call-with-function-replacements
                     (list (list 'agent-compact-conversation
@@ -2225,14 +2223,6 @@
                       (call 'child-compact-tool (json-object "child" "keeper"))))
                    (test-assert (equal compacted '("bkid11" "scout" t))
                                 "compaction runs on the child's history, in its role, while holding its lease"))
-                 (call 'child-reset-tool (json-object "child" "bkid11"))
-                 (let ((child (conversation-load-by-id configuration "bkid11")))
-                   (test-assert (and (not (search "work for broot11"
-                                                  (format nil "~S" (conversation--read-records
-                                                                    (conversation-pathname child)))))
-                                     (equal (conversation-role child) "scout")
-                                     (equal (conversation-parent-identifier child) "broot11"))
-                                "a reset child keeps its role and parent and loses its history"))
                  (test-assert (search "Removed @keeper, @sibling, and the 1 channels below them"
                                       (tool-result-content
                                        (call 'child-remove-tool (json-object "children" (vector "keeper" "sibling")))))
@@ -2249,7 +2239,7 @@
                                                (member (world-session-mapping-conversation mapping)
                                                        '("bkid11" "bgrand11") :test #'string=))
                                              (world-session-mappings configuration)))
-                                "a removed child leaves no channel, agent, history or mapping")))
+                                  "a removed child leaves no channel, agent, history or mapping"))
             (task-orchestrator-close orchestrator))))))
   nil)
 

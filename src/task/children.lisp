@@ -3,8 +3,7 @@
 ;;;; -- Child Lifecycle Tools --
 
 ;;; A parent keeps its children: it sends them work through their channels,
-;;; and child.rename, child.compact, child.reset and child.remove look after
-;;; them. Each names one child by its name or its channel, among the channels
+;;; and child.remove looks after them. Each names one child by its name or its channel, among the channels
 ;;; nested in the caller's own. A child that runs, or whose channel is open,
 ;;; is busy, and only renaming does not wait for it to be idle.
 
@@ -24,9 +23,6 @@
   ()
   (:documentation "Compact an idle child's history, as (compact) does for a session."))
 
-(defclass child-reset-tool (child-tool)
-  ()
-  (:documentation "Clear an idle child's history, keeping its name, role and channel."))
 
 (defclass child-remove-tool (child-tool)
   ()
@@ -65,19 +61,6 @@
      :tool-name "child.compact")
     (tool-success (format nil "Compacted @~A's history." (participant-name agent)))))
 
-(defmethod tool-execute ((tool child-reset-tool) (context tool-context) arguments)
-  "Clear the history of the idle child ARGUMENTS name."
-  (declare (ignore tool))
-  (task--validate-tool-arguments arguments '("child") "child.reset")
-  (multiple-value-bind (channel agent)
-      (task-child--find context (tool-argument arguments "child" :required t) "child.reset")
-    (task-child--call-with-lease
-     context channel
-     (lambda ()
-       (task-child--reset-history (tool-context-configuration context) channel))
-     :tool-name "child.reset")
-    (tool-success (format nil "Cleared @~A's history; its name, role and channel stay."
-                          (participant-name agent)))))
 
 (defmethod tool-execute ((tool child-remove-tool) (context tool-context) arguments)
   "Delete the idle children ARGUMENTS name, with everything they own, in one pass."
@@ -122,8 +105,6 @@
                 '("child" "name"))
       (register 'child-compact-tool "compact"
                 "Compact an idle child's history into a summary, so it keeps working with less context.")
-      (register 'child-reset-tool "reset"
-                "Clear an idle child's history. It keeps its name, role and channel, and starts fresh on the next work you send it.")
       (register 'child-remove-tool "remove"
                 "Delete idle children for good, several at once: their channels, histories, worktrees and own children."
                 (json-object "children" (json-object "type"        "array"
@@ -182,21 +163,3 @@
                                                            :orchestrator (child-tool-orchestrator tool)
                                                            :depth        (1+ (task-parent-depth parent)))
                   :worker        nil)))
-
-(-> task-child--reset-history (configuration string) null)
-(defun task-child--reset-history (configuration channel)
-  "Replace the history of child CHANNEL, whose lease the caller holds, with an empty one of the same child."
-  (let* ((old      (conversation-load-by-id configuration channel))
-         (pathname (conversation-pathname old)))
-    (conversation-delete-history configuration channel)
-    (conversation-append-record
-     (conversation-create configuration
-                          :identifier        channel
-                          :prompt-cache-key  (conversation-prompt-cache-key old)
-                          :storage-root      (uiop:pathname-directory-pathname pathname)
-                          :parent-identifier (conversation-parent-identifier old)
-                          :agent-name        (conversation-agent-name old)
-                          :role              (conversation-role old)
-                          :origin-directory  (conversation-origin-directory old))
-     (goal->record nil)))
-  nil)
