@@ -3526,19 +3526,6 @@ pristine or recovery session runs apart from it."
          choice)))
   ':continue)
 
-(define-application-command application--builtin-tasks-command
-    (:name              "/tasks"
-     :argument          "[list|get|transcript|cancel|revive|abandon] [ID] [ARGUMENTS]"
-     :description       "inspect task lineage, artifacts and explicit recovery"
-     :tip               "shows compact activity and routes steering through ordinary job authority."
-     :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :slash-parser      application-task-inspector-slash-arguments
-     :callable          t)
-    (application &optional (action ':list) id &rest options)
-  (application-present application (apply #'application-task-inspector application action id options))
-  ':continue)
-
 (define-application-command application--builtin-goal-command
     (:name              "/goal"
      :help-topic        :conversations

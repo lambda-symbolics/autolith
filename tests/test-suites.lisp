@@ -1641,12 +1641,6 @@
   test-task-continuity-revive
   test-task-continuity-ownership)
 
-(define-test-suite task-inspector
-  test-task-inspector-transcript
-  test-task-inspector-bounded-usage
-  test-task-inspector-presentation
-  test-task-inspector-dispatch)
-
 (define-test-suite mission-review
   test-mission-review-checkpoint-lifecycle
   test-mission-review-native-contract

@@ -83,7 +83,6 @@ integers, pathnames, and quoted data directly:
 (trace nil)
 (mcp :refresh)
 (permissions :ask)
-(tasks :transcript "ID" :offset 0 :limit 4000)
 #+END_SRC
 
 Omit a switch argument to inspect its value. Pass =t= to enable it or =nil= to
@@ -3298,7 +3297,7 @@ turn.
 Delivery receipts survive restart and conversation compaction. Notifications are
 reconstructed from terminal artifacts without repeating job effects. Cancellation,
 paused or terminal missions, spent budgets, and conversation ownership constrain
-automatic turns. Inspect retained results with =job.get=, =job.continuity= or =(tasks)=.
+automatic turns. Inspect retained results with =job.get= or =job.continuity=.
 
 Outside a child's exact conversation, its outcomes are available only for
 inspection. Completing a child does not reopen it or redirect descendant results
@@ -3310,24 +3309,8 @@ subsequent ordinary turns. Use =job.wait= when deliberate waiting is appropriate
 
 ** Task inspection and continuity
 
-Use =(tasks)= for a compact nonmodal inventory of owned live and durable work,
-including lineage, timing, reported usage, recent activity and artifact paths:
-
-#+BEGIN_SRC lisp
-(tasks :list :offset 32 :limit 32)
-(tasks :get "JOB-ID")
-(tasks :transcript "JOB-ID" :offset 0 :limit 4000)
-(tasks :cancel "JOB-ID")
-#+END_SRC
-
-Lists show 32 tasks per page, with live work first. Use =:offset= and =:limit=
-(up to 64) to navigate.
-
-Transcript bounds are character counts, defaulting to 0 and 4000. Use the
-shown next offset for another window. The =:get= and =:cancel= actions
-use the ordinary owned job operations and authorization. A running child reads
-messages to its channel at its next safe boundary, so =(tell "CHILD" "text")=
-steers it.
+A running child reads messages to its channel at its next safe boundary. Use
+=(tell "CHILD" "text")= to steer it.
 
 Use =job.continuity= with =action= =list= or =get= to classify retained work as
 live detached, completed, reconstructible from a checkpoint, safe to restart,
@@ -3340,16 +3323,9 @@ The primary owner may declare =allow-restart= with a =safety= rationale and
 =image=, target =repl= and the same explicit authority. A safety rationale is
 an assertion about repeating external effects. Revival reattaches live work,
 starts the named REPL from its saved image, or dispatches a new child from a safe
-retained shared-workspace task specification:
-
-#+BEGIN_SRC lisp
-(tasks :revive "JOB-ID" :authorize t)
-(tasks :abandon "EXECUTION-ID" :authorize t)
-#+END_SRC
-
-For equivalent =job.continuity= calls, use =revive= or =abandon= with =id= and
-=authorize: true=. The recovery decision is durably recorded before dispatch
-and links the old execution to the new execution.
+retained shared-workspace task specification. Use =job.continuity= with
+=revive= or =abandon=, an =id=, and =authorize: true=. The recovery decision is
+durably recorded before dispatch and links the old execution to the new execution.
 
 A failed or interrupted revival consumes its claim and records an uncertain
 outcome for explicit inspection. When you resume a conversation, you see this
