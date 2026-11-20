@@ -505,11 +505,8 @@ told its client's pane with CHANNEL-PRESENTATION-SET-GEOMETRY."
   "The styled input prompt shown on the live editor row.")
 
 (defparameter *application-message-header-prefixes*
-  '("❯ you" "● " "> " "< " "◆ status")
-  "The transcript prefixes opening user and assistant messages in either style.
-
-The fullscreen viewport jumps between these lines, so a reader can follow the
-exchange without scrolling through reasoning and tool activity.")
+  '("❯ you" "● " "◆ status")
+  "The transcript prefixes used to navigate between messages and status.")
 
 (defparameter *application-placeholder*
   "Ask Autolith anything. Type (help) for operations."

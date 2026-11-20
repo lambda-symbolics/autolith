@@ -579,25 +579,15 @@ Retain the older edge when the resident character budget requires eviction."
 
 (-> terminal-ui-fullscreen--message-start-p (fullscreen-terminal-ui string (integer 0)) boolean)
 (defun terminal-ui-fullscreen--message-start-p (ui text offset)
-  "Return true when TEXT's row at OFFSET starts a line opening a user or assistant message.
-
-A line opens a message when it begins with a message prefix, or when it is an
-indented timestamp line directly above one, as in the REPL transcript style."
-  (flet ((prefixed-p (start)
-           (some (lambda (prefix)
-                   (let ((end (+ start (length prefix))))
-                     (and (<= end (length text))
-                          (string= prefix text :start2 start :end2 end))))
-                 (terminal-ui-message-header-prefixes ui))))
-    (and (or (zerop offset)
-             (char= (char text (1- offset)) #\Newline))
-         (or (prefixed-p offset)
-             (let ((newline (position #\Newline text :start offset)))
-               (and newline
-                    (< (+ offset 2) newline)
-                    (string= "  " text :start2 offset :end2 (+ offset 2))
-                    (prefixed-p (1+ newline)))))
-         t)))
+  "Return true when TEXT's row at OFFSET begins with a message prefix."
+  (and (or (zerop offset)
+           (char= (char text (1- offset)) #\Newline))
+       (some (lambda (prefix)
+               (let ((end (+ offset (length prefix))))
+                 (and (<= end (length text))
+                      (string= prefix text :start2 offset :end2 end))))
+             (terminal-ui-message-header-prefixes ui))
+       t))
 
 (-> terminal-ui-fullscreen--message-ranges (fullscreen-terminal-ui) list)
 (defun terminal-ui-fullscreen--message-ranges (ui)

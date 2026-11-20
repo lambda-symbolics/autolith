@@ -458,7 +458,6 @@
   test-terminal-fullscreen-submit-click
   test-localgroup-click-events
   test-terminal-fullscreen-message-jumps
-  test-terminal-fullscreen-repl-message-starts
   test-terminal-fullscreen-exit-epilogue
   test-terminal-fullscreen-forced-exit-resume)
 

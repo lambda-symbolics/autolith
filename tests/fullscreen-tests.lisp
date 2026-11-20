@@ -1188,25 +1188,6 @@
                        "Newer-edge eviction releases identities without advancing the older disk cursor.")))))
   nil)
 
-(-> test-terminal-fullscreen-repl-message-starts () null)
-(defun test-terminal-fullscreen-repl-message-starts ()
-  "Test REPL-style messages start at their timestamp line, or their marker without one."
-  (let* ((terminal (make-instance 'recording-terminal :columns 40 :rows 12))
-         (ui       (terminal-ui-create :terminal terminal :fullscreen-p t
-                                       :message-header-prefixes '("> " "< "))))
-    (dolist (case (list (list (format nil "  2026-10-26 21:30~%> hi!~%") 0 t
-                              "a timestamp line above a marker opens the message")
-                        (list (format nil "  2026-10-26 21:30~%> hi!~%") 19 t
-                              "the marker line itself still opens a message")
-                        (list (format nil "< reply~%  continued~%") 8 nil
-                              "an indented continuation line opens nothing")
-                        (list (format nil "  body~%~%< next~%") 0 nil
-                              "an indented line above a blank row opens nothing")))
-      (destructuring-bind (text offset expected description) case
-        (test-assert (eq (terminal-ui-fullscreen--message-start-p ui text offset) expected)
-                     description))))
-  nil)
-
 (-> test-terminal-fullscreen-exit-epilogue () null)
 (defun test-terminal-fullscreen-exit-epilogue ()
   "Test epilogue text reaches the normal screen after the alternate buffer is left."
