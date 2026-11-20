@@ -22,7 +22,7 @@ autolith_launcher_capture_asdf_environment()
 
 autolith_update_usage()
 {
-  printf 'Usage: autolith update [--help]\n       autolith --update [--help]\n'
+  printf 'Usage: autolith update [--help]\n'
 }
 
 autolith_update_help()
@@ -92,12 +92,6 @@ autolith_launcher_parse()
         take_value=true
         remaining_arguments+=("$argument")
         ;;
-      --update)
-        if [[ $command_seen == false ]]; then
-          update_requested=true
-        fi
-        remaining_arguments+=("$argument")
-        ;;
       -*) remaining_arguments+=("$argument") ;;
       *)
         if [[ $command_seen == false && $argument == update ]]; then
@@ -151,7 +145,7 @@ autolith_launcher_parse()
     if [[ $# -gt 1 && ${!#} == -- ]]; then
       set -- "${original_arguments[@]:0:$#-1}"
     fi
-    if [[ (${1:-} != update && ${1:-} != --update) || $# -gt 2 ||
+    if [[ ${1:-} != update || $# -gt 2 ||
           ($# -eq 2 && ${2:-} != --help && ${2:-} != -h) ]]; then
       autolith_update_usage >&2
       exit 64

@@ -1964,8 +1964,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
    :name        "update"
    :description "install the latest packaged release and exit"
    :long-description
-   "autolith --update is an equivalent update-and-exit alias.
-Source checkouts update through Git and ./script/bootstrap; Nix installations
+   "Source checkouts update through Git and ./script/bootstrap; Nix installations
 update through their flake or Nix profile."
    :handler
    (lambda (command)
@@ -1996,8 +1995,8 @@ Lisp starts; on Windows it prints the folders to delete."
 
 (-> main--normalize-update-arguments (list) list)
 (defun main--normalize-update-arguments (arguments)
-  "Validate standalone update syntax and normalize its legacy launcher alias."
-  (if (member (first arguments) '("update" "--update") :test #'equal)
+  "Validate standalone update syntax."
+  (if (equal (first arguments) "update")
       (let ((tail (rest arguments)))
         (when (equal (last tail) '("--"))
           (setf tail (butlast tail)))
@@ -2078,8 +2077,8 @@ secure: traffic is unencrypted, so put a TLS proxy in front."
    :long-description
    "The stable launcher also accepts --recovery and --from-source, which
 select how Autolith starts before this command line is parsed.
-Use -- to end option parsing. autolith --update is an alias for autolith update;
-both update the packaged installation and exit without starting a session.
+Use -- to end option parsing. autolith update installs the latest packaged
+release and exits without starting a session.
 autolith uninstall removes the installation and keeps user data."
    :version      *autolith-version*
    :options      (main--session-options)

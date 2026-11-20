@@ -739,13 +739,12 @@ autolith update
 #+END_SRC
 
 The command exits successfully when updated or already current, and returns a
-nonzero status if checking or installing fails. =autolith --update= is an
-equivalent update-and-exit alias. Run =autolith= afterward to start the new
-release. Both spellings accept =--help= or =-h=; extra arguments exit with status
-64 before checking for updates. Use your flake or Nix profile to update Nix
-installations; update the checkout and run =./script/bootstrap= for source
-installations. On Nix and source installations, the command explains how to
-update without building or starting Lisp images.
+nonzero status if checking or installing fails. Run =autolith= afterward to
+start the new release. The command accepts =--help= or =-h=; extra arguments
+exit with status 64 before checking for updates. Use your flake or Nix profile
+to update Nix installations; update the checkout and run =./script/bootstrap=
+for source installations. On Nix and source installations, the command
+explains how to update without building or starting Lisp images.
 
 To update from a session and restart it with its original command arguments:
 

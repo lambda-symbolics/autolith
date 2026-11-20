@@ -69,11 +69,11 @@ Pristine recovery keeps the default.")
 
 (defun launcher-update-usage ()
   "Print the update sub-command usage to standard error."
-  (format *error-output* "Usage: autolith update [--help]~%       autolith --update [--help]~%"))
+  (format *error-output* "Usage: autolith update [--help]~%"))
 
 (defun launcher-update-help ()
   "Print the update sub-command help to standard output."
-  (format t "Usage: autolith update [--help]~%       autolith --update [--help]~%~%Install the latest packaged release and exit without starting a session.~%Source checkouts: update the checkout, then run script/bootstrap.ps1.~%"))
+  (format t "Usage: autolith update [--help]~%~%Install the latest packaged release and exit without starting a session.~%Source checkouts: update the checkout, then run script/bootstrap.ps1.~%"))
 
 (defun launcher-uninstall-usage ()
   "Print the uninstall sub-command usage to standard error."
@@ -119,10 +119,6 @@ before deleting the listed directories."
            (setf (launcher-request-localgroup-handoff-p request) t))
          (setf take-value-p t)
          (push argument remaining))
-        ((string= argument "--update")
-         (unless command-seen-p
-           (setf (launcher-request-update-p request) t))
-         (push argument remaining))
         ((and (plusp (length argument)) (char= (char argument 0) #\-))
          (push argument remaining))
         (t
@@ -166,7 +162,7 @@ before deleting the listed directories."
                                (string= (first (last arguments)) "--"))
                           (butlast arguments)
                           arguments)))
-        (when (or (not (member (first operands) '("update" "--update") :test #'string=))
+        (when (or (not (string= (first operands) "update"))
                   (> (length operands) 2)
                   (and (= (length operands) 2)
                        (not (member (second operands) '("--help" "-h") :test #'string=))))
