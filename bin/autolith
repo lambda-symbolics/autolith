@@ -220,9 +220,9 @@ active_image_valid()
        --autolith-internal-active-image-probe >/dev/null 2>&1
 }
 
-# The world server hosts every channel in one process, so the active image gets
-# a larger heap than SBCL's default. Pristine recovery keeps the default.
-active_heap_size=2GB
+# The hosted channels share this heap. Leave room for SBCL to copy surviving
+# objects before releasing the old pages. Pristine recovery keeps its default.
+active_heap_size=3GB
 
 run_active_core()
 {
