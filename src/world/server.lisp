@@ -775,9 +775,10 @@ REASON, when given, is what each attached terminal is told before it lets go."
 
 (-> world-server-tell (world-server t t) list)
 (defun world-server-tell (server channel text)
-  "Send TEXT to CHANNEL as the person, as (tell) does, and answer with the channel it reached.
+  "Deliver prose TEXT as the person, or submit Lisp to CHANNEL's input controller.
 
-A channel nobody serves is served for its agent to read the message."
+Lisp uses canonical channel admission without terminal pickers or restart selection.
+An unhosted target is served before admitting Lisp; prose keeps durable message delivery."
   (unless (and (stringp channel) (stringp text))
     (error 'world-error
            :message   "A tell names the channel and the message."
@@ -788,11 +789,21 @@ A channel nobody serves is served for its agent to read the message."
                             (error 'world-error
                                    :message   "No person is in the world yet."
                                    :operation ':tell)))
-         (target        (channel-identifier (world-channel-designated world configuration channel))))
-    (world-message-send configuration :sender  (participant-identifier person)
-                                      :channel target
-                                      :text    text)
-    (list :ok :operation ':tell :channel target)))
+         (target        (world-channel-designated world configuration channel))
+         (identifier    (channel-identifier target)))
+    (if (input-lisp-p text)
+        (let* ((host        (world-server--start-host
+                             server :conversation-id identifier
+                                    :directory       (channel-workspace target)
+                                    :arguments       (list :switch-p     t
+                                                           :fullscreen-p (world-server-fullscreen-p server))))
+               (application (world-host-application (world-server--wait-ready server host))))
+          (application-input-controller--handle-submission
+           (application-input-controller application) text :interactive-p nil))
+        (world-message-send configuration :sender  (participant-identifier person)
+                                          :channel identifier
+                                          :text    text))
+    (list :ok :operation ':tell :channel identifier)))
 
 (-> world-server-status (world-server) list)
 (defun world-server-status (server)

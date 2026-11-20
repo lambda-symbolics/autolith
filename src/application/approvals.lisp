@@ -60,6 +60,8 @@ A choice is an item's :VALUE, or its :NAME without one. KIND says what is
 approved, such as :command or :external-tool, and ENTRY describes the request
 in plain text for clients. Return NIL when the approval is dismissed, the
 turn is cancelled, or nobody is left to answer."
+  (when (and *application-local-user-evaluation-p* (not *application-command-interactive-p*))
+    (error 'configuration-error :message "This operation requires interactive approval."))
   (let* ((hub      (application-client-hub application))
          (ui       (application-ui application))
          (choices  (mapcar (lambda (item) (or (getf item :value) (getf item :name))) items))

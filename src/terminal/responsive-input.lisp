@@ -1634,11 +1634,11 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
   nil)
 
 (-> application-input-controller--schedule-lisp
-    (application-input-controller (or string user-message-input))
+    (application-input-controller (or string user-message-input) &key (:interactive-p boolean))
     boolean)
-(defun application-input-controller--schedule-lisp (controller source)
+(defun application-input-controller--schedule-lisp (controller source &key (interactive-p t))
   "Queue local Lisp SOURCE to run at the first idle opportunity."
-  (when (application-input-controller--enqueue controller ':lisp source)
+  (when (application-input-controller--enqueue controller (if interactive-p ':lisp ':native-lisp) source)
     (application-input-controller--present-scheduled-lisp controller (user-message-input-text source))
     t))
 
@@ -1915,15 +1915,16 @@ reaches the very next provider request."
           (application-input-controller--open-prompt-if-ready controller))))))
 
 (-> application-input-controller--run-responsive-lisp
-    (application-input-controller string)
+    (application-input-controller string &key (:interactive-p boolean))
     keyword)
-(defun application-input-controller--run-responsive-lisp (controller source)
-  "Execute immediate local Lisp SOURCE on CONTROLLER's terminal reader."
-  (application-input-controller--call-with-responsive-prompt-block
-   controller
-   (lambda ()
-     (application-run-lisp-input
-      (application-input-controller-application controller) source))))
+(defun application-input-controller--run-responsive-lisp (controller source &key (interactive-p t))
+  "Execute immediate local Lisp SOURCE with the submitting caller's interaction policy."
+  (flet ((run ()
+           (application-run-lisp-input
+            (application-input-controller-application controller) source :interactive-p interactive-p)))
+    (if interactive-p
+        (application-input-controller--call-with-responsive-prompt-block controller #'run)
+        (run))))
 
 (-> application-input-controller--handle-recalled-submission
     (application-input-controller (or string user-message-input)
@@ -2095,20 +2096,22 @@ may execute immediately; other Lisp waits for the idle boundary."
 
 (-> application-input-controller--handle-submission
     (application-input-controller (or string user-message-input)
-     &key (:steer-p boolean))
+     &key (:steer-p boolean) (:interactive-p boolean))
     null)
-(defun application-input-controller--handle-submission (controller input &key steer-p)
+(defun application-input-controller--handle-submission (controller input &key steer-p (interactive-p t))
   "Route INPUT through canonical policy and preserve its exact terminal outcome."
   (application-input-controller--call-submitted-input
    controller input
-   (lambda () (application-input-controller--route-submission controller input :steer-p steer-p)))
+   (lambda ()
+     (application-input-controller--route-submission
+      controller input :steer-p steer-p :interactive-p interactive-p)))
   nil)
 
 (-> application-input-controller--route-submission
     (application-input-controller (or string user-message-input)
-     &key (:steer-p boolean))
+     &key (:steer-p boolean) (:interactive-p boolean))
     t)
-(defun application-input-controller--route-submission (controller input &key steer-p)
+(defun application-input-controller--route-submission (controller input &key steer-p (interactive-p t))
   "Apply canonical input policy, returning :DEFERRED only after accepting later work."
   (let* ((application (application-input-controller-application controller))
          (message     (input-message input))
@@ -2140,14 +2143,17 @@ may execute immediately; other Lisp waits for the idle boundary."
                (:cancel
                 (application-input-controller--request-exit controller ':quit))
                (:execute
-                (executed (application-input-controller--run-responsive-lisp controller text)))
+                (executed (application-input-controller--run-responsive-lisp
+                           controller text :interactive-p interactive-p)))
                (:steer
                 (deferred (application-input-controller--schedule-steering-command controller input)))
                (:apply
                 (deferred (application-input-controller--schedule-apply controller input)))
                (:hold
-                (deferred (application-input-controller--schedule-lisp controller input))))
-             (deferred (application-input-controller--enqueue controller ':lisp input))))
+                (deferred (application-input-controller--schedule-lisp
+                           controller input :interactive-p interactive-p))))
+             (deferred (application-input-controller--enqueue
+                        controller (if interactive-p ':lisp ':native-lisp) input))))
         (t
          ':done)))))
 
@@ -3709,15 +3715,12 @@ however it ended."
                 :tool-restriction-p        t
                 :goal-continuations-p      nil
                 :fatal-agent-loop-errors-p nil)))
-             (:native-lisp
-              (application-input-controller--record-prompt-result
-               controller
-               (application-run-lisp-input application (second work) :interactive-p nil)))
-             (:lisp
+             ((:native-lisp :lisp)
               (let ((result
                       (if (input-async-lisp-p (second work))
                           (application-run-async-lisp-input application (second work))
-                          (application-run-lisp-input application (second work)))))
+                          (application-run-lisp-input
+                           application (second work) :interactive-p (eq (first work) ':lisp)))))
                 (application-input-controller--record-prompt-result
                  controller result)
                 (when (eq result ':quit)

@@ -1067,6 +1067,102 @@ the version the client says it is, when it says one."
                              "a direct message or mention from another channel schedules its cold recipient")))))))))
   nil)
 
+(-> test-world-server-tell-input-dispatch () null)
+(defun test-world-server-tell-input-dispatch ()
+  "Dispatch CLI Lisp in cold and busy channels without sending it to a model or opening approvals."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (declare (ignore root))
+     (world-tests--persisted-conversation configuration "btell31" 1000)
+     (world-server--reconcile configuration)
+     (world-participant-rename configuration "al-btell31" "cli-receiver")
+     (let ((application nil)
+           (picks       0))
+       (test-call-with-function-replacements
+        (list (list 'localgroup--client-configuration (lambda () configuration))
+              (list 'terminal-ui-select
+                    (lambda (&rest arguments)
+                      (declare (ignore arguments))
+                      (incf picks)
+                      nil)))
+        (lambda ()
+          (labels ((send (selector source)
+                     "Submit SOURCE through the CLI and return its acknowledgment."
+                     (with-output-to-string (*standard-output*)
+                       (let ((command (parse-command-line (main--top-level-command)
+                                                          (list "tell" selector source))))
+                         (funcall (command-handler command) command))))
+
+                   (operations ()
+                     "Return the recipient's durable local evaluations."
+                     (conversation-user-operation-snapshot (application-conversation application)))
+
+                   (await-operation (source count)
+                     "Wait for the exact SOURCE after COUNT earlier evaluations and return its record."
+                     (let ((record nil))
+                       (test-assert
+                        (task-tests--wait-until
+                         (lambda ()
+                           (setf record (find source (nthcdr count (operations))
+                                              :key  (lambda (item) (getf (rest item) :source))
+                                              :test #'string=)))
+                         30)
+                        (format nil "~S completes in its destination; operations: ~S; turn: ~S"
+                                source (operations)
+                                (application-input-controller-turn-state
+                                 (application-input-controller application))))
+                       record)))
+            (let* ((source "(format t \"hello from autolith tell\")")
+                   (output (send "@CLI-RECEIVER" source)))
+              (setf application (world-host-application (world-server--find-host server "btell31")))
+              (let ((record (await-operation source 0)))
+                (test-assert (and (eq (getf (rest record) :status) ':ok)
+                                  (search "hello from autolith tell" (getf (rest record) :result)))
+                             "a tell to a cold channel evaluates Lisp and retains captured output"))
+              (test-assert (and (search (conversation-identifier-display "btell31") output)
+                                (not (search "hello from autolith tell" output)))
+                           "tell acknowledges routing without forwarding destination evaluation output"))
+            (let* ((source "(permissions :auto)")
+                   (count  (length (operations))))
+              (send "btell31" source)
+              (test-assert (eq (getf (rest (await-operation source count)) :status) ':ok)
+                           "an explicit authorized action executes without an interactive choice"))
+            (let* ((source "(delete)")
+                   (count  (length (operations))))
+              (send "tell31" source)
+              (let ((record (await-operation source count)))
+                (test-assert (and (eq (getf (rest record) :status) ':aborted)
+                                  (non-empty-string-p (getf (rest record) :result)))
+                             (format nil "bare delete aborts with a refusal explanation: ~S" record))))
+            (let* ((controller (application-input-controller application))
+                   (source     "(format t \"queued CLI Lisp\")")
+                   (count      (length (operations))))
+              (test-assert (task-tests--wait-until
+                            (lambda () (not (application-input-controller-busy-p controller))) 10)
+                           "earlier work finishes before the busy fixture takes ownership")
+              (application-input-controller-begin-external-work controller)
+              (test-assert (application-input-controller-turn-active-p controller)
+                           "the busy fixture owns an active turn")
+              (unwind-protect
+                   (progn
+                     (send "btell31" source)
+                     (test-assert (= (length (operations)) count)
+                                  "ordinary Lisp waits for the busy channel's idle boundary")
+                     (let ((before (length (operations))))
+                       (send "btell31" "(delete)")
+                       (let ((record (await-operation "(delete)" before)))
+                         (test-assert (and (eq (getf (rest record) :status) ':aborted)
+                                           (non-empty-string-p (getf (rest record) :result)))
+                                      (format nil "busy delete aborts with a refusal explanation: ~S" record)))))
+                (application-input-controller-finish-external-work controller))
+              (test-assert (eq (getf (rest (await-operation source (1+ count))) :status) ':ok)
+                           "deferred CLI Lisp executes through the ordinary work queue"))
+            (test-assert (and (zerop picks)
+                              (world-channel-find (world-load configuration) "btell31")
+                              (null (world-inbox-deliveries configuration "btell31")))
+                         "Lisp opens no picker, deletes nothing without confirmation, and never enters message delivery")))))))
+  nil)
+
 (-> test-world-server-checkpoint-cancel () null)
 (defun test-world-server-checkpoint-cancel ()
   "Test a checkpoint waiting for running work can be cancelled, and the channels go on without it."

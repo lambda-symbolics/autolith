@@ -1809,6 +1809,18 @@ explicitly. For example, =autolith tell researcher "review this"= sends a
 message to researcher wherever that agent resides. Ambiguous IDs report their
 matches and select nothing.
 
+Send a Lisp form as the quoted message to evaluate it in the target channel:
+
+#+BEGIN_SRC sh
+autolith tell TARGET '(format t "hello from autolith tell")'
+#+END_SRC
+
+The same input admission rules apply as in the channel. Evaluation is
+noninteractive: supply command arguments explicitly; an action requiring
+confirmation, such as =(delete)=, reports an error instead of opening a picker.
+Read evaluation output and errors in the target channel's transcript. The CLI
+prints only the routing acknowledgment, without waiting for queued work to finish.
+
 When exactly one endpoint is reachable, omit =TARGET= from =pause= or =detach=
 to select it. These commands require a hosted channel;
 =tell= also accepts cold channels. A message sent there, including a mention
