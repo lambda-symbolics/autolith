@@ -5535,9 +5535,9 @@
                     ("/permissions" (:full) :apply) ("/hurry-up" (t) :apply)
                     ("/cwd" ("one/") :steer) ("/cwd" () :execute)
                     ("/goal" (:pause) :hold) ("/mcp" () :execute)
-                    ("/hurry-up" () :execute) ("/model" () :hold)
-                    ("/effort" () :hold) ("/status" () :execute)
-                    ("/compact" () :hold) ("/close" () :cancel)))
+                    ("/hurry-up" () :execute) ("/model" () :apply-interactive)
+                    ("/effort" () :apply-interactive) ("/permissions" () :apply-interactive)
+                    ("/status" () :execute) ("/compact" () :hold) ("/close" () :cancel)))
       (destructuring-bind (name arguments expected) case
         (test-assert (eq (busy-action name arguments) expected)
                      (format nil "busy ~A ~S resolves to ~A" name arguments expected)))))
@@ -5576,10 +5576,10 @@
                      (list (list ':lisp "(compact)")))
               "only genuinely held commands wait behind the active turn")
              (test-assert
-              (equal (deque->list
-                      (application-input-controller-pending-apply-items
-                       controller))
-                     (list "(timestamps t)"))
+               (equal (deque->list
+                       (application-input-controller-pending-apply-items
+                        controller))
+                      (list (list ':native-lisp "(timestamps t)")))
               "state changes queue for the next safe boundary instead")
              (application-input-controller--apply-pending-commands controller)
              (test-assert
@@ -5608,13 +5608,59 @@
                   (application-input-controller--apply-pending-commands controller)))
                (test-assert
                 (not picker-opened-p)
-                "boundary-applied commands never open interactive pickers"))
+                "an explicit model value applies without opening an effort picker"))
+             (let ((events nil))
+               (flet ((record (event)
+                        "Record the picker or effect and whether it ran during the turn."
+                        (push (list event (application-input-controller-turn-active-p controller)) events)))
+                 (test-call-with-function-replacements
+                  (list (list 'application--pick-model
+                              (lambda (candidate &key provider)
+                                (declare (ignore candidate provider))
+                                (record ':model-picker)
+                                "gpt-5.6-luna"))
+                        (list 'application-set-model
+                              (lambda (candidate model &key provider)
+                                (declare (ignore candidate model provider))
+                                (record ':model-changed)))
+                        (list 'application--pick-reasoning-effort
+                              (lambda (candidate)
+                                (declare (ignore candidate))
+                                (record ':effort-picker)
+                                "high"))
+                        (list 'application-set-reasoning-effort
+                              (lambda (candidate effort)
+                                (declare (ignore candidate effort))
+                                (record ':effort-changed)))
+                        (list 'application--pick-identifier
+                              (lambda (candidate &key &allow-other-keys)
+                                (declare (ignore candidate))
+                                (record ':permissions-picker)
+                                "ask"))
+                        (list 'application-permissions-command
+                              (lambda (candidate choice)
+                                (declare (ignore candidate))
+                                (record choice))))
+                  (lambda ()
+                    (dolist (input '("(model)" "(effort)" "(permissions)"))
+                      (application-input-controller--handle-submission controller input))
+                    (test-assert (null events) "no picker opens on the submission thread")
+                    (application-input-controller--apply-pending-commands controller)))
+                 (test-assert
+                  (equal (nreverse events)
+                         '((:model-picker t) (:model-changed t) (:effort-picker t) (:effort-changed t)
+                           (:effort-picker t) (:effort-changed t) (:permissions-picker t) (:ask t)))
+                  "queued pickers and selected values apply during the active turn in input order")
+                 (test-assert
+                  (equal (application-input-controller--state controller :work-items)
+                         (list (list ':lisp "(compact)")))
+                  "settings use the active boundary instead of joining the held follow-up")))
              (application-input-controller--handle-submission
               controller "(timestamps nil)")
              (test-assert
               (equal (deque->list
                       (application-input-controller-pending-apply-items controller))
-                     (list "(timestamps nil)"))
+                     (list (list ':native-lisp "(timestamps nil)")))
               "canonical Lisp state changes queue for the next safe boundary")
              (application-input-controller--apply-pending-commands controller)
              (test-assert

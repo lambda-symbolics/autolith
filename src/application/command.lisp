@@ -29,7 +29,7 @@
     "The command metadata keys every defining form must state explicitly.")
 
   (defparameter *application-command-busy-behaviors*
-    '(:hold :inspect :execute :apply :steer :cancel)
+   '(:hold :inspect :execute :apply :apply-interactive :steer :cancel)
     "The supported command policies while application work is active.")
 
   (defparameter *application-command-terminal-behaviors*
@@ -397,7 +397,7 @@ The maximum is NIL for &REST or &KEY."
    (busy-behavior
     :initarg       :busy-behavior
     :reader        application-command-busy-behavior
-    :type          (member :hold :inspect :execute :apply :cancel)
+     :type         (member :hold :inspect :execute :apply :apply-interactive :steer :cancel)
     :documentation "The command policy while application work is active.")
    (terminal-behavior
     :initarg       :terminal-behavior
@@ -1075,10 +1075,11 @@ without changing the registry."
 
 (defgeneric application-command-busy-action (command invocation)
   (:documentation
-   "Return :HOLD, :EXECUTE, :APPLY, :STEER, or :CANCEL during active work.
+   "Return :HOLD, :EXECUTE, :APPLY, :APPLY-INTERACTIVE, :STEER, or :CANCEL.
 
-:EXECUTE runs immediately, :APPLY runs before steering at the next safe provider
-boundary, :STEER shares the ordered steering lane, and :HOLD waits for idle."))
+:EXECUTE runs immediately. :APPLY and :APPLY-INTERACTIVE run at the next safe
+provider boundary before steering, with the latter allowing a terminal picker.
+:STEER shares the ordered steering lane, and :HOLD waits for idle."))
 
 (defmethod application-command-busy-action
     ((command application-command)
@@ -1087,7 +1088,8 @@ boundary, :STEER shares the ordered steering lane, and :HOLD waits for idle."))
 
 Argument-free :INSPECT queries execute immediately. Argument-free :APPLY and
 :STEER queries do likewise unless they require exclusive terminal ownership.
-With arguments, :APPLY and :STEER defer through their respective boundary lanes."
+:APPLY-INTERACTIVE settings may use a picker at the boundary when called with
+no arguments; explicit values still use the noninteractive :APPLY lane."
   (ecase (application-command-busy-behavior command)
     (:hold
      ':hold)
@@ -1095,6 +1097,11 @@ With arguments, :APPLY and :STEER defer through their respective boundary lanes.
      (if (application-command-invocation-argument-free-p command invocation)
          ':execute
          ':hold))
+    (:apply-interactive
+     (if (and (application-command-invocation-argument-free-p command invocation)
+              (application-command-terminal-owner-p command invocation))
+         ':apply-interactive
+         ':apply))
     ((:apply :steer)
      (cond
        ((not (application-command-invocation-argument-free-p command invocation))

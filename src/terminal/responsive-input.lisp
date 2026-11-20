@@ -1782,17 +1782,15 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
       (setf (application-input-controller-active-command-input controller) nil))
     (if (eq (command-message-input-phase input) ':failed) ':failed ':continue)))
 
-(-> application-input-controller--schedule-apply
-    (application-input-controller (or string user-message-input)
-     &optional (option application-command-invocation)) boolean)
-(defun application-input-controller--schedule-apply (controller input &optional invocation)
-  "Queue INPUT at the next safe boundary, preserving a structured INVOCATION."
+(-> application-input-controller--enqueue-apply
+    (application-input-controller list) boolean)
+(defun application-input-controller--enqueue-apply (controller work)
+  "Queue WORK at the next safe provider boundary, ahead of follow-ups."
   (with-lock-held ((application-input-controller-lock controller))
-    (deque-push-back
-     (application-input-controller-pending-apply-items controller)
-     (if invocation
-         (command-message-input-create input invocation)
-         (user-message-input-copy input))))
+    (when (application-input-controller-stopping-p controller)
+      (return-from application-input-controller--enqueue-apply nil))
+    (deque-push-back (application-input-controller-pending-apply-items controller) work)
+    (sb-thread:condition-broadcast (application-input-controller-condition-variable controller)))
   (application-present
    (application-input-controller-application controller)
    (list
@@ -1802,9 +1800,26 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
     (terminal-span ':dim
                    (format nil "  ~A"
                            (text-cell-prefix
-                            (sanitize-text (user-message-input-text input) :single-line-p t)
-                            72)))))
+                             (sanitize-text (user-message-input-text (second work)) :single-line-p t)
+                             72)))))
   t)
+
+(-> application-input-controller--schedule-apply
+    (application-input-controller (or string user-message-input)
+     &optional (option application-command-invocation)) boolean)
+(defun application-input-controller--schedule-apply (controller input &optional invocation)
+  "Schedule a noninteractive command with its optional decoded INVOCATION."
+  (application-input-controller--enqueue-apply
+   controller (if invocation
+                  (list ':command (command-message-input-create input invocation))
+                  (list ':native-lisp (user-message-input-copy input)))))
+
+(-> application-input-controller--schedule-interactive-apply
+    (application-input-controller (or string user-message-input)) boolean)
+(defun application-input-controller--schedule-interactive-apply (controller input)
+  "Give an explicit terminal settings picker the same boundary as a setting value."
+  (application-input-controller--enqueue-apply
+   controller (list ':lisp (user-message-input-copy input))))
 
 (-> application-input-controller--take-pending-applies
     (application-input-controller)
@@ -1824,36 +1839,32 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
 (defun application-input-controller--apply-pending-commands (controller &key agent)
   "Apply queued command inputs, then let running AGENT adopt replaced runtime.
 
-Runs non-interactively so a boundary application never opens terminal
-pickers. AGENT, when supplied, is the loop still executing the current turn;
-it adopts a replaced configuration, provider, or tool registry so the change
-reaches the very next provider request."
-  (let ((inputs      (application-input-controller--take-pending-applies controller))
+Only terminal picker work runs interactively. AGENT, when supplied, is the loop
+still executing the current turn; it adopts the resulting runtime before the
+next provider request."
+  (let ((items       (application-input-controller--take-pending-applies controller))
         (application (application-input-controller-application controller)))
-    (when inputs
-      (dolist (input inputs)
-        (application-input-controller--call-submitted-input
-         controller input
-         (lambda ()
-           (let ((text (user-message-input-text input)))
-             (cond
-                ((typep input 'command-message-input)
-                 (let* ((invocation (command-message-input-invocation input))
-                        (command    (application-command-invocation-command invocation)))
-                   (application-command-execute command application invocation)))
-               ((input-async-lisp-p text)
-                (application-run-async-lisp-input application text))
-               ((input-lisp-p text)
-                (application-run-lisp-input application text :interactive-p nil))
-               ((input-leading-slash-p text)
-                (application--reject-slash-input application)))))))
+    (when items
+      (dolist (work items)
+        (destructuring-bind (kind input) work
+          (application-input-controller--call-submitted-input
+           controller input
+           (lambda ()
+             (ecase kind
+               (:command
+                (let* ((invocation (command-message-input-invocation input))
+                       (command    (application-command-invocation-command invocation)))
+                  (application-command-execute command application invocation)))
+               ((:lisp :native-lisp)
+                (application-run-lisp-input application (user-message-input-text input)
+                                            :interactive-p (eq kind ':lisp))))))))
       (when agent
         (application--agent-adopt-runtime application agent))))
   nil)
 
 (-> application-input-controller--lisp-active-turn-action
     (application-input-controller string)
-    (member :apply :steer :cancel :execute :hold))
+    (member :apply :apply-interactive :steer :cancel :execute :hold))
 (defun application-input-controller--lisp-active-turn-action (controller source)
   "Return SOURCE's admission action when CONTROLLER has an active turn."
   (if (application-input-controller-turn-active-p controller)
@@ -2025,6 +2036,8 @@ may execute immediately; other Lisp waits for the idle boundary."
            (application-input-controller--request-exit controller ':quit))))
       (:steer
        (application-input-controller--schedule-steering-command controller input))
+      (:apply-interactive
+       (application-input-controller--schedule-interactive-apply controller input))
       (:apply
        (application-input-controller--schedule-apply controller text))
       (:hold
@@ -2149,6 +2162,11 @@ may execute immediately; other Lisp waits for the idle boundary."
                 (deferred (application-input-controller--schedule-steering-command controller input)))
                (:apply
                 (deferred (application-input-controller--schedule-apply controller input)))
+               (:apply-interactive
+                (deferred
+                 (if interactive-p
+                     (application-input-controller--schedule-interactive-apply controller input)
+                     (application-input-controller--schedule-lisp controller input :interactive-p nil))))
                (:hold
                 (deferred (application-input-controller--schedule-lisp
                            controller input :interactive-p interactive-p))))

@@ -3271,7 +3271,7 @@ pristine or recovery session runs apart from it."
      :argument          "[MODEL] [:provider PROVIDER]"
      :description       "pick a registered provider model and reasoning effort"
      :tip               "Select a provider/model ID, or use (model \"ID\" :provider \"NAME\"). The choice is saved for future sessions."
-     :busy-behavior     :apply
+     :busy-behavior     :apply-interactive
      :terminal-behavior :exclusive
      :callable          t)
     (application &rest arguments)
@@ -3320,7 +3320,7 @@ pristine or recovery session runs apart from it."
      :argument          "[LEVEL]"
      :description       "pick the reasoning effort"
      :tip               "sets the model's reasoning budget without changing models. Higher levels allow more reasoning and can take longer; available levels depend on the model."
-     :busy-behavior     :apply
+     :busy-behavior     :apply-interactive
      :terminal-behavior :exclusive-without-arguments
      :callable          t)
     (application &optional (effort nil effort-supplied-p))
@@ -3448,7 +3448,7 @@ pristine or recovery session runs apart from it."
      :help-order        2
      :description       "choose and remember command access for this channel"
      :tip               "Use `(permissions :ask)` for approval prompts, `:auto` for automatic authorization, `:sandbox` for workspace confinement, or `:full` for host access in this channel across restarts."
-     :busy-behavior     :apply
+     :busy-behavior     :apply-interactive
      :terminal-behavior :exclusive-without-arguments
      :callable          t
      :slash-parser      application--parse-permissions-control

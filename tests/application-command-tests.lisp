@@ -2251,8 +2251,10 @@
            (controller   (application-input-controller-create application :start-reader-p nil)))
       (unwind-protect
            (progn
-             (dolist (case '(("(model)" :hold)
-                             ("(effort)" :hold)
+             (dolist (case '(("(model)" :apply-interactive)
+                             ("(effort)" :apply-interactive)
+                             ("(permissions)" :apply-interactive)
+                             ("(effort (read-line))" :hold)
                              ("(compact)" :hold)
                              ("(cwd \"elsewhere\")" :steer)
                              ("(cwd)" :execute)
