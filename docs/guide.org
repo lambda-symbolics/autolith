@@ -3169,8 +3169,8 @@ levels, and 262,144 tree nodes.
 A child keeps its channel, name, role and history after its run. Its parent
 sends it more work through that channel, and =channel:current= lists the
 parent's children, each busy or idle. An agent has at most 32 children.
-=child.rename= renames a child; =child.compact= and =child.reset= compact or
-clear an idle child's history; =child.remove= deletes an idle child with its
+=child.rename= renames a child; =child.compact= summarizes an idle child's
+history; =child.remove= deletes an idle child with its channel and its own
 channel and its own children. Nothing else deletes a child. A child's channel
 serves it in its role, with that role's tools and instructions, whether it
 runs for its parent or someone opens the channel. A session that serves one

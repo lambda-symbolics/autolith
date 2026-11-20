@@ -679,7 +679,6 @@ sessions and interfaces without an automatic turn controller.
 | =channel.send=  | Give an idle child new work, or steer a running one, through its channel; a running child reads it at its next safe boundary.                     |
 | =child.rename=  | Give a child a name that says what it does.                                                                                                       |
 | =child.compact= | Shrink an idle child's long history into a summary.                                                                                               |
-| =child.reset=   | Clear an idle child's history; it keeps its name, role and channel.                                                                               |
 | =child.remove=  | Delete an idle child you no longer need, with its channel and its own children.                                                                   |
 
 Children may post bounded interim notes with =yield.note=; notes

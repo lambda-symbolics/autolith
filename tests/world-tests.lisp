@@ -1844,7 +1844,7 @@
 
 (-> test-world-child-lifecycle () null)
 (defun test-world-child-lifecycle ()
-  "Test a parent renames, resets and removes its children, and waits while one is busy."
+  "Test a parent renames, compacts and removes its children, and waits while one is busy."
   (with-test-configuration (configuration)
     (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
       (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent "broot11"
