@@ -108,7 +108,7 @@
 (defun test-main-world-client-cleanup-cause ()
   "Preserve shared-screen owner exits and original errors through independent cleanup failures."
   (with-test-configuration (configuration)
-   (dolist (phase '(:exit :detach :recovery-quit :primary-error))
+   (dolist (phase '(:exit :detach :primary-error))
      (let* ((terminal  (make-instance 'scripted-terminal :columns 80))
             (panel     (world-sidebar-create configuration))
             (screen    (localgroup-screen-create :terminal terminal :panel panel))
@@ -118,8 +118,7 @@
                              "original attachment failure"))
             (attempts  nil)
             (relayed-p nil)
-            (relayed   nil)
-            (choice-p  nil))
+            (relayed   nil))
        (test-call-with-function-replacements
         (list
          (list 'world-sidebar-create
@@ -145,15 +144,7 @@
                  (declare (ignore candidate identifier mode))
                  (funcall attached-function)
                  (when (eq phase ':primary-error) (error cause))
-                 (if (eq phase ':recovery-quit)
-                     '(:attachment-lost :kind :callback-failure :message
-                       "rendering failed")
-                     exit)))
-         (list 'main--attachment-choice
-               (lambda (&rest arguments)
-                 (declare (ignore arguments))
-                 (setf choice-p t)
-                 nil))
+                  exit))
          (list 'localgroup-client-screen-release
                (lambda (candidate)
                  (declare (ignore candidate))
@@ -185,40 +176,11 @@
                   (main--run-world-client configuration)
                 (test-assert
                  (and success relayed-p (eq relayed exit)
-                      (eq choice-p (eq phase ':recovery-quit))
                       (= (length (getf metadata :cleanup-failures)) 2)
                       (not (search "private" (write-to-string metadata))))
-                 "exit, detach and recovery quit reach relay exit unchanged with class-only diagnostics")))
+                  "exit and detach reach relay exit unchanged with class-only diagnostics")))
           (test-assert (equal (reverse attempts) '("client-screen" "sidebar"))
            "each shared-screen owner cleanup stage is attempted independently"))))))
-  nil)
-
-(-> test-main-attachment-choice () null)
-(defun test-main-attachment-choice ()
-  "Offer manual retry, a different channel and detach without invoking a renderer again."
-  (dolist (entry '(((#\r) (:reattach))
-                   (((:insert "bsecnd2") :enter) (:switch :session-id "bsecnd2"))
-                   ((#\q) nil)))
-    (let* ((events   (copy-list (first entry)))
-           (expected (second entry))
-           (terminal (make-instance 'scripted-terminal :columns 80))
-           (screen   (localgroup-screen-create :terminal terminal)))
-      (test-call-with-function-replacements
-       (list (list 'terminal-read-event
-                   (lambda (candidate)
-                     (declare (ignore candidate))
-                     (or (pop events) ':end-of-input)))
-             (list 'localgroup-screen-close
-                   (lambda (candidate)
-                     (declare (ignore candidate))
-                     (error "renderer cleanup failed"))))
-       (lambda ()
-         (let ((*error-output* (make-broadcast-stream)))
-           (test-assert
-            (equal (main--attachment-choice
-                    screen "bfirst1" '(:kind :callback-failure :message "Rendering failed."))
-                   expected)
-            "a rendering failure leaves explicit attachment recovery choices"))))))
   nil)
 
 (-> test-localgroup-client-accepted-setup-failure () null)
@@ -291,63 +253,6 @@
                            (not (application-clients-attached-p application)))
                       "the failed view releases its channel")
          (localgroup-screen-close screen)))))
-  nil)
-
-(-> test-world-client-attachment-recovery () null)
-(defun test-world-client-attachment-recovery ()
-  "Retry a lost attachment with bounded discovery and no channel open or work resubmission."
-  (with-test-configuration (configuration)
-    (let ((opens        0)
-          (attaches     nil)
-          (choices      0)
-          (reported     nil)
-          (attach-count 0))
-      (test-call-with-function-replacements
-       (list
-        (list 'main--open-world-channel
-              (lambda (&rest arguments)
-                (declare (ignore arguments))
-                (incf opens)
-                (values "bfirst1" nil)))
-        (list 'world-client-open
-              (lambda (&rest arguments)
-                (declare (ignore arguments))
-                (error "Attachment recovery must not open or rerun a channel.")))
-        (list 'world-sidebar-start (lambda (panel) (declare (ignore panel))))
-        (list 'world-sidebar-stop (lambda (panel) (declare (ignore panel))))
-        (list 'channel-view-run
-              (lambda (view &key attached-function notice client-version boot-p)
-                (declare (ignore notice client-version boot-p))
-                (push (channel-subscription-identifier view) attaches)
-                (incf attach-count)
-                (case attach-count
-                  (1
-                   (funcall attached-function)
-                   (list ':attachment-lost :kind    ':transport-failure
-                                           :message "The channel's connection closed."))
-                  (2
-                   (error 'localgroup-error :operation ':client :message "Endpoint not ready."))
-                  (otherwise
-                   (funcall attached-function)
-                   nil))))
-        (list 'main--attachment-choice
-              (lambda (screen identifier termination)
-                (declare (ignore screen))
-                (incf choices)
-                (test-assert (and (string= identifier "bfirst1") (getf termination :message))
-                             "the recovery prompt retains identity and reports each failure")
-                '(:reattach)))
-        (list 'localgroup-relay-exit
-              (lambda (candidate exit mode &key session-id)
-                (declare (ignore candidate mode))
-                (setf reported (list session-id exit)))))
-       (lambda ()
-         (let ((*error-output* (make-broadcast-stream)))
-           (main--run-world-client configuration))))
-      (test-assert (and (= opens 1) (= choices 2)
-                        (equal attaches '("bfirst1" "bfirst1" "bfirst1"))
-                        (equal reported '("bfirst1" nil)))
-                   "loss and a failed retry retain the terminal until explicit retry or departure")))
   nil)
 
 (-> test-client-input-queue-lifecycle () null)

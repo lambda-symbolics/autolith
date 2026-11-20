@@ -801,9 +801,9 @@
  test-world-server-move-goal test-world-server-adoption-recovery
  test-world-client-joins-winner test-world-client-switch-navigates
  test-world-client-refusal-ends-start test-world-client-switch-failures
- test-world-host-health test-world-client-attachment-recovery
+ test-world-host-health
  test-world-host-cleanup-retry
- test-main-attachment-choice test-localgroup-client-accepted-setup-failure
+ test-localgroup-client-accepted-setup-failure
  test-localgroup-client-checkpoint-recovery
  test-main-world-client-cleanup-cause
  test-application-conversation-maintenance

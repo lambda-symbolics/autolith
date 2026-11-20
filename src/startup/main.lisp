@@ -1230,67 +1230,6 @@ still shows the boot panel keeps it until the user starts the session."
                     :boot-p            (not (null (localgroup-screen-boot-ui screen)))
                     :attached-function attached-function))
 
-(-> main--attachment-choice (localgroup-screen string list) (option list))
-(defun main--attachment-choice (screen identifier termination)
-  "Keep a disconnected terminal available for explicit reattachment or channel selection.
-
-Use plain terminal input rather than retrying a failed renderer. Reattachment
-only rediscovers the same endpoint; choosing another channel is explicit."
-  (handler-case
-      (localgroup-screen-close screen)
-    (error ()
-      ;; The original attachment diagnostic is independent of screen cleanup.
-      nil))
-  (let ((terminal (localgroup-screen-terminal screen))
-        (input    ""))
-    (format *error-output* "~&Channel ~A disconnected: ~A~%r: reattach; channel ID + Enter: switch; q: detach.~%> "
-            (conversation-identifier-display identifier)
-            (bounded-string (or (getf termination :message) "The attachment was lost.") :limit 400))
-    (finish-output *error-output*)
-    (loop
-      (let ((event (terminal-read-event terminal)))
-        (cond
-          ((or (member event '(:escape :interrupt :end-of-input :stream-end))
-               (and (zerop (length input)) (eql event #\q)))
-           (return nil))
-          ((and (consp event) (eq (first event) ':switch))
-           (return event))
-          ((and (zerop (length input)) (eql event #\r))
-           (return (list ':reattach)))
-          ((or (member event '(:enter :return))
-               (eql event #\Return) (eql event #\Newline)
-               (and (consp event) (eq (first event) ':line)))
-           (when (and (consp event) (eq (first event) ':line) (stringp (second event)))
-             (setf input (subseq (second event) 0 (min 128 (length (second event))))))
-           (when (zerop (length input))
-             (return (list ':reattach)))
-           (let ((target (handler-case
-                             (session-identifier-normalize input)
-                           (error ()
-                             nil))))
-             (when target
-               (return (list ':switch :session-id target))))
-           (setf input "")
-           (format *error-output* "~&Invalid channel ID.~%> "))
-          ((or (member event '(:backspace :delete-backward))
-               (eql event #\Backspace) (eql event #\Rubout))
-           (when (plusp (length input))
-             (setf input (subseq input 0 (1- (length input))))
-             (write-string (format nil "~C ~C" #\Backspace #\Backspace) *error-output*)))
-          (t
-           (let ((text (cond
-                         ((and (characterp event) (graphic-char-p event))
-                          (string event))
-                         ((and (consp event) (member (first event) '(:insert :paste))
-                               (stringp (second event)))
-                          (second event)))))
-             (when text
-              (let* ((safe     (remove-if-not #'graphic-char-p text))
-                     (accepted (subseq safe 0 (min (length safe) (- 128 (length input))))))
-                 (setf input (concatenate 'string input accepted))
-                 (write-string accepted *error-output*))))))
-        (finish-output *error-output*)))))
-
 (-> main--welcome-agent-counts (world string) (values integer integer))
 (defun main--welcome-agent-counts (world directory)
   "Return durable agent totals and the number residing in DIRECTORY, including idle agents."
@@ -1455,7 +1394,6 @@ Return success and bounded secondary cleanup metadata without replacing a primar
          (screen           (localgroup-client-screen-create :panel panel))
          (launch-directory (namestring (uiop:getcwd)))
          (last-channel     nil)
-         (recovering-p     nil)
          (final-exit       nil)
          (cleanup-failures nil))
     (unwind-protect
@@ -1518,7 +1456,6 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                                   origin nil
                                                                   switching-p nil
                                                                   restoring-p nil
-                                                                  recovering-p nil
                                                                   started-p nil))))
                             (error (condition)
                                    (when started-p
@@ -1533,11 +1470,6 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                     (switching-p
                                      (setf notice (main--switch-failure session-id condition))
                                      (list ':return))
-                                    (recovering-p
-                                     (list ':attachment-lost :kind ':transport-failure :message
-                                           (if (typep condition 'image-daemon:daemon-error)
-                                               (daemon-error-message condition)
-                                               "The channel endpoint could not be reattached.")))
                                     (restoring-p
                                      (setf (world-sidebar-current panel) nil
                                            last-channel nil)
@@ -1548,20 +1480,21 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                    condition)))
                                     (t
                                      (error condition)))))))
-                      (when (and (consp exit) (eq (first exit) ':attachment-lost))
-                        (setf recovering-p t
-                              exit (main--attachment-choice screen session-id (rest exit))))
-                      (cond
-                       ((and (consp exit) (eq (first exit) ':reattach))
-                        (setf origin nil
-                              restoring-p nil
-                              started-p nil))
+                       (cond
+                        ((and (consp exit) (eq (first exit) ':attachment-lost))
+                         (setf final-exit
+                               (list :status 1 :message
+                                     (format nil "Channel ~A disconnected: ~A"
+                                             (conversation-identifier-display session-id)
+                                             (bounded-string
+                                              (or (getf (rest exit) :message) "The attachment was lost.")
+                                              :limit 400))))
+                         (return))
                        ((and (consp exit) (eq (first exit) ':return))
                         (setf session-id origin
                               restoring-p (not (null origin))
                               origin nil
                               switching-p nil
-                              recovering-p nil
                               started-p nil))
                        ((and (consp exit) (eq (first exit) ':disconnected))
                         (setf final-exit (rest exit)) (return))
