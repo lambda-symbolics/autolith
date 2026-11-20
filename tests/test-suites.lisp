@@ -773,6 +773,7 @@
  test-world-server-wake-channel test-world-server-stop-reason
  test-world-server-control-z-detach test-world-server-status-line
  test-world-client-stop-outcomes test-world-client-exit-observation
+  test-world-client-new-command
  test-world-server-new-channel test-world-server-tell test-world-server-hosting
  test-world-server-checkpoint-quiescence test-world-server-checkpoint-cancel
  test-world-server-restart-marker test-world-server-restart-owned-cleanup

@@ -1586,6 +1586,33 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                             (main--single-selection command "channel or agent designator")
                             (first (command-arguments command)))))))
 
+(-> main--new-command () clingon:command)
+(defun main--new-command ()
+  "Return the command that creates a hosted channel without attaching."
+  (make-command
+   :name        "new"
+   :description "create a new channel without attaching"
+   :usage       "[DIRECTORY]"
+   :handler
+   (lambda (command)
+     (let* ((argument  (main--single-selection command "directory"))
+            (directory (if argument
+                           (merge-pathnames (platform-pathname argument) (uiop:getcwd))
+                           (uiop:getcwd))))
+       (unless (uiop:directory-exists-p directory)
+         (error 'configuration-error :message
+                (format nil "The directory ~A does not exist." directory)))
+       (let* ((configuration (localgroup--client-configuration))
+              (identifier    (world-client-open
+                              configuration
+                              :directory         directory
+                              :permission-mode   (or (config :permission-mode configuration) ':ask)
+                              :new-p             t
+                              :attach-expected-p nil)))
+         (localgroup--write-styled-line
+          *standard-output* (channel-open-instruction identifier)
+          (localgroup--status-output-styled-p *standard-output*)))))))
+
 (-> main--replay-command () clingon:command)
 (defun main--replay-command ()
   "Return the read-only conversation replay sub-command definition."
@@ -1936,6 +1963,7 @@ autolith uninstall removes the installation and keeps user data."
    :version      *autolith-version*
    :options      (main--session-options)
    :sub-commands (list (main--open-command)
+                       (main--new-command)
                        (main--replay-command)
                        (main--tool-failures-command)
                        (main--fork-command)

@@ -976,6 +976,36 @@ the version the client says it is, when it says one."
                  (localgroup-client-close connection)))))))))
   nil)
 
+(-> test-world-client-new-command () null)
+(defun test-world-client-new-command ()
+  "Create two distinct unattached channels in the requested workspace through the CLI."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (test-call-with-function-replacements
+      (list (list 'localgroup--client-configuration (lambda () configuration)))
+      (lambda ()
+        (let ((identifiers nil))
+          (dotimes (index 2)
+            (let* ((output
+                     (with-output-to-string (*standard-output*)
+                       (let ((command (parse-command-line (main--top-level-command)
+                                                          (list "new" (namestring root)))))
+                         (funcall (command-handler command) command))))
+                   (host (find-if-not (lambda (host)
+                                        (member (world-host-channel host) identifiers :test #'equal))
+                                      (world-server--hosts server))))
+              (test-assert host "each invocation hosts a fresh channel in the same workspace")
+              (let* ((identifier (world-host-channel host))
+                     (session    (world-server-tests--session server identifier))
+                     (status     (rest (localgroup-status-snapshot session))))
+                (push identifier identifiers)
+                (test-assert (search (channel-open-command identifier) output)
+                             "new prints a usable open command for the channel it created")
+                (test-assert (and (equal (getf status :cwd) (world-workspace-name root))
+                                  (not (getf status :terminal-client-pid)))
+                             "the created channel serves the requested directory without a client")))))))))
+  nil)
+
 (-> test-world-server-tell () null)
 (defun test-world-server-tell ()
   "Exercise CLI tells and interchannel messages through durable delivery and cold-host scheduling."

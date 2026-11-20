@@ -47,9 +47,11 @@ A server publishes its endpoint again after a checkpoint, and a channel
 opens once the checkpoint is over.")
 
 (-> world-client--entry
-    (configuration &key (:permission-mode keyword) (:immutable-p boolean) (:deadline real))
+    (configuration &key (:permission-mode keyword) (:immutable-p boolean) (:deadline real)
+                        (:attach-expected-p boolean))
     cons)
-(defun world-client--entry (configuration &key (permission-mode ':ask) immutable-p deadline)
+(defun world-client--entry
+    (configuration &key (permission-mode ':ask) immutable-p deadline (attach-expected-p t))
   "Return the world server's endpoint entry: the one answering, or a new server's.
 
 A server that holds the world without answering, as during a checkpoint, is
@@ -66,8 +68,9 @@ other."
          (channel-loading-report 1 "Starting world server and checking saved conversations")
          (handler-case
              (return (world-client-start-server configuration
-                                                :permission-mode permission-mode
-                                                :immutable-p     immutable-p))
+                                                :permission-mode   permission-mode
+                                                :immutable-p       immutable-p
+                                                :attach-expected-p attach-expected-p))
            (localgroup-error (condition)
              ;; Another client's server took the lease meanwhile: join it.
              (unless (world-server-running-p configuration)
@@ -84,12 +87,13 @@ other."
                         (:permission-mode keyword) (:immutable-p boolean)
                         (:pick-channel-p boolean)
                         (:recovery-diagnosis (option string)) (:launch list) (:new-p boolean)
-                        (:images list) (:mcp-servers list) (:switch-p boolean))
+                         (:images list) (:mcp-servers list) (:switch-p boolean)
+                         (:attach-expected-p boolean))
     (values string boolean))
 (defun world-client-open
     (configuration &key directory channel (permission-mode ':ask) immutable-p
                         pick-channel-p recovery-diagnosis launch new-p images mcp-servers
-                        switch-p)
+                        switch-p (attach-expected-p t))
   "Open CHANNEL, or a channel for DIRECTORY, in CONFIGURATION's world server.
 
 NEW-P opens a new channel for DIRECTORY instead of its latest one. IMAGES,
@@ -98,7 +102,8 @@ draft. MCP-SERVERS, an editor's server declarations in portable form, join
 the tools of a channel that starts for this open. SWITCH-P says a terminal
 moves here from another channel, so a channel that starts for it skips its
 startup presentation.
-The first client starts the server; later ones find it running. LAUNCH is
+The first client starts the server; later ones find it running. Without
+ATTACH-EXPECTED-P, the client does not open a terminal afterward. LAUNCH is
 the plist of launch options this start stated explicitly; a new channel
 takes them, and a channel already served refuses the ones it cannot change.
 Return the opened channel's session identifier, whose endpoint answers by
@@ -111,9 +116,10 @@ sharing one it already served."
         (terminal-current-size)
       (loop
         (let* ((entry    (world-client--entry configuration
-                                              :permission-mode permission-mode
-                                              :immutable-p     immutable-p
-                                              :deadline        deadline))
+                                              :permission-mode   permission-mode
+                                              :immutable-p       immutable-p
+                                              :deadline          deadline
+                                              :attach-expected-p attach-expected-p))
                (response
                  (handler-case
                      ;; Wait for the answer instead of sending the open again.
@@ -163,7 +169,8 @@ sharing one it already served."
                   (error 'localgroup-error
                          :message   "The world server did not name the opened channel."
                          :operation ':open))
-                (channel-loading-report 6 "Attaching terminal")
+                (when attach-expected-p
+                  (channel-loading-report 6 "Attaching terminal"))
                 (return (values identifier (not (null (getf (rest response) :started-p))))))
               (sleep 0.5)))))))
 
