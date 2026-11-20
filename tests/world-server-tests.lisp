@@ -499,7 +499,7 @@ Keep the override until the captured thread exits; replacement threads pass thro
                               ':continue)
                             (apply run application text arguments)))))
           (lambda ()
-            (dolist (sender (list (participant-identifier human) "al-bactivityparent" "al-bactivitypeer"))
+            (dolist (sender (list (participant-identifier human) "bactivityparent" "bactivitypeer"))
               (test-assert (null (activities)) "An idle child has no activity row.")
               (unwind-protect
                    (progn
@@ -1012,7 +1012,7 @@ the version the client says it is, when it says one."
      (world-tests--persisted-conversation configuration "btell11" 1000)
      (world-tests--persisted-conversation configuration "btell22" 2000)
      (world-server--reconcile configuration)
-     (world-participant-rename configuration "al-btell11" "receiver")
+     (world-participant-rename configuration "btell11" "receiver")
      (let ((started nil))
        (test-call-with-function-replacements
         (list (list 'localgroup--client-configuration (lambda () configuration))
@@ -1033,8 +1033,7 @@ the version the client says it is, when it says one."
                      "Return the receiver's durable copy of TEXT."
                      (find text (world-inbox-deliveries configuration "btell11")
                            :key #'world-delivery-text :test #'string=)))
-            (loop for selector in '("btell11" "b-tell11" "tell11" "receiver"
-                                    "@RECEIVER" "al-btell11")
+            (loop for selector in '("btell11" "b-tell11" "tell11" "receiver" "@RECEIVER")
                   for index from 1
                   for text = (format nil "from CLI ~D" index)
                   do (setf started nil)
@@ -1055,7 +1054,7 @@ the version the client says it is, when it says one."
                             ("btell22" "@receiver please review" :mention)))
               (destructuring-bind (channel text kind) case
                 (setf started nil)
-                (world-message-send configuration :sender "al-btell22" :channel channel :text text)
+                (world-message-send configuration :sender "btell22" :channel channel :text text)
                 (drain-wakeups)
                 (test-assert (and (equal started '("btell11"))
                                   (delivery text)
@@ -1072,7 +1071,7 @@ the version the client says it is, when it says one."
      (declare (ignore root))
      (world-tests--persisted-conversation configuration "btell31" 1000)
      (world-server--reconcile configuration)
-     (world-participant-rename configuration "al-btell31" "cli-receiver")
+     (world-participant-rename configuration "btell31" "cli-receiver")
      (let ((application nil)
            (picks       0))
        (test-call-with-function-replacements

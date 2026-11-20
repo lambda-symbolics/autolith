@@ -917,15 +917,11 @@ need hundreds of suffixes."
 (-> world-participant-designated (world string) (option participant))
 (defun world-participant-designated (world designator)
   "Return an active participant by ID, @name, exact channel path or unique ID fragment."
-  (let ((designator (if (uiop:string-prefix-p "@" designator) (subseq designator 1) designator)))
+  (let* ((explicit-name-p (uiop:string-prefix-p "@" designator))
+         (designator      (if explicit-name-p (subseq designator 1) designator)))
     (if (uiop:string-prefix-p "/" designator)
         (world--path-participant world designator)
-        (or (let* ((canonical (handler-case (identifier-normalize designator)
-                                  (identifier-error () nil)))
-                   (participant (or (world-participant-find world designator)
-                                    (and canonical (world-participant-find world canonical)))))
-              (and participant (participant-residence participant) participant))
-            (world--participant-name-target world designator)
+        (or (world-message-participant world designator :name-first-p explicit-name-p)
             (let ((matches (identifier-match designator (world--participants-where world #'participant-residence)
                                               :key #'participant-identifier)))
               (and (= (length matches) 1) (first matches)))))))
@@ -956,7 +952,7 @@ ambiguous or unresolved explicit addresses still signal an error."
   (or (and (string-equal designator *world-inbox-designator*)
            (world-inbox-channel world))
       (and (uiop:string-prefix-p "@" designator)
-           (world--residence-channel world (subseq designator 1) :sender sender))
+           (world--residence-channel world (subseq designator 1) :sender sender :name-first-p t))
       (let ((resolved (handler-case
                           (conversation-identifier-migration-resolve configuration designator)
                         ((or conversation-error conversation-identifier-error) ()
@@ -1002,10 +998,11 @@ A channel whose parent is not among MEMBERS is a root."
             (push node (rest parent))
             (push node roots))))))
 
-(-> world--residence-channel (world string &key (:sender (option participant))) channel)
-(defun world--residence-channel (world name &key sender)
+(-> world--residence-channel
+    (world string &key (:sender (option participant)) (:name-first-p boolean)) channel)
+(defun world--residence-channel (world name &key sender name-first-p)
   "Return the residence of NAME, which may name SENDER's parent recipient."
-  (let ((participant (world-message-participant world name :sender sender)))
+  (let ((participant (world-message-participant world name :sender sender :name-first-p name-first-p)))
     (cond
       ((null participant)
        (error 'world-error

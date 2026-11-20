@@ -1630,11 +1630,11 @@
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
-    (world-participant-rename configuration "al-bsecnd2" "researcher")
-    (world-participant-rename configuration "al-bfirst1" "bsecnd2")
+    (world-participant-rename configuration "bsecnd2" "researcher")
+    (world-participant-rename configuration "bfirst1" "bsecnd2")
     (let* ((world (world-load configuration))
-           (agent (world-participant-find world "al-bsecnd2")))
-      (dolist (designator '("researcher" "RESEARCHER" "@researcher" "al-bsecnd2" "@al-bsecnd2"))
+           (agent (world-participant-find world "bsecnd2")))
+      (dolist (designator '("researcher" "RESEARCHER" "@researcher" "bsecnd2" "b-secnd2"))
         (test-assert (string= (channel-identifier
                                (world-channel-designated world configuration designator))
                              (participant-residence agent))
@@ -1644,8 +1644,10 @@
                                 "bsecnd2")
                         (string= (channel-identifier
                                   (world-channel-designated world configuration "@bsecnd2"))
-                                 "bfirst1"))
-                   "a full channel ID takes priority over a participant name; @ selects the participant")
+                                 "bfirst1")
+                        (string= (participant-identifier (world-participant-designated world "@bsecnd2")) "bfirst1")
+                        (equal (world-message-mentions world "ask @bsecnd2") '("bfirst1")))
+                   "a bare channel ID takes priority over a name; @ selects the named participant")
       (test-assert (handler-case
                       (progn (world-channel-designated world configuration "@nobody" :error-p nil) nil)
                     (world-error () t))
@@ -1674,7 +1676,7 @@
                                                            :name "helper" :created-at 1500)
       (world-tests--child-conversation configuration "bpeer11" :root "broot11" :parent "broot11"
                                                             :name "peer" :created-at 1600)
-      (world-participant-rename configuration "al-broot11" "lead")
+      (world-participant-rename configuration "broot11" "lead")
       (labels ((resolve (address identifier)
                  "Assert ADDRESS resolves to the same stable IDENTIFIER."
                  (test-assert (string= identifier
@@ -1737,10 +1739,10 @@
              (application--builtin-tell-command application "/lead/helper" "hello")
              (test-assert (and (equal opened "bkid11") (equal sent "bkid11"))
                           "open and tell invoke their existing operations with the same stable channel ID"))))
-        (world-participant-rename configuration "al-broot11" "captain")
+        (world-participant-rename configuration "broot11" "captain")
         (reject "/lead/helper" "exact path")
         (resolve "/captain/helper" "bkid11")
-        (legacy-name "al-bpeer11" "helper")
+        (legacy-name "bpeer11" "helper")
         (let* ((world (world-load configuration))
                (kid   (world-channel-path world (world-channel-find world "bkid11")))
                (peer  (world-channel-path world (world-channel-find world "bpeer11"))))
@@ -1750,13 +1752,13 @@
           (resolve kid "bkid11")
           (resolve peer "bpeer11")
           (reject "helper" kid peer)
-          (test-assert (string= (participant-identifier (world-participant-designated world kid)) "al-bkid11")
+          (test-assert (string= (participant-identifier (world-participant-designated world kid)) "bkid11")
                        "an exact channel path addresses its sole resident agent"))
-        (world-participant-rename configuration "al-bpeer11" "peer")
-        (legacy-name "al-broot11" "ops/team%lead")
+        (world-participant-rename configuration "bpeer11" "peer")
+        (legacy-name "broot11" "ops/team%lead")
         (resolve "/ops%2Fteam%25lead/helper" "bkid11")
         (reject "/ops/team%lead/helper" "exact path")
-        (world-participant-rename configuration "al-bkid11" (conversation-identifier-display "bpeer11"))
+        (world-participant-rename configuration "bkid11" (conversation-identifier-display "bpeer11"))
         (let* ((world (world-load configuration))
                (paths (world-channel-paths world)))
           (test-assert (string= (gethash "bkid11" paths)
@@ -1783,7 +1785,7 @@
          configuration
          (lambda (world)
            (values
-            (loop for identifier in (list "al-broot11" (participant-identifier standalone))
+            (loop for identifier in (list "broot11" (participant-identifier standalone))
                   collect (world--participant-record
                            (world--copy-participant (world-participant-find world identifier) :name "inbox")))
             nil)))
@@ -1881,7 +1883,7 @@
                (progn
                  (call 'child-rename-tool (json-object "child" "@helper" "name" "keeper"))
                  (test-assert (string= (participant-name (world-participant-find (world-load configuration)
-                                                                                 "al-bkid11"))
+                                                                                   "bkid11"))
                                        "keeper")
                               "a parent renames its child by its name")
                    (let ((lease (conversation-lease-acquire configuration "bkid11")))

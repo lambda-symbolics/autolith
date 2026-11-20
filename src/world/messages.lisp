@@ -495,10 +495,12 @@ writes can pass for that header."
 
 ;;;; -- Mentions --
 
-(-> world-message-participant (world string &key (:sender (option participant))) (option participant))
-(defun world-message-participant (world designator &key sender)
+(-> world-message-participant
+    (world string &key (:sender (option participant)) (:name-first-p boolean)) (option participant))
+(defun world-message-participant (world designator &key sender name-first-p)
   "Return the participant DESIGNATOR names by identifier, display identifier or unique name.
 
+With NAME-FIRST-P, an explicit @name takes precedence over a matching ID.
 With SENDER, @parent names the participant its message to its parent
 reaches; see `world-message-parent-recipient'."
   (let ((canonical (handler-case (identifier-normalize designator)
@@ -507,10 +509,11 @@ reaches; see `world-message-parent-recipient'."
     (or (and sender
              (world-handle-reserved-p designator)
              (world-message-parent-recipient world sender))
+        (and name-first-p (world--participant-name-target world designator))
         (let ((participant (or (world-participant-find world designator)
                                (and canonical (world-participant-find world canonical)))))
           (and participant (participant-residence participant) participant))
-        (world--participant-name-target world designator))))
+        (and (not name-first-p) (world--participant-name-target world designator)))))
 
 (-> world-message-parent-recipient (world participant) (option participant))
 (defun world-message-parent-recipient (world sender)
@@ -575,7 +578,7 @@ to report to @parent, so it must not reach SENDER's parent or the person."
                (participant (and (world-mention-boundary-p text at)
                                  (plusp (length designator))
                                  (not (and to-child-p (world-handle-reserved-p designator)))
-                                 (world-message-participant world designator :sender sender))))
+                                 (world-message-participant world designator :sender sender :name-first-p t))))
           (when (and participant
                      (not (member (participant-identifier participant) mentions
                                   :test #'string=)))
