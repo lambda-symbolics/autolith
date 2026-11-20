@@ -227,138 +227,22 @@ boundary cannot fit within that budget."
 
 (-> task-child-goal-context (task-job configuration) string)
 (defun task-child-goal-context (job child-configuration)
-  "Build child instructions without replacing ordinary path authorization."
-  (let* ((identity (task-job-identity job))
-         (item     (task-job-item job))
+  "Build child instructions without a terminal output contract."
+  (let* ((item    (task-job-item job))
          (context
            (if (getf item :worktree)
-               (format nil "~@[~A~2%~]This is an isolated modifying task at baseline ~A. Edit and test in ~A. Return your findings through yield; the parent will explicitly inspect and integrate your artifact. Do not modify or integrate into source workspace ~A. Stage new files before yielding so the complete patch can be extracted."
+               (format nil "~@[~A~2%~]This is an isolated modifying task at baseline ~A. Edit and test in ~A. Return your findings through the ordinary child result; the parent will explicitly inspect and integrate your artifact. Do not modify or integrate into source workspace ~A. Stage new files before finishing so the complete patch can be extracted."
                        (getf item :context)
                        (getf (getf item :worktree) :baseline)
                        (getf (getf item :worktree) :path)
                        (getf (getf item :worktree) :source))
                (getf item :context))))
     (format nil
-            "You are child agent ~A, depth ~D; the system prompt carries your role.~@[~2%Shared parent context:~%~A~]~2%Your initial workspace is ~A. Work within the assignment's scope. Paths outside the workspace use the ordinary tool path authorization; this initial directory is not an additional confinement policy. Complete the assignment in the user message. You MUST end by calling yield.submit exactly once. A normal assistant stop without yield is a failed child run. Put the useful parent-facing answer in yield.text and structured data in yield.data when requested."
-            (getf identity :id)
+            "You are child agent ~A, depth ~D; the system prompt carries your role.~@[~2%Shared parent context:~%~A~]~2%Your initial workspace is ~A. Work within the assignment's scope. Paths outside the workspace use the ordinary tool path authorization; this initial directory is not an additional confinement policy. Complete the assignment in the user message and finish the turn normally."
+            (getf (task-job-identity job) :id)
             (1+ (task-parent-depth (task-job-parent-agent job)))
             context
             (namestring (config :working-directory child-configuration)))))
-
-(defmethod tool-execute
-    ((tool task-yield-tool) (context tool-context) arguments)
-  "Validate and record one exact terminal child yield."
-  (declare (ignore tool))
-  (let ((agent (tool-context-agent context)))
-    (unless (typep agent 'task-child-agent)
-      (error 'task-yield-error
-             :message   "yield.submit is available only inside a child agent."
-             :tool-name "yield.submit"))
-    (let* ((completion (task-child-agent-completion agent))
-           (identifier (getf (task-child-agent-identity agent) :id))
-      (labels ((yield-error (message &key (code ':invalid-yield))
-                 (error 'task-yield-error
-                        :message   message
-                        :code      code
-                        :tool-name "yield.submit"
-                        :task-id   identifier))
-
-               (optional-string (name)
-                 (multiple-value-bind (value present-p)
-                     (gethash name arguments)
-                   (when (and present-p (not (stringp value)))
-                     (yield-error
-                      (format nil "Yield field ~S must be a string when supplied."
-                              name)))
-                   (values value present-p))))
-        (when (task-completion-called-p completion)
-          (yield-error "This child already submitted its terminal yield."
-                       :code ':already-yielded))
-        (loop for field being the hash-keys of arguments
-              unless (member field
-                             '("status" "text" "data" "error" "label")
-                             :test #'string=)
-                do (yield-error
-                    (format nil "Unknown yield field ~S." field)))
-        (multiple-value-bind (status-text status-present-p)
-            (gethash "status" arguments)
-          (unless (and status-present-p (stringp status-text))
-            (yield-error "Yield status must be a string."))
-          (let ((status
-                  (cond
-                    ((string= status-text "success")
-                     :success)
-                    ((string= status-text "failed")
-                     :failed)
-                    ((string= status-text "aborted")
-                     :aborted)
-                    (t
-                     (yield-error
-                      "Yield status must be exactly success, failed, or aborted.")))))
-            (multiple-value-bind (text text-present-p)
-                (optional-string "text")
-              (declare (ignore text-present-p))
-              (multiple-value-bind (failure failure-present-p)
-                  (optional-string "error")
-                (multiple-value-bind (label label-present-p)
-                    (optional-string "label")
-                  (declare (ignore label-present-p))
-                  (when (and label
-                             (> (length label)
-                                *task-result-label-maximum-characters*))
-                    (yield-error
-                     (format nil
-                             "Yield label may contain at most ~D characters."
-                             *task-result-label-maximum-characters*)))
-                  (multiple-value-bind (data data-present-p)
-                      (gethash "data" arguments)
-                    (case status
-                      (:success
-                       (when failure-present-p
-                         (yield-error
-                          "A successful yield must not contain an error field."))
-                       (unless (or data-present-p
-                                   (non-empty-string-p (task--trim (or text ""))))
-                         (yield-error
-                          "A successful yield requires non-empty text or explicit data."))
-                      ((:failed :aborted)
-                       (unless (and failure-present-p
-                                    (non-empty-string-p
-                                     (task--trim (or failure ""))))
-                         (yield-error
-                          "A failed or aborted yield requires a non-empty error string."))
-                       (when data-present-p
-                         (yield-error
-                          "A failed or aborted yield must not contain structured data."))))
-                    (when data-present-p
-                      (task-json->sexp data))
-                    (multiple-value-bind (accepted-p reason)
-                        (task-job--call-with-yield-claim
-                         (task-child-agent-job agent)
-                         (lambda ()
-                           (setf (task-completion-called-p completion) t
-                                 (task-completion-status completion) status
-                                 (task-completion-text completion) text
-                                 (task-completion-data completion) data
-                                 (task-completion-data-present-p completion)
-                                 data-present-p
-                                 (task-completion-error completion) failure
-                                 (task-completion-label completion) label)))
-                      (unless accepted-p
-                        (yield-error
-                         (ecase reason
-                           (:closed
-                            "This child can no longer accept a terminal yield.")
-                           (:closing
-                            "This child is closing and cannot accept a terminal yield.")
-                           (:not-running
-                            "This child is not running and cannot accept a terminal yield.")
-                           (:steering-pending
-                            "Additional user context is waiting. Continue the child turn before yielding."))
-                         :code ':yield-unavailable))
-                      (tool-success
-                       (task--write-readable-sexp
-                          '(:yield-submit :accepted-p t))))))))))))))))
 
 (-> task--utf8-length (string) (integer 0))
 (defun task--utf8-length (text)
@@ -581,23 +465,20 @@ the root's cache key. Siblings with matching prefixes still share one key."
     list)
 (defun task--assemble-child-result
     (job &key provider-result child conversation completion)
-  "Assemble the child's yielded outcome with shared execution metadata."
+  "Assemble the ordinary child outcome with shared execution metadata."
   (task--execution-metadata job :configuration (agent-configuration child))
   (setf (getf (task-job-execution-metadata job) :conversation-file)
         (namestring (conversation-pathname conversation)))
   (task--terminal-result
    job
-   (list :status                      (if (task-completion-called-p completion)
-                                          (task-completion-status completion)
-                                          ':failed)
+   (list :status                      (if (agent-turn-complete-p child provider-result)
+                                         ':success
+                                         ':failed)
          :output                      (task--result-output completion (task-job-progress job) provider-result)
-         :error                       (or (task-completion-error completion)
-                                          (and (not (task-completion-called-p completion))
-                                               "Child stopped without calling yield.submit."))
-         :yielded-p                   (task-completion-called-p completion)
-         :structured-output-present-p (task-completion-data-present-p completion)
-         :structured-output           (and (task-completion-data-present-p completion)
-                                           (task-json->sexp (task-completion-data completion)))
+         :error                       (task-completion-error completion)
+         :yielded-p                   nil
+         :structured-output-present-p nil
+         :structured-output           nil
          :label                       (task-completion-label completion))))
 
 (-> task--failed-result (task-job keyword (option string)) list)

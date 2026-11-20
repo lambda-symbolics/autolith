@@ -126,18 +126,18 @@
 (defclass task-completion nil
   ((called-p :initform nil :accessor task-completion-called-p :type
              boolean :documentation
-             "True after the child accepted one terminal yield.")
+             "True after internal completion state is recorded.")
    (status :initform nil :accessor task-completion-status :type
            (option keyword) :documentation
-           "The success, failed, or aborted yield status.")
+           "The internal success, failed, or aborted status.")
    (text :initform nil :accessor task-completion-text :type
          (option string) :documentation
-         "The optional human-readable yield result.")
+         "The optional human-readable child result.")
    (data :initform nil :accessor task-completion-data :type t
-         :documentation "The raw validated provider JSON yield value.")
+         :documentation "Internal retained result data.")
    (data-present-p :initform nil :accessor task-completion-data-present-p
                    :type boolean :documentation
-                   "True when the child explicitly supplied yield data, including null.")
+                   "True when internal result data is present.")
    (error :initform nil :accessor task-completion-error :type
           (option string) :documentation
           "The optional child-reported failure text.")
@@ -145,7 +145,7 @@
           (option string) :documentation
           "The optional concise result label."))
   (:documentation
-   "The explicit terminal protocol state of one child agent."))
+   "Internal result and cancellation continuity state for one child agent."))
 
 (defclass task-progress nil
   ((lock :initform (make-lock "Autolith task progress") :reader
@@ -562,7 +562,7 @@ parent, and borrowed capabilities are released at terminal state."))
           "The explicit child depth below the primary agent.")
    (completion :initarg :completion :reader task-child-agent-completion
                :type task-completion :documentation
-               "The required terminal yield state.")
+               "The internal result and cancellation continuity state.")
    (orchestrator
     :initarg       :orchestrator
     :reader        task-child-agent-orchestrator
@@ -572,7 +572,7 @@ parent, and borrowed capabilities are released at terminal state."))
         :documentation
         "The lifecycle and progress record for this child."))
   (:documentation
-   "A real in-process agent session that must finish through yield.submit."))
+   "A real in-process agent session."))
 
 (defmethod agent-hurry-up-p ((agent task-child-agent))
   "Return the live hurry-up policy shared by AGENT's task orchestrator."
@@ -592,16 +592,14 @@ parent, and borrowed capabilities are released at terminal state."))
 
 (defmethod agent-turn-complete-p
     ((agent task-child-agent) (result provider-result))
-  "Return true after AGENT atomically yields or claims an unsteered stop."
-  (or (task-completion-called-p (task-child-agent-completion agent))
-      (and (call-next-method)
-           (task-job--claim-normal-completion
-            (task-child-agent-job agent)))))
+  "Return true after the child provider turn reaches its ordinary terminal boundary."
+  (declare (ignore agent))
+  (call-next-method))
 
 (defmethod agent-turn-completion-details ((agent task-child-agent))
-  "Identify whether AGENT completed through its explicit yield protocol."
-  (list :yielded-p
-        (task-completion-called-p (task-child-agent-completion agent))))
+  "Return no child-facing terminal-yield details."
+  (declare (ignore agent))
+  nil)
 
 (defclass task-tool-result (tool-result)
   ((details :initarg :details :reader task-tool-result-details
@@ -648,32 +646,6 @@ parent, and borrowed capabilities are released at terminal state."))
   "Return TOOL's shared task orchestrator."
   (task-orchestrator-tool-orchestrator tool))
 
-(defclass task-yield-tool (tool) nil
-  (:documentation
-   "Submit the required terminal result from a child agent."))
-
-(defclass task-note-tool (tool) nil
-  (:documentation
-   "Post one bounded interim child note to the parent agent."))
-
-(defmethod tool-storm-guard-exempt-p ((tool task-yield-tool))
-  "Exempt the required terminal child yield from the mutating-call storm guard."
-  t)
-
-(defmethod tool-execution-policy ((tool task-yield-tool))
-  "Execute the terminal child yield without concurrent sibling calls."
-  (declare (ignore tool))
-  ':exclusive)
-
-(defmethod tool-decode-arguments ((tool task-run-tool) source)
-  "Decode child.spawn booleans without conflating JSON false and null."
-  (declare (ignore tool))
-  (task-json-decode source :tool-name "child.spawn"))
-
-(defmethod tool-decode-arguments ((tool task-yield-tool) source)
-  "Decode yield values without conflating JSON false and null."
-  (declare (ignore tool))
-  (task-json-decode source :tool-name "yield.submit"))
 
 (defmethod tool-decode-arguments ((tool task-agents-tool) source)
   "Decode child.roles values without conflating JSON false and null."

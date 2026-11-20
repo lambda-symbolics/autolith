@@ -153,10 +153,6 @@ local-user override."
   (declare (ignore tool))
   t)
 
-(defmethod tool-user-callable-p ((tool task-yield-tool))
-  "Hide the child-only terminal yield operation from the primary user surface."
-  (declare (ignore tool))
-  nil)
 
 (defgeneric tool-active-turn-action (tool)
   (:documentation

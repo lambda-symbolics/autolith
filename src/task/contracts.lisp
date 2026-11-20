@@ -61,18 +61,6 @@
              (task-agent-definition-error-field condition)
              (task-agent-definition-error-cause condition)))))
 
-;;; A cancelled child unwinds on CL-JOBPOND:JOB-ABORTED.
-
-(define-condition task-yield-error
-    (task-error)
-  nil
-  (:documentation
-   "A child agent supplied an invalid or duplicate terminal yield."))
-
-(defmethod tool-failure-code ((condition task-yield-error))
-  "Expose terminal-yield validation without exporting its submitted fields."
-  (or (tool-error-code condition) ':invalid-yield))
-
 
 ;;;; -- Native Definition Bounds --
 
@@ -268,8 +256,8 @@
   (handler-case
       (cl-llm-provider-api:output-json->sexp value)
     (cl-llm-provider-api:output-value-error (condition)
-      (error 'task-yield-error :tool-name "yield.submit"
-             :message                     (cl-llm-provider-api:provider-api-error-message condition)))))
+        (error 'task-error :tool-name "task.result"
+               :message                     (cl-llm-provider-api:provider-api-error-message condition)))))
 
 (-> task-sexp->json (t) json-value)
 (defun task-sexp->json (value)
