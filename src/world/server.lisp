@@ -52,7 +52,10 @@
             "The tool runtimes a checkpoint closed in this channel, restarted when it is served again.")
            (idle-since :initform nil :accessor world-host-idle-since :type
             (option real) :documentation
-            "The internal real time the server first found the channel idle, or NIL while it is in use."))
+            "The internal real time the server first found the channel idle, or NIL while it is in use.")
+           (idle-grace-seconds :initform nil :accessor world-host-idle-grace-seconds
+                               :type          (option (real 0 *))
+                               :documentation "A shorter idle delay for an unviewed completed assignment, cleared by use."))
           (:documentation "One channel's application and the thread serving it.
 
 A host paused for a checkpoint keeps its application; its thread ended so
@@ -583,9 +586,14 @@ its agent, serves it again. Nothing is unloaded while a checkpoint runs."
               (cond
                 ((null since)
                  (setf (world-host-idle-since host) now))
-                ((>= (- now since) limit)
+                ((>= (- now since)
+                     (if (world-host-idle-grace-seconds host)
+                         (min limit (* (world-host-idle-grace-seconds host)
+                                       internal-time-units-per-second))
+                         limit))
                  (world-server--close-host host))))
-            (setf (world-host-idle-since host) nil)))))
+            (setf (world-host-idle-since host) nil
+                  (world-host-idle-grace-seconds host) nil)))))
   nil)
 
 (-> world-server-stop (world-server &key (:reason (option string))) null)
@@ -1863,6 +1871,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
       (setf (world-host-state host) ':closing)
       (let ((application (world-host-application host))
             (failures    nil))
+        (application-assignment-finish application :stop-p t)
         (flet ((attempt (function)
                  (handler-case (funcall function)
                    (error (condition) (push condition failures)))))
@@ -2290,17 +2299,37 @@ notice directly if it never paused, as when a checkpoint fails early."
            (application-input-controller-condition-variable controller))))))
   nil)
 
+(defclass world-host-execution-owner (hosted-execution-owner)
+  ((host :initarg :host :reader execution-owner-host
+         :documentation "The reserved host whose retirement excludes this transition."))
+  (:documentation "A hosted source protected through its complete residence transition."))
+
+(defmethod execution-owner-call-with-exclusion ((owner world-host-execution-owner) function)
+  "Refuse unavailable sources and exclude retirement until FUNCTION settles the claim."
+  (let ((host (execution-owner-host owner)))
+    (with-lock-held ((world-host-retirement-lock host))
+      (unless (world-host-live-p host)
+        (error 'world-error :operation ':move :identifier (world-host-channel host)
+               :message "The participant's channel is opening or closing; the move or park was refused."))
+      (funcall function))))
+
 (defmethod participant-execution-owner ((server world-server) configuration participant)
-  "Resolve a pooled assignment across hosts before choosing a channel host."
-  (or (loop for host in (world-server--hosts server)
-            for owner = (participant-execution-owner (world-host-application host)
-                                                     configuration participant)
-            when (typep owner 'pooled-execution-owner) return owner)
-      (channel-execution-owner server configuration participant
-                               :channel (participant-residence participant))))
+  "Resolve an admitted assignment host without reacquiring its lifetime lease."
+  (let* ((channel (participant-residence participant))
+         (host    (and channel (world-server--find-host server channel))))
+    (or (and host (application-assignment-job (world-host-application host))
+             (channel-execution-owner server configuration participant :channel channel))
+        (loop for candidate in (world-server--hosts server)
+              for owner = (participant-execution-owner (world-host-application candidate)
+                                                       configuration participant)
+              when (typep owner 'pooled-execution-owner) return owner)
+        (channel-execution-owner server configuration participant :channel channel))))
 
 (defmethod channel-execution-owner ((server world-server) configuration participant &key channel)
-  "Resolve a hosted destination, or use durable stored adoption."
+  "Resolve a reserved host with lifetime exclusion, or use durable stored adoption."
   (let ((host (and channel (world-server--find-host server channel))))
-    (channel-execution-owner (and host (world-host-application host))
-                             configuration participant :channel channel)))
+    (if host
+        (make-instance 'world-host-execution-owner
+                       :configuration configuration :participant participant :channel channel
+                       :application (world-host-application host) :host host)
+        (channel-execution-owner nil configuration participant :channel channel))))

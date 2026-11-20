@@ -791,6 +791,10 @@
  test-world-server-close-without-search-rebuild
  test-world-server-launch-options test-world-server-close-unattached
  test-world-server-close-ownership test-world-server-attachment-moves-nobody
+ test-world-server-open-running-child
+ test-world-server-running-child-move-and-park test-world-server-running-child-precommit
+ test-world-server-running-child-opening-move test-world-server-running-child-close
+ test-world-server-running-child-idle-grace
  test-world-server-person-unread test-world-server-open-before-checkpoint
  test-world-server-move test-world-execution-owner-claims
  test-world-execution-owner-staging test-world-server-move-running-child

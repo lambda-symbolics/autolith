@@ -116,6 +116,9 @@ Without an input controller, as in a headless job, or without a resident
 agent to read them, messages wait in the inbox. Settling received messages
 makes room in the inbox, so a send that found it full is resumed right
 after, rather than waiting for the next send to come by."
+  ;; The pooled observer alone consumes assignment inbox steering and receipts.
+  (when (application-assignment-job application)
+    (return-from application-world-deliver 0))
   (let ((channel       (application-world--served-channel application))
         (controller    (application-input-controller application))
         (configuration (application-configuration application))
@@ -535,6 +538,9 @@ shares nothing. A delivery that fails is reported and never stops the turn."
 (defgeneric channel-execution-owner (environment configuration participant &key channel)
   (:documentation "Resolve the prepared adoption endpoint for CHANNEL."))
 
+(defgeneric execution-owner-call-with-exclusion (owner function)
+  (:documentation "Call FUNCTION while OWNER's execution resources cannot retire."))
+
 (defgeneric execution-owner-claim (owner)
   (:documentation "Quiesce OWNER and acquire exclusion before exporting context."))
 
@@ -603,8 +609,8 @@ leaves the session's own choice in place: the world never blocks a session."
           nil))))
   nil)
 
-(-> application-world-stop-agent (application) null)
-(defun application-world-stop-agent (application)
+(-> application-world-stop-agent (application &key (:reason keyword)) null)
+(defun application-world-stop-agent (application &key (reason ':cancelled))
   "Hold APPLICATION's new work and wait until its agent's turn reached a safe boundary.
 
 The active turn is cancelled the way steering is taken: the tool call in
@@ -615,8 +621,9 @@ the channel's work resumes and the stop is refused."
     (when controller
       ;; A session's pause asks for the cancellation itself; without one, as
       ;; outside a world server, the turn is asked to stop directly.
-      (unless (application-localgroup-pause application)
-        (application-input-controller--request-active-turn-cancellation controller))
+      (unless (application-localgroup-pause application :reason reason)
+        (unless (application-assignment-cancel application :reason reason)
+          (application-input-controller--request-active-turn-cancellation controller)))
       (let ((deadline (+ (get-internal-real-time)
                          (* *world-agent-stop-seconds* internal-time-units-per-second))))
         (loop while (application-world--agent-turn-active-p application)
@@ -927,42 +934,45 @@ resume the source on precommit failure; committed residence never rolls back."
                            (multiple-value-list (world-context-read configuration identifier))))
          (written-p   nil)
          (committed-p nil))
-    (unwind-protect
-         (progn
-           (execution-owner-claim owner)
-           (multiple-value-bind (rows from goal) (execution-owner-export owner)
-             (multiple-value-bind (prepared provider)
-                 (if target (execution-owner-prepare target) (values nil nil))
-               (setf written-p t)
-               (world-context-write configuration identifier
-                                    :source from :rows rows :goal goal
-                                    :destination destination :transition (make-identifier))
-               (let ((current (if destination
-                                  (world-participant-move configuration identifier destination
-                                                          :expected-residence source)
-                                  (world-participant-park configuration identifier
-                                                          :expected-residence source))))
-                 (setf committed-p t)
-                 (when (execution-owner-state owner)
-                   (setf (participant-state-identity (execution-owner-state owner)) current)))
-               (let ((dropped (execution-owner-depart owner destination)))
-                 (when target
-                   (handler-case (world-session-remap configuration destination identifier)
-                     (autolith-error ()
-                       nil))
-                   (execution-owner-adopt target (execution-owner-state owner)
-                                          :configuration prepared :provider provider))
-                 dropped))))
-      (unwind-protect
-           (unless committed-p
-             (when written-p
-               (if previous
-                   (destructuring-bind (rows from destination transition goal) previous
-                     (world-context-write configuration identifier
-                                          :source from :rows rows :goal goal
-                                          :destination destination :transition transition))
-                   (world-context-delete configuration identifier))))
-        (execution-owner-release owner committed-p)))))
+    (execution-owner-call-with-exclusion
+     owner
+     (lambda ()
+       (unwind-protect
+            (progn
+              (execution-owner-claim owner)
+              (multiple-value-bind (rows from goal) (execution-owner-export owner)
+                (multiple-value-bind (prepared provider)
+                    (if target (execution-owner-prepare target) (values nil nil))
+                  (setf written-p t)
+                  (world-context-write configuration identifier
+                                       :source from :rows rows :goal goal
+                                       :destination destination :transition (make-identifier))
+                  (let ((current (if destination
+                                     (world-participant-move configuration identifier destination
+                                                             :expected-residence source)
+                                     (world-participant-park configuration identifier
+                                                             :expected-residence source))))
+                    (setf committed-p t)
+                    (when (execution-owner-state owner)
+                      (setf (participant-state-identity (execution-owner-state owner)) current)))
+                  (let ((dropped (execution-owner-depart owner destination)))
+                    (when target
+                      (handler-case (world-session-remap configuration destination identifier)
+                        (autolith-error ()
+                          nil))
+                      (execution-owner-adopt target (execution-owner-state owner)
+                                             :configuration prepared :provider provider))
+                    dropped))))
+         (unwind-protect
+              (unless committed-p
+                (when written-p
+                  (if previous
+                      (destructuring-bind (rows from destination transition goal) previous
+                        (world-context-write configuration identifier
+                                             :source from :rows rows :goal goal
+                                             :destination destination :transition transition))
+                      (world-context-delete configuration identifier))))
+           (execution-owner-release owner committed-p)))))))
 
 (-> world-agent--lease (configuration participant) conversation-lease)
 (defun world-agent--lease (configuration participant)
@@ -1270,6 +1280,10 @@ fullscreen each of its tokens is a widget that submits it when clicked."
                      :participant participant :channel channel :application application)
       (channel-execution-owner nil configuration participant :channel channel)))
 
+(defmethod execution-owner-call-with-exclusion ((owner execution-owner) function)
+  "Call FUNCTION when OWNER needs no host-lifetime exclusion."
+  (funcall function))
+
 (defmethod execution-owner-claim ((owner stored-execution-owner))
   "Hold an unserved conversation's exclusive lease when one exists."
   (when (world-agent--stored-channel-p (execution-owner-configuration owner)
@@ -1282,7 +1296,7 @@ fullscreen each of its tokens is a widget that submits it when clicked."
 (defmethod execution-owner-claim ((owner hosted-execution-owner))
   "Stop the host without releasing its lifetime lease."
   (let ((application (execution-owner-application owner)))
-    (application-world-stop-agent application)
+    (application-world-stop-agent application :reason ':moved)
     (application-world-adopt-pending-context application :strict-p t)
     (setf (execution-owner-state owner) (application-participant-state application)
           (participant-state-identity (execution-owner-state owner))

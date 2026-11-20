@@ -106,6 +106,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-agent
     :type          (option agent)
     :documentation "The reconnectable provider and tool coordinator.")
+   (assignment-job
+    :initform      nil
+    :accessor      application-assignment-job
+    :type          (option job)
+    :documentation "The pooled assignment that retains provider execution until terminal settlement.")
    (ui
     :initarg       :ui
     :accessor      application-ui
@@ -1306,20 +1311,23 @@ Validate PREVIOUS-PROVIDER against the effective registrations before replacing 
           (:permission-mode (member :ask :auto :sandboxed :full-access))
           (:pristine-p boolean) (:installation-provenance installation-provenance)
           (:update-availability (option update-availability))
-          (:recovering-p boolean) (:client-pane list) (:hurry-up-p boolean))
+          (:recovering-p boolean) (:client-pane list) (:hurry-up-p boolean)
+           (:agent (option agent)))
     application)
 (defun application--make-connected-application
     (&key configuration conversation conversation-lease provider tool-registry worker
           permission-state (permission-mode ':ask) pristine-p installation-provenance
-          update-availability recovering-p client-pane hurry-up-p)
+           update-availability recovering-p client-pane hurry-up-p agent)
   "Construct an application around caller-owned resources without initializing history.
-The caller must retain the result before fallible connection initialization."
-  (let* ((agent (agent-create :configuration configuration
-                              :provider      provider
-                              :conversation  conversation
-                              :tool-registry tool-registry
-                              :hurry-up-p    hurry-up-p
-                              :worker        worker))
+The caller must retain the result before fallible connection initialization.
+AGENT, when supplied, retains its participant state and execution resources."
+  (let* ((agent (or agent
+                    (agent-create :configuration configuration
+                                  :provider      provider
+                                  :conversation  conversation
+                                  :tool-registry tool-registry
+                                  :hurry-up-p    hurry-up-p
+                                  :worker        worker)))
          (ui    (application-terminal-ui-create
                  :client-pane   client-pane
                  :configuration configuration

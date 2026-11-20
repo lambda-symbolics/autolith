@@ -847,11 +847,21 @@ Live executions retain their pool ownership and remain inspectable after return.
     (mission-context-bind (task-job-mission-context job) configuration)
     (mission-context-bind (task-job-mission-context job) conversation)
     (mission-review-bind-checkpoint (task-job-review-checkpoint job) conversation)
-    ;; The lease marks the child's channel as served while it runs, so a
-    ;; message to it is taken as steering instead of opening the channel again.
-    (let ((lease (conversation-lease-acquire configuration (conversation-identifier conversation))))
+    ;; The pooled job keeps execution authority; its hosted channel owns any
+    ;; resources that must outlive the assignment's terminal result.
+    (let ((lease (conversation-lease-acquire configuration (conversation-identifier conversation)))
+          (host  nil))
       (unwind-protect
            (progn
+             (sb-sys:without-interrupts
+               (setf host (world-server-prepare-assignment job child lease))
+               (when host
+                 (world-server-start-assignment host)))
+             (when host
+               (world-server--wait-ready
+                (application-world-server (world-host-application host)) host)
+               (setf observer (application-assignment-observer
+                               (world-host-application host) observer job)))
              (task-child-inherit-reference-history job conversation provider)
              (let ((result
                      (agent-run-user-turn
@@ -876,6 +886,7 @@ Live executions retain their pool ownership and remain inspectable after return.
          (ignore-errors (task-completion-release child))
         ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
          (ignore-errors (context-forget-conversation (conversation-identifier conversation)))
-        ; mallet:suppress no-ignore-errors -- best-effort worker shutdown must not mask the child result
-         (ignore-errors (lisp-worker-pool-stop-all worker))
-         (conversation-lease-release lease))))))
+         (unless host
+           ; mallet:suppress no-ignore-errors -- best-effort worker shutdown must not mask the child result
+           (ignore-errors (lisp-worker-pool-stop-all worker))
+           (conversation-lease-release lease)))))))

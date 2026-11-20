@@ -3970,3 +3970,522 @@ the version the client says it is, when it says one."
                  (probe-file (world-context-pathname configuration identifier)))
             "postcommit failure detaches and resumes the source without undoing residence or staged recovery"))))))
   nil)
+
+(-> world-server-tests--call-running-child
+    (function &key (:before-start (option function)) (:uncancellable-p boolean)) null)
+(defun world-server-tests--call-running-child (function &key before-start uncancellable-p)
+  "Call FUNCTION with a pool-admitted child blocked in its first provider request.
+The parent invokes child.spawn through its ordinary serving loop. Wait for real
+terminal publication and join the serving owner before restoring the provider."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry            (world-client-entry configuration))
+            (parent-id        (getf (rest (world-server-tests--open
+                                           entry (world-tests--workspace root "parent"))) :session-id))
+            (parent           (world-host-application (world-server--find-host server parent-id)))
+            (parent-requests  0)
+            (identifier       nil)
+            (job              nil)
+            (entered          (sb-thread:make-semaphore))
+            (release          (sb-thread:make-semaphore))
+            (statistics-lock  (make-lock "assignment provider statistics"))
+            (requests         nil)
+            (active           0)
+            (maximum-active   0)
+            (parent-client    nil)
+            (start-error      nil)
+            (start-assignment (fdefinition 'world-server-start-assignment)))
+       (test-call-with-function-replacements
+        (list
+         (list 'world-server-start-assignment
+               (lambda (host)
+                 (when before-start
+                   (handler-case (funcall before-start host)
+                     (error (condition) (setf start-error condition))))
+                 (funcall start-assignment host)))
+         (list 'provider-stream-turn
+               (lambda (provider conversation &rest arguments)
+                 (declare (ignore provider))
+                 (if (string= (conversation-identifier conversation) parent-id)
+                     (agent-test-result
+                      "parent-spawn"
+                      (if (= (incf parent-requests) 1)
+                          (list (agent-test-call
+                                 :call-id "spawn-first-turn-child" :namespace "child" :name "spawn"
+                                 :arguments "{\"name\":\"first-turn-child\",\"agent\":\"task\",\"task\":\"Complete the assignment.\",\"completion-policy\":\"notify\"}"))
+                          (list (agent-test-message "Child admitted."))))
+                     (let ((first-p nil))
+                       (with-lock-held (statistics-lock)
+                        (setf first-p (null requests))
+                        (when first-p
+                          (setf identifier (conversation-identifier conversation)))
+                        (push (current-thread) requests)
+                        (incf active)
+                        (setf maximum-active (max maximum-active active)))
+                       (unwind-protect
+                            (progn
+                             (when first-p
+                               (flet ((hold ()
+                                        "Block this actual provider owner until released or interrupted."
+                                        (sb-thread:signal-semaphore entered)
+                                        (assert (sb-thread:wait-on-semaphore release :timeout 60))))
+                                 (if uncancellable-p
+                                     (sb-sys:without-interrupts (hold))
+                                     (hold))))
+                             (let ((text (if first-p "assignment-live-result" "ordinary-follow-up-result")))
+                               (funcall (getf arguments :event-callback)
+                                        (make-instance 'assistant-delta-event :text text))
+                               (agent-test-result
+                                (if first-p "child-first-turn" "child-follow-up")
+                                (append
+                                 (list (agent-test-message text))
+                                 (when first-p
+                                   (list (agent-test-call
+                                          :call-id "child-yield" :namespace "yield" :name "submit"
+                                          :arguments "{\"status\":\"success\",\"text\":\"Assignment complete.\"}")))))))
+                         (with-lock-held (statistics-lock) (decf active))))))))
+        (lambda ()
+          (unwind-protect
+               (progn
+                 (setf parent-client
+                       (test-localgroup--present (application-localgroup-session parent) :client-pid 424239))
+                 (localgroup-client-call parent-client ':submit :text "Delegate this work.")
+                 (test-assert (sb-thread:wait-on-semaphore entered :timeout 30)
+                              "ordinary child.spawn admits a real pool job and enters its first request")
+                 (setf job
+                       (find identifier
+                             (task-orchestrator-list-jobs (application--task-orchestrator parent))
+                             :key #'task-job-execution-identifier :test #'string=))
+                 (test-assert (null start-error)
+                              (format nil "the registration hook completes before serving: ~A" start-error))
+                 (test-assert (and job (eq (job-state job) ':running))
+                              "the production pool owns the running assignment")
+                 (test-assert (conversation-lease-busy-p configuration identifier)
+                              "a pooled assignment owns its conversation before a client opens it")
+                 (let* ((opened (world-server-open server (list :channel identifier :switch-p t)))
+                        (host   (world-server--find-host server identifier)))
+                   (test-assert opened "opening the running child reuses its registered host")
+                   (funcall function
+                            (list :server server :configuration configuration :root root
+                                  :parent parent :job job :host host
+                                  :application (world-host-application host)
+                                  :thread      (first requests)
+                                  :release     (lambda () (sb-thread:signal-semaphore release))
+                                  :statistics
+                                  (lambda ()
+                                    (with-lock-held (statistics-lock)
+                                      (list :requests       (reverse requests)
+                                            :maximum-active maximum-active)))))))
+            (sb-thread:signal-semaphore release)
+            (when job
+              (unless (job-terminal-p job)
+                (job-cancel job :reason ':shutdown))
+              (test-assert (nth-value 1 (job-await job :timeout-seconds 15))
+                           "real pool terminal publication follows assignment unwind before fixture shutdown"))
+            (let ((host (and identifier (world-server--find-host server identifier))))
+              (when host
+                (world-server-close server identifier)
+                (let ((owner (world-host-thread host)))
+                  (when owner
+                    (sb-thread:join-thread owner :default nil :timeout 15)
+                    (test-assert (not (thread-alive-p owner))
+                                 "the serving owner ends before the provider fixture is restored")))))
+            (when parent-client
+              (localgroup-client-close parent-client))))))))
+  nil)
+
+(-> test-world-server-open-running-child () null)
+(defun test-world-server-open-running-child ()
+  "Attach real clients through pooled output, settlement and ordinary follow-up."
+  ;; Build the cold syntax backend before timing ordinary command delivery.
+  (application-lisp-code-spans "(settings :transcript-style :repl)")
+  (world-server-tests--call-running-child
+   (lambda (context)
+     (destructuring-bind (&key root parent job host application thread release statistics
+                              &allow-other-keys)
+         context
+       (let ((endpoint    (application-localgroup-session application))
+             (state       (application-participant-state application))
+             (connections nil)
+             (seen        nil))
+         (unwind-protect
+              (progn
+                (test-assert (and (application-world--agent-turn-active-p application)
+                                  (eq (application-participant-state application)
+                                      (task-job-participant-state job)))
+                             "the admitted host is busy with the exact pooled participant state")
+                (test-assert (not (eq (application-permission-state parent)
+                                     (application-permission-state application)))
+                             "ordinary permission changes have an independent mutable state")
+                (dotimes (index 3)
+                  (multiple-value-bind (connection events)
+                      (test-localgroup--present endpoint :client-pid (+ 424240 index)
+                                                       :watches-p    (= index 2))
+                    (push connection connections)
+                    (push events seen)))
+                (setf connections (nreverse connections) seen (nreverse seen))
+                (test-assert (= (length (application-clients application)) 3)
+                             "two controlling clients and a watcher attach during the initial assignment")
+                (let* ((commands 0)
+                       (tools    0)
+                       (assignment
+                         (callback-agent-observer-create
+                          :command-authorization-callback
+                          (lambda (command directory)
+                            (declare (ignore command directory)) (incf commands) ':allow)
+                          :tool-authorization-callback
+                          (lambda (tool arguments)
+                            (declare (ignore tool arguments)) (incf tools) ':deny)))
+                       (observer (application-assignment-observer application assignment job)))
+                  (test-assert
+                   (and (eq (agent-observer-authorize-command observer "true" root) ':allow)
+                        (eq (agent-observer-authorize-tool
+                             observer (first (tool-registry-tools (application-tool-registry application)))
+                             (json-object)) ':deny)
+                        (= commands 1) (= tools 1)
+                        (handler-case
+                            (progn (agent-observer-evaluate-on-client observer '("(+ 1 2)")) nil)
+                          (client-evaluation-error () t)))
+                   "presentation preserves assignment authorization and does not grant client evaluation"))
+                (localgroup-client-call (second connections) ':submit :text "queued follow-up")
+                (test-assert
+                 (= (length (getf (funcall statistics) :requests)) 1)
+                 "direct input queues honestly behind the pooled assignment")
+                (funcall release)
+                (test-assert
+                 (task-tests--wait-until
+                  (lambda ()
+                    (and (job-terminal-p job)
+                         (null (application-assignment-job application))
+                         (= (length (getf (funcall statistics) :requests)) 2)
+                         (not (application-input-controller-active-p
+                               (application-input-controller application)))))
+                  15)
+                 "terminal settlement permits exactly one ordinary queued follow-up")
+                (test-assert (and (eq (job-state job) ':completed)
+                                  (eq (getf (job-result job) :status) ':success)
+                                  (eq endpoint (application-localgroup-session application))
+                                  (eq (world-host-application host) application)
+                                  (eq (application-participant-state application) state)
+                                  (not (typep (application-agent application) 'task-child-agent))
+                                  (equal (config :child-role (application-configuration application)) "task")
+                                  (not (find "yield" (tool-registry-tools (application-tool-registry application))
+                                             :key #'tool-namespace :test #'string=)))
+                             "the same host and endpoint adopt ordinary role execution without assignment-only tools")
+                (dolist (events seen)
+                  (test-assert
+                   (task-tests--wait-until
+                    (lambda ()
+                      (let ((all (funcall events)))
+                        (and (find-if (lambda (event)
+                                        (and (eq (first event) ':ui)
+                                             (eq (getf (rest event) :operation) ':markdown)
+                                             (equal (getf (rest event) :source) "assignment-live-result"))) all)
+                             (find-if (lambda (event)
+                                        (and (eq (first event) ':ui)
+                                             (eq (getf (rest event) :operation) ':markdown)
+                                             (equal (getf (rest event) :source) "ordinary-follow-up-result"))) all))))
+                    10)
+                   "each original client sees live assignment and follow-up output without reattaching"))
+                (let ((later (test-localgroup--present endpoint :client-pid 424250)))
+                  (unwind-protect
+                       (progn
+                         (localgroup-client-call later ':submit :text "attached after settlement")
+                         (test-assert
+                          (task-tests--wait-until
+                           (lambda () (= (length (getf (funcall statistics) :requests)) 3)) 10)
+                          "a client joining after settlement can submit an ordinary turn"))
+                    (localgroup-client-close later)))
+                (localgroup-client-close (first connections))
+                (test-assert (and (application-clients-controlled-p application)
+                                  (getf (localgroup-client-call (second connections) ':state) :state))
+                             "detaching the first controller leaves the second connected and usable")
+                (localgroup-client-call (second connections) ':submit
+                                        :text "(settings :transcript-style :repl)")
+                (test-assert
+                 (task-tests--wait-until
+                  (lambda () (eq (config :transcript-style (application-configuration application)) ':repl)) 10)
+                 "the remaining controlling client can execute an ordinary command")
+                (let ((observed (funcall statistics)))
+                  (test-assert (and (= (getf observed :maximum-active) 1)
+                                    (eq (first (getf observed :requests)) thread)
+                                    (every (lambda (owner) (eq owner (world-host-thread host)))
+                                           (rest (getf observed :requests))))
+                               "one provider owner runs at a time, with the initial request on the original job thread")))
+           (dolist (connection connections) (localgroup-client-close connection)))))))
+  nil)
+
+(-> test-world-server-running-child-move-and-park () null)
+(defun test-world-server-running-child-move-and-park ()
+  "Move or park a real blocked pool owner while holding its queued ordinary work."
+  (dolist (move-p '(t nil))
+    (world-server-tests--call-running-child
+     (lambda (context)
+       (destructuring-bind (&key server configuration root parent job application statistics
+                                &allow-other-keys)
+           context
+         (let* ((state       (application-participant-state application))
+                (source      (task-job-execution-identifier job))
+                (world       (values (world-reconcile-sessions configuration)))
+                (participant (find ':agent (world-channel-residents world source) :key #'participant-kind))
+                (identifier  (participant-identifier participant))
+                (entry       (world-client-entry configuration))
+                (target      "move064")
+                (connection  (test-localgroup--present
+                              (application-localgroup-session application) :client-pid 424260))
+                (grandchild  (task-tests--register-job
+                              (application--task-orchestrator application) (application-agent application)
+                              (task-job-definition job) :name "independent-grandchild")))
+           (unwind-protect
+                (progn
+                  (world-tests--persisted-conversation configuration target 2000)
+                  (world-channel-create configuration :id target
+                                        :owner            (participant-identifier (world-human-participant world))
+                                        :workspace        (world-tests--workspace root "destination"))
+                  (when move-p
+                    (world-server-tests--open entry (world-tests--workspace root "destination") :channel target)
+                    (let ((resident (find ':agent
+                                          (world-channel-residents
+                                           (world-reconcile-sessions configuration) target)
+                                          :key #'participant-kind)))
+                      (when resident
+                        (localgroup-query-record entry ':dismiss
+                                                 (list :participant (participant-identifier resident))))))
+                  (test-assert
+                   (and (handler-case
+                            (progn (world-server-move server identifier
+                                                     (conversation-identifier (application-conversation parent)))
+                                   nil)
+                          (world-error () t))
+                        (null (job-cancellation-reason job)))
+                   "an occupied destination refuses before cancelling the real assignment")
+                  (setf (application-goal application)
+                        '(:objective "movable assignment goal" :status :paused
+                          :continuations 0 :created-at 1))
+                  (application--record-goal application)
+                  (conversation-append-user-message (application-conversation application)
+                                                    "unique child context marker")
+                  (localgroup-client-call connection ':submit :text "held source follow-up")
+                  (let ((answer
+                          (if move-p
+                              (localgroup-query-record entry ':move
+                                                       (list :participant identifier :channel target))
+                              (localgroup-query-record entry ':dismiss (list :participant identifier)))))
+                    (test-assert (and (job-terminal-p job)
+                                      (eq (job-cancellation-reason job) ':moved)
+                                      (plusp (getf (rest answer) :dropped))
+                                      (= (length (getf (funcall statistics) :requests)) 1))
+                                 "the real job settles with :moved before the held source input is dropped"))
+                  (test-assert
+                   (and (null (job-cancellation-reason grandchild))
+                        (not (job-terminal-p grandchild))
+                        (null (task-job--cancelled-ancestor-reason grandchild)))
+                   "an independent grandchild survives real pooled cancellation")
+                  (test-assert
+                   (and (not (eq state (application-participant-state application)))
+                        (null (application-goal application))
+                        (conversation-lease-busy-p configuration source)
+                        (getf (localgroup-client-call connection ':state) :state))
+                   "the source keeps its lease and usable endpoint without the departed state or goal")
+                  (if move-p
+                      (progn
+                        (world-server-tests--open entry (world-tests--workspace root "destination") :channel target)
+                        (let* ((destination (world-host-application (world-server--find-host server target)))
+                               (text        (json-encode
+                                             (coerce (conversation-input-items-for-request
+                                                      (application-conversation destination)) 'vector)))
+                               (marker      "unique child context marker"))
+                          (test-assert
+                           (and (eq state (application-participant-state destination))
+                                (equal (getf (application-goal destination) :objective)
+                                       "movable assignment goal")
+                                (= (loop for offset = (search marker text)
+                                           then (search marker text :start2 (+ offset (length marker)))
+                                         while offset count t)
+                                   1)
+                                (not (typep (application-agent destination) 'task-child-agent)))
+                           "one ordinary destination adopts the exact participant, goal and context once")))
+                      (test-assert
+                       (and (null (participant-residence
+                                   (world-participant-find (world-load configuration) identifier)))
+                            (null (participant-state-conversation state))
+                            (equal (getf (nth-value 4 (world-context-read configuration identifier)) :objective)
+                                   "movable assignment goal"))
+                       "parking serializes the goal and context before releasing the live participant")))
+             (localgroup-client-close connection)
+             (job-cancel grandchild :reason ':shutdown)))))))
+  nil)
+
+(-> test-world-server-running-child-precommit () null)
+(defun test-world-server-running-child-precommit ()
+  "Resume accepted source input when staging fails after real pooled cancellation."
+  (world-server-tests--call-running-child
+   (lambda (context)
+     (destructuring-bind (&key configuration job application release statistics &allow-other-keys)
+         context
+       (declare (ignore release))
+       (let* ((state         (application-participant-state application))
+              (source        (task-job-execution-identifier job))
+              (identifier    (participant-identifier (participant-state-identity state)))
+              (session       (application-localgroup-session application))
+              (connection    (test-localgroup--present session :client-pid 424261))
+              (write-context (fdefinition 'world-context-write)))
+         (unwind-protect
+              (progn
+                (localgroup-client-call connection ':submit :text "resume this accepted follow-up")
+                (test-call-with-function-replacements
+                 (list (list 'world-context-write
+                             (lambda (candidate participant &rest arguments)
+                               (if (equal participant identifier)
+                                   (error 'world-error :operation ':move :identifier identifier
+                                          :message "Injected staging failure.")
+                                   (apply write-context candidate participant arguments)))))
+                 (lambda ()
+                   (test-assert
+                    (handler-case
+                        (progn (localgroup-query-record (world-client-entry configuration) ':dismiss
+                                                        (list :participant identifier))
+                               nil)
+                      (localgroup-error () t))
+                    "a staging error refuses the residence commitment")))
+                (test-assert
+                 (and (task-tests--wait-until
+                       (lambda () (= (length (getf (funcall statistics) :requests)) 2)) 15)
+                      (job-terminal-p job) (eq (job-cancellation-reason job) ':moved)
+                      (eq state (application-participant-state application))
+                      (not (localgroup-session-paused-p session))
+                      (equal (participant-residence
+                              (world-participant-find (world-load configuration) identifier)) source))
+                 "the original host resumes queued work after precommit failure without moving"))
+           (localgroup-client-close connection))))))
+  nil)
+
+(-> test-world-server-running-child-opening-move () null)
+(defun test-world-server-running-child-opening-move ()
+  "Refuse a hosted residence claim between registration and controller readiness."
+  (let ((refused-p nil))
+    (world-server-tests--call-running-child
+     (lambda (context)
+       (test-assert refused-p
+                    "a registered host without a controller cannot admit a residence claim")
+       (funcall (getf context :release)))
+     :before-start
+     (lambda (host)
+       (let* ((application   (world-host-application host))
+              (configuration (application-configuration application))
+              (state         (application-participant-state application))
+              (identity      (participant-state-identity state))
+              (participant   (make-instance 'participant
+                                            :identifier "early64" :kind ':agent :name "opening-claim"
+                                            :name-source ':explicit :parent nil :settings nil
+                                            :residence (world-host-channel host) :created-at 1 :updated-at 1))
+              (owner         (make-instance 'world-host-execution-owner
+                                            :configuration configuration :participant participant
+                                            :channel (world-host-channel host) :application application :host host)))
+         (unwind-protect
+              (setf refused-p
+                    (and (null (application-input-controller application))
+                         (handler-case
+                             (progn
+                               (execution-owner-call-with-exclusion
+                                owner (lambda () (execution-owner-claim owner)))
+                               nil)
+                           (world-error () t))))
+           (setf (participant-state-identity state) identity))))))
+  nil)
+
+(-> test-world-server-running-child-close () null)
+(defun test-world-server-running-child-close ()
+  "Close a real assignment, refuse moves while closing, and retain timed-out ownership."
+  (dolist (timeout-p '(nil t))
+    (world-server-tests--call-running-child
+     (lambda (context)
+       (destructuring-bind (&key server configuration job host application release &allow-other-keys)
+           context
+         (let* ((identifier  (task-job-execution-identifier job))
+                (participant (participant-state-identity (application-participant-state application)))
+                (worker      (application-worker application))
+                (registry    (application-tool-registry application)))
+           (world-server-close server identifier)
+           (cond
+             (timeout-p
+              (let ((*world-server-checkpoint-join-seconds* 0.02))
+                (test-assert
+                 (and (handler-case
+                          (progn (world-server--release-host server host) nil)
+                        (world-error () t))
+                      (not (job-terminal-p job))
+                      (eq worker (application-worker application))
+                      (eq registry (application-tool-registry application))
+                      (eq (world-server--find-host server identifier) host)
+                      (conversation-lease-busy-p configuration identifier))
+                 "a stop timeout retains the live job, borrowed resources, host and lease"))
+              ;; Keep the provider behind its barrier until the refusal is observed.
+              (test-assert
+               (and (handler-case
+                        (progn (localgroup-query-record (world-client-entry configuration) ':dismiss
+                                                        (list :participant (participant-identifier participant))) nil)
+                      (localgroup-error () t))
+                    (equal (participant-residence
+                            (world-participant-find (world-load configuration) (participant-identifier participant)))
+                           identifier)
+                    (conversation-lease-busy-p configuration identifier))
+               "dismissal while closing is refused without moving the participant or releasing the lease")
+              (funcall release))
+             (t
+              (test-assert (nth-value 1 (job-await job :timeout-seconds 15))
+                           "close interrupts the provider without its barrier being released")))
+           (test-assert
+            (and (nth-value 1 (job-await job :timeout-seconds 15))
+                 (job-cancellation-requested-p job)
+                 (task-tests--wait-until
+                  (lambda () (null (world-server--find-host server identifier))) 15)
+                 (not (conversation-lease-busy-p configuration identifier)))
+            "real cancellation settles before final host retirement releases the lease"))))
+     :uncancellable-p timeout-p))
+  nil)
+
+(-> test-world-server-running-child-idle-grace () null)
+(defun test-world-server-running-child-idle-grace ()
+  "Retire unviewed assignments through idle policy after allowing a separate attach handshake."
+  (dolist (attach-p '(nil t))
+    (world-server-tests--call-running-child
+     (lambda (context)
+       (destructuring-bind (&key server configuration job host application release &allow-other-keys)
+           context
+         (let* ((identifier (task-job-execution-identifier job))
+                (endpoint   (application-localgroup-session application))
+                (connection nil))
+           (unwind-protect
+                (progn
+                  (funcall release)
+                  (test-assert
+                   (task-tests--wait-until
+                    (lambda () (and (job-terminal-p job)
+                                    (null (application-assignment-job application))
+                                    (world-host-idle-grace-seconds host))) 15)
+                   "an unviewed completion enters ordinary idle grace without closing its endpoint")
+                  (let* ((now   (get-internal-real-time))
+                         (grace (* (world-host-idle-grace-seconds host) internal-time-units-per-second)))
+                    (world-server--unload-cold-hosts server :now now)
+                    (world-server-open server (list :channel identifier :switch-p t))
+                    (world-server--unload-cold-hosts server :now (+ now (/ grace 2)))
+                    (test-assert (and (world-host-live-p host)
+                                      (eq endpoint (application-localgroup-session application)))
+                                 "an accepted open keeps its endpoint throughout the pre-attach grace")
+                    (when attach-p
+                      (setf connection (test-localgroup--present endpoint :client-pid 424262)))
+                    (world-server--unload-cold-hosts server
+                                                   :now (+ now grace internal-time-units-per-second))
+                    (if attach-p
+                        (test-assert (and (world-host-live-p host)
+                                          (null (world-host-idle-grace-seconds host))
+                                          (getf (localgroup-client-call connection ':state) :state))
+                                     "a later attachment restores ordinary idle policy and keeps its usable endpoint")
+                        (test-assert
+                         (and (task-tests--wait-until
+                               (lambda () (null (world-server--find-host server identifier))) 15)
+                              (not (conversation-lease-busy-p configuration identifier)))
+                         "the existing sweeper retires an unviewed assignment after grace and releases its lease"))))
+             (when connection (localgroup-client-close connection))))))))
+  nil)

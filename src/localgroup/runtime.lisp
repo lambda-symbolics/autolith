@@ -141,15 +141,16 @@ conversation transaction can roll back before releasing either lease."
                (application-input-controller-condition-variable controller)))))))
     (not (null resumed-p))))
 
-(-> application-localgroup-pause (application) boolean)
-(defun application-localgroup-pause (application)
-  "Pause queued work and request cancellation of APPLICATION's active turn."
+(-> application-localgroup-pause (application &key (:reason keyword)) boolean)
+(defun application-localgroup-pause (application &key (reason ':cancelled))
+  "Hold queued work before requesting active-turn cancellation with REASON."
     (let ((session    (application-localgroup-session application))
           (controller (application-input-controller application)))
       (unless (and session controller) (return-from application-localgroup-pause nil))
       (with-lock-held ((image-daemon:daemon-runtime-lock session))
         (setf (localgroup-session-paused-p session) t))
-      (application-input-controller--request-active-turn-cancellation controller)
+      (unless (application-assignment-cancel application :reason reason)
+        (application-input-controller--request-active-turn-cancellation controller))
       (with-lock-held ((application-input-controller-lock controller))
         (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller)))

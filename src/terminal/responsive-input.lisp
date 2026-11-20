@@ -1047,10 +1047,12 @@ never waits for work that holds it."
     null)
 (defun application-input-controller--interrupt-main (controller condition)
   "Signal CONDITION on CONTROLLER's main thread unless already running there."
-  (let ((thread (application-input-controller-main-thread controller)))
-    (unless (eq thread (current-thread))
-      (when (thread-alive-p thread)
-        (interrupt-thread thread (lambda () (error condition))))))
+  (unless (application-assignment-cancel
+           (application-input-controller-application controller) :reason ':shutdown)
+    (let ((thread (application-input-controller-main-thread controller)))
+      (unless (eq thread (current-thread))
+        (when (thread-alive-p thread)
+          (interrupt-thread thread (lambda () (error condition)))))))
   nil)
 
 (-> application-input-controller--consume-turn-cancellation-delivery-p
@@ -1071,16 +1073,19 @@ never waits for work that holds it."
 (defun application-input-controller--interrupt-main-for-turn-cancellation
     (controller)
   "Promptly deliver CONTROLLER's pending turn cancellation to its main thread."
-  (let ((thread (application-input-controller-main-thread controller)))
-    (unless (eq thread (current-thread))
-      (when (thread-alive-p thread)
-        (interrupt-thread
-         thread
-         (lambda ()
-           (when
-               (application-input-controller--consume-turn-cancellation-delivery-p
-                controller)
-             (error (make-condition 'application-turn-cancelled))))))))
+  (if (application-assignment-cancel
+       (application-input-controller-application controller) :reason ':cancelled)
+      (application-input-controller--consume-turn-cancellation-delivery-p controller)
+      (let ((thread (application-input-controller-main-thread controller)))
+        (unless (eq thread (current-thread))
+          (when (thread-alive-p thread)
+            (interrupt-thread
+             thread
+             (lambda ()
+               (when
+                   (application-input-controller--consume-turn-cancellation-delivery-p
+                    controller)
+                 (error (make-condition 'application-turn-cancelled)))))))))
   nil)
 
 (-> application-input-controller--record-failure
