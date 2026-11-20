@@ -164,7 +164,7 @@
   "Return ENTRY's startup advice with its call and inline code styled.
 
 Use the Markdown renderer's inline parser without choosing a width here;
-the terminal wraps the semantic spans.
+the terminal wraps the semantic spans."
   (multiple-value-bind (text styles)
       (termdown::markdown--parse-inline (application-command-tip entry))
     (application--tip-spans
