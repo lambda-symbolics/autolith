@@ -3285,28 +3285,10 @@ A failed or interrupted revival consumes its claim and records an uncertain
 outcome for explicit inspection. When you resume a conversation, you see this
 inventory for a decision. Resuming does not replay the work.
 
-** Engineering task artifacts
-
-Select the bundled =engineering= role for the standard engineering artifact contract.
-The version-1 contract requires =schemaVersion=, =baseline= (=kind=, =workspace=,
-=revision=), =change= (=kind=, =reference=), =paths=, =checks=, =evidence=, =issues=
-and =integrationNotes=. =symbols= is optional.
-
-For each check, include the command, status (=passed=, =failed=, =skipped= or
-=not-run=) and summary. Evidence references are optional. Use baseline kind
-=unknown= when no revision is available and change kind =none= when no change
-was produced.
-
-
-Common properties cannot be overridden. The usual structured =yield.submit= and
-durable result transport validate and retain these values. Checks and evidence
-are child-reported observations; mission gates establish harness acceptance.
-A failed or aborted child follows the ordinary error-only terminal contract.
-
 ** Isolated modifying tasks
 
-Supply an =isolation= object in a flat =child.spawn= call or in each selected batch
-item. Omit it for the ordinary shared workspace. The object accepts =baseline=
+Supply an =isolation= object in a =child.spawn= call. Omit it for the ordinary
+shared workspace. The object accepts =baseline=
 (a commit-resolving revision, default =HEAD=), =dirtyPolicy= (=reject= by default,
 or explicit =ignore=), and =artifactKind= (=patch= by default, or =commit-range=).
 With =ignore=, use only the committed baseline; staged, unstaged and untracked
