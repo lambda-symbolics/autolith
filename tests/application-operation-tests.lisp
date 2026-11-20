@@ -376,12 +376,86 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-completion-catalog-cache () null)
+(defun test-completion-catalog-cache ()
+  "Verify idle completion repaints reuse one cached catalog object."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (let* ((provider (terminal-ui-completion-function (application-ui application)))
+                (first    (and provider (funcall provider)))
+                (second   (and provider (funcall provider))))
+           (test-assert (and (consp first) (eq first second))
+                        "idle repaints reuse one cached completion catalog"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-completion-catalog-invalidation () null)
+(defun test-completion-catalog-invalidation ()
+  "Verify registering a tool rebuilds the cached catalog with the new operation."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (let* ((provider (terminal-ui-completion-function (application-ui application)))
+                (before   (funcall provider))
+                (registry (application-tool-registry application))
+                (probe    (make-instance
+                           'application-operation-test-tool
+                           :namespace   "fresh"
+                           :name        "probe"
+                           :description "Freshly registered probe tool."
+                           :parameters
+                           (tool-object-schema
+                            (json-object "text" (tool-string-property "Text to echo."))
+                            '("text")))))
+           (tool-registry-register registry probe)
+           (let* ((after (funcall provider))
+                  (names (mapcar (lambda (entry) (getf entry :name)) after)))
+             (test-assert (and (not (eq before after))
+                               (find "(fresh.probe" names :test #'string=))
+                          "tool registration rebuilds the catalog with the new operation")))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-completion-catalog-locked-fallback () null)
+(defun test-completion-catalog-locked-fallback ()
+  "Verify completion keeps the last catalog when another thread holds the registry lock."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (let* ((provider (terminal-ui-completion-function (application-ui application)))
+                (before   (funcall provider))
+                (entered  (sb-thread:make-semaphore))
+                (release  (sb-thread:make-semaphore))
+                (holder
+                  (sb-thread:make-thread
+                   (lambda ()
+                      (with-recursive-lock-held
+                          (*extension-registry-transaction-lock*)
+                        (sb-thread:signal-semaphore entered)
+                        (sb-thread:wait-on-semaphore release))))))
+           (unwind-protect
+                (progn
+                  (sb-thread:wait-on-semaphore entered)
+                  (test-assert (eq before (funcall provider))
+                               "a held registry lock keeps the last complete catalog"))
+             (sb-thread:signal-semaphore release)
+             (sb-thread:join-thread holder)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> run-application-operation-tests () boolean)
 (defun run-application-operation-tests ()
   "Run focused unified command and tool operation tests."
   (test-channel-send-operation)
   (test-tool-boolean-argument)
   (test-application-operation-binding-conflicts)
+  (test-completion-catalog-cache)
+  (test-completion-catalog-invalidation)
+  (test-completion-catalog-locked-fallback)
   (multiple-value-bind (application root terminal tool)
       (application-operation-tests--application)
     (unwind-protect

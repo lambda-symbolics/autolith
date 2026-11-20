@@ -702,6 +702,7 @@ The maximum is NIL for &REST or &KEY."
     (setf *application-command-registrations* registrations
           *application-command-effective* effective
           *application-command-index* index))
+  (extension-registry--advance-generation)
   nil)
 
 (-> register-application-command

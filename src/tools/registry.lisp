@@ -1206,9 +1206,10 @@ RETAIN lists runtime identities another registry shares and still owns."
 (-> tool-registry-register (tool-registry tool) tool)
 (defun tool-registry-register (registry tool)
   "Register TOOL, preserving an existing name's presentation position."
-  (ordered-map-set (tool-registry-tool-map registry)
-                   (tool-canonical-name tool)
-                   tool))
+  (prog1 (ordered-map-set (tool-registry-tool-map registry)
+                          (tool-canonical-name tool)
+                          tool)
+      (extension-registry--advance-generation)))
 
 (-> tool-registry-delete-if (tool-registry function) tool-registry)
 (defun tool-registry-delete-if (registry predicate)
@@ -1218,6 +1219,7 @@ RETAIN lists runtime identities another registry shares and still owns."
      (declare (ignore canonical-name))
      (funcall predicate tool))
    (tool-registry-tool-map registry))
+  (extension-registry--advance-generation)
   registry)
 
 (-> tool-registry-restrict (tool-registry function &key (:retain list)) tool-registry)

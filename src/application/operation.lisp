@@ -506,14 +506,25 @@ never returned. Refresh an unchanged query after two seconds without blocking in
   (let ((ui (and (slot-boundp application 'ui)
                  (application-ui application))))
     (when (typep ui 'terminal-ui)
-      (let ((entries nil))
-        (setf (terminal-ui-completion-function ui)
-              (lambda ()
-                ;; Painting holds the UI lock. A registry writer may need that UI,
-                ;; so keep the last complete catalog and retry on the next paint.
-                (sb-thread:with-recursive-lock (*extension-registry-transaction-lock* :wait-p nil)
-                  (setf entries (application-operation-completion-entries application)))
-                entries)))
+       (let ((entries    nil)
+             (generation nil)
+             (registry   nil))
+         (setf (terminal-ui-completion-function ui)
+               (lambda ()
+                 ;; Painting holds the UI lock. A registry writer may need that UI,
+                 ;; so keep the last complete catalog and retry on the next paint.
+                 (sb-thread:with-recursive-lock
+                     (*extension-registry-transaction-lock* :wait-p nil)
+                   (let ((current-generation *extension-registry-generation*)
+                         (current-registry
+                           (and (slot-boundp application 'tool-registry)
+                                (application-tool-registry application))))
+                     (unless (and (eql generation current-generation)
+                                  (eq registry current-registry))
+                       (setf entries (application-operation-completion-entries application)
+                             generation current-generation
+                             registry current-registry))))
+                 entries)))
       (setf (terminal-ui-path-search-function ui)
             (application-path--completion-provider
              (lambda (query) (application-path-search-files application query))
