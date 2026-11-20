@@ -144,87 +144,21 @@ The primary blocking field and legacy inverse async field are mutually exclusive
 
 (-> task-normalize-arguments (hash-table &key (:definitions list)) list)
 (defun task-normalize-arguments (arguments &key definitions)
-  "Return the validated task descriptions shared by execution and presentation."
+  "Return the validated single child description shared by execution and presentation."
   (task--validate-json-fields
-   arguments '("name" "agent" "task" "context" "blocking" "async" "tasks" "isolation"
+   arguments '("name" "agent" "task" "context" "blocking" "async" "isolation"
                "completion-policy")
    "the top-level call")
-  (let* ((tasks               nil)
-         (tasks-present-p     nil)
-         (flat-task           nil)
-         (flat-task-present-p nil)
-         (shared-context      (task--repair-prose (json-get arguments "context")))
-         (top-blocking-p
-           (task--blocking-policy arguments nil "the top-level call"))
-         (top-completion-policy
-           (tool-completion-policy-argument arguments :tool-name "child.spawn"))
-         (items               nil))
-    (multiple-value-setq (tasks tasks-present-p)
-      (gethash "tasks" arguments))
-    (multiple-value-setq (flat-task flat-task-present-p)
-      (gethash "task" arguments))
-    (when (and (nth-value 1 (gethash "context" arguments))
-               (not (stringp shared-context)))
-      (error 'task-error :message
-             "A supplied task context must be a string."
-             :tool-name "child.spawn"))
-    (setf items
-          (cond
-            (tasks-present-p
-             (when flat-task-present-p
-               (error 'task-error :message
-                      "A batch task call cannot also contain top-level task."
-                      :tool-name "child.spawn"))
-             (dolist (field '("name" "agent" "isolation"))
-               (when (nth-value 1 (gethash field arguments))
-                 (error 'task-error
-                        :message
-                        (format nil
-                                "A batch task call cannot contain top-level field ~S."
-                                field)
-                        :tool-name "child.spawn")))
-             (unless (and (vectorp tasks)
-                          (not (stringp tasks))
-                          (plusp (length tasks)))
-               (error 'task-error :message
-                      "A batch task call requires a non-empty tasks array."
-                      :tool-name "child.spawn"))
-             (loop for item across tasks
-                   collect (task--normalize-item
-                            item :shared-context   shared-context
-                            :top-blocking-p        top-blocking-p
-                            :top-completion-policy top-completion-policy)))
-            (t
-             (list (task--normalize-item
-                    arguments :top-blocking-p top-blocking-p
-                    :top-completion-policy    top-completion-policy)))))
-    (when (> (length items) *task-maximum-batch-size*)
-      (error 'task-error
-             :message
-             (format nil "A task batch may contain at most ~D children."
-                     *task-maximum-batch-size*)
-             :tool-name "child.spawn"))
-    (let ((names (make-hash-table :test #'equal)))
-      (dolist (item items)
-        (let ((name (getf item :name)))
-          (when name
-            (let ((key (string-downcase name)))
-              (when (gethash key names)
-                (error 'task-error :message
-                       (format nil "Task name ~S is duplicated in this batch."
-                               name)
-                       :tool-name "child.spawn"))
-              (setf (gethash key names) t))))))
-    (loop for item in items
-          for index from 1
-          for definition = (task-find-agent-definition definitions (getf item :agent))
-          collect (append item
-                          (list :index index
-                                :mode  (if (or (getf item :blocking)
-                                               (and definition
-                                                    (task-agent-definition-blocking-p definition)))
-                                           ':synchronous
-                                           ':detached))))))
+  (let* ((item (task--normalize-item arguments))
+         (definition
+           (task-find-agent-definition definitions (getf item :agent))))
+    (list (append item
+                  (list :index 1
+                        :mode (if (or (getf item :blocking)
+                                      (and definition
+                                           (task-agent-definition-blocking-p definition)))
+                                  ':synchronous
+                                  ':detached))))))
 
 (-> task--resolve-items
     (agent task-orchestrator list
@@ -1333,55 +1267,21 @@ poll a job whose completion will wake it."
 
 (-> task-run-parameters-schema () hash-table)
 (defun task-run-parameters-schema ()
-  "Return the permissive flat-or-batch schema advertised by child.spawn."
-  (let* ((item-properties
-           (json-object "name"
-                        (tool-string-property "Optional stable child name.")
-                        "agent"
-                        (tool-string-property
-                         "Agent type, including scout, designer, reviewer, librarian, task, or sonic.")
-                        "task"
-                        (tool-string-property
-                         "Self-contained child assignment.")
-                        "context"
-                        (tool-string-property
-                         "Optional item-specific background.")
-                        "isolation" (task-worktree-options-schema)
-                        "blocking"
-                        (tool-boolean-property
-                         "Wait for this child instead of detaching it; defaults to false.")
-                        "completion-policy" (tool-completion-policy-property)
-                        "async"
-                        (tool-boolean-property
-                         "Compatibility inverse: true detaches and false blocks; cannot combine with blocking.")))
-         (item-schema (tool-object-schema item-properties '("task")))
-         (properties
-           (json-object "name"
-                        (tool-string-property
-                         "Optional stable child name for a flat call.")
-                        "agent"
-                        (tool-string-property
-                         "Agent type for a flat call; defaults to task.")
-                        "task"
-                        (tool-string-property
-                         "Self-contained assignment for a flat call.")
-                        "context"
-                        (tool-string-property
-                         "Optional background shared by every task in a batch call.")
-                        "isolation" (task-worktree-options-schema)
-                        "blocking"
-                        (tool-boolean-property
-                         "Wait for non-forced children instead of detaching them; defaults to false.")
-                        "completion-policy" (tool-completion-policy-property)
-                        "async"
-                        (tool-boolean-property
-                         "Compatibility inverse: true detaches and false blocks; cannot combine with blocking.")
-                        "tasks"
-                        (json-object "type" "array" "description"
-                                     "Child assignments executed with shared context."
-                                     "items" item-schema "minItems" 1
-                                     "maxItems" *task-maximum-batch-size*))))
-    (tool-object-schema properties nil)))
+  "Return the flat schema advertised by child.spawn."
+  (tool-object-schema
+   (json-object
+    "name" (tool-string-property "Optional stable child name.")
+    "agent" (tool-string-property
+             "Agent type, including scout, designer, reviewer, librarian, task, or sonic.")
+    "task" (tool-string-property "Self-contained child assignment.")
+    "context" (tool-string-property "Optional background for this child.")
+    "isolation" (task-worktree-options-schema)
+    "blocking" (tool-boolean-property
+                 "Wait for this child instead of detaching it; defaults to false.")
+    "completion-policy" (tool-completion-policy-property)
+    "async" (tool-boolean-property
+              "Compatibility inverse: true detaches and false blocks; cannot combine with blocking."))
+   nil))
 
 (-> task-agents-parameters-schema () hash-table)
 (defun task-agents-parameters-schema ()

@@ -667,11 +667,8 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
          :message
          (typecase condition
            (job-pool-capacity-exceeded
-            (if (eq (job-pool-capacity-exceeded-limit-kind condition) :batch-size)
-                (format nil "A task batch may contain at most ~D children."
-                        (task-orchestrator-maximum-batch-size orchestrator))
-                (format nil "The task runtime admits at most ~D live jobs."
-                        (task-orchestrator-maximum-live-jobs orchestrator))))
+            (format nil "The task runtime admits at most ~D live jobs."
+                    (task-orchestrator-maximum-live-jobs orchestrator)))
            (t
             "The task runtime is shutting down."))
          :tool-name "child.spawn"))

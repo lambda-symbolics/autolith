@@ -308,18 +308,6 @@
                  :namespace "test"
                  :name      "block"
                  :arguments "{}"))
-               ((and (eq (task-test-provider-mode provider) :manifest)
-                     (= request-number *task-maximum-batch-size*))
-                (agent-test-call
-                 :call-id   (format nil "yield-~D" request-number)
-                 :namespace "yield"
-                 :name      "submit"
-                 :arguments
-                 (json-encode
-                  (json-object
-                   "status" "failed"
-                   "text" "The final manifest child failed."
-                   "error" "AUTOLITH-LAST-MANIFEST-CHILD-FAILED"))))
                (t
                 (agent-test-call
                  :call-id   (format nil "yield-~D" request-number)

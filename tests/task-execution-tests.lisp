@@ -312,50 +312,6 @@
                   nil)
               (task-error () t))
             "task normalization rejects combined blocking and async fields")
-           (test-assert
-            (equal '("First" "Second")
-                   (mapcar (lambda (item) (getf item :task))
-                           (task-normalize-arguments
-                            (json-object "tasks"
-                                         (json-array
-                                          (json-object "task" "First")
-                                          (json-object "task" "Second"))))))
-            "a batch without shared context runs each self-contained task")
-           (dolist
-               (case
-                (list
-                 (list
-                  (json-object
-                   "name" "forbidden-top-level-name"
-                   "context" "Shared batch context."
-                   "tasks" (json-array (json-object "task" "First")))
-                  "batch task normalization rejects a top-level name")
-                 (list
-                  (json-object
-                   "agent" "scout"
-                   "context" "Shared batch context."
-                   "tasks" (json-array (json-object "task" "First")))
-                  "batch task normalization rejects a top-level agent")
-                 (list
-                  (json-object
-                    "context" "Shared batch context."
-                    "tasks"
-                    (json-array
-                     (json-object "task" "First" "legacy" t)))
-                  "batch items reject unknown fields")
-                 (list
-                  (json-object
-                   "context" "Shared batch context."
-                   "tasks" "this string is not a task array")
-                  "batch tasks reject strings despite their vector representation")))
-             (test-assert
-              (handler-case
-                  (progn
-                    (task-normalize-arguments (first case))
-                    nil)
-                (task-error ()
-                  t))
-              (second case)))
            (let* ((agent-directory (merge-pathnames ".autolith/agents/" root))
                   (agent-path      (merge-pathnames "scout.sexp" agent-directory))
                   (project-configuration

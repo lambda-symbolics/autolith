@@ -11,8 +11,6 @@
 (defparameter *task-default-maximum-runtime-milliseconds* 3600000
   "The default one-hour wall-clock cap for one child; zero disables the deadline.")
 
-(defparameter *task-maximum-batch-size* 16
-  "The largest task batch accepted atomically.")
 
 (defparameter *task-children-maximum* 32
   "The most children one agent may have; new work goes to an existing child through its channel.")
