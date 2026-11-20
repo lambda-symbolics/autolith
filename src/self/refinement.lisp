@@ -253,7 +253,7 @@ Sandbox permission does not authorize evaluation acceptance or promotion."
             (or (and (equal namespace "resource") (equal name "edit"))
                 (and (equal namespace "self")
                      (member name '("define" "redefine" "set" "eval" "commit"
-                                    "persist-definition" "discard") :test #'equal))))
+                                    "discard") :test #'equal))))
            (:skill
             (or (and (equal namespace "skill")
                     (member name '("load" "edit") :test #'equal))
@@ -277,7 +277,7 @@ Sandbox permission does not authorize evaluation acceptance or promotion."
       (refinement--reject ':invalid "Refinement requires completed owner operations, not explicit asynchronous handoffs."))
     (when (and (not (eq scope :global))
                (or (and (equal namespace "self")
-                        (member name '("commit" "persist-definition") :test #'equal))
+                         (equal name "commit"))
                    (and (equal namespace "skill") (equal name "edit"))
                    (and (equal namespace "resource") (equal name "edit")
                         (stringp uri) (uiop:string-prefix-p "memory:global" uri))))

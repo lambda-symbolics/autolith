@@ -196,57 +196,13 @@ This opt-in checker may run for minutes without output."))
              :message   (format nil "Invalid durable mutation transition from ~S to ~S."
                                 (durable-mutation-phase mutation)
                                 phase)
-             :tool-name "self.persist-definition"
+             :tool-name "self.status"
              :pathname  (durable-mutation-pathname mutation)))
   (setf (durable-mutation-phase mutation) phase)
   (when git-commit
     (setf (durable-mutation-git-commit mutation) git-commit))
   (durable-mutation-journal configuration mutation :detail detail)
   mutation)
-
-(-> durable-mutation-create
-    (configuration list
-     &key
-     (:relative-pathname string)
-     (:previous-source string)
-     (:proposed-source string))
-    durable-mutation)
-(defun durable-mutation-create
-    (configuration definition
-     &key relative-pathname previous-source proposed-source)
-  "Create and journal a pending durable transaction for DEFINITION."
-  (let* ((target (definition-key definition))
-         (mutation
-           (make-instance 'durable-mutation
-                         :identifier       (mutation-identifier-allocate configuration)
-                          :target          target
-                          :pathname        relative-pathname
-                          :previous-source previous-source
-                          :proposed-source proposed-source
-                          :base-commit
-                          (source-revision
-                           (make-source-provenance
-                            (config :source-root configuration)))
-                          :phase           :pending)))
-    (maphash
-     (lambda (identifier existing)
-       (declare (ignore identifier))
-       (when (and (string= target (durable-mutation-target existing))
-                  (member (durable-mutation-phase existing)
-                          '(:pending :installed :checked :source-written)
-                          :test #'eq))
-         (durable-mutation-transition
-          configuration
-          existing
-          :superseded
-          :detail (format nil "Superseded by mutation ~A."
-                          (durable-mutation-identifier mutation)))))
-     *durable-mutations*)
-    (setf (gethash (durable-mutation-identifier mutation)
-                   *durable-mutations*)
-          mutation)
-    (durable-mutation-journal configuration mutation)
-    mutation))
 
 (-> durable-mutations-reconcile (configuration) list)
 (defun durable-mutations-reconcile (configuration)
@@ -429,128 +385,6 @@ records resolves once."
                    (setf (gethash identifier *durable-mutations*) mutation)))))))))
   (durable-mutations-reconcile configuration)
   *durable-mutations*)
-
-(-> durable-mutation--fallback-source (configuration list) (option string))
-(defun durable-mutation--fallback-source (configuration definition)
-  "Return DEFINITION's tracked source when private history has no prior form."
-  (handler-case
-      (loop for tracked in (self-tracked-definitions configuration
-                                                     (second definition))
-            for form = (source-form-form
-                        (tracked-definition-source-form tracked))
-            when (eq (first form) (first definition))
-              return (tracked-definition-source tracked))
-    (error ()
-      nil)))
-
-(defmethod tool-execute ((tool self-persist-definition-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Install, check, and persist one definition in a private image commit."
-  (declare (ignore tool))
-  (with-live-mutation
-    (let* ((definition-source
-             (tool-argument arguments "definition" :required t))
-           (configuration (tool-context-configuration context))
-           (definition    (self-read-form definition-source :read-eval nil)))
-      (unless (definition-form-p definition)
-        (error 'source-mutation-error
-               :message   "The durable source is not a supported complete definition."
-               :tool-name "self.persist-definition"
-               :pathname  (configuration-image-commit-root configuration)))
-      (let* ((target          (definition-key definition))
-             (home-package    (definition-home-package-name definition))
-             (commit-identifier
-               (mutation-identifier-allocate configuration
-                :occupied-p (lambda (candidate)
-                              (probe-file (image-commit--directory configuration candidate)))))
-             (commit-directory
-               (image-commit--directory configuration commit-identifier))
-             (commit-script   (merge-pathnames "reconstruct.lisp"
-                                               commit-directory))
-             (previous-source (or (image-commit-definition-source
-                                   configuration target)
-                                  (durable-mutation--fallback-source
-                                   configuration
-                                   definition)
-                                  ""))
-             (undo-action
-               (self--definition-state-undo-action
-                definition
-                (and (non-empty-string-p previous-source) previous-source)
-                (find-package '#:autolith)))
-             (mutation
-               (durable-mutation-create configuration
-                                        definition
-                                        :relative-pathname
-                                        (namestring commit-script)
-                                        :previous-source previous-source
-                                        :proposed-source definition-source))
-             (checker         (tool-context-effective-mutation-checker context))
-             (published-p     nil))
-        (handler-case
-            (progn
-              (self-call-with-restarts
-               (lambda ()
-                 (self--install-definition definition definition-source))
-               :restart-name         (tool-argument arguments "restart")
-               :restart-value-source (tool-argument arguments "restart-value"))
-              (durable-mutation-transition configuration mutation :installed)
-              (self-repair-check-mutations
-               configuration checker definition-source
-               :mutations (list (durable-mutation-identifier mutation)))
-              (durable-mutation-transition configuration mutation :checked)
-              (let ((commit
-                      (image-commit-publish
-                       configuration
-                       :title            (format nil "Persist definition ~A" target)
-                       :mutation-records nil
-                       :additional-entries
-                       (list (list :kind         ':definition
-                                   :id           (durable-mutation-identifier mutation)
-                                   :target       target
-                                   :package      "AUTOLITH"
-                                   :home-package home-package
-                                   :source       definition-source))
-                       :identifier       commit-identifier)))
-                (setf published-p t)
-                (durable-mutation-transition configuration mutation
-                                             :source-written)
-                (durable-mutation-transition configuration mutation :durable)
-                (tool-success
-                 (format nil
-                         "Mutation ~A installed, checked, and persisted as ~
-                          private image commit ~A.~%Private Git commit: ~A~%
-                          Replay script: ~A"
-                         (durable-mutation-identifier mutation)
-                         commit-identifier
-                         (image-commit-history-commit commit)
-                         (namestring commit-script)))))
-          (error (condition)
-            (unless published-p
-              (handler-case
-                  (self--undo-failed-definition-installation
-                   undo-action
-                   condition)
-                (active-image-corruption (corruption)
-                  (durable-mutation-transition
-                   configuration
-                   mutation
-                   :failed
-                   :detail
-                   (format nil "Mutation failed: ~A~%Restoration failed: ~A"
-                           condition
-                           (active-image-corruption-restoration-condition
-                            corruption)))
-                  (error corruption)))
-              (unless (member (durable-mutation-phase mutation)
-                              '(:failed :superseded)
-                              :test #'eq)
-                (durable-mutation-transition configuration
-                                             mutation
-                                             :failed
-                                             :detail condition)))
-            (error condition)))))))
 
 
 ;;;; -- Source Revision Boundary --

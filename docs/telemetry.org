@@ -274,7 +274,7 @@ created without consent receive an export ID at their first consented link,
 assessment or closure.
 
 Supply the exact active local papercut ID in =incident= when you call
-=self.eval=, =self.redefine=, =self.set= or =self.persist-definition= for a repair.
+=self.eval=, =self.redefine= or =self.set= for a repair.
 Supply =repair-kind= to declare =redefine_function=, =change_setting=,
 =change_tool_strategy= or =other=. Unknown incidents and conflicting mutation
 links fail before a mutation. Omit =incident= for a standalone definition or

@@ -1378,15 +1378,3 @@ Files belonging only to unloaded optional systems or withheld features are left 
                       :tool-name "lisp.source")))
          (declare (ignore values))
          (tool-success output))))))
-
-(-> source-replace-definition (pathname string) (values string string))
-(defun source-replace-definition (pathname definition-source)
-  "Replace one complete definition and return updated and preceding source text."
-  (handler-case
-      (surgeon:source-replace-definition pathname definition-source
-                                         :package (find-package '#:autolith))
-    ((or definition-unsupported definition-not-found) (condition)
-      (error 'source-mutation-error
-             :message   (surgeon-error-message condition)
-             :tool-name "self.persist-definition"
-             :pathname  pathname))))

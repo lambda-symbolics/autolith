@@ -2072,7 +2072,7 @@
 (defun fullscreen-test--long-lisp-source-rail ()
   "Expanded long literals fit their rail without losing source text or click targets."
   (let* ((source      (concatenate 'string
-                                   "\"self[._](eval|define|redefine|set|diff|exercise|discard|persist-definition|commit|status|checkpoint|generations|rollback)"
+                                   "\"self[._](eval|define|redefine|set|diff|exercise|discard|commit|status|checkpoint|generations|rollback)"
                                    (format nil "~{~A~}\"" (loop repeat 24 collect "界é"))))
          (description (list :header "▸ lisp.eval" :sources (list source) :line-limit 8
                             :lisp-columns 80 :input-key "long-literal")))

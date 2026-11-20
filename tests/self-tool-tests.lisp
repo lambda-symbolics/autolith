@@ -299,11 +299,10 @@
 
 (-> test-self-tools () null)
 (defun test-self-tools ()
-  "Test active definition installation, inspection, and form-aware persistence."
+  "Test active definition installation, inspection and rollback."
   (test-self-capture-bounds)
   (let* ((configuration          (test-configuration))
          (root                   (test-configuration-root configuration))
-         (pathname               (merge-pathnames "definitions.lisp" root))
          (previous-function      (symbol-function 'test-self-target))
          (implementation-package (find-package '#:sb-ext))
          (implementation-name
@@ -538,25 +537,7 @@
                        (typep
                         (active-image-corruption-restoration-condition condition)
                         'serious-condition))))
-              "a restoration failure preserves both conditions and escapes tool handling"))
-           (ensure-directories-exist pathname)
-           (with-open-file (stream pathname
-                                   :direction         ':output
-                                   :if-exists         ':supersede
-                                   :if-does-not-exist ':create
-                                   :external-format   ':utf-8)
-             (format stream
-                     "; preserve this comment~%~%(defun first-definition () 1)~%~%(defun test-self-target () 0)~%"))
-           (source-replace-definition
-            pathname
-            "(defun test-self-target () \"Persisted documentation.\" 84)")
-           (let ((updated (uiop:read-file-string pathname)))
-             (test-assert (search "; preserve this comment" updated)
-                          "form-aware replacement preserves preceding comments")
-             (test-assert (search "Persisted documentation." updated)
-                          "form-aware replacement writes the complete definition")
-             (test-assert (search "(defun first-definition () 1)" updated)
-                          "form-aware replacement preserves neighboring forms")))
+             "a restoration failure preserves both conditions and escapes tool handling")))
       (setf (symbol-function 'test-self-target) previous-function)
       (remhash (definition-key '(defun test-self-target () 0))
                *exploratory-definitions*)
@@ -1292,7 +1273,6 @@
          (previous-commit-identifier   *active-image-commit-identifier*)
          (previous-history-commit      *active-image-history-commit*)
          (previous-lineage-identifier  *active-image-lineage-identifier*)
-         (legacy-identifier            nil)
          (*image-commit-replay-probe-function*
            (lambda (checked-configuration script identifier)
              (declare (ignore checked-configuration identifier))
@@ -1344,24 +1324,7 @@
                                    :worker           nil
                                    :conversation     conversation
                                    :mutation-checker checker))
-                  (failing-active-context
-                    (make-instance
-                     'tool-context
-                     :configuration configuration
-                     :worker        nil
-                     :conversation  conversation
-                     :mutation-checker
-                     (make-instance
-                      'callback-mutation-checker
-                      :active-callback
-                      (lambda (checked-configuration definition-source)
-                        (declare (ignore checked-configuration
-                                         definition-source))
-                        (error "Injected active check failure.")))))
                   (registry     (make-default-tool-registry))
-                  (persist-tool (tool-registry-find registry
-                                                    "self"
-                                                    "persist-definition"))
                   (set-tool     (tool-registry-find registry "self" "set"))
                   (diff-tool    (tool-registry-find registry "self" "diff"))
                   (commit-tool  (tool-registry-find registry "self" "commit")))
@@ -1446,8 +1409,7 @@
                          :id             identifier
                          :manifest       (namestring manifest-pathname)
                          :history-commit history-commit)))
-                (setf legacy-identifier identifier
-                      (symbol-function 'test-self-target) previous-function
+                (setf (symbol-function 'test-self-target) previous-function
                       *image-state-initialized-p* nil
                       *active-image-commit-identifier* nil
                       *active-image-history-commit* nil
@@ -1480,135 +1442,6 @@
                                          (getf (rest record) :id)))
                 (test-assert (= (test-self-target) 10)
                              "discard restores the newest historical definition"))
-             (test-assert
-              (handler-case
-                  (progn
-                    (tool-execute
-                     persist-tool
-                     failing-active-context
-                     (json-object
-                      "definition"
-                      "(defun test-self-target () \"Return a rejected value.\" 13)"))
-                    nil)
-                (error ()
-                  t))
-              "a failing active check rejects private persistence")
-             (test-assert (= (test-self-target) 10)
-                          "a rejected definition restores the newest historical value")
-             (test-assert
-              (string= (or (image-commit--pointer-identifier configuration) "")
-                       legacy-identifier)
-              "a rejected definition preserves private selection")
-             (let* ((*package*  (find-package '#:autolith))
-                    (new-definition-source
-                      "(defun test-self-new-rejected-definition () \"Exist only during a rejected durable mutation.\" 17)")
-                    (new-definition
-                      (self-read-form new-definition-source :read-eval nil))
-                    (new-target (definition-key new-definition)))
-               (when (fboundp 'test-self-new-rejected-definition)
-                 (fmakunbound 'test-self-new-rejected-definition))
-               (remhash new-target *exploratory-definitions*)
-               (test-assert
-                (handler-case
-                    (progn
-                      (tool-execute
-                       persist-tool
-                       failing-active-context
-                       (json-object "definition" new-definition-source))
-                      nil)
-                  (error ()
-                    t))
-                "a failing active check rejects a new durable definition")
-               (test-assert
-                (not (fboundp 'test-self-new-rejected-definition))
-                "rejected new persistence restores an unbound function")
-               (test-assert
-                (not (nth-value
-                      1
-                      (gethash new-target *exploratory-definitions*)))
-                "rejected new persistence removes its exploratory source")
-               (test-assert
-                (string= (or (image-commit--pointer-identifier configuration) "")
-                         legacy-identifier)
-                "rejected new persistence leaves private selection unchanged"))
-             (let* ((result
-                      (tool-execute
-                       persist-tool
-                       context
-                       (json-object
-                        "definition"
-                        "(defun test-self-target () \"Return the durable value.\" 84)")))
-                    (first-commit (image-commit-current configuration)))
-               (test-assert (tool-result-success-p result)
-                            "durable definition persistence succeeds")
-               (test-assert first-commit
-                            "durable persistence selects a private commit")
-               (test-assert
-                (uiop:subpathp (image-commit-script-pathname first-commit)
-                               (configuration-image-commit-root configuration))
-                "the reconstruction script stays under private Autolith data")
-               (test-assert
-                (test-fixture-permissions-p
-                 *platform*
-                 (image-commit-script-pathname first-commit)
-                 ':read-only)
-                "published private replay scripts are read-only")
-               (test-assert
-                (string= (or (image-commit-parent-identifier first-commit) "")
-                         legacy-identifier)
-                "durable persistence advances the selected legacy lineage")
-               (let ((script
-                       (uiop:read-file-string
-                        (image-commit-script-pathname first-commit))))
-                 (test-assert
-                  (and (search "Return the durable value." script)
-                       (not (search "Return the legacy private value." script))
-                       (not (search "Return the v0.31.1 committed value." script)))
-                  "durable persistence normalizes the historical definition entries"))
-               (let ((first-identifier (image-commit-identifier first-commit)))
-                 (tool-execute
-                  persist-tool
-                  context
-                  (json-object
-                   "definition"
-                   "(defun test-self-target () \"Return the second value.\" 85)"))
-                 (let* ((second-commit (image-commit-current configuration))
-                        (script        (uiop:read-file-string
-                                        (image-commit-script-pathname second-commit))))
-                   (test-assert
-                    (string= (or (image-commit-parent-identifier second-commit) "")
-                             first-identifier)
-                    "private definition commits form an immutable lineage")
-                   (test-assert
-                    (and (search "Return the second value." script)
-                         (not (search "Return the durable value." script)))
-                    "a full replay snapshot retains only the effective definition"))))
-             (test-assert (= (test-self-target) 85)
-                          "private persistence installs the latest definition")
-             (test-assert
-              (search "Return the durable baseline."
-                      (uiop:read-file-string source-pathname))
-              "private persistence never modifies tracked source")
-             (let ((mutation
-                     (loop for value being the hash-values
-                             of *durable-mutations*
-                           when (and
-                                 (string=
-                                  (durable-mutation-target value)
-                                  (definition-key
-                                   '(defun test-self-target () 0)))
-                                 (eq (durable-mutation-phase value) :durable))
-                             return value)))
-               (test-assert mutation
-                            "private definition persistence becomes durable")
-               (let ((identifier (durable-mutation-identifier mutation)))
-                 (clrhash *durable-mutations*)
-                 (durable-mutations-load configuration)
-                 (test-assert
-                  (eq (durable-mutation-phase
-                       (gethash identifier *durable-mutations*))
-                      :durable)
-                  "durable private state replays from the journal")))
              (let ((failed-result
                      (handler-case
                          (progn
@@ -1777,25 +1610,6 @@
             *active-image-commit-identifier* previous-commit-identifier
             *active-image-history-commit* previous-history-commit
             *active-image-lineage-identifier* previous-lineage-identifier)
-      (when (fboundp 'test-self-new-rejected-definition)
-        (fmakunbound 'test-self-new-rejected-definition))
-      (remhash
-       (definition-key '(defun test-self-new-rejected-definition () nil))
-       *exploratory-definitions*)
-      (let ((test-identifiers nil))
-        (maphash
-         (lambda (identifier mutation)
-           (when (member
-                  (durable-mutation-target mutation)
-                  (list
-                   (definition-key '(defun test-self-target () 0))
-                   (definition-key
-                    '(defun test-self-new-rejected-definition () nil)))
-                  :test #'string=)
-             (push identifier test-identifiers)))
-         *durable-mutations*)
-        (dolist (identifier test-identifiers)
-          (remhash identifier *durable-mutations*)))
       (platform-delete-directory-tree *platform* source-root
                                       :validate          t
                                       :if-does-not-exist ':ignore)))
@@ -2062,150 +1876,6 @@
                                         :if-does-not-exist ':ignore))))
   nil)
 
-(-> test-durable-definition-publication-boundary () null)
-(defun test-durable-definition-publication-boundary ()
-  "Test a post-publication failure does not undo selected live definition state."
-  (let* ((*package*                    (find-package '#:autolith))
-         (source-root
-           (uiop:ensure-directory-pathname
-            (merge-pathnames
-             (format nil "autolith-publication-tests-~A/" (make-identifier))
-             (uiop:temporary-directory))))
-         (configuration                (test-configuration-for-source-root source-root))
-         (source-pathname              (merge-pathnames "src/baseline.lisp" source-root))
-         (definition-source
-           "(defun test-self-published-definition () \"Remain live after publication.\" 23)")
-         (definition                   (self-read-form definition-source :read-eval nil))
-         (target                       (definition-key definition))
-         (previous-state-initialized-p *image-state-initialized-p*)
-         (previous-commit-identifier   *active-image-commit-identifier*)
-         (previous-history-commit      *active-image-history-commit*)
-         (previous-lineage-identifier  *active-image-lineage-identifier*)
-         (original-transition-function
-           (symbol-function 'durable-mutation-transition))
-         (mutation                     nil)
-         (*image-commit-replay-probe-function*
-           (lambda (checked-configuration script identifier)
-             (declare (ignore checked-configuration script identifier))
-             nil)))
-    (unwind-protect
-         (progn
-           (ensure-directories-exist source-pathname)
-           (with-open-file (stream source-pathname
-                                   :direction         ':output
-                                   :if-exists         ':supersede
-                                   :if-does-not-exist ':create
-                                   :external-format   ':utf-8)
-             (format stream "(in-package #:autolith)~%"))
-           (self-git-command configuration '("init" "--quiet"))
-           (self-git-command configuration
-                             '("config" "user.name" "Autolith Test"))
-           (self-git-command
-            configuration
-            '("config" "user.email" "autolith-test@example.invalid"))
-           (self-git-command configuration '("add" "src/baseline.lisp"))
-           (self-git-command configuration
-                             '("commit" "--quiet" "--no-gpg-sign" "-m" "Create baseline"))
-           (when (fboundp 'test-self-published-definition)
-             (fmakunbound 'test-self-published-definition))
-           (remhash target *exploratory-definitions*)
-           (setf *image-state-initialized-p* nil
-                 *active-image-commit-identifier* nil
-                 *active-image-history-commit* nil
-                 *active-image-lineage-identifier* nil)
-           (image-state-load configuration)
-           (let* ((conversation
-                    (conversation-create configuration
-                                         :identifier "publication-boundary"))
-                  (context
-                    (make-instance
-                     'tool-context
-                     :configuration configuration
-                     :worker        nil
-                     :conversation  conversation
-                     :mutation-checker
-                     (make-instance
-                      'callback-mutation-checker
-                      :active-callback
-                      (lambda (checked-configuration checked-source)
-                        (declare (ignore checked-configuration checked-source))
-                        "active checks passed"))))
-                  (tool (tool-registry-find (make-default-tool-registry)
-                                            "self" "persist-definition")))
-             (setf (symbol-function 'durable-mutation-transition)
-                   (lambda (checked-configuration checked-mutation phase
-                            &key detail git-commit)
-                     (let ((result
-                             (funcall original-transition-function
-                                      checked-configuration
-                                      checked-mutation
-                                      phase
-                                      :detail     detail
-                                      :git-commit git-commit)))
-                       (when (eq phase :source-written)
-                         (error "Injected post-publication journal failure."))
-                       result)))
-             (test-assert
-              (handler-case
-                  (progn
-                    (tool-execute
-                     tool
-                     context
-                     (json-object "definition" definition-source))
-                    nil)
-                (error (condition)
-                  (test-assert
-                   (search "Injected post-publication journal failure."
-                           (princ-to-string condition))
-                   (format nil "the failure follows publication: ~A" condition))
-                  t))
-              "an error after image publication still escapes the tool")
-             (setf (symbol-function 'durable-mutation-transition)
-                   original-transition-function))
-           (setf mutation
-                 (loop for candidate being the hash-values
-                         of *durable-mutations*
-                       when (string= target
-                                     (durable-mutation-target candidate))
-                         return candidate))
-           (test-assert mutation
-                        "post-publication failure retains its mutation state")
-           (test-assert
-            (and (fboundp 'test-self-published-definition)
-                 (= (test-self-published-definition) 23))
-            "post-publication failure preserves the selected live definition")
-           (test-assert
-            (string= (gethash target *exploratory-definitions*)
-                     definition-source)
-            "post-publication failure preserves selected exploratory source")
-           (test-assert
-            (image-commit-contains-mutation-p
-             configuration
-             (durable-mutation-identifier mutation))
-            "post-publication failure leaves the selected replay commit intact")
-           (test-assert
-            (eq (durable-mutation-phase mutation) :source-written)
-            "post-publication journal progress remains reconcilable")
-           (durable-mutations-reconcile configuration)
-           (test-assert
-            (eq (durable-mutation-phase mutation) :durable)
-            "reconciliation completes the selected post-publication mutation"))
-      (setf (symbol-function 'durable-mutation-transition)
-            original-transition-function
-            *image-state-initialized-p* previous-state-initialized-p
-            *active-image-commit-identifier* previous-commit-identifier
-            *active-image-history-commit* previous-history-commit
-            *active-image-lineage-identifier* previous-lineage-identifier)
-      (when (fboundp 'test-self-published-definition)
-        (fmakunbound 'test-self-published-definition))
-      (remhash target *exploratory-definitions*)
-      (when mutation
-        (remhash (durable-mutation-identifier mutation) *durable-mutations*))
-      (platform-delete-directory-tree *platform* source-root
-                                      :validate          t
-                                      :if-does-not-exist ':ignore)))
-  nil)
-
 (-> test-self-replay-foreign-home () null)
 (defun test-self-replay-foreign-home ()
   "Test replay skips stale definitions whose names moved to a library."
@@ -2352,34 +2022,6 @@
                             (test-assert (and *image-replay-skips*
                                               (eq (observe) ':replacement))
                                          "recorded ownership changes skip stale replacements")))
-                        (when (eq kind ':method)
-                          (let* ((*image-commit-replay-probe-function*
-                                   (lambda (checked-configuration pathname identifier)
-                                     (declare (ignore checked-configuration identifier))
-                                     (load pathname)
-                                     nil))
-                                 (context (make-instance 'tool-context :configuration configuration))
-                                 (tool    (tool-registry-find (make-default-tool-registry)
-                                                              "self" "persist-definition"))
-                                 (result
-                                   (tool-execute
-                                    tool context
-                                    (json-object
-                                     "definition"
-                                     (write-to-string
-                                      (test-self--foreign-definition kind symbol ':persisted))))))
-                            (test-assert (and (tool-result-success-p result)
-                                              (eq (observe) ':persisted))
-                                         "direct persistence installs and replays foreign methods")
-                            (let* ((commit (image-commit-current configuration))
-                                   (entry  (first (image-commit-base-entries configuration))))
-                              (test-assert (equal "SB-EXT" (getf entry :home-package))
-                                           "direct persistence records the foreign target owner")
-                              (call-with-package-unlocked package (lambda () (eval baseline)))
-                              (load (image-commit-script-pathname commit))
-                              (test-assert (and (eq (observe) ':persisted)
-                                                (sb-ext:package-locked-p package))
-                                           "the selected private script restores the foreign method and lock"))))
                         (when (eq kind ':variable)
                           (test-assert
                            (handler-case

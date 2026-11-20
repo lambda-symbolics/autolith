@@ -1030,7 +1030,7 @@ them."
     (when (subtypep class 'mutable-self-tool)
       (setf (gethash "diagnostic" properties) (default-tools--diagnostic-property)))
     (when (member class '(self-eval-tool self-redefine-tool self-set-tool
-                          self-persist-definition-tool self-exercise-tool))
+                          self-exercise-tool))
       (setf (gethash "incident" properties)
             (tool-string-property "The exact active papercut identifier for this repair; omit for a standalone mutation.")
             (gethash "repair-kind" properties)
@@ -1104,17 +1104,6 @@ them."
              "restart" (tool-restart-property)
              "restart-value" (tool-restart-value-property))
             '("symbol" "value")))
-          (list
-           'self-persist-definition-tool
-           "self" "persist-definition"
-           "Compile, install, check, and persist one complete definition in a private image commit backed by Autolith's private mutation-history Git repository. The tracked source repository is never modified."
-           (tool-object-schema
-            (json-object
-             "definition" (tool-string-property
-                           "A complete defining Common Lisp form.")
-             "restart" (tool-restart-property)
-             "restart-value" (tool-restart-value-property))
-            '("definition")))
           (list
            'self-status-tool
            "self" "status"

@@ -145,15 +145,6 @@
   ()
   (:documentation "Set one active global binding to an evaluated value."))
 
-(defclass self-persist-definition-tool (lisp-source-input mutable-self-tool)
-  ()
-  (:documentation "Install and privately commit one complete definition."))
-
-(defmethod tool-source-argument ((tool self-persist-definition-tool))
-  "Name the definition a durable installation commits."
-  (declare (ignore tool))
-  "definition")
-
 (defclass self-status-tool (self-tool)
   ()
   (:documentation "Summarize active-image mutation and recovery state."))

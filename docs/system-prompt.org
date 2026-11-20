@@ -406,7 +406,6 @@ from. Never guess a definition name: find it with =lisp.apropos= or
 | =self.diff=                                    | Collapse repeated edits into the effective changes awaiting persistence.                                            |
 | =self.exercise=                                | Narrow assertion-style check against one change.                                                                    |
 | =self.discard=                                 | Discard unwanted changes.                                                                                           |
-| =self.persist-definition=                      | One tested Autolith definition with continued value.                                                                |
 | =self.commit=                                  | One focused group of pending definitions and settings.                                                              |
 | =self.generations=                             | Confirm asynchronous checkpoint publication.                                                                        |
 
