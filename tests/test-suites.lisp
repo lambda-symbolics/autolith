@@ -1132,10 +1132,7 @@
   test-application-conversation-maintenance-repair)
 
 (define-test-suite conversation-replay
-  test-conversation-replay-navigation
   test-conversation-replay-projection
-  test-conversation-replay-storage
-  test-conversation-replay-command-line
   test-conversation-fork-storage
   test-conversation-image-archive-ownership
   test-conversation-image-maintenance-failures

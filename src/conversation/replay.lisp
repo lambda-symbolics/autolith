@@ -295,52 +295,6 @@ whole history when a crash or retention boundary interrupted sequencing."
      (format stream "~S~%" record)))
   nil)
 
-(-> conversation-replay-write-current
-    (conversation-replay-session stream &key (:raw-p boolean))
-    null)
-(defun conversation-replay-write-current (session stream &key raw-p)
-  "Write SESSION's selected record, optionally as its projected S-expression."
-  (let* ((entry    (conversation-replay--current-record session))
-         (record   (conversation-replay-record-record entry))
-         (sequence (conversation-replay--record-sequence entry))
-         (time     (conversation-replay--record-time entry)))
-    (format stream "~&[turn ~D | sequence ~A | ~A | ~A]~%"
-            (conversation-replay-record-turn entry)
-            (or sequence "?")
-            (conversation-replay-timestamp-string time)
-            (conversation-replay-record-kind record))
-    (if raw-p
-        (format stream "~S~%" record)
-        (conversation-replay-write-record-body record stream))
-    (force-output stream))
-  nil)
-
-(-> conversation-replay--parse-positive-count ((option string)) (integer 1))
-(defun conversation-replay--parse-positive-count (text)
-  "Return TEXT as a positive navigation count, defaulting to one."
-  (if (null text)
-      1
-      (handler-case
-          (let ((count (parse-integer text :junk-allowed nil)))
-            (unless (plusp count)
-              (error 'configuration-error
-                     :message "A replay movement count must be positive."))
-            count)
-        (parse-error ()
-          (error 'configuration-error
-                 :message (format nil "Invalid replay movement count ~S." text))))))
-
-(-> conversation-replay-move (conversation-replay-session integer)
-    conversation-replay-record)
-(defun conversation-replay-move (session delta)
-  "Move SESSION by signed record DELTA, clamped to its durable range."
-  (let* ((records (conversation-replay-session-records session))
-         (maximum (1- (length records))))
-    (setf (conversation-replay-session-position session)
-          (min maximum
-               (max 0 (+ (conversation-replay-session-position session) delta))))
-    (conversation-replay--current-record session)))
-
 (-> conversation-replay--select-index
     (conversation-replay-session function string)
     conversation-replay-record)
@@ -353,18 +307,6 @@ whole history when a crash or retention boundary interrupted sequencing."
              :message (format nil "No replay record matches ~A." description)))
     (setf (conversation-replay-session-position session) position)
     (aref records position)))
-
-(-> conversation-replay-select-turn (conversation-replay-session integer)
-    conversation-replay-record)
-(defun conversation-replay-select-turn (session turn)
-  "Select the first record in nonnegative user TURN."
-  (conversation-replay--select-by session ':turn turn))
-
-(-> conversation-replay-select-sequence (conversation-replay-session integer)
-    conversation-replay-record)
-(defun conversation-replay-select-sequence (session sequence)
-  "Select the first record at or after nonnegative durable SEQUENCE."
-  (conversation-replay--select-by session ':sequence sequence))
 
 (-> conversation-replay--parse-date (string) (values integer integer integer))
 (defun conversation-replay--parse-date (text)
@@ -391,12 +333,6 @@ whole history when a crash or retention boundary interrupted sequencing."
       (error 'configuration-error
              :message (format nil "Invalid local replay date ~S; use YYYY-MM-DD."
                               text)))))
-
-(-> conversation-replay-select-date (conversation-replay-session string)
-    conversation-replay-record)
-(defun conversation-replay-select-date (session text)
-  "Select SESSION's first record on local calendar date TEXT."
-  (conversation-replay--select-by session ':date text))
 
 (-> conversation-replay--parse-clock (string) (values integer integer integer))
 (defun conversation-replay--parse-clock (text)
@@ -429,12 +365,6 @@ whole history when a crash or retention boundary interrupted sequencing."
           (multiple-value-bind (hour minute second)
               (conversation-replay--parse-clock (subseq text 11))
             (encode-universal-time second minute hour day month year)))))))
-
-(-> conversation-replay-select-time (conversation-replay-session string)
-    conversation-replay-record)
-(defun conversation-replay-select-time (session text)
-  "Select the first record at or after TEXT, using the selected date for a clock."
-  (conversation-replay--select-by session ':time text))
 
 (-> conversation-replay--target-time (string (option timestamp)) timestamp)
 (defun conversation-replay--target-time (text current-time)
@@ -516,18 +446,6 @@ whole history when a crash or retention boundary interrupted sequencing."
       (t
        (error 'configuration-error :message (format nil "Unknown replay selector ~S." kind))))))
 
-(-> conversation-replay--select-by
-    (conversation-replay-session keyword (or integer string))
-    conversation-replay-record)
-(defun conversation-replay--select-by (session kind value)
-  "Select SESSION's first entry matching a typed KIND and VALUE."
-  (multiple-value-bind (predicate description)
-      (conversation-replay--selector
-       kind value
-       :current-time (conversation-replay--record-time
-                      (conversation-replay--current-record session)))
-    (conversation-replay--select-index session predicate description)))
-
 (-> conversation-replay-apply-selection
     (conversation-replay-session list)
     conversation-replay-record)
@@ -541,167 +459,6 @@ whole history when a crash or retention boundary interrupted sequencing."
                         (conversation-replay--current-record session)))
       (conversation-replay--select-index session predicate description)))
   (conversation-replay--current-record session))
-
-(-> conversation-replay-write-location
-    (conversation-replay-session stream)
-    null)
-(defun conversation-replay-write-location (session stream)
-  "Write SESSION's current navigation location to STREAM."
-  (let* ((records (conversation-replay-session-records session))
-         (entry   (conversation-replay--current-record session)))
-    (format stream
-            "record ~D of ~D, turn ~D, sequence ~A, ~A~%"
-            (1+ (conversation-replay-session-position session))
-            (length records)
-            (conversation-replay-record-turn entry)
-            (or (conversation-replay--record-sequence entry) "?")
-            (conversation-replay-timestamp-string
-             (conversation-replay--record-time entry)))
-    (force-output stream))
-  nil)
-
-(-> conversation-replay-write-help (stream) null)
-(defun conversation-replay-write-help (stream)
-  "Write the replay debugger command reference to STREAM."
-  (format stream
-          "~&Replay commands:~%
-  next [N], previous [N]  step durable records~%
-  turn N                  jump to a user turn~%
-  sequence N              jump to a durable sequence~%
-  date YYYY-MM-DD          jump to a local date~%
-  time TIME               jump to local or RFC 3339 time~%
-  first, last              jump to either boundary~%
-  print, raw, where        inspect the selected record~%
-  help, quit               show this text or leave replay~%")
-  (force-output stream)
-  nil)
-
-(-> conversation-replay--command-arguments (string) list)
-(defun conversation-replay--command-arguments (line)
-  "Return whitespace-separated replay command words from LINE."
-  (remove ""
-          (uiop:split-string line
-                             :separator '(#\Space #\Tab #\Newline #\Return))
-          :test #'string=))
-
-(-> conversation-replay-execute-command
-    (conversation-replay-session string stream)
-    boolean)
-(defun conversation-replay-execute-command (session line stream)
-  "Execute replay debugger LINE and return true when the session should continue."
-  (let* ((arguments (conversation-replay--command-arguments line))
-         (command   (string-downcase (or (first arguments) "next")))
-         (value     (second arguments)))
-    (labels ((reject-extra-arguments (maximum)
-               "Reject command words beyond MAXIMUM."
-               (when (> (length arguments) maximum)
-                 (error 'configuration-error
-                        :message (format nil "Replay command ~A received too many arguments."
-                                         command)))))
-      (cond
-        ((member command '("q" "quit" "exit") :test #'string=)
-         (reject-extra-arguments 1)
-         nil)
-        ((member command '("n" "next") :test #'string=)
-         (reject-extra-arguments 2)
-         (conversation-replay-move
-          session (conversation-replay--parse-positive-count value))
-         (conversation-replay-write-current session stream)
-         t)
-        ((member command '("p" "previous" "prev") :test #'string=)
-         (reject-extra-arguments 2)
-         (conversation-replay-move
-          session (- (conversation-replay--parse-positive-count value)))
-         (conversation-replay-write-current session stream)
-         t)
-        ((string= command "turn")
-         (reject-extra-arguments 2)
-         (conversation-replay-select-turn
-          session (parse-integer value :junk-allowed nil))
-         (conversation-replay-write-current session stream)
-         t)
-        ((member command '("sequence" "record") :test #'string=)
-         (reject-extra-arguments 2)
-         (conversation-replay-select-sequence
-          session (parse-integer value :junk-allowed nil))
-         (conversation-replay-write-current session stream)
-         t)
-        ((string= command "date")
-         (reject-extra-arguments 2)
-         (conversation-replay-select-date session value)
-         (conversation-replay-write-current session stream)
-         t)
-        ((string= command "time")
-         (reject-extra-arguments 2)
-         (conversation-replay-select-time session value)
-         (conversation-replay-write-current session stream)
-         t)
-        ((string= command "first")
-         (reject-extra-arguments 1)
-         (setf (conversation-replay-session-position session) 0)
-         (conversation-replay-write-current session stream)
-         t)
-        ((string= command "last")
-         (reject-extra-arguments 1)
-         (setf (conversation-replay-session-position session)
-               (1- (length (conversation-replay-session-records session))))
-         (conversation-replay-write-current session stream)
-         t)
-        ((member command '("print" "show") :test #'string=)
-         (reject-extra-arguments 1)
-         (conversation-replay-write-current session stream)
-         t)
-        ((string= command "raw")
-         (reject-extra-arguments 1)
-         (conversation-replay-write-current session stream :raw-p t)
-         t)
-        ((string= command "where")
-         (reject-extra-arguments 1)
-         (conversation-replay-write-location session stream)
-         t)
-        ((member command '("h" "help" "?") :test #'string=)
-         (reject-extra-arguments 1)
-         (conversation-replay-write-help stream)
-         t)
-        (t
-         (error 'configuration-error
-                :message (format nil "Unknown replay command ~S." command)))))))
-
-(-> conversation-replay-run
-    (configuration string list
-     &key (:input stream) (:output stream) (:interactive-p boolean))
-    null)
-(defun conversation-replay-run
-    (configuration identifier selection
-     &key (input *standard-input*) (output *standard-output*)
-          (interactive-p
-            (and (interactive-stream-p input)
-                 (interactive-stream-p output))))
-  "Inspect IDENTIFIER without acquiring a lease or writing conversation state."
-  (let* ((conversation (conversation-replay-load configuration identifier))
-         (session      (conversation-replay-create conversation)))
-    (conversation-replay-apply-selection session selection)
-    (format output "~&Autolith replay ~A~@[  ~A~]~%"
-            (conversation-identifier-display
-             (conversation-identifier conversation))
-            (conversation-title conversation))
-    (conversation-replay-write-current session output)
-    (when interactive-p
-      (conversation-replay-write-help output)
-      (loop
-        (format output "replay> ")
-        (force-output output)
-        (let ((line (read-line input nil nil)))
-          (unless line
-            (return))
-          (handler-case
-              (unless (conversation-replay-execute-command session line output)
-                (return))
-            (autolith-error (condition)
-              (format output "~A~%" condition))
-            (error (condition)
-              (format output "~A~%" condition)))))))
-  nil)
 
 
 ;;;; -- Durable Conversation Forks --

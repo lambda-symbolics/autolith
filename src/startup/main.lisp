@@ -1797,28 +1797,6 @@ Return success and bounded secondary cleanup metadata without replacing a primar
           *standard-output* (channel-open-instruction identifier)
           (localgroup--status-output-styled-p *standard-output*)))))))
 
-(-> main--replay-command () clingon:command)
-(defun main--replay-command ()
-  "Return the read-only conversation replay sub-command definition."
-  (make-command
-   :name        "replay"
-   :description "inspect a saved conversation as a read-only event stream"
-   :usage       "ID [turn N | date YYYY-MM-DD | time TIME | sequence N]"
-   :handler
-   (lambda (command)
-     (let ((arguments (command-arguments command)))
-       (unless arguments
-         (error 'configuration-error
-                :message "Replay requires a conversation identifier."))
-       (when (> (length arguments) 3)
-         (error 'configuration-error
-                :message "Replay accepts an ID and at most one selector."))
-       (conversation-replay-run
-        (configuration-create :immutable-p                 t
-                              :defer-provider-validation-p t)
-        (first arguments)
-        (rest arguments))))))
-
 (-> main--fork-command () clingon:command)
 (defun main--fork-command ()
   "Return the durable conversation fork sub-command definition."
@@ -2121,7 +2099,6 @@ autolith uninstall removes the installation and keeps user data."
    :options      (main--session-options)
    :sub-commands (list (main--open-command)
                        (main--new-command)
-                       (main--replay-command)
                        (main--fork-command)
                        (main--acp-command)
                        (main--auth-command)

@@ -1531,22 +1531,6 @@ readable through =job.get=.
 If a world server still serves the conversation as a channel, resume attaches to
 that live channel with its jobs intact. See Local sessions.
 
-Inspect a saved conversation without resuming or locking it with:
-
-#+BEGIN_SRC sh
-autolith replay ID
-autolith replay ID turn 12
-autolith replay ID date 2026-08-28
-autolith replay ID time 2026-08-28T10:30:00
-autolith replay ID sequence 1200
-#+END_SRC
-
-On an interactive terminal, replay behaves like a small debugger over durable
-conversation events. =next= and =previous= step records; =turn=, =date=, =time=,
-and =sequence= jump to a location; =raw= shows the selected replay form; and
-=quit= exits. Replay reads complete persisted forms without acquiring the
-conversation lease or repairing, appending, or resuming the conversation.
-
 ** Usage
 
 Inspect stored data, logical disk usage, and process memory from the OS shell:
