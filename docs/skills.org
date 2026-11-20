@@ -46,13 +46,14 @@ corrupt cache is regenerated from =SKILL.md=.
 
 * Authoring global skills
 
-Use =skill.edit= with the exact =name= and complete =content= of a =SKILL.md=
-definition to create or replace
-=${XDG_CONFIG_HOME:-~/.config}/autolith/skills/NAME/SKILL.md=.
-The source is limited to 262144 characters. Autolith validates the frontmatter
-and instruction body before atomically replacing the file. Failed validation
-or publication preserves the previous source. If that directory contains a
-native =SKILL.sexp=, edit the native definition directly instead.
+Read =skill-source:NAME= with =resource.read= to get the source lines and
+revision under the configured user-global =skills/NAME/= directory. Then pass
+that revision to =resource.edit= with line edits against the observed lines.
+To create a Markdown skill, read an unused name first and use =replace-empty=
+with the missing source's revision and the complete =SKILL.md= definition.
+If =SKILL.sexp= exists, read and edit it instead of =SKILL.md=.
+Autolith validates the complete prospective definition before atomic publication.
+This resource is available to top-level agents.
 
 * Native =SKILL.sexp=
 

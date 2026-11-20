@@ -79,13 +79,15 @@
 
 (-> skill-augment-tool-registry (tool-registry) tool-registry)
 (defun skill-augment-tool-registry (registry)
-  "Register skill.load and the skill: resource scheme in REGISTRY."
+  "Register skill.load and the skill resource schemes in REGISTRY."
   (unless (tool-registry-find registry "skill" "load")
     (tool-registry-describe-namespace
      registry "skill"
      "Request-local loading of discovered Autolith Skills.")
     (resource-registry-register (tool-registry-resource-registry registry)
                                 (make-instance 'skill-resolver :scheme "skill"))
+    (resource-registry-register (tool-registry-resource-registry registry)
+                                (make-instance 'skill-source-resolver :scheme "skill-source"))
     (tool-registry-register
      registry
      (make-instance
@@ -101,67 +103,4 @@
         (tool-string-property
          "The exact case-sensitive name from the request's Skills catalog."))
        '("name")))))
-  registry)
-
-
-;;;; -- Skill Authoring Tool --
-
-(defparameter *skill-edit-maximum-content-characters* (* 256 1024)
-  "The maximum source length, in characters, accepted by one skill.edit call.")
-
-(defclass skill-edit-tool (tool) ()
-  (:documentation "Create or replace one validated global Autolith skill."))
-
-(defmethod tool-execute ((tool skill-edit-tool) (context tool-context) (arguments hash-table))
-  "Validate the source, then atomically create or replace one global SKILL.md file."
-  (declare (ignore tool))
-  (let* ((name          (tool-argument arguments "name" :required t))
-         (content       (tool-argument arguments "content" :required t))
-         (configuration (tool-context-configuration context))
-         (root          (skill-global-root configuration)))
-    (unless (cl-skills:skill-name-valid-p name)
-      (error 'tool-error
-             :tool-name "skill.edit"
-             :message   "skill.edit name must be 1-64 lowercase letters, digits, or single internal hyphens."))
-    (unless (and (stringp content)
-                 (<= (length content) *skill-edit-maximum-content-characters*))
-      (error 'tool-error
-             :tool-name "skill.edit"
-             :message   "skill.edit content must be a string no larger than 262144 characters."))
-    (let* ((pathname (merge-pathnames (format nil "~A/SKILL.md" name) root))
-           (native   (make-pathname :type "sexp" :defaults pathname)))
-      (handler-case
-          (cl-skills:skill-source-validate content pathname)
-        (cl-skills:skill-validation-error (condition)
-          (error 'tool-error :tool-name "skill.edit"
-                 :message               (format nil "Skill validation failed: ~A" condition))))
-      (when (probe-file native)
-        (error 'tool-error :tool-name "skill.edit"
-               :message               (format nil "Edit the native skill at ~A instead; it takes precedence over SKILL.md."
-                                              native)))
-      (publish-file pathname content)
-      (make-instance 'tool-result
-                     :success-p t
-                     :content   (format nil "Validated and wrote global skill ~A at ~A."
-                                        name (namestring pathname))))))
-
-(-> skill-edit-augment-tool-registry (tool-registry) tool-registry)
-(defun skill-edit-augment-tool-registry (registry)
-  "Register global skill authoring independently of skill.load availability."
-  (unless (tool-registry-find registry "skill" "edit")
-    (tool-registry-describe-namespace
-     registry "skill" "Request-local loading and global authoring of Autolith Skills.")
-    (tool-registry-register
-     registry
-     (make-instance
-      'skill-edit-tool
-      :namespace   "skill"
-      :name        "edit"
-      :description "Create or replace a global SKILL.md after runtime-equivalent validation."
-      :parameters
-      (tool-object-schema
-       (json-object
-        "name" (tool-string-property "New or existing global skill name.")
-        "content" (tool-string-property "Complete SKILL.md content, including frontmatter."))
-       '("name" "content")))))
   registry)

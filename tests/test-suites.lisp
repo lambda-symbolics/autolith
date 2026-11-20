@@ -977,7 +977,7 @@
   test-skill-load-tool
   test-skill-provider-context
   test-skill-cache-prefix
-  test-skill-edit-tool
+  test-skill-source-resource
   test-skill-load-presentation
   test-skill-description-resource)
 

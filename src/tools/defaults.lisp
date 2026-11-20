@@ -1187,7 +1187,6 @@ socket."
     (mission-schedule-register-tools registry)
     (skill-augment-tool-registry registry)
     (executable-skill-register-tools registry)
-    (skill-edit-augment-tool-registry registry)
     (when (fboundp 'structural-register-default-tools)
       (structural-register-default-tools registry))
     (when (fboundp 'debug-register-default-tools)

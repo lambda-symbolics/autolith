@@ -312,11 +312,20 @@ Return NIL when NAME disappears during enumeration."
    *workspace-file-resource-digest-key*
    (format nil "~(~A~)~C~A" kind #\Null content)))
 
+(defgeneric workspace-file-check-path (resource context)
+  (:documentation "Check resource-specific path constraints before observing or staging a file."))
+
+(defmethod workspace-file-check-path ((resource workspace-file-resource) (context tool-context))
+  "Ordinary workspace paths have no additional resource-specific constraints."
+  (declare (ignore resource context))
+  nil)
+
 (-> workspace-file--observe-path
     (workspace-file-resource tool-context)
     workspace-file-observation)
 (defun workspace-file--observe-path (resource context)
   "Return a complete observation of RESOURCE's current filesystem state."
+  (workspace-file-check-path resource context)
   (let* ((path (workspace-file-resource-pathname resource))
          (kind (workspace-file--path-kind path)))
     (when (eq kind ':other)
@@ -353,6 +362,7 @@ Return NIL when NAME disappears during enumeration."
   "Read a workspace file whole up to MAXIMUM-BYTES, past the editing snapshot limit.
 
 Directories and missing files keep their ordinary observation."
+  (workspace-file-check-path resource context)
   (let ((path (workspace-file-resource-pathname resource)))
     (if (eq (workspace-file--path-kind path) ':file)
         (workspace-file--read-content path :context       context
@@ -503,6 +513,7 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
     workspace-file-observation)
 (defun workspace-file--publish (resource context &key base-observation content)
   "Stage and publish CONTENT after an immediate exact BASE-OBSERVATION check."
+  (workspace-file-check-path resource context)
   (let ((path   (workspace-file-resource-pathname resource))
         (octets (workspace-file--replacement-octets content)))
     (platform-ensure-directories-exist *platform* path)
@@ -518,6 +529,7 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
          :observe (lambda () (workspace-file--observe-path resource context))
          :same-p  #'workspace-file--same-observation-p
          :publish (lambda (temporary)
+                      (workspace-file-check-path resource context)
                     (handler-case
                         (funcall
                          (if (eq (workspace-file-observation-kind base-observation)

@@ -11,7 +11,7 @@
     "self.generations"
     "self.rollback" "child.spawn" "child.roles" "job.get" "job.wait"
     "job.cancel" "job.list" "job.continuity" "child.worktree" "skill.invoke" "skill.verify"
-    "skill.edit" "agenda.transport" "mcp.status" "mcp.refresh" "mcp.resources" "mcp.read-resource"
+    "agenda.transport" "mcp.status" "mcp.refresh" "mcp.resources" "mcp.read-resource"
     "mcp.prompts" "mcp.get-prompt" "yield.note" "yield.submit" "tool_search.tool_search_tool"
     "multi_tool_use.parallel" "web.run" "web_extra.gist" "rlm.infer" "rlm.map" "rlm.complete"
     "papercut.report" "fs.view-image" "skill.load")

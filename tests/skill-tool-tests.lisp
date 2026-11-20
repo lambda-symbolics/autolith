@@ -34,10 +34,8 @@
   (with-test-configuration (configuration)
     (let* ((body         "SELECTED-SKILL-PROVIDER-BOUNDARY-PROBE")
            (conversation (conversation-create configuration :identifier "skill-provider"))
-           (registry     (skill-edit-augment-tool-registry
-                          (skill-augment-tool-registry (make-instance 'tool-registry))))
+           (registry     (skill-augment-tool-registry (make-instance 'tool-registry)))
            (namespaces   (tool-registry-provider-schemas registry))
-           (hidden       (tool-registry-provider-schemas registry :canonical-names '("skill.edit")))
            (context      (make-instance 'tool-context :configuration configuration
                                                      :worker nil :conversation conversation
                                                      :registry       registry))
@@ -72,11 +70,10 @@
                       (context-delivery-contributions delivery) "skill-selected-probe"))
                 (format nil "~A injects the selected body on subsequent requests"
                         (class-name (class-of provider))))))
-           (dolist (schemas (list #() hidden))
-             (test-assert
-              (not (search body (json-encode
-                                 (provider-request-object provider conversation schemas))))
-              "requests without skill.load do not receive selected instructions"))
+            (test-assert
+             (not (search body (json-encode
+                                (provider-request-object provider conversation #()))))
+             "requests without skill.load do not receive selected instructions")
            (let* ((ordinary   (test-request-history
                                provider (provider-request-object provider conversation namespaces)))
                   (compaction (test-request-history
@@ -105,73 +102,73 @@
         :key  #'context-contribution-identifier
         :test #'string=))
 
-(-> test-skill-edit-tool () null)
-(defun test-skill-edit-tool ()
-  "Exercise global skill creation, replacement, validation, and failed publication."
+(-> test-skill-source-resource () null)
+(defun test-skill-source-resource ()
+  "Exercise revisioned creation, validation, atomic publication and native precedence."
   (with-test-configuration (configuration)
-    (let* ((registry    (skill-edit-augment-tool-registry (make-instance 'tool-registry)))
-           (authoring-configuration
-             (configuration-copy
-              configuration
-              :cache-root (uiop:ensure-directory-pathname
-                           (skill-tool-tests--write (config :cache-root configuration)
-                                                    "unavailable" "Not a directory."))))
-           (context     (make-instance 'tool-context :configuration authoring-configuration
-                                                    :worker nil :registry registry))
-           (root        (skill-global-root configuration))
-           (pathname    (merge-pathnames "editable/SKILL.md" root))
-           (initial     (skill-tests--agent-definition "editable" "An editable skill." "First body."))
-           (replacement (skill-tests--agent-definition "editable" "Updated skill." "Second body.")))
-      (labels ((edit (name content)
-                 (tool-registry-execute-call
-                  registry
-                  (json-object "namespace" "skill" "name" "edit"
-                               "arguments" (json-encode (json-object "name" name "content" content)))
-                  context)))
-        (test-assert (tool-result-success-p (edit "editable" initial))
-                     "skill.edit creates a global skill without writable cache storage")
-        (test-assert (string= initial (uiop:read-file-string pathname))
-                     "creation writes the supplied source")
-        (test-assert (skill-catalog-find
-                      (skill-catalog-discover (list root)
-                                              :cache-root (config :cache-root configuration))
-                      "editable")
-                     "the created skill is discoverable")
-        (test-assert (tool-result-success-p (edit "editable" replacement))
-                     "skill.edit replaces an existing Markdown skill")
-        (dolist (entry (list (list "../editable" initial)
-                             (list "Bad-Name" initial)
-                             (list "editable" "Missing frontmatter")
-                             (list "editable" (skill-tests--agent-definition
-                                               "other" "Wrong name." "Body."))
-                             (list "editable" (skill-tests--agent-definition
-                                               "editable" "Oversized source."
-                                               (make-string cl-skills:*skill-file-character-limit*
-                                                            :initial-element #\x)))
-                             (list "editable" (make-string (1+ *skill-edit-maximum-content-characters*)
-                                                           :initial-element #\x))))
-          (test-assert (not (tool-result-success-p (apply #'edit entry)))
-                       "invalid skill edits fail"))
-        (test-assert (string= replacement (uiop:read-file-string pathname))
-                     "validation failures preserve the prior skill")
-        (let ((rename #'uiop:rename-file-overwriting-target))
-          (test-call-with-function-replacements
-           (list (list 'uiop:rename-file-overwriting-target
-                       (lambda (source target)
-                         (if (equal target pathname)
-                             (error 'file-error :pathname target)
-                             (funcall rename source target)))))
-           (lambda ()
-             (test-assert (not (tool-result-success-p (edit "editable" initial)))
-                          "publication failure is reported"))))
-        (test-assert (and (string= replacement (uiop:read-file-string pathname))
-                          (= 1 (length (uiop:directory-files
-                                        (uiop:pathname-directory-pathname pathname)))))
-                     "failed publication preserves the original and removes its temporary file")
-        (skill-tool-tests--write root "editable/SKILL.sexp"
-                                 (skill-tests--definition "editable" "Native skill." "Native body."))
-        (test-assert (not (tool-result-success-p (edit "editable" initial)))
-                     "a native skill cannot silently shadow an edited Markdown skill"))))
+    (let* ((registry     (make-default-tool-registry))
+           (conversation (conversation-create configuration))
+           (context      (make-instance 'tool-context :configuration configuration
+                                                     :worker nil :conversation conversation :registry registry))
+           (root         (skill-global-root configuration))
+           (pathname     (merge-pathnames "editable/SKILL.md" root))
+           (uri          "skill-source:editable")
+           (initial      (skill-tests--agent-definition "editable" "An editable skill." "First body.")))
+      (labels ((read-source ()
+                 (workspace-resource-tests--call registry context :namespace "resource" :name "read"
+                                                  :arguments (list "uri" uri)))
+
+               (revision (result)
+                 (workspace-resource-tests--field (tool-result-content result) "Revision: "))
+
+               (edit (base operation)
+                 (workspace-resource-tests--call registry context :namespace "resource" :name "edit"
+                                                  :arguments (list "uri" uri "base-revision" base
+                                                                   "operations" (vector operation))))
+
+               (replace-line (line content)
+                 (json-object "op" "replace-lines" "start-line" line "end-line" line "content" content)))
+        (let* ((missing (read-source))
+               (base    (revision missing))
+               (create  (json-object "op" "replace-empty" "content" initial)))
+          (test-assert (not (tool-result-success-p missing)) "observe missing source before creation")
+          (test-assert (tool-result-success-p (edit base create)) "create a validated Markdown skill")
+          (test-assert (not (tool-result-success-p (edit base create))) "refuse stale creation"))
+        (let* ((read (read-source))
+               (base (revision read))
+               (line (position "First body." (text--split-lines initial) :test #'string=)))
+          (test-assert (string= initial (uiop:read-file-string pathname)) "creation writes the supplied source")
+          (test-assert (not (tool-result-success-p (edit base (replace-line 1 "invalid frontmatter"))))
+                       "invalid prospective definitions are refused")
+          (test-assert (string= initial (uiop:read-file-string pathname)) "validation failure preserves source")
+          (let ((*workspace-file-resource-publish-function*
+                  (lambda (source target)
+                    (declare (ignore source))
+                    (error 'file-error :pathname target))))
+            (test-assert (not (tool-result-success-p (edit base (replace-line (1+ line) "Second body."))))
+                         "failed atomic publication is reported"))
+          (test-assert (and (string= initial (uiop:read-file-string pathname))
+                            (= 1 (length (uiop:directory-files (uiop:pathname-directory-pathname pathname)))))
+                       "failed publication preserves the original and removes its temporary file")
+          (test-assert (tool-result-success-p (edit base (replace-line (1+ line) "Second body.")))
+                       "edit an observed line using the original revision")
+          (test-assert (skill-catalog-find (skill-catalog-for-configuration configuration) "editable")
+                       "the edited skill is discoverable"))
+        (let* ((markdown (revision (read-source)))
+               (source   (skill-tests--definition "editable" "Native skill." "Native body."))
+               (native   (skill-tool-tests--write root "editable/SKILL.sexp" source))
+               (read     (read-source)))
+          (test-assert (search "Native body." (tool-result-content read)) "native source takes precedence")
+          (test-assert (not (tool-result-success-p (edit markdown (replace-line 1 "stale Markdown"))))
+                       "native precedence invalidates a Markdown observation")
+          (let ((line (position-if (lambda (text) (search "Native body." text)) (text--split-lines source))))
+            (let ((result (edit (revision read)
+                                (replace-line (1+ line) (format nil " :instructions ~S)" "New native body.")))))
+              (test-assert (tool-result-success-p result)
+                           (format nil "Edit and validate the native definition: ~A" (tool-result-content result)))))
+          (test-assert (and (search "New native body." (uiop:read-file-string native))
+                            (search "Second body." (uiop:read-file-string pathname)))
+                       "editing the native source does not overwrite Markdown")))))
   nil)
 
 (-> test-skill-load-tool () null)
