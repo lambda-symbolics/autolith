@@ -132,8 +132,8 @@
   :version "git-17249edda7cd28cd90ce4c9788f5ede77453fed7"))
 ("cl-worktree" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-worktree.git" :ref "473fa51cbfccbc4c37f16a1f4ef27ac51d8c3233")
-  :version "git-473fa51cbfccbc4c37f16a1f4ef27ac51d8c3233"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-worktree.git" :ref "fd99c6db6b869f07d2e4122d001bfb3311ad0752")
+  :version "git-fd99c6db6b869f07d2e4122d001bfb3311ad0752"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-exec-sandbox.git" :ref "95d15f2a97e4ff965fbd57e7ec30130b25421101")
@@ -144,8 +144,8 @@
   :version "git-582986f8ccbd0bd206dde022f9f65837ae82357c"))
 ("clifff" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/clifff.git" :ref "3abd4bbdf341023357b8ae94c9bb8651fa52d90d")
-  :version "git-3abd4bbdf341023357b8ae94c9bb8651fa52d90d"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/clifff.git" :ref "f6882b8bb7dc2e4b0808c2de0d48d0f87f398996")
+  :version "git-f6882b8bb7dc2e4b0808c2de0d48d0f87f398996"))
 ("colorlisp" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/colorlisp.git" :ref "b6fdb68ae22ab997bb818c486983129ec7ac6177")
@@ -184,8 +184,8 @@
   :version "git-00cdcc08c95079298bff996be49e40a5319fae58"))
 ("mcparen" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/mcparen.git" :ref "bef9d739fa6c187dcf1c2cfd8995d51b2c942b0b")
-  :version "git-bef9d739fa6c187dcf1c2cfd8995d51b2c942b0b"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/mcparen.git" :ref "1279e3cd0e7e275dd3c01146ecdf4bd2690fd313")
+  :version "git-1279e3cd0e7e275dd3c01146ecdf4bd2690fd313"))
 ("sbcl-generations" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-generations.git" :ref "a6d1a97626d0a385b6a167bdab4761f1edfd5e4b")

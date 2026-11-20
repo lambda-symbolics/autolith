@@ -2276,6 +2276,20 @@
                 "notifications/tools/list_changed")
                (eq (json-get projected "params" :absent) :absent))
               "credential stdio retains only a detached tool-change signal"))
+            (let* ((notification
+                     (json-object
+                      "jsonrpc" "2.0"
+                      "method" "notifications/tools/list_changed"
+                      "params" (json-object
+                                "_meta" (json-object "io.modelcontextprotocol/subscriptionId" 17
+                                                     "secret" "private metadata")
+                                "secret" "private payload")))
+                   (projected (funcall credential-projector ':notification notification))
+                   (params    (json-get projected "params"))
+                   (metadata  (json-get params "_meta")))
+              (test-assert (and (eql 17 (json-get metadata "io.modelcontextprotocol/subscriptionId"))
+                                (= 1 (hash-table-count params) (hash-table-count metadata)))
+                           "credential stdio keeps the watch correlation ID without other payload"))
            (test-assert
             (null
              (funcall

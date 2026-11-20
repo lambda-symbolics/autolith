@@ -407,13 +407,11 @@
           "id" identifier
           "method" "ping"))))
     (:notification
-     (let ((method (json-get value "method")))
-       (when (and
-              (stringp method)
-              (string= method "notifications/tools/list_changed"))
-         (json-object
-          "jsonrpc" "2.0"
-          "method" "notifications/tools/list_changed"))))
+     (or (mcparen:mcp-tool-watch-project-notification value)
+         (when (equal (json-get value "method") "notifications/tools/list_changed")
+           (json-object
+            "jsonrpc" "2.0"
+            "method" "notifications/tools/list_changed"))))
     (:stderr
      nil)
     (:reader-failure
@@ -540,6 +538,7 @@
     :exchange-scope-function exchange-scope-function)
    :name    "autolith"
    :version *autolith-version*
+   :protocol-mode ':auto
    :startup-timeout
    (mcp-server-configuration-startup-timeout-seconds server-configuration)
    :tool-timeout
@@ -993,6 +992,7 @@ retained value is credential-redacted or projected."
                            :registration-source
                            (mcp-server-registration-source registration)
                            :provider-namespace                (gethash name namespace-map)
+                           :watch-tool-changes-p t
                            :client-factory
                            (lambda (runtime notification-handler)
                              (mcp-tools--client server configuration
