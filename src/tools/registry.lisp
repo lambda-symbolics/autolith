@@ -145,14 +145,6 @@
   ()
   (:documentation "Set one active global binding to an evaluated value."))
 
-(defclass self-experiment-start-tool (mutable-self-tool)
-  ()
-  (:documentation "Start one tuning experiment for an exploratory mutation."))
-
-(defclass self-experiment-settle-tool (mutable-self-tool)
-  ()
-  (:documentation "Record a verdict for the open tuning experiment."))
-
 (defclass self-persist-definition-tool (lisp-source-input mutable-self-tool)
   ()
   (:documentation "Install and privately commit one complete definition."))

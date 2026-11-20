@@ -115,8 +115,6 @@
                          (arguments hash-table))
   "Restore and discard one effective exploratory mutation."
   (declare (ignore tool))
-  (tuning-experiment-assert-settled
-   (tool-context-configuration context) "self.discard")
   (let* ((record
            (self-discard-mutation
             (tool-context-configuration context)

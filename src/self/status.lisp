@@ -48,9 +48,6 @@
             (format stream "  ~A  ~A~%"
                     (getf properties :kind)
                     (getf properties :target))))
-        (let ((experiment (tuning-experiment-render-open configuration)))
-          (when experiment
-            (format stream "~A~%" experiment)))
         (format stream "checkpoint~%  publishing  ~:[no~;yes~]~%"
                 *checkpoint-in-progress-p*)
         (format stream "generations~%  retained   ~D~%  compatible ~D~%  rollback   ~:[unavailable~;available~]~%  newest     ~A~%  selected   ~A"

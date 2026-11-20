@@ -253,7 +253,6 @@
                                           (:file "self/apropos")
                                           (:file "state/durable-mutations")
                                           (:file "state/image-commits")
-                                          (:file "self/tuning-experiments")
                                           (:file "startup/user-init")
                                           (:file "state/generations")
                                           (:file "self/status")

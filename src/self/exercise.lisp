@@ -35,11 +35,6 @@ can verify the current active state after a discard."
               (self-exercise--mutation-record configuration mutation-identifier))
            (mutation-identifier
              (and record (getf (rest record) :id)))
-           (experiment
-             (tuning-experiment-for-mutation configuration
-                                             mutation-identifier))
-           (experiment-identifier
-             (and experiment (tuning-experiment-identifier experiment)))
            (exercise-identifier (make-identifier)))
       (mutation-journal-append
        configuration
@@ -48,7 +43,6 @@ can verify the current active state after a discard."
              :id exercise-identifier
              :lineage    *active-image-lineage-identifier*
              :mutation   mutation-identifier
-             :experiment experiment-identifier
              :proposed   source
              :result     ':pending))
       (handler-case
@@ -63,16 +57,14 @@ can verify the current active state after a discard."
                    :id exercise-identifier
                    :lineage    *active-image-lineage-identifier*
                    :mutation   mutation-identifier
-                   :experiment experiment-identifier
                    :proposed   source
                    :result     ':passed
                    :values     result-values
                    :output     (bounded-string output :limit 2000)))
             (format nil
-                    "Exercise ~A passed ~:[against the current active state~;for mutation ~:*~A~]~:[~; and tuning experiment ~:*~A~].~2%~A"
+                    "Exercise ~A passed ~:[against the current active state~;for mutation ~:*~A~].~2%~A"
                     exercise-identifier
                     mutation-identifier
-                    experiment-identifier
                     (self-evaluation-result result-values output)))
         (error (condition)
           (mutation-journal-append
@@ -82,7 +74,6 @@ can verify the current active state after a discard."
                  :id exercise-identifier
                  :lineage    *active-image-lineage-identifier*
                  :mutation   mutation-identifier
-                 :experiment experiment-identifier
                  :proposed   source
                  :result     ':failed
                  :condition  (bounded-string condition :limit 2000)))

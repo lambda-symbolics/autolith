@@ -851,8 +851,6 @@ authoritative; entries without the record are judged by source revision."
                :message   "self.redefine accepts one complete supported definition."
                :tool-name "self.redefine"
                :pathname  nil))
-      (tuning-experiment-assert-mutation-installable configuration
-                                                       "self.redefine")
       (let ((identifier   (make-identifier))
             (home-package (definition-home-package-name definition))
             (key          (definition-key definition))
@@ -951,7 +949,6 @@ authoritative; entries without the record are judged by source revision."
                                   (sbcl-worker-render-value (symbol-value symbol))))
            (previous-bound-p (boundp symbol))
            (previous-value   (and (boundp symbol) (symbol-value symbol))))
-       (tuning-experiment-assert-mutation-installable configuration "self.set")
       (mutation-journal-append
        configuration
        (list :mutation

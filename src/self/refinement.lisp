@@ -253,8 +253,7 @@ Sandbox permission does not authorize evaluation acceptance or promotion."
             (or (and (equal namespace "resource") (equal name "edit"))
                 (and (equal namespace "self")
                      (member name '("define" "redefine" "set" "eval" "commit"
-                                    "persist-definition" "discard" "experiment-start"
-                                    "experiment-settle") :test #'equal))))
+                                    "persist-definition" "discard") :test #'equal))))
            (:skill
             (or (and (equal namespace "skill")
                     (member name '("load" "edit") :test #'equal))

@@ -1105,34 +1105,6 @@ them."
              "restart-value" (tool-restart-value-property))
             '("symbol" "value")))
           (list
-           'self-experiment-start-tool
-           "self" "experiment-start"
-           "Start one explicit tuning experiment for an effective pending self.set or self.redefine mutation."
-           (tool-object-schema
-            (json-object
-             "mutation" (tool-string-property
-                         "The exact effective mutation identifier from self.diff.")
-             "hypothesis" (tool-string-property
-                           "The nonempty hypothesis motivating this tuning change.")
-             "criterion" (tool-string-property
-                          "The nonempty expected effect and measurement criterion."))
-            '("mutation" "hypothesis" "criterion")))
-          (list
-           'self-experiment-settle-tool
-           "self" "experiment-settle"
-           "Record evidence-based settlement for the open tuning experiment without committing or discarding its mutation."
-           (tool-object-schema
-            (json-object
-             "experiment" (tool-string-property
-                           "The open experiment identifier; defaults to the sole open experiment.")
-             "verdict" (json-object
-                        "type" "string"
-                        "enum" #("better" "worse" "unchanged" "too-early")
-                        "description" "The measured tuning outcome.")
-             "observation" (tool-string-property
-                            "A nonempty bounded observation supporting the verdict."))
-            '("verdict" "observation")))
-          (list
            'self-persist-definition-tool
            "self" "persist-definition"
            "Compile, install, check, and persist one complete definition in a private image commit backed by Autolith's private mutation-history Git repository. The tracked source repository is never modified."

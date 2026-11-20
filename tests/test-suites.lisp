@@ -1383,7 +1383,6 @@
   test-self-application-command-definitions
   test-self-restart-selection
   test-self-discard
-  test-self-tuning-experiments
   test-standard-mutation-checker
   test-durable-self-mutation
   test-durable-definition-publication-boundary

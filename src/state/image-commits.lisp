@@ -1318,7 +1318,6 @@ commit with nothing pending still drops them."
            (identifier    (make-identifier))
            (mutation-identifiers
              (mapcar (lambda (record) (getf (rest record) :id)) records)))
-      (tuning-experiment-assert-settled configuration "self.commit")
       (unless (or records (plusp dropped))
         (error 'image-commit-error
                :message   "The active image has no reconstructible mutations to commit."
