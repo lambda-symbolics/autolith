@@ -2061,11 +2061,40 @@
                          "the second form collapses the completed input without losing its result"))))))
   nil)
 
+(-> fullscreen-test--long-lisp-source-rail () null)
+(defun fullscreen-test--long-lisp-source-rail ()
+  "Expanded long literals fit their rail without losing source text or click targets."
+  (let* ((source      (concatenate 'string
+                                   "\"self[._](eval|define|redefine|set|diff|exercise|discard|experiment-start|experiment-settle|persist-definition|commit|status|checkpoint|generations|rollback)"
+                                   (format nil "~{~A~}\"" (loop repeat 24 collect "界é"))))
+         (description (list :header "▸ lisp.eval" :sources (list source) :line-limit 8
+                            :lisp-columns 80 :input-key "long-literal")))
+    (dolist (columns '(28 55 96))
+      (let* ((entry  (application--source-input-entry description columns :expanded-p t))
+             (lines  (rest (uiop:split-string (terminal--spans-text entry) :separator '(#\Newline))))
+             (action '(:toggle-tool-input "long-literal")))
+        (test-assert (and (rest lines)
+                          (every (lambda (line)
+                                   (and (uiop:string-prefix-p "  │ " line)
+                                        (< (text-cell-width line) columns)
+                                        (not (eql (char line 4) (code-char #x301))))) lines))
+                     "every continuation has a rail and fits in terminal cells without splitting a grapheme")
+        (test-assert (string= source (format nil "~{~A~}" (mapcar (lambda (line) (subseq line 4)) lines)))
+                     "combining the display fragments recovers the exact unbroken literal")
+        (test-assert (= (length lines)
+                        (count-if (lambda (span)
+                                    (and (termdown:widget-p span)
+                                         (equal (termdown:widget-action span) action)
+                                         (string= (terminal-span-text span) "│ "))) entry))
+                     "each continuation rail carries the original expansion action"))))
+  nil)
+
 (-> test-terminal-fullscreen-lisp-input-expansion () null)
 (defun test-terminal-fullscreen-lisp-input-expansion ()
   "Expand Lisp input by clicking its source, then reflow, fold an outcome and collapse."
   (fullscreen-test--lisp-input-formatting)
   (fullscreen-test--lisp-source-tools-expand)
+  (fullscreen-test--long-lisp-source-rail)
   (fullscreen-test--lisp-async-input-expansion)
   (with-test-configuration (configuration)
     (let* ((terminal    (make-instance 'recording-terminal :columns 100 :rows 48))

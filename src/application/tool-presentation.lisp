@@ -163,8 +163,7 @@ letters but no lowercase letters."
          (indented      (append (list (terminal-span ':plain "  ")) row))
          (action        (when (and row (every #'termdown:widget-p row))
                           (termdown:widget-action (first row))))
-         (fitted        (if (or *application-tool-input-expanded-p*
-                                (<= (terminal--spans-width indented) maximum-width))
+         (fitted        (if (<= (terminal--spans-width indented) maximum-width)
                             indented
                             (append (terminal--clip-spans indented (max 0 (1- maximum-width)))
                                     (list (terminal-span ':dim "…"))))))
@@ -758,11 +757,55 @@ structural discriminator as a readable heading instead."
              :line-limit    *application-tool-call-lines*
              :lisp-columns  *application-lisp-input-columns*)))))
 
+(-> application--wrap-source-row ((integer 1) list) list)
+(defun application--wrap-source-row (columns row)
+  "Fold a highlighted source ROW behind its rail, at grapheme boundaries."
+  (let* ((rail  (first row))
+         (spans (rest row))
+         (width (- columns 1 2 (terminal--spans-width (list rail)))))
+    (unless (and (plusp width) (> (terminal--spans-width spans) width))
+      (return-from application--wrap-source-row (list row)))
+    (let ((text        (format nil "~{~A~}" (mapcar #'terminal-span-text spans)))
+          (span-offset 0)
+          (consumed    0)
+          (used        0)
+          (rows        nil))
+      (flet ((take-through (end)
+               "Consume the next styled range up to the character offset END."
+               (loop while (< consumed end)
+                     for span = (first spans)
+                     for label = (terminal-span-text span)
+                     for count = (min (- end consumed) (- (length label) span-offset))
+                     when (plusp count)
+                       collect (terminal-span (terminal-span-style span)
+                                              (subseq label span-offset (+ span-offset count)))
+                     do (incf consumed count)
+                        (incf span-offset count)
+                        (when (= span-offset (length label))
+                          (pop spans)
+                          (setf span-offset 0)))))
+        (loop for start = 0 then end
+              while (< start (length text))
+              for end = (clinedi:grapheme-next-boundary text start)
+              for cells = (clinedi:grapheme-cell-width text start end)
+              do (when (> (+ used cells) width)
+                   (when (< consumed start)
+                     (push (cons rail (take-through start)) rows))
+                   (setf used 0))
+                 (cond
+                   ((> cells width)
+                    (take-through end)
+                    (push (list rail (terminal-span ':dim "…")) rows))
+                   (t
+                    (incf used cells))))
+        (when (< consumed (length text))
+          (push (cons rail (take-through (length text))) rows)))
+      (nreverse rows))))
+
 (-> application--source-input-entry (list (integer 1) &key (:expanded-p boolean)) list)
 (defun application--source-input-entry (description columns &key expanded-p)
   "Lay out source display DESCRIPTION locally; its strings are never read or evaluated."
-  (let* ((*application-tool-input-expanded-p*      expanded-p)
-         (*application-provider-call-presentation* t)
+  (let* ((*application-provider-call-presentation* t)
          (*application-tool-call-invocation*       (getf description :invocation))
          (*application-tool-call-lines*            (getf description :line-limit))
          (header                                   (getf description :header))
@@ -773,7 +816,7 @@ structural discriminator as a readable heading instead."
                          collect
                          (if (and expanded-p
                                   (not (find-if (lambda (character) (find character '(#\Newline #\Return))) text)))
-                             (let ((width (min (getf description :lisp-columns) (max 1 (- columns 4)))))
+                             (let ((width (min (getf description :lisp-columns) (max 1 (- columns 5)))))
                                (application--transcript-source-value
                                 (list ':formatted-lisp text width)
                                 (lambda () (lisp-source-layout text width))))
@@ -782,17 +825,24 @@ structural discriminator as a readable heading instead."
            (application--source-preview-rows
             source :language *application-common-lisp-language* :rainbow-parentheses-p t
             :limit (if expanded-p (1+ (count #\Newline source)) *application-tool-call-lines*)))
+         (display-rows                             (if expanded-p
+                                                       (loop for row in source-rows append (application--wrap-source-row columns row))
+                                                       source-rows))
          (rows
            (append
             (application--argument-field-rows columns (getf description :fields))
             (if input-key
-                (loop for row in source-rows
+                 (loop for row in display-rows
                       collect (loop for span in row
                                     collect (termdown:make-widget
                                              (terminal-span-style span) (terminal-span-text span)
                                              (list ':toggle-tool-input input-key))))
-                source-rows)
-            (application--restart-value-rows (json-object "restart-value" (getf description :restart-value))))))
+                 display-rows)
+            (let ((restart-rows (application--restart-value-rows (json-object "restart-value" (getf description :restart-value)))))
+              (if (and expanded-p restart-rows)
+                  (cons (first restart-rows)
+                        (loop for row in (rest restart-rows) append (application--wrap-source-row columns row)))
+                  restart-rows)))))
     (multiple-value-bind (inline-header body-rows)
         (application--inline-tool-call-header-at-columns columns header rows)
       (append
