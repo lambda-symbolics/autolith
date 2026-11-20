@@ -390,7 +390,7 @@
 
 (-> test-cli-world-client-start () null)
 (defun test-cli-world-client-start ()
-  "Test a client-first start opening its channel in the world server and attaching."
+  "Test client-owned welcome, explicit starts, failures and channel navigation."
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let* ((identifier   "b6uouHJ")
@@ -403,6 +403,8 @@
            (attach-error nil)
            (started-p    t)
            (switch-to    nil)
+           (welcomed     0)
+           (welcome-events nil)
            (direct-p     nil))
       (test-call-with-function-replacements
        (list
@@ -416,6 +418,15 @@
               (lambda (resolve-configuration prefix)
                 (declare (ignore resolve-configuration prefix))
                 identifier))
+        (list 'main--welcome-world-client
+              (lambda (screen welcome-configuration directory &rest arguments)
+                (declare (ignore welcome-configuration))
+                (incf welcomed)
+                (test-assert (and (null (world-sidebar-current (localgroup-screen-panel screen)))
+                                  (equal directory (namestring (uiop:getcwd))))
+                             "welcome has no selected channel and uses the client's launch directory")
+                (let ((event (pop welcome-events)))
+                  (if (functionp event) (funcall event arguments) event))))
         (list 'localgroup-endpoint-records
               (lambda (&rest arguments) (declare (ignore arguments)) (list record)))
         (list 'world-client-open
@@ -462,19 +473,10 @@
        (lambda ()
          (let ((*error-output* (make-string-output-stream)))
            (main-dispatch '())
-           (let ((arguments (first opened)))
-             (test-assert (and (= (length opened) 1)
-                               (equal (getf arguments :directory)
-                                      (config :working-directory configuration))
-                               (null (getf arguments :channel))
-                               (member (getf arguments :permission-mode)
-                                       '(:ask :auto :sandboxed :full-access))
-                               (not (getf arguments :pick-channel-p))
-                               (= (length attached) 1)
-                               (eq (second (first attached)) ':control)
-                               (null queried)
-                               (not direct-p))
-                          "a plain start opens a channel for its directory and attaches to it"))
+            (test-assert (and (= welcomed 1) (null opened) (null attached)
+                              (null queried) (not direct-p))
+                         "a bare interactive launch neither opens nor attaches a channel")
+            (main-dispatch (list "open" identifier))
            (main-dispatch (list "open" identifier))
            (test-assert (and (= (length opened) 2)
                              (string= (getf (first opened) :channel) identifier)
@@ -489,7 +491,7 @@
                                               :operation ':attach
                                               :message   "The attachment was rejected."))
            (test-assert (handler-case
-                            (progn (main-dispatch '()) nil)
+                             (progn (main-dispatch (list "open" identifier)) nil)
                           (localgroup-error (condition)
                             (and (search "rejected" (autolith-error-message condition))
                                  (equal queried '((:close t))))))
@@ -497,7 +499,7 @@
            (setf started-p nil
                  queried   nil)
            (test-assert (handler-case
-                            (progn (main-dispatch '()) nil)
+                             (progn (main-dispatch (list "open" identifier)) nil)
                           (localgroup-error (condition)
                             (and (search "rejected" (autolith-error-message condition))
                                  (null queried))))
@@ -507,7 +509,7 @@
                                               :operation ':spawn
                                               :message   "No world server could start."))
            (test-assert (handler-case
-                            (progn (main-dispatch '()) nil)
+                             (progn (main-dispatch (list "open" identifier)) nil)
                           (localgroup-error (condition)
                             (and (not direct-p)
                                  (search "The world server is not available: No world server could start"
@@ -517,9 +519,9 @@
                  opened     nil
                  attached   nil
                  switch-to  "c6uouHJ")
-           (main-dispatch '())
+            (main-dispatch (list "open" identifier))
            (test-assert (and (= (length opened) 2)
-                             (null (getf (second opened) :channel))
+                              (string= (getf (second opened) :channel) identifier)
                              (string= (getf (first opened) :channel) "c6uouHJ")
                              (= (length attached) 2)
                              (null switch-to))
@@ -551,7 +553,7 @@
                              (configuration-error () (not direct-p)))
                            "read-only open never falls back to a controlling direct session")))
            (setf opened nil)
-           (main-dispatch '("--immutable" "--fullscreen"))
+            (main-dispatch (list "open" identifier "--immutable" "--fullscreen"))
            (test-assert (equal (getf (first opened) :launch) '(:immutable-p t :fullscreen-p t))
                         "the options a start states explicitly travel with the open")
            (setf opened nil)
@@ -564,8 +566,135 @@
                           "explicit live opens forward the same launch options as plain starts"))
            (setf opened nil)
            (main-dispatch '())
-           (test-assert (null (getf (first opened) :launch))
-                        "a start that states nothing sends no launch options"))))))
+            (test-assert (and (null opened) (= welcomed 2))
+                         "a later bare start returns to welcome rather than selecting the last channel")
+            (setf opened nil attached nil queried nil started-p t
+                  attach-error (make-condition 'localgroup-error :operation ':attach
+                               :message "The attachment was rejected.")
+                  welcome-events
+                  (list (list ':switch :session-id identifier)
+                        (lambda (arguments)
+                          (test-assert (search "rejected" (getf arguments :notice))
+                                       "a refused welcome attachment returns with its diagnostic")
+                          (setf attach-error nil)
+                          (list ':switch :new-p t))))
+            (main-dispatch '())
+            (test-assert (and (= (length opened) 2) (= (length attached) 2)
+                              (getf (first opened) :new-p)
+                              (every (lambda (arguments)
+                                       (equal (getf arguments :directory) (namestring (uiop:getcwd))))
+                                     opened)
+                              (equal queried '((:close t))))
+                         "welcome cleans up a refused new attachment and creates a channel on explicit retry in the original directory")
+            (setf opened nil attached nil)
+            (test-call-with-function-replacements
+             (list (list 'application-recovery-state (lambda (candidate)
+                          (declare (ignore candidate)) (values identifier nil)))
+                   (list 'application-recovery-diagnosis-prompt (lambda (candidate)
+                          (declare (ignore candidate)) "Internal crash instructions")))
+             (lambda ()
+               (main-dispatch '())
+               (test-assert (and (null opened) (null attached))
+                            "implicit recovery supplies welcome information without selecting a channel"))))))))
+  nil)
+
+(-> test-client-welcome-layout () null)
+(defun test-client-welcome-layout ()
+  "Check welcome geometry and durable participant counts independently of channel liveness."
+  (with-test-configuration (configuration root)
+    (let ((directory (namestring (config :working-directory configuration))))
+      (multiple-value-bind (human home)
+          (world-participant-create configuration :kind ':human :name "user"
+                                    :home (list :workspace directory))
+        (let ((remote (world-channel-create configuration :owner (participant-identifier human)
+                                            :workspace (namestring (merge-pathnames "other/" root)))))
+          (dolist (residence (list (channel-identifier home) (channel-identifier home)
+                                  (channel-identifier remote) nil))
+            (let ((agent (world-participant-create configuration :kind ':agent :name (make-identifier)
+                         :residence (or residence (channel-identifier home)))))
+              (unless residence
+                (world-participant-park configuration (participant-identifier agent)))))
+          (multiple-value-bind (total local) (main--welcome-agent-counts (world-load configuration) directory)
+            (test-assert (and (= total 4) (= local 2))
+                         "count agents rather than channels, include parked agents, and compare residences")))))
+    (test-call-with-function-replacements
+     (list (list 'terminal--render-spans
+                 (lambda (terminal spans) (declare (ignore terminal)) (terminal--spans-text spans))))
+     (lambda ()
+       (dolist (geometry '((120 32) (120 10) (60 10) (44 12) (20 8) (1 1)))
+         (destructuring-bind (width height) geometry
+           (let* ((terminal (make-instance 'recording-terminal :columns width :rows height))
+                  (screen (localgroup-screen-create :terminal terminal))
+                  (frame (main--welcome-frame screen "/launch/" :total 4 :local 2
+                          :immutable-p t :recovered-p t :recovery-conversation-id "b6uouHJ"))
+                  (rows (coerce (clinedi:frame-snapshot-rows frame) 'list))
+                  (nonempty (remove-if (lambda (row) (zerop (length (string-trim " " row)))) rows)))
+             (test-assert (and (= (clinedi:frame-snapshot-height frame) height)
+                               (= (clinedi:frame-snapshot-width frame) width)
+                               (every (lambda (row) (<= (text-cell-width row) width)) rows))
+                          "welcome fits wide, compact and one-cell geometry")
+             (when (= width 44)
+               (let ((text (format nil "~{~A~%~}" rows)))
+                 (test-assert (and (search "Recovery available" text) (search "Sidebar:" text))
+                              "drop the logo before hiding recovery or navigation in a compact pane")))
+             (when (= width 120)
+               (let* ((block-width (loop for row in nonempty
+                                         maximize (text-cell-width (string-left-trim " " row))))
+                      (left (loop for row in nonempty minimize (position-if-not (lambda (char) (char= char #\Space)) row))))
+                 (test-assert (= left (floor (- width block-width) 2))
+                              "center the actual content block within the pane")))
+             (when (= height 32)
+               (let ((text (format nil "~{~A~%~}" rows)))
+                 (test-assert (and (search "/launch/" text) (search "4 (2 here)" text)
+                                   (search "immutable, recovered" text) (search "autolith open" text))
+                              "welcome shows launch workspace, durable counts, modes and explicit recovery action")))))))))
+  nil)
+
+(-> test-client-welcome-input () null)
+(defun test-client-welcome-input ()
+  "Check input startup, physical resize, quit and screen-preserving selection handoff."
+  (with-test-configuration (configuration)
+    (dolist (last-event (list ':interrupt ':enter (list ':switch :session-id "b6uouHJ")))
+      (let* ((terminal (make-instance 'recording-terminal :columns 80 :rows 24))
+             (screen (localgroup-screen-create :terminal terminal))
+             (events (list ':resize last-event))
+             (started-p nil)
+             (stopped-p nil)
+             (unwatched-p nil)
+             (last-frame nil)
+             (*terminal-resize-pending-p* nil))
+        (test-call-with-function-replacements
+         (list
+          (list 'terminal-start (lambda (candidate) (declare (ignore candidate)) (setf started-p t)))
+          (list 'terminal-stop (lambda (candidate) (declare (ignore candidate)) (setf stopped-p t)))
+          (list 'platform-watch-terminal-resize
+                (lambda (platform function) (declare (ignore platform function)) ':welcome-watch))
+          (list 'platform-unwatch-terminal-resize
+                (lambda (platform watch) (declare (ignore platform))
+                  (setf unwatched-p (eq watch ':welcome-watch))))
+          (list 'terminal-current-size (lambda () (values 12 44)))
+          (list 'terminal-input-ready-p (lambda (candidate) (declare (ignore candidate)) t))
+          (list 'terminal-read-event (lambda (candidate) (declare (ignore candidate)) (pop events)))
+          (list 'localgroup-screen-show-frame
+                (lambda (candidate frame &rest arguments)
+                  (declare (ignore arguments))
+                  (setf last-frame frame (localgroup-screen-frame candidate) frame))))
+         (lambda ()
+           (let ((exit (main--welcome-world-client screen configuration "/launch/"
+                         :recovery-diagnosis "INTERNAL CRASH INSTRUCTIONS")))
+             (test-assert (and started-p unwatched-p (not stopped-p)
+                               (eq last-frame (localgroup-screen-frame screen))
+                               (= (clinedi:frame-snapshot-width last-frame) 44)
+                               (= (clinedi:frame-snapshot-height last-frame) 12))
+                          "welcome starts input, follows physical resize and releases only its watch on handoff")
+             (test-assert (equal exit (case last-event
+                                       (:interrupt nil)
+                                       (:enter (list ':switch :new-p t))
+                                       (otherwise last-event)))
+                          "quit, explicit creation and sidebar selection return distinct results")
+             (test-assert (not (search "INTERNAL CRASH INSTRUCTIONS"
+                                      (format nil "~{~A~}" (coerce (clinedi:frame-snapshot-rows last-frame) 'list))))
+                          "render safe recovery status without raw crash instructions")))))))
   nil)
 
 (-> test-cli-startup-failure-line () null)

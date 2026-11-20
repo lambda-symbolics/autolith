@@ -12,6 +12,22 @@ Launch Autolith from your terminal:
 autolith
 #+END_SRC
 
+An interactive launch without a channel selection opens the welcome view. Read
+its centered startup banner beside the sidebar: =workspace= is the directory
+from which you launched the client, and =agents= shows all durable agents as
+=N (M here)=, with =M= counting agents whose current residence is in that
+workspace. Parked agents count toward the total.
+
+Select a channel in the sidebar to open it, or press Enter in the welcome pane
+to create a channel in the launch directory. Press Ctrl-C to quit. Recovery
+information includes an explicit =autolith open ID= hint; choose when to reopen
+that channel. With =autolith open ID= or =autolith open=, open the selected
+channel or the conversation picker directly.
+
+The startup banner belongs to the client welcome view. When you select, reopen,
+or switch channels, read the channel's conversation without another startup
+banner.
+
 If you haven't authenticated yet, follow the [[file:../README.org][README]] instructions.
 
 Autolith's prompt window can also evaluate Lisp forms directly:
@@ -112,9 +128,9 @@ read the command and working directory alongside the decision.
 
 * Onboarding
 
-At the opening boot screen, press Space or Enter to start the tour. Press Esc or
-begin typing to open the listener instead. Typed and pasted text stays in the
-prompt. The lessons are available on the next launch or with =(onboard)=.
+After opening a channel, press Space or Enter at its boot screen to start the
+tour. Press Esc or begin typing to open the listener instead. Typed and pasted
+text stays in the prompt. Open the lessons again with =(onboard)=.
 
 On your first interactive launch, try the prompt, =(help)=, background Lisp, and
 =(settings)= in the fullscreen tour. Edit the lesson input and press Enter to

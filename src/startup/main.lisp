@@ -1056,6 +1056,8 @@ state, including an empty list after successful or pristine startup."
                     configuration
                     :permission-mode    permission-mode
                     :immutable-p        immutable-p
+                     :welcome-p         (not (or effective-open-requested-p effective-open-id
+                                                 handoff-record image-values))
                     :conversation-id    (or effective-open-id recovery-conversation-id)
                     :attachment-mode    attachment-mode
                     :pick-channel-p     (and effective-open-requested-p
@@ -1328,21 +1330,160 @@ only rediscovers the same endpoint; choosing another channel is explicit."
                  (write-string accepted *error-output*))))))
         (finish-output *error-output*)))))
 
+(-> main--welcome-agent-counts (world string) (values integer integer))
+(defun main--welcome-agent-counts (world directory)
+  "Return durable agent totals and the number residing in DIRECTORY, including idle agents."
+  (loop for participant in (world-participants world)
+        for agent-p = (eq (participant-kind participant) ':agent)
+        for residence = (and agent-p (participant-residence participant))
+        for channel = (and residence (world-channel-find world residence))
+        count agent-p into total
+        count (and channel
+                   (equal (uiop:ensure-directory-pathname directory)
+                          (uiop:ensure-directory-pathname (channel-workspace channel)))) into local
+        finally (return (values total local))))
+
+(-> main--welcome-frame
+    (localgroup-screen string &key (:total (option integer)) (:local (option integer))
+     (:immutable-p boolean) (:recovered-p boolean) (:tip list)
+     (:recovery-conversation-id (option string)) (:notice (option string)))
+    clinedi:frame-snapshot)
+(defun main--welcome-frame
+    (screen directory &key total local immutable-p recovered-p tip recovery-conversation-id notice)
+  "Render safe client startup information centered in the current pane."
+  (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
+    (let* ((content-width (max 1 (min 88 width)))
+           (terminal (localgroup-screen-terminal screen))
+           (metadata
+             (list (list (terminal-span ':brand (format nil "AUTOLITH v~A" *autolith-version*)))
+                   (application--banner-metadata-field "workspace"
+                    (sanitize-text directory :single-line-p t))
+                   (application--banner-metadata-field
+                    "agents" (if total (format nil "~D (~D here)" total local)
+                                 "catalogue unavailable"))
+                   (application--banner-metadata-field
+                    "mode" (format nil "~A~A" (if immutable-p "immutable" "mutable")
+                                   (if recovered-p ", recovered" "")))))
+           (header
+             (cond
+               ((>= content-width (+ (application--banner-logo-width)
+                                      (text-cell-width *application-banner-gap*)
+                                      *application-banner-minimum-metadata-width*))
+                (application--banner-side-by-side-spans metadata content-width))
+               (t
+                (application--banner-stacked-spans metadata content-width))))
+           (spans
+             (append header
+              (list (terminal-span ':dim "Sidebar: select channel. Enter: new. Ctrl-C: quit.")
+                    (terminal-span ':plain (format nil "~%")))
+              (when (or recovered-p recovery-conversation-id)
+                (list (terminal-span ':notice
+                       (if recovery-conversation-id
+                           (format nil "Recovery available: autolith open ~A~%"
+                                   (conversation-identifier-display recovery-conversation-id))
+                           (format nil "Recovered startup.~%")))))
+              (when notice
+                (list (terminal-span ':notice
+                       (format nil "~A~%" (sanitize-text (bounded-string notice :limit 200)
+                                                        :single-line-p t))))))))
+      (labels ((rows (content)
+                 (wrap-styled-text (terminal--spans-text content)
+                                   (terminal--render-spans terminal content) content-width)))
+        (let* ((lines (rows spans))
+               (warning (rows (list (terminal-span ':notice
+                               "! autolith executes model-generated code with your user privileges; sandboxing is no substitute for human oversight"))))
+               (tip-rows (when tip (rows tip))))
+          (when (> (length lines) height)
+            (setf lines
+                  (rows (append
+                         (loop for row in metadata append (application--banner-terminate-row row))
+                         (nthcdr (length header) spans)))))
+          (when (<= (+ (length lines) 1 (length warning)) height)
+            (setf lines (append lines (list (list "" "")) warning)))
+          (when (and tip-rows (<= (+ (length lines) 1 (length tip-rows)) height))
+            (setf lines (append lines (list (list "" "")) tip-rows)))
+          (let* ((block-width (loop for (text) in lines maximize (text-cell-width text)))
+                 (top (max 0 (floor (- height (length lines)) 2)))
+                 (left (make-string (max 0 (floor (- width block-width) 2))
+                                    :initial-element #\Space)))
+            (clinedi:frame-snapshot-apply
+             nil (loop for line in lines for row from top below height
+                       collect (list row (concatenate 'string left (second line))))
+             :height height :width width :complete-p t)))))))
+
+(-> main--welcome-world-client
+    (localgroup-screen configuration string
+     &key (:immutable-p boolean) (:recovery-diagnosis (option string))
+     (:recovery-conversation-id (option string)) (:notice (option string)))
+    (option list))
+(defun main--welcome-world-client
+    (screen configuration directory &key immutable-p recovery-diagnosis recovery-conversation-id notice)
+  "Read client welcome input, releasing its resize watch before channel loading."
+  (let ((terminal (localgroup-screen-terminal screen))
+        (tip (application--startup-tip-spans))
+        (resize-watch nil)
+        (next-refresh 0)
+        (total nil)
+        (local nil))
+    (unwind-protect
+         (progn
+           (terminal-start terminal)
+           (setf resize-watch
+                 (platform-watch-terminal-resize *platform*
+                  (lambda () (setf *terminal-resize-pending-p* t))))
+           (loop
+             (when (shiftf *terminal-resize-pending-p* nil)
+               (multiple-value-bind (rows columns) (terminal-current-size)
+                 (terminal-set-dimensions terminal columns :rows rows))
+               (localgroup-screen-resized screen))
+             (when (>= (get-internal-real-time) next-refresh)
+               (setf next-refresh (+ (get-internal-real-time) internal-time-units-per-second))
+               (handler-case
+                   (multiple-value-setq (total local)
+                     (main--welcome-agent-counts (world-load configuration) directory))
+                 (world-error () (setf total nil local nil))))
+             (localgroup-screen-show-frame
+              screen (main--welcome-frame
+                      screen directory :total total :local local :immutable-p immutable-p
+                      :recovered-p (not (null (or recovery-diagnosis
+                                               (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED")))))
+                      :tip tip :recovery-conversation-id recovery-conversation-id :notice notice)
+              :cursor-visible-p nil)
+             (localgroup-screen-tick screen)
+             (cond
+               ((terminal-input-ready-p terminal)
+                (let ((event (localgroup-screen-filter-event screen (terminal-read-event terminal))))
+                  (cond
+                    ((member event '(:interrupt :end-of-input :stream-end))
+                     (return nil))
+                    ((and (consp event) (eq (first event) ':switch))
+                     (return event))
+                    ((or (member event '(:enter :return)) (eql event #\Return) (eql event #\Newline))
+                     (return (list ':switch :new-p t)))
+                    ((eq event ':resize)
+                     (setf *terminal-resize-pending-p* t)))))
+               (t
+                (sleep 0.05)))))
+      (when resize-watch
+        (platform-unwatch-terminal-resize *platform* resize-watch)))))
+
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
      (:conversation-id (option string)) (:attachment-mode (member :control :read-only))
-     (:pick-channel-p boolean) (:recovery-diagnosis (option string)) (:launch list) (:images list))
+     (:pick-channel-p boolean) (:welcome-p boolean)
+     (:recovery-diagnosis (option string)) (:launch list) (:images list))
     (values boolean list))
 (defun main--run-world-client
        (configuration
         &key (permission-mode ':ask) immutable-p conversation-id (attachment-mode ':control)
-        pick-channel-p recovery-diagnosis launch images)
+        pick-channel-p welcome-p recovery-diagnosis launch images)
   "Serve one terminal across channel switches, committing navigation after attachment acknowledgment.
 Discovery, endpoint refresh and the attach handshake share a bounded switch transaction.
 A failed switch restores its source, or reports a disconnected terminal if that source disappeared.
 Return success and bounded secondary cleanup metadata without replacing a primary condition or exit."
   (let* ((panel            (world-sidebar-create configuration))
          (screen           (localgroup-client-screen-create :panel panel))
+         (launch-directory (namestring (uiop:getcwd)))
          (last-channel     nil)
          (recovering-p     nil)
          (final-exit       nil)
@@ -1351,6 +1492,8 @@ Return success and bounded secondary cleanup metadata without replacing a primar
         (progn
          (world-sidebar-start panel)
          (multiple-value-bind (session-id started-p)
+             (if welcome-p
+                 (values nil nil)
              (main--call-with-channel-loading screen "Opening channel"
                                               (lambda ()
                                                 (main--open-world-channel configuration
@@ -1373,13 +1516,19 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                       (localgroup-screen-terminal screen)))))
                                               :boot-p
                                               (and (config :fullscreen-p configuration)
-                                                   (config :boot-screen-p configuration)))
+                                                   (config :boot-screen-p configuration))))
            (loop with origin = nil
+                 with switching-p = nil
                  with restoring-p = nil
                  with client-version = *autolith-version*
                  with notice = nil
                  do (let ((exit
                            (handler-case
+                             (if (null session-id)
+                                 (main--welcome-world-client
+                                  screen configuration launch-directory
+                                  :immutable-p immutable-p :recovery-diagnosis recovery-diagnosis
+                                  :recovery-conversation-id conversation-id :notice (shiftf notice nil))
                             (main--attach-world-channel configuration session-id attachment-mode
                                                         :screen screen :notice
                                                         (shiftf notice nil) :client-version
@@ -1390,9 +1539,10 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                                 session-id
                                                                 last-channel session-id
                                                                 origin nil
+                                                                switching-p nil
                                                                 restoring-p nil
                                                                 recovering-p nil
-                                                                started-p nil)))
+                                                                started-p nil))))
                             (error (condition)
                                    (when started-p
                                      ; mallet:suppress no-ignore-errors -- preserve attachment failure while closing an unattached new channel
@@ -1403,7 +1553,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                                    (list :channel           session-id
                                                                          :unattached-only-p t))))))
                                    (cond
-                                    (origin
+                                    (switching-p
                                      (setf notice (main--switch-failure session-id condition))
                                      (list ':return))
                                     (recovering-p
@@ -1431,9 +1581,11 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                               started-p nil))
                        ((and (consp exit) (eq (first exit) ':return))
                         (setf session-id origin
+                              restoring-p (not (null origin))
                               origin nil
-                              started-p nil
-                              restoring-p t))
+                              switching-p nil
+                              recovering-p nil
+                              started-p nil))
                        ((and (consp exit) (eq (first exit) ':disconnected))
                         (setf final-exit (rest exit)) (return))
                        ((and (consp exit) (eq (first exit) ':switch))
@@ -1442,21 +1594,27 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                            (progn
                             (multiple-value-setq (session-id started-p)
                                (main--call-with-channel-loading
-                                screen "Loading channel"
+                                screen (if target "Loading channel" "Opening channel")
                                 (lambda ()
                                   (world-client-open configuration
                                                      :channel         target
+                                                     :directory       (unless left launch-directory)
+                                                     :new-p           (getf (rest exit) :new-p)
+                                                     :launch          (unless left launch)
                                                      :permission-mode permission-mode
                                                      :immutable-p     immutable-p
-                                                     :switch-p        t))
-                                :agent-name (world-sidebar-agent-name panel target)))
-                            (setf origin left))
+                                                     :switch-p        (not (null target))))
+                                :agent-name (when target (world-sidebar-agent-name panel target))))
+                             (setf origin left switching-p t))
                            (error (condition)
-                                  (setf notice (main--switch-failure target condition)
+                                  (setf notice (if target
+                                                   (main--switch-failure target condition)
+                                                   (format nil "Could not open a channel: ~A" condition))
                                         session-id left
                                         origin nil
+                                        switching-p nil
                                         started-p nil
-                                        restoring-p t)))))
+                                        restoring-p (not (null left)))))))
                        (t
                         (setf final-exit exit) (return)))))))
       (flet ((cleanup (stage function)

@@ -1763,6 +1763,8 @@
   test-cli-detached-dispatch
   test-cli-detached-receipt-cleanup
   test-cli-world-client-start
+  test-client-welcome-layout
+  test-client-welcome-input
   test-cli-detached-process)
 
 (when (test-fixture-available-p *platform* ':posix-shell)
