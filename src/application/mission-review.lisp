@@ -237,8 +237,7 @@ primary agent or local user."
                  (with-recursive-lock-held ((mission-context-lock context))
                    (setf (getf run :findings) findings
                          (getf run :status) ':completed
-                         (getf run :summary)
-                         (mission--bounded-text (gethash "summary" (task-sexp->json (getf result :structured-output)))))
+                          (getf run :summary) (getf (first findings) :summary))
                    (mission--evidence context ':review (list id findings))))
                (error (condition)
                  (with-recursive-lock-held ((mission-context-lock context))
