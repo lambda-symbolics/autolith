@@ -2817,17 +2817,19 @@ pool must reject the cancelled parent without creating a descendant."
                           (json-object "type" "output_text"
                                        "text" "Parent design is ready.")))))
            (let* ((result  (tool-execute tool context arguments))
-                  (idle-p
-                    (task-tests--wait-until
-                     (lambda ()
-                       (and
-                          (zerop
-                           (task-orchestrator-active-count orchestrator))
-                          (loop for job being the hash-values of
-                                (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator))
-                                always (job-terminal-p job))))
-                     1))
                   (jobs    (task-orchestrator-list-jobs orchestrator))
+                  (idle-p
+                    (progn
+                      (dolist (job jobs)
+                        (unless (nth-value 1 (task-job-await job 30))
+                          (error "Scheduler fixture did not observe terminal publication for ~A."
+                                 (job-identifier job))))
+                      ;; A terminal result may precede the worker releasing its slot.
+                      (task-tests--wait-until
+                       (lambda ()
+                         (and (zerop (task-orchestrator-live-count orchestrator))
+                              (zerop (task-orchestrator-active-count orchestrator))))
+                       30)))
                   (details (tool-result-details result))
                   (content (tool-result-content result))
                   (native-content
@@ -2835,9 +2837,11 @@ pool must reject the cancelled parent without creating a descendant."
                   (artifact-forms
                     (mapcar
                      (lambda (job)
-                       (task-tests--read-exact-native-value
-                        (uiop:read-file-string
-                         (getf (job-result job) :output-path))))
+                       (let ((path (getf (job-result job) :output-path)))
+                         (unless path
+                           (error "Terminal fixture job ~A in state ~A did not publish an artifact."
+                                  (job-identifier job) (job-state job)))
+                         (task-tests--read-exact-native-value (uiop:read-file-string path))))
                      jobs))
                   (workers
                     (copy-list
@@ -3120,8 +3124,16 @@ pool must reject the cancelled parent without creating a descendant."
                      :parent-reference-p           t
                      :oversized-parent-reference-p t))
                   (inputs (first (getf observation :provider-request-inputs))))
-             (test-assert (getf observation :success-p)
-                          "a detached child with oversized parent history succeeds")
+             (test-assert (and (getf observation :success-p)
+                               (= (getf observation :job-count) 1))
+                          "the scheduler accepts one detached child with oversized parent history")
+             (test-assert (getf observation :scheduler-idle-p)
+                          (format nil "Detached scheduler drained (active ~D, live ~D)."
+                                  (getf observation :active-count) (getf observation :live-count)))
+             (let* ((artifact (first (getf observation :artifact-forms)))
+                    (status   (getf artifact :status)))
+               (test-assert (eq status ':success)
+                            (format nil "Detached child artifact status ~S: ~A" status (getf artifact :error))))
              (test-assert
               (equal (mapcar (lambda (item) (json-get item "role")) inputs)
                      '("assistant" "developer" "user"))

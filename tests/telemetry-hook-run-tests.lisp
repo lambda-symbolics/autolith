@@ -910,7 +910,8 @@
                   (deadline-expired t :timed-out "timeout")))
     (test-telemetry--call
      (lambda (configuration)
-       (let* ((timeout-p (second case))
+       (let* ((timeout-p   (second case))
+              (publication (sb-thread:make-semaphore))
               (provider
                (make-instance
                 'run-job-test-provider :configuration configuration :block-on-empty-p timeout-p
@@ -928,14 +929,20 @@
             (list (list 'task--write-result-artifact
                         (lambda (job result)
                           (declare (ignore job result))
+                          (sb-thread:signal-semaphore publication)
                           (error "Injected task result publication failure.")))))
           (lambda ()
             (multiple-value-bind (spans results)
-                (test-telemetry-hooks--run-job configuration provider :timeout-seconds 1)
+                (if timeout-p
+                    (test-telemetry-hooks--run-job configuration provider :timeout-seconds 1)
+                    (test-telemetry-hooks--run-job configuration provider))
               (let ((roots (remove-if-not
                             (lambda (span)
                               (equal (test-telemetry--attribute span "autolith.event.kind") "run"))
                             spans)))
+                (unless timeout-p
+                  (test-assert (sb-thread:try-semaphore publication)
+                               "The child reached the injected publication failure."))
                 (test-assert (eq (first results) (third case))
                              (format nil "~A: The job reaches the expected real terminal failure." (first case)))
                 (test-assert (= (length roots) 1)
