@@ -883,13 +883,11 @@
                            (lambda (&rest arguments)
                              (declare (ignore arguments))
                              (error "CLI startup must use the cached provider catalog.")))
-                     (list 'main--client-session-p (constantly nil))
-                     (list 'main--connect-application
-                           (lambda (&key configuration &allow-other-keys)
+                     (list 'main--interactive-input-p (constantly t))
+                     (list 'main--run-world-client
+                           (lambda (configuration &rest arguments)
+                             (declare (ignore arguments))
                              (prepare configuration)))
-                     (list 'application-run
-                           (lambda (application &rest arguments)
-                             (declare (ignore application arguments))))
                      (list 'run-job-run
                            (lambda (input output mode &key configuration)
                              (declare (ignore input output mode))

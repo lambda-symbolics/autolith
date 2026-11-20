@@ -6904,31 +6904,6 @@
 (-> test-conversation-picker () null)
 (defun test-conversation-picker ()
   "Test saved-conversation picker items and interactive selection."
-  (let ((observed-conversation-id nil)
-        (observed-initial-command :unobserved)
-        (*active-application*     nil))
-    (test-call-with-function-replacements
-     (list
-      (list 'world-channel-latest-top-level
-            (lambda (configuration workspace)
-              (declare (ignore configuration workspace))
-              "latest-workspace-channel"))
-      (list 'application-create
-            (lambda (configuration &key conversation-id permission-mode)
-              (declare (ignore configuration permission-mode))
-              (setf observed-conversation-id conversation-id)
-              (make-instance 'application)))
-      (list 'application-run
-            (lambda (application &key initial-command &allow-other-keys)
-              (declare (ignore application))
-              (setf observed-initial-command initial-command))))
-     (lambda ()
-       (let ((*main-direct-start-p* t))
-         (main-dispatch '("open")))))
-    (test-assert
-     (and (equal observed-conversation-id "latest-workspace-channel")
-          (null observed-initial-command))
-     "direct command-line open resumes the latest workspace channel without the picker"))
   (test-assert
    (string= (application--selected-conversation-id
              "explicit" "recovered")
@@ -6938,134 +6913,80 @@
    (string= (application--selected-conversation-id nil "recovered")
             "recovered")
    "automatic recovery supplies the conversation without an explicit resume")
-  (let ((observed-mode        nil)
-        (*active-application* nil))
-    (test-call-with-function-replacements
-     (list
-      (list
-       'application-create
-       (lambda (configuration &key conversation-id permission-mode explicit-permission-mode)
-         (declare (ignore configuration conversation-id permission-mode))
-         (setf observed-mode explicit-permission-mode)
-         (make-instance 'application)))
-      (list
-       'application-run
-       (lambda (application &rest arguments)
-         (declare (ignore application arguments))
-         nil)))
-     (lambda ()
-       (let ((*main-direct-start-p* t))
-         (main-dispatch '("--permissions" "sandbox")))))
-    (test-assert (eq observed-mode ':sandboxed)
-                 "--permissions reaches application creation as an explicit selection"))
-  (let ((observed-mode        nil)
-        (*active-application* (make-instance 'application)))
-    (test-call-with-function-replacements
-     (list
-      (list
-       'application-reconnect
-       (lambda (application &key conversation-id immutable-p permission-mode explicit-permission-mode)
-         (declare (ignore application conversation-id immutable-p permission-mode))
-         (setf observed-mode explicit-permission-mode)
-         (make-instance 'application)))
-      (list
-       'application-run
-       (lambda (application &rest arguments)
-         (declare (ignore application arguments))
-         nil)))
-     (lambda ()
-       (let ((*main-direct-start-p* t))
-         (main-dispatch '("--permissions" "full")))))
-    (test-assert (eq observed-mode ':full-access)
-                 "--permissions reaches reconnect as an explicit selection"))
+  (dolist (case '(("sandbox" :sandboxed) ("full" :full-access)))
+    (let ((observed-mode nil))
+      (test-call-with-function-replacements
+       (list (list 'main--interactive-input-p (constantly t))
+             (list 'main--run-world-client
+                   (lambda (configuration &key launch &allow-other-keys)
+                     (declare (ignore configuration))
+                     (setf observed-mode (getf launch :permission-mode)))))
+       (lambda () (main-dispatch (list "--permissions" (first case)))))
+      (test-assert (eq observed-mode (second case))
+                   "an explicit permission selection reaches the world channel launch")))
   (let* ((environment-names
            '("AUTOLITH_RECOVERY_CONVERSATION_ID"
              "AUTOLITH_RECOVERY_RENDERED_SEQUENCE"
-             "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE"))
+             "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE"
+             "AUTOLITH_CRASH_POINTER"))
          (previous-environment
            (loop for name in environment-names
                  collect (cons name (uiop:getenv name))))
          (observed-conversation-id    :unset)
-         (observed-initial-command    :unset)
+         (observed-latest-p           :unset)
          (observed-recovery-diagnosis :unset)
-         (observed-adaptation-offer-p :unset)
-         (reconnect-failure-p         nil)
-         (*active-application*        (make-instance 'application)))
+         (startup-failure-p           nil))
     (unwind-protect
          (test-call-with-function-replacements
           (list
-           (list 'main--client-session-p
-                 (lambda (&rest arguments)
-                   (declare (ignore arguments))
-                   nil))
+           (list 'main--interactive-input-p (constantly t))
            (list 'main-resolve-conversation
                  (lambda (configuration prefix)
                    (declare (ignore configuration))
                    prefix))
-           (list
-            'application-reconnect
-            (lambda (application
-                     &key conversation-id immutable-p permission-mode)
-              (declare (ignore application immutable-p permission-mode))
-              (when reconnect-failure-p
-                (error "reconnect failed"))
-              (setf observed-conversation-id conversation-id)
-              (make-instance 'application)))
-           (list
-            'application-recovery-diagnosis-prompt
-            (lambda (configuration)
-              (declare (ignore configuration))
-              "diagnose"))
-           (list
-            'application-run
-            (lambda (application
-                     &key initial-command initial-input recovery-diagnosis
-                          adaptation-offer-p)
-              (declare (ignore application initial-input))
-              (setf observed-initial-command initial-command
-                    observed-recovery-diagnosis recovery-diagnosis
-                    observed-adaptation-offer-p adaptation-offer-p))))
+           (list 'application-recovery-diagnosis-prompt
+                 (lambda (configuration)
+                   (declare (ignore configuration))
+                   "diagnose"))
+           (list 'main--run-world-client
+                 (lambda (configuration &key conversation-id latest-p recovery-diagnosis
+                                              &allow-other-keys)
+                   (declare (ignore configuration))
+                   (when startup-failure-p (error "world client startup failed"))
+                   (setf observed-conversation-id conversation-id
+                         observed-latest-p latest-p
+                         observed-recovery-diagnosis recovery-diagnosis))))
           (lambda ()
-            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
-                            "recovered")
+            (platform-unsetenv "AUTOLITH_CRASH_POINTER")
+            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID" "recovered")
             (main-dispatch '("open"))
             (test-assert
-             (and (null observed-conversation-id)
-                  (null observed-initial-command)
-                  (string= observed-recovery-diagnosis "diagnose")
-                  (null observed-adaptation-offer-p))
-             "automatic recovery ignores a replayed bare resume picker request")
+             (and (equal observed-conversation-id "recovered")
+                  (null observed-latest-p)
+                  (equal observed-recovery-diagnosis "diagnose"))
+             "automatic recovery selects its channel and diagnosis instead of the latest channel")
             (test-assert
              (null (uiop:getenv "AUTOLITH_RECOVERY_CONVERSATION_ID"))
-             "successful startup consumes one-shot recovery metadata")
+             "successful world client startup consumes one-shot recovery metadata")
             (setf observed-conversation-id :unset
-                  observed-initial-command :unset
-                  observed-recovery-diagnosis :unset
-                  observed-adaptation-offer-p :unset)
-            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
-                            "recovered")
+                  observed-latest-p :unset
+                  observed-recovery-diagnosis :unset)
+            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID" "recovered")
             (main-dispatch '("open" "explicit"))
             (test-assert
-             (and (string= observed-conversation-id "explicit")
-                  (null observed-initial-command)
-                  (null observed-recovery-diagnosis)
-                  observed-adaptation-offer-p)
-             "an explicit recovered resume still overrides crash reconnection")
-            (setf reconnect-failure-p t)
-            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
-                            "recovered")
+             (and (equal observed-conversation-id "explicit")
+                  (null observed-latest-p)
+                  (null observed-recovery-diagnosis))
+             "an explicit recovered open overrides crash reconnection and its diagnosis")
+            (setf startup-failure-p t)
+            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID" "recovered")
             (test-assert
-             (handler-case
-                 (progn
-                   (main-dispatch '("open"))
-                   nil)
-               (simple-error ()
-                 t))
-             "failed recovery application construction reports its error")
+             (handler-case (progn (main-dispatch '("open")) nil)
+               (simple-error () t))
+             "failed world client startup reports its error")
             (test-assert
-             (string= (uiop:getenv "AUTOLITH_RECOVERY_CONVERSATION_ID")
-                      "recovered")
-             "failed recovery application construction preserves recovery metadata")))
+             (equal (uiop:getenv "AUTOLITH_RECOVERY_CONVERSATION_ID") "recovered")
+             "failed world client startup preserves recovery metadata")))
       (dolist (entry previous-environment)
         (if (rest entry)
             (platform-setenv (first entry) (rest entry))

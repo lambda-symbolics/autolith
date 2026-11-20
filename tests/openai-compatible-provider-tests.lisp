@@ -276,19 +276,11 @@
                      (lambda (configuration)
                        (declare (ignore configuration))
                        nil))
-               (list 'application-create
-                     (lambda (configuration &key conversation-id permission-mode)
-                       (declare (ignore conversation-id permission-mode))
-                       (setf observed-configuration configuration)
-                       (make-instance 'application)))
-               (list 'application-run
-                     (lambda (application &rest arguments)
-                       (declare (ignore application arguments))
-                       nil))
-               (list 'main--client-session-p
-                     (lambda (&rest arguments)
+               (list 'main--interactive-input-p (constantly t))
+               (list 'main--run-world-client
+                     (lambda (configuration &rest arguments)
                        (declare (ignore arguments))
-                       nil)))
+                       (setf observed-configuration configuration))))
               (lambda ()
                 (main-dispatch nil)))
              (test-assert
@@ -343,8 +335,6 @@
            (preferences-store configuration :model model)
            (preferences-store configuration :reasoning-effort "minimal")
            (let ((authentication-calls nil)
-                 (live-application     (make-instance 'application))
-                 (reconnect-called-p   nil)
                  (create               #'configuration-create))
              (test-call-with-function-replacements
               (list
@@ -386,28 +376,15 @@
                        (push (list configuration selection method)
                              authentication-calls)
                        nil))
-               (list 'application-reconnect
-                     (lambda (application &rest arguments)
-                       (declare (ignore arguments))
-                       (setf reconnect-called-p t)
-                       application))
-               (list 'application-run
-                     (lambda (application &rest arguments)
-                       (declare (ignore application arguments))
-                       nil))
-               (list 'main--client-session-p
-                     (lambda (&rest arguments)
-                       (declare (ignore arguments))
+               (list 'main--interactive-input-p (constantly t))
+               (list 'main--run-world-client
+                     (lambda (configuration &rest arguments)
+                       (declare (ignore configuration arguments))
                        nil)))
               (lambda ()
-                (let ((*active-application* live-application))
-                  (let ((*active-application* nil))
-                    (main-dispatch '("auth")))
-                  (let ((*active-application* nil))
-                    (main-dispatch '("auth" "chatgpt" "device"))))))
-             (test-assert
-              (not reconnect-called-p)
-              "auth commands do not reconnect the active application")
+                (let ((*active-application* nil))
+                  (main-dispatch '("auth"))
+                  (main-dispatch '("auth" "chatgpt" "device")))))
              (let ((calls (nreverse authentication-calls)))
                (test-assert (= (length calls) 2)
                             "auth commands authenticate exactly once each")
