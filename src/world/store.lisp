@@ -1291,11 +1291,14 @@ names the caller in refusals."
   "Convert legacy active agent IDs to their existing channel IDs in one world transaction.
 
 Only catalogue metadata changes. Original agent IDs are historical aliases;
-inactive records and all conversation and transfer files are left alone."
+inactive records and all conversation and transfer files are left alone. A
+legacy agent is retired without conversion if a participant already has the
+channel ID and records the legacy ID as its alias."
   (world--transact
    configuration
    (lambda (world)
      (let ((identifiers (make-hash-table :test #'equal))
+           (duplicates  (make-hash-table :test #'equal))
            (retired     nil)
            (records     nil)
            (now         (get-universal-time)))
@@ -1303,9 +1306,16 @@ inactive records and all conversation and transfer files are left alone."
                   (let ((channel (participant-residence agent)))
                     (when (and (eq (participant-kind agent) ':agent)
                                channel (not (equal identifier channel)))
-                      (when (world-participant-find world channel)
-                        (error 'world-error :operation ':channel-identities :identifier channel
-                               :message "A participant already uses a channel's canonical identity."))
+                      (let ((converted (world-participant-find world channel)))
+                        (cond
+                          ((null converted)
+                           nil)
+                          ;; A process of an older version wrote the legacy record again.
+                          ((equal (participant-legacy-identifier converted) identifier)
+                           (setf (gethash identifier duplicates) t))
+                          (t
+                           (error 'world-error :operation ':channel-identities :identifier channel
+                                  :message "A participant already uses a channel's canonical identity."))))
                       (setf (gethash identifier identifiers) channel)
                       (push (list :participant-deleted :version *world-format-version*
                                   :id identifier :time now)
@@ -1316,7 +1326,7 @@ inactive records and all conversation and transfer files are left alone."
           (lambda (identifier participant)
             (let ((channel (gethash identifier identifiers))
                   (parent  (gethash (participant-parent participant) identifiers)))
-              (when (or channel parent)
+              (when (and (or channel parent) (not (gethash identifier duplicates)))
                 (push (world--participant-record
                        (world--copy-participant participant
                                                 :identifier (or channel identifier)

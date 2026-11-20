@@ -316,11 +316,21 @@
                                                        :subscriptions '("bcanonical")
                                                        :created-at 1000 :updated-at 1000))) nil)))
       (world-ensure-channel-identities configuration)
+      ;; An older writer can append the legacy record again after conversion.
+      (world--transact configuration
+                       (lambda (world)
+                         (declare (ignore world))
+                         (values (list (world--participant-record
+                                        (make-instance 'participant :identifier "al-legacy" :kind ':agent
+                                                       :name "stale" :parent person :residence "bcanonical"
+                                                       :created-at 1000 :updated-at 1000))) nil)))
+      (world-ensure-channel-identities configuration)
       (multiple-value-bind (channel agent)
           (world-channel-register configuration "bcanonical" :workspace workspace :title "New title")
         (let ((world (world-load configuration)))
           (test-assert (and (equal (participant-identifier agent) (channel-identifier channel))
                             (eq agent (world-participant-find world "al-legacy"))
+                             (equal (participant-name agent) "helper")
                             (equal (channel-title channel) "Legacy title")
                             (equal (world-channel-residents world "bcanonical") (list agent)))
                        "a legacy ID reads the one canonical agent, and retry keeps existing metadata")
