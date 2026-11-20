@@ -1231,16 +1231,18 @@ request it conflicts with from one that says nothing."
           (conversation-identifier-display identifier) condition))
 
 (-> main--call-with-channel-loading
-    (localgroup-screen string function &key (:start-p boolean) (:boot-p boolean)) t)
-(defun main--call-with-channel-loading (screen title function &key start-p boot-p)
-  "Call FUNCTION while displaying its actual channel-opening milestones on SCREEN."
-  (localgroup-screen-show-loading screen title :start-p start-p :boot-p boot-p)
+    (localgroup-screen string function
+     &key (:start-p boolean) (:boot-p boolean) (:agent-name (option string))) t)
+(defun main--call-with-channel-loading (screen title function &key start-p boot-p agent-name)
+  "Call FUNCTION while displaying its channel-opening milestones and AGENT-NAME on SCREEN."
+  (localgroup-screen-show-loading screen title :start-p start-p :boot-p boot-p :agent-name agent-name)
   (handler-bind
       ((channel-loading-progress
          (lambda (progress)
            (localgroup-screen-show-loading
             screen title :step        (channel-loading-progress-step progress)
-                         :description (channel-loading-progress-description progress)))))
+                         :description (channel-loading-progress-description progress)
+                         :agent-name  agent-name))))
     (funcall function)))
 
 (-> main--attach-world-channel
@@ -1438,18 +1440,15 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                           (handler-case
                            (progn
                             (multiple-value-setq (session-id started-p)
-                              (main--call-with-channel-loading screen
-                                                               (format nil "Loading channel ~A"
-                                                                       (conversation-identifier-display
-                                                                        target))
-                                                               (lambda ()
-                                                                 (world-client-open configuration
-                                                                                    :channel  target
-                                                                                    :permission-mode
-                                                                                    permission-mode
-                                                                                    :immutable-p
-                                                                                    immutable-p
-                                                                                    :switch-p t))))
+                               (main--call-with-channel-loading
+                                screen "Loading channel"
+                                (lambda ()
+                                  (world-client-open configuration
+                                                     :channel         target
+                                                     :permission-mode permission-mode
+                                                     :immutable-p     immutable-p
+                                                     :switch-p        t))
+                                :agent-name (world-sidebar-agent-name panel target)))
                             (setf origin left))
                            (error (condition)
                                   (setf notice (main--switch-failure target condition)

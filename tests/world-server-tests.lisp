@@ -2506,7 +2506,7 @@ the version the client says it is, when it says one."
          (rejects-p       nil)
          (quit-p          nil)
          (notices         nil)
-         (loading-p       nil)
+         (loading         nil)
          (reports         nil)
          (lifecycle       nil)
          (release         (symbol-function 'localgroup-client-screen-release)))
@@ -2514,7 +2514,7 @@ the version the client says it is, when it says one."
               "Run one switch and check its sole final report names EXPECTED-CHANNEL."
               (setf opens nil
                     attaches nil
-                    loading-p nil
+                    loading nil
                     client-versions nil
                     notices nil
                     reports nil
@@ -2570,13 +2570,16 @@ the version the client says it is, when it says one."
                                 (throw 'client-exit (getf exit :status)))))
                       (list 'localgroup-screen-show-loading
                             (lambda (screen text &rest arguments)
-                              (declare (ignore screen text arguments))
-                              (setf loading-p t)))
+                              (declare (ignore screen))
+                              (push (list text (getf arguments :agent-name)) loading)))
                       (list 'world-client-open
                             (lambda (candidate &rest arguments)
                               (declare (ignore candidate))
-                              (test-assert loading-p
-                               "Loading is displayed before the blocking channel open")
+                              (test-assert (equal (first loading) '("Loading channel" "Ada"))
+                                           "Loading names the resident before the blocking channel open")
+                              (channel-loading-report 4 "Initializing channel")
+                              (test-assert (equal (second loading) (first loading))
+                                           "The switch progress keeps its agent name")
                               (push arguments opens)
                               (if refuse-p
                                   (error 'localgroup-error :message
@@ -2611,6 +2614,9 @@ the version the client says it is, when it says one."
                           (< (position ':stop events)
                              (position ':report events)))
                      "Screen release and sidebar shutdown each happen once before the final report"))))))
+       (world-tests--persisted-conversation configuration "bsecnd2" 1000)
+       (world-reconcile-sessions configuration)
+       (world-participant-rename configuration "al-bsecnd2" "Ada")
        (run "bsecnd2")
        (test-assert
         (and (= (length opens) 1) (null (getf (first opens) :launch))

@@ -431,14 +431,15 @@ side panel for the frame."
 
 (-> localgroup-screen-show-loading
     (localgroup-screen string &key (:step (integer 1 6)) (:description string)
-                                  (:start-p boolean) (:boot-p boolean))
+                                  (:start-p boolean) (:boot-p boolean) (:agent-name (option string)))
     null)
 (defun localgroup-screen-show-loading
-    (screen text &key (step 1) (description "Connecting to world") start-p boot-p)
+    (screen text &key (step 1) (description "Connecting to world") start-p boot-p agent-name)
   "Show actual channel-opening progress, using the whole boot panel for initial startup.
 
 START-P permits taking the terminal. BOOT-P selects the shared boot panel
-before the first channel frame; channel switches retain their side panel."
+before the first channel frame; channel switches retain their side panel and
+highlight AGENT-NAME when known."
   (with-lock-held ((localgroup-screen-lock screen))
     (when (or start-p (localgroup-screen-active-p screen))
       (when boot-p
@@ -448,7 +449,7 @@ before the first channel frame; channel switches retain their side panel."
         (localgroup-screen--enter screen))
       (setf (localgroup-screen-drawer-open-p screen) nil
             (localgroup-screen-frame screen) nil
-            (localgroup-screen-loading screen) (list text step description)
+            (localgroup-screen-loading screen) (list text step description agent-name)
             (localgroup-screen-cursor screen) (list 0 0 nil))
       (localgroup-screen--take-whole-screen screen (not (null (localgroup-screen-boot-ui screen))))
       (localgroup-screen--paint screen)))
@@ -457,7 +458,7 @@ before the first channel frame; channel switches retain their side panel."
 (-> localgroup-screen--loading-frame (localgroup-screen) clinedi:frame-snapshot)
 (defun localgroup-screen--loading-frame (screen)
   "Render SCREEN's current milestone centered in the current channel pane."
-  (destructuring-bind (title step description) (localgroup-screen-loading screen)
+  (destructuring-bind (title step description agent-name) (localgroup-screen-loading screen)
     (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
       (when (localgroup-screen-boot-ui screen)
         (return-from localgroup-screen--loading-frame
@@ -474,9 +475,13 @@ before the first channel frame; channel switches retain their side panel."
                                                  (floor (* content-width (1- step)) 6)))
              (stage         (list (terminal-span ':legend-accent (format nil "~D/6" step))
                                   (terminal-span ':dim (format nil "  ~A" description))))
+             (heading       (cons (terminal-span ':brand title)
+                                  (when agent-name
+                                    (list (terminal-span ':plain " ")
+                                          (terminal-span ':agent-name agent-name)))))
              (lines         (cond
                               ((>= height 4)
-                               (list (list (terminal-span ':brand title)) nil bar stage))
+                                (list heading nil bar stage))
                               ((>= height 2)
                                (list bar stage))
                               (t

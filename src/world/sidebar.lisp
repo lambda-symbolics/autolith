@@ -466,6 +466,20 @@ The choice stays when the terminal moves to another channel."
 Folding describes this terminal's view; clients may fold independently."
   (apply #'world-sidebar--entries sidebar :include-closed-p t (world-sidebar-inputs sidebar)))
 
+(-> world-sidebar-agent-name (world-sidebar string) (option string))
+(defun world-sidebar-agent-name (sidebar identifier)
+  "Return the resident agent's display name for IDENTIFIER, when known.
+
+Use the sidebar's catalogue first. A command may open a channel the sidebar
+has not seen yet; check the durable world in that case."
+  (or (rest (assoc identifier (getf (world-sidebar-inputs sidebar) :names) :test #'equal))
+      (handler-case
+          (rest (assoc identifier
+                       (world-sidebar--names (world-load (world-sidebar-configuration sidebar)))
+                       :test #'equal))
+        (autolith-error ()
+          nil))))
+
 (-> world-sidebar--channel-entry-function
     (world-sidebar &key (:names list) (:statuses list) (:pending list) (:runtime-unknown-p boolean))
     function)
