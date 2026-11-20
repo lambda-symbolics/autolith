@@ -233,20 +233,6 @@ With PERSISTED-P its conversation holds a message."
    "only a detach handoff starts deliberately detached")
   nil)
 
-(-> test-localgroup-client-first-resume () null)
-(defun test-localgroup-client-first-resume ()
-  "Test which starts open a channel in the world server and which run their session directly."
-  (with-platform-capability (':detached-sessions "client-first starts")
-    (dolist (case '((()                                                   t
-                     "an ordinary start, a resume or crash recovery is a client of the world server")
-                    ((:handoff-record (:localgroup-handoff :version 1)) nil
-                     "the spawned session itself runs direct")
-                    ((:pristine-p t)                                       nil
-                     "a pristine rescue session runs apart from the world server")))
-      (destructuring-bind (arguments expected label) case
-        (test-assert (eq (apply #'main--client-session-p arguments) expected) label))))
-  nil)
-
 (-> test-localgroup-fresh-session-spawn () null)
 (defun test-localgroup-fresh-session-spawn ()
   "Test client-first spawn records, launch options, and start-failure cleanup."

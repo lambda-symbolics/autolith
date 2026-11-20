@@ -118,14 +118,11 @@
            (started-p      t)
            (switch-to      nil)
            (welcomed       0)
-           (welcome-events nil)
-           (direct-p       nil))
+           (welcome-events nil))
       (test-call-with-function-replacements
        (list
         (list 'configuration-create
               (lambda (&rest arguments) (declare (ignore arguments)) configuration))
-        (list 'main--client-session-p
-              (lambda (&rest arguments) (declare (ignore arguments)) t))
         (list 'main--interactive-input-p
               (lambda () t))
         (list 'main-resolve-conversation
@@ -178,18 +175,13 @@
                         queried))
                 (list :ok)))
         (list 'localgroup-relay-exit
-              (lambda (&rest arguments) (declare (ignore arguments))))
-        (list 'main--connect-application
-              (lambda (&rest arguments)
-                (declare (ignore arguments))
-                (setf direct-p t)
-                (error 'configuration-error :message "direct startup"))))
+              (lambda (&rest arguments) (declare (ignore arguments)))))
        (lambda ()
          (let ((*error-output* (make-string-output-stream)))
            (main-dispatch '())
             (test-assert (and (= welcomed 1) (= (length opened) 1) (null attached)
                               (getf (first opened) :inbox-p) (not (getf (first opened) :attach-expected-p))
-                              (null queried) (not direct-p))
+                              (null queried))
                          "a bare launch preloads home without attaching and shows the welcome banner")
             (setf opened nil attached nil welcome-events (list (list ':switch :session-id identifier)))
             (main-dispatch '())
@@ -234,9 +226,8 @@
            (test-assert (handler-case
                              (progn (main-dispatch (list "open" identifier)) nil)
                           (localgroup-error (condition)
-                            (and (not direct-p)
-                                 (search "The world server is not available: No world server could start"
-                                         (autolith-error-message condition)))))
+                             (search "The world server is not available: No world server could start"
+                                     (autolith-error-message condition))))
                         "a failed open ends the start with its reason instead of starting directly")
            (setf open-error nil
                  opened     nil
@@ -268,13 +259,6 @@
                               (progn (main-dispatch (list "open" identifier "--read-only")) nil)
                              (configuration-error () t))
                            "read-only open rejects noninteractive input instead of submitting it")))
-           (test-call-with-function-replacements
-            (list (list 'main--client-session-p (lambda (&rest arguments) (declare (ignore arguments)) nil)))
-            (lambda ()
-              (test-assert (handler-case
-                              (progn (main-dispatch (list "open" identifier "--read-only")) nil)
-                             (configuration-error () (not direct-p)))
-                           "read-only open never falls back to a controlling direct session")))
            (setf opened nil)
            (main-dispatch (list "open" identifier "--immutable"))
            (test-assert (equal (getf (first opened) :launch) '(:immutable-p t))

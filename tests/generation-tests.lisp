@@ -998,33 +998,27 @@
 
 (-> generation-tests--test-checkpoint-open-identity () null)
 (defun generation-tests--test-checkpoint-open-identity ()
-  "Verify retained sessions resume directly by their persisted conversation ID."
-  (let ((main-arguments nil)
-        (style-events   nil))
-    (let ((*active-application* t))
-      (test-call-with-function-replacements
-       (list
-        (list 'application-conversation
-              (lambda (application)
-                (declare (ignore application))
-                :conversation))
-        (list 'conversation-identifier
-              (lambda (conversation)
-                (declare (ignore conversation))
-                "conversation-identity"))
-        (list 'main
-              (lambda (arguments)
-                (setf main-arguments arguments)
-                (push *main-direct-start-p* style-events)
-                nil)))
-       (lambda ()
-         (checkpoint-resume-main '("--localgroup-handoff" "consumed"))))
-     (test-assert (equal main-arguments '("open" "conversation-identity"))
-                  "saved checkpoints resume their originating conversation")
-     (test-assert (equal style-events '(t))
-                  "saved checkpoints resume in their own process, bypassing client-first startup")
-     (test-assert (null *main-direct-start-p*)
-                  "saved checkpoint startup leaves later starts client-first")))
+  "Verify a retained heap forwards startup through its own world namespace."
+  (let* ((*checkpoint-boot-generation*
+           (make-instance 'generation :identifier "saved01"))
+         (*world-image-selection* nil)
+         (*active-application* t)
+         (main-arguments nil)
+         (image-selection nil))
+    (test-call-with-function-replacements
+     (list (list 'world-server-restart-claim (lambda () nil))
+           (list 'main
+                 (lambda (arguments)
+                   (setf main-arguments arguments
+                         image-selection *world-image-selection*)
+                   nil)))
+     (lambda ()
+       (checkpoint-resume-main '("open" "conversation-identity"))))
+    (test-assert (equal main-arguments '("open" "conversation-identity"))
+                 "retained heaps forward the requested channel to world startup")
+    (test-assert (and (equal image-selection "generation-saved01")
+                      (null *active-application*))
+                 "retained heaps select their endpoint scope without restoring a direct session"))
   nil)
 
 (-> test-checkpoint-backend-selection () null)

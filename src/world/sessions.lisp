@@ -914,23 +914,3 @@ and its first record names it."
                                       :value  *world-inbox-designator*
                                       :source ':initial))
     (conversation-pathname conversation)))
-
-
-;;;; -- Conditions --
-
-(define-condition world-session-warning (warning)
-  ((pathname
-    :initarg       :pathname
-    :reader        world-session-warning-pathname
-    :type          pathname
-    :documentation "The session mapping pathname involved.")
-   (cause
-    :initarg       :cause
-    :reader        world-session-warning-cause
-    :type          t
-    :documentation "The failure encountered while updating world session state."))
-  (:report (lambda (condition stream)
-             (format stream "World session operation at ~A failed: ~A"
-                     (world-session-warning-pathname condition)
-                     (world-session-warning-cause condition))))
-  (:documentation "An error occurred while updating world session state."))

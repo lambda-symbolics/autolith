@@ -8,6 +8,23 @@
 ;;; The server answers at one more endpoint, "world", through which clients
 ;;; open channels, and it stays alive without clients until it is stopped.
 
+(define-condition world-session-warning (warning)
+  ((pathname
+    :initarg       :pathname
+    :reader        world-session-warning-pathname
+    :type          pathname
+    :documentation "The world catalogue or channel state pathname involved.")
+   (cause
+    :initarg       :cause
+    :reader        world-session-warning-cause
+    :type          t
+    :documentation "The failure encountered while updating world state."))
+  (:report (lambda (condition stream)
+             (format stream "World operation at ~A failed: ~A"
+                     (world-session-warning-pathname condition)
+                     (world-session-warning-cause condition))))
+  (:documentation "An optional world state operation failed."))
+
 (defparameter *world-server-identifier* "world"
   "The endpoint identifier under which a world server answers.")
 
@@ -263,12 +280,18 @@ the process could fork, and a new thread serves the application again."))
 
 TOKEN and CREATED-AT name the endpoint the client that started this process
 waits for; without them the endpoint gets fresh ones. The process services,
-the management REPL and Slynk, start with the server. The server never runs
-pristine: a pristine rescue session runs apart from it."
-  (let* ((failures     (application--prepare-process configuration :pristine-p nil))
+the management REPL and Slynk, start with the server. Pristine and retained
+images use their own endpoint namespace."
+  (let* ((pristine-p (equal *world-image-selection* "pristine"))
+         (failures   (if *checkpoint-boot-generation*
+                         (application--prepare-process configuration
+                                                       :pristine-p pristine-p
+                                                       :image-replay-failures nil)
+                         (application--prepare-process configuration
+                                                       :pristine-p pristine-p)))
          (bootstrapped (with-extension-registry-transaction
                          (application--load-extension-configuration
-                          configuration :pristine-p nil)
+                          configuration :pristine-p pristine-p)
                          (provider-bootstrap-configuration configuration)))
          (server       (make-instance 'world-server
                                       :configuration            bootstrapped
@@ -294,21 +317,14 @@ pristine: a pristine rescue session runs apart from it."
 
 (-> world-server--reconcile (configuration) null)
 (defun world-server--reconcile (configuration)
-  "Reconcile required channel identities without optional transcript/cache cleanup.
-Each channel subsequently synchronizes its own conversation. Report recovery and
-reconciliation failures independently so an optional failure cannot skip identities."
-  ;; Recovery can do filesystem work. Run it at server start, never in a
-  ;; presentation-locked reconciliation or picker refresh.
+  "Recover interrupted channel removals and require canonical catalogue identities."
+  ;; Removal recovery can do filesystem work. Keep it out of presentation locks.
   (handler-case (channel-remove-recover configuration)
     (error (cause)
       (warn 'world-session-warning
             :pathname (channel--removal-root configuration)
             :cause    cause)))
-  (handler-case (world-reconcile-sessions configuration)
-    (error (cause)
-      (warn 'world-session-warning
-            :pathname (configuration-world-sessions-path configuration)
-            :cause    cause)))
+  (world-ensure-channel-identities configuration)
   nil)
 
 (-> world-server-lock-pathname (configuration) pathname)
@@ -1124,7 +1140,7 @@ host to publish its endpoint."
   (let* ((configuration (world-server-configuration server))
          (channel       (or (getf arguments :channel)
                            (when (getf arguments :inbox-p)
-                             (channel-identifier (world-session-inbox configuration)))))
+                             (channel-identifier (world-ensure-inbox configuration)))))
          (directory     (getf arguments :directory)))
     (cond
      ((stringp channel)
@@ -1154,7 +1170,7 @@ host to publish its endpoint."
                :operation ':open))
       (let ((workspace (world-workspace-name directory)))
          (when (and (getf arguments :latest-p) (not (getf arguments :new-p)))
-           (let ((latest (world-session-latest-channel configuration workspace)))
+           (let ((latest (world-channel-latest-top-level configuration workspace)))
              (when latest
                (return-from world-server--host-for
                  (world-server--host-for server (list* :channel latest arguments))))))
@@ -1571,6 +1587,7 @@ forgotten again when no thread could start."
                   (when (getf launch :immutable-p) (list :immutable-p t)))))
          (application
           (application--build configuration :conversation-id conversation-id
+                              :pristine-p (equal *world-image-selection* "pristine")
                               :permission-mode
                               (world-server--permission-mode server (getf arguments :permission-mode))
                               :explicit-permission-mode

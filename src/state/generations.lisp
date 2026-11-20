@@ -144,7 +144,8 @@ quiescing, because both touch the private history repository."
      reconstruction-pathname
      :generation-identifier identifier
      :commit                image-commit)
-    (list* :reconstruction (namestring reconstruction-pathname)
+    (list* :world-entry 1
+           :reconstruction (namestring reconstruction-pathname)
            :image-commit   (and image-commit (image-commit-identifier image-commit))
            :mutation-history-commit
            (and image-commit (image-commit-history-commit image-commit))
@@ -416,31 +417,40 @@ between that process's exit and the boot of the saved core."
   "Leave unrecognized checkpoint STATE unchanged."
   state)
 
-(defvar *main-direct-start-p* nil
-  "Whether a start runs its session in this process instead of a world server's channel.
+(defvar *world-image-selection* nil
+  "The booted image's endpoint namespace, or NIL for the normal active image.")
 
-A booted generation resumes its saved session this way, as recovery does,
-apart from the world server.")
+(defvar *checkpoint-boot-generation* nil
+  "The retained generation whose exact heap this saver writes, or NIL before a save.")
 
 (-> checkpoint-resume-main (list) null)
 (defun checkpoint-resume-main (arguments)
-  "Run a booted saved core: serve its world server again after a restart, or resume its saved session.
+  "Boot this retained generation as an image-scoped world server and terminal client.
 
-A world server that saved this heap to restart from it serves its channels
-again when its launcher boots the core for that restart. Any other boot,
-such as a rollback, resumes the active application's conversation by its
-persisted identity, in this process."
+A supervised exact-heap restart rejoins its existing world endpoint namespace."
   (let ((restart (world-server-restart-claim)))
     (when restart
       (uiop:quit (world-server-restart-resume restart))))
-  (let* ((application  (and (boundp '*active-application*)
-                            (symbol-value '*active-application*)))
-         (conversation (and application (application-conversation application)))
-         (identifier   (and conversation (conversation-identifier conversation))))
-    (if (non-empty-string-p identifier)
-        (let ((*main-direct-start-p* t))
-          (main (list "open" identifier)))
-        (main arguments))))
+  (unless *checkpoint-boot-generation*
+    (error 'checkpoint-error
+           :stage ':boot
+           :pathname nil
+           :message "This core does not identify a world-capable retained generation."))
+  (setf *world-image-selection*
+        (format nil "generation-~A" (generation-identifier *checkpoint-boot-generation*))
+        (symbol-value '*active-application*) nil)
+  (main arguments))
+
+(-> generation-session-launch-command (configuration) list)
+(defun generation-session-launch-command (configuration)
+  "Return the command for this exact retained heap, or the active-image launcher."
+  (if (and *checkpoint-boot-generation*
+           (not (equal *world-image-selection* "pristine")))
+      (list (namestring sb-ext:*runtime-pathname*)
+            "--noinform" "--core"
+            (namestring (generation-core-pathname *checkpoint-boot-generation*))
+            "--end-runtime-options")
+      (platform-session-launch-command *platform* (config :source-root configuration))))
 
 (-> checkpoint--source-snapshot (configuration &key (:allow-dirty-p boolean)) string)
 (defun checkpoint--source-snapshot (configuration &key allow-dirty-p)
@@ -528,8 +538,8 @@ persisted identity, in this process."
 
 Everything this process still holds is written into the core, so credentials are
 dropped and inherited worker descriptors detached before the image is saved."
-  (declare (ignore generation))
-  (setf *credentials-in-request-scope* nil
+  (setf *checkpoint-boot-generation* generation
+        *credentials-in-request-scope* nil
         *active-secret-use-count* 0
         *secret-use-depth* 0
         *secret-use-quiescence-owner* nil)

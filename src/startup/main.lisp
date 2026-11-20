@@ -824,42 +824,6 @@ dependencies."
                   (provider-model-provider-name model) model)))))
   nil)
 
-(-> main--connect-application
-    (&key (:configuration configuration)
-          (:conversation-id (option string))
-          (:immutable-p boolean)
-          (:pristine-p boolean)
-          (:permission-mode (member :ask :auto :sandboxed :full-access))
-          (:explicit-permission-mode (option keyword))
-          (:fresh-conversation-p boolean)
-          (:image-replay-failures list))
-    application)
-(defun main--connect-application
-    (&key configuration conversation-id immutable-p pristine-p permission-mode
-          explicit-permission-mode fresh-conversation-p
-          (image-replay-failures nil image-state-loaded-p))
-  "Create or reconnect the active application for one normal or handoff startup.
-
-Forward supplied IMAGE-REPLAY-FAILURES when authentication already loaded private
-state, including an empty list after successful or pristine startup."
-  (if (and (not pristine-p)
-           (not fresh-conversation-p)
-           (typep *active-application* 'application))
-      (apply #'application-reconnect *active-application*
-             :conversation-id conversation-id
-             :immutable-p     immutable-p
-             :permission-mode permission-mode
-             (when explicit-permission-mode
-               (list :explicit-permission-mode explicit-permission-mode)))
-      (apply #'application-create configuration
-             :conversation-id conversation-id
-             :permission-mode permission-mode
-             (append (when explicit-permission-mode
-                       (list :explicit-permission-mode explicit-permission-mode))
-                     (when pristine-p (list :pristine-p t))
-                     (when image-state-loaded-p
-                       (list :image-replay-failures image-replay-failures))))))
-
 (-> main--site-root-arguments (clingon:command) list)
 (defun main--site-root-arguments (command)
   "Return an explicit site-root override only when COMMAND supplies one."
@@ -898,6 +862,14 @@ state, including an empty list after successful or pristine startup."
                   authentication-selection authentication-method)
   "Start one interactive Autolith session from COMMAND's parsed options."
   (main--register-local-source-trees)
+  (setf *world-image-selection*
+        (cond
+          ((getopt* command ':pristine)
+           "pristine")
+          (*checkpoint-boot-generation*
+           (format nil "generation-~A" (generation-identifier *checkpoint-boot-generation*)))
+          (t
+           nil)))
   (let* ((pristine-p               (not (null (getopt* command ':pristine))))
          (read-only-p              (and open-requested-p (getopt command ':read-only)))
          (attachment-mode          (if read-only-p ':read-only ':control))
@@ -942,14 +914,12 @@ state, including an empty list after successful or pristine startup."
          (conversation-id          (or effective-open-id recovery-conversation-id))
          (latest-p                 (and effective-open-requested-p (null conversation-id)))
          (inbox-p                  (not (or effective-open-requested-p conversation-id handoff-record)))
-         (pick-channel-p           (and handoff-record (getf (rest handoff-record) :pick-channel-p)))
          (image-state-loaded-p
            (and authenticate-p
                 (or pristine-p fresh-handoff-p
-                    (not (typep *active-application* 'application)))))
-         (image-replay-failures
-           (when image-state-loaded-p
-             (image-state-load configuration :pristine-p pristine-p))))
+                    (not (typep *active-application* 'application))))))
+    (when image-state-loaded-p
+      (image-state-load configuration :pristine-p pristine-p))
     (when authenticate-p
       (unless pristine-p
         (user-init-load configuration))
@@ -959,7 +929,11 @@ state, including an empty list after successful or pristine startup."
     (when handoff-record
       (localgroup-handoff-begin-startup handoff-record)
       (application--clear-recovery-environment))
-    (when (and handoff-record (getf (rest handoff-record) :world-p))
+    (when handoff-record
+      (unless (getf (rest handoff-record) :world-p)
+        (error 'configuration-error
+               :message "A detached startup ticket must select a world server.")))
+    (when handoff-record
       (let* ((*localgroup-startup-record* handoff-record)
              (status                      (world-server-run configuration
                                                             :permission-mode
@@ -977,98 +951,33 @@ state, including an empty list after successful or pristine startup."
       (format *error-output* "~&Autolith: ~A~%"
               (application--command-sandbox-unavailable-message))
       (force-output *error-output*))
-    (when (and (main--client-session-p
-                :handoff-record handoff-record
-                :pristine-p     pristine-p)
-               (if (main--interactive-input-p)
-                   (main--run-world-client
-                    configuration
-                    :permission-mode     permission-mode
-                    :immutable-p         immutable-p
-                     :conversation-id    conversation-id
-                     :attachment-mode    attachment-mode
-                     :inbox-p            inbox-p
-                     :latest-p           latest-p
-                      :welcome-p          inbox-p
-                      :recovery-diagnosis recovery-diagnosis
-                      :launch             (main--launch-options
-                                           command :permission-mode explicit-permission-mode))
-                   (progn
-                      (apply #'world-client-run-script configuration
-                             :conversation-id conversation-id
-                             :permission-mode permission-mode
-                             :immutable-p     immutable-p
-                             :launch          (main--launch-options
-                                               command :permission-mode explicit-permission-mode)
-                             (when latest-p (list :latest-p t)))
-                     t)))
-      (return-from main--start-session nil))
-    (when read-only-p
-      (error 'configuration-error
-             :message "Read-only opening requires a hosted channel; direct startup is unavailable."))
-    (let ((*localgroup-startup-record* handoff-record))
-      (setf *active-application*
-            (apply #'main--connect-application
-                   :configuration        configuration
-                    :conversation-id     (or effective-open-id
-                                             (when latest-p
-                                               (world-session-latest-channel
-                                                configuration
-                                                (world-workspace-name
-                                                 (config :working-directory configuration)))))
-                   :immutable-p          immutable-p
-                   :pristine-p           pristine-p
-                   :permission-mode      (if pristine-p
-                                             (or explicit-permission-mode permission-mode)
-                                             permission-mode)
-                   :fresh-conversation-p (not (null fresh-handoff-p))
-                   (append (when (and explicit-permission-mode (not pristine-p))
-                             (list :explicit-permission-mode explicit-permission-mode))
-                           (when image-state-loaded-p
-                             (list :image-replay-failures image-replay-failures)))))
-      (application--clear-recovery-environment)
-      (handler-case
-          ;; A detached session's launcher only logs this exit, so tell the
-          ;; attached terminals before the session unwinds and closes them.
-          (handler-bind ((main-launcher-exit-condition
-                           (lambda (condition)
-                             (multiple-value-bind (status message details)
-                                 (main--launcher-exit-text condition)
-                               (localgroup-finish-attachments *active-application*
-                                                              :status  status
-                                                              :message message
-                                                              :details details)))))
-            (application-run
-             *active-application*
-             :initial-command    (and pick-channel-p
-                                      (null effective-open-id)
-                                      "(open)")
-             :initial-input
-             (when handoff-record
-               (localgroup-handoff-initial-input handoff-record))
-             :recovery-diagnosis recovery-diagnosis
-             :adaptation-offer-p (null recovery-diagnosis)))
-        (main-launcher-exit-condition (condition)
-          (multiple-value-bind (status message) (main--launcher-exit-text condition)
-            (format *error-output* "~A~%" message)
-            (uiop:quit status))))))
+    (unless (platform-supports-p *platform* ':detached-sessions)
+      (error 'platform-capability-unavailable
+             :capability ':detached-sessions
+             :message "Starting a world server requires detached-session support."))
+    (if (main--interactive-input-p)
+        (main--run-world-client
+         configuration
+         :permission-mode    permission-mode
+         :immutable-p        immutable-p
+         :conversation-id    conversation-id
+         :attachment-mode    attachment-mode
+         :inbox-p            inbox-p
+         :latest-p           latest-p
+         :welcome-p          inbox-p
+         :recovery-diagnosis recovery-diagnosis
+         :launch             (main--launch-options
+                              command :permission-mode explicit-permission-mode))
+        (apply #'world-client-run-script configuration
+               :conversation-id conversation-id
+               :permission-mode permission-mode
+               :immutable-p     immutable-p
+               :launch          (main--launch-options
+                                 command :permission-mode explicit-permission-mode)
+               (when latest-p (list :latest-p t))))
+    (application--clear-recovery-environment))
   nil)
 
-(-> main--client-session-p
-    (&key (:handoff-record (option list)) (:pristine-p boolean))
-    boolean)
-(defun main--client-session-p (&key handoff-record pristine-p)
-  "Return true when this start should attach to the world server.
-Replacements, pristine starts, and booted generations use the direct path."
-  (when (and (null handoff-record)
-             (not (platform-supports-p *platform* ':detached-sessions)))
-    (error 'platform-capability-unavailable
-           :capability ':detached-sessions
-           :message "Starting a world server requires detached-session support."))
-  (and (null handoff-record)
-       (not pristine-p)
-       (not *main-direct-start-p*)
-       t))
 
 (-> main--interactive-input-p () boolean)
 (defun main--interactive-input-p ()

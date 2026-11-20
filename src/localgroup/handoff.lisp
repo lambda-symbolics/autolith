@@ -294,8 +294,7 @@ before any shell is involved."
     (configuration handoff-pathname &key (permission-mode ':ask) immutable-p pristine-p)
   "Return the platform launch command and handoff arguments for CONFIGURATION."
   (append
-   (platform-session-launch-command
-    *platform* (config :source-root configuration))
+   (generation-session-launch-command configuration)
    (list "--permissions" (localgroup-handoff-permission-string permission-mode))
    (when (config :model-selection-override-p configuration)
      (append (list "--model" (config :model configuration))

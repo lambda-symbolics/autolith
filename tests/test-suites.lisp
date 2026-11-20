@@ -1713,15 +1713,13 @@
 
 (define-test-suite localgroup-handoff
   test-localgroup-handoff-site-arguments
-  test-localgroup-client-first-resume
   test-localgroup-abandoned-session-exit
   test-localgroup-lingering-session
   test-localgroup-fresh-session-spawn
   test-localgroup-world-spawn)
 
 (define-test-suite localgroup-handoff-boundary
-  test-localgroup-handoff-cancellation
-  test-localgroup-fresh-startup-selection)
+  test-localgroup-handoff-cancellation)
 
 (define-test-suite session-cli
   test-cli-resume-prefixes

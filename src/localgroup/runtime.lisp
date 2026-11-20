@@ -24,18 +24,23 @@
             :documentation "The serving thread that published this endpoint."))
           (:documentation "One authenticated local control endpoint for a primary application."))
 
-(-> localgroup-registry-directory (configuration) pathname)
-(defun localgroup-registry-directory (configuration)
-  "Return CONFIGURATION's private localgroup endpoint directory."
-  (merge-pathnames "localgroup/" (config :state-root configuration)))
-
 (-> localgroup-world-directory (configuration) pathname)
 (defun localgroup-world-directory (configuration)
-  "Return CONFIGURATION's private directory holding the world server's endpoint record.
+  "Return the ephemeral endpoint directory for this image selection.
 
-It sits apart from the channel endpoints, so session listings never show the
-server itself."
-  (merge-pathnames "world/" (localgroup-registry-directory configuration)))
+Durable catalogues and channel writer leases are shared across selections."
+  (let ((root (merge-pathnames "world/endpoints/"
+                               (config :state-root configuration))))
+    (if *world-image-selection*
+        (progn
+          (conversation-identifier-validate-path-component *world-image-selection*)
+          (merge-pathnames (format nil "~A/" *world-image-selection*) root))
+        root)))
+
+(-> localgroup-registry-directory (configuration) pathname)
+(defun localgroup-registry-directory (configuration)
+  "Return this image selection's ephemeral channel endpoint directory."
+  (merge-pathnames "channels/" (localgroup-world-directory configuration)))
 
 (-> localgroup-registry-pathname (configuration string) pathname)
 (defun localgroup-registry-pathname (configuration session-id)

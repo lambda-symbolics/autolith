@@ -33,6 +33,7 @@ Without ATTACH-EXPECTED-P no terminal is about to attach, as for autolith start.
   (localgroup-handoff-spawn-fresh configuration
                                   :permission-mode   permission-mode
                                   :immutable-p       immutable-p
+                                  :pristine-p        (equal *world-image-selection* "pristine")
                                   :attach-expected-p attach-expected-p
                                   :world-p           t)
   (or (world-client-entry configuration)
