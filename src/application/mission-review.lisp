@@ -125,23 +125,22 @@ across changed snapshots and is not reset by retries or restarts."
 
 (-> mission-review--definition (list) task-agent-definition)
 (defun mission-review--definition (policy)
-  "Return a read-only programmatic reviewer using the native task contract."
+  "Return a read-only programmatic reviewer using ordinary provider output."
   (make-instance 'task-agent-definition
                  :name "reviewer" :source ':programmatic
                  :description  "Independent mission checkpoint reviewer"
-                 :instructions "Review only the supplied independent context. Identify concrete findings with stable unique IDs, severity, confidence and evidence. Findings are advice. Do not claim harness acceptance. Submit your native contracted data through yield.submit."
-                 :tools nil :spawns nil :models (getf policy :models)
-                   :blocking-p   t))
+                 :instructions "Review only the supplied independent context. Identify concrete findings with stable unique IDs, severity, confidence and evidence. Findings are advice. Do not claim harness acceptance. Return a concise plain-text review with findings and summary."
+                 :tools nil :spawns nil :models (getf policy :models))
 
 (-> mission-review--run-task (mission-context list &key (:run list) (:background string) (:tool-context tool-context)) list)
 (defun mission-review--run-task (context policy &key run background tool-context)
   "Invoke one actual contracted task under existing delegation and permissions."
   (let* ((parent     (tool-context-agent tool-context))
          (runtime    (tool-context-execution-runtime tool-context))
-         (definition (mission-review--definition policy))
-         (item       (list :name (format nil "review-~A" (getf policy :id))
-                           :agent "reviewer" :blocking t :context background
-                            :task "Perform the configured independent review. Return findings and summary through yield.submit."))
+           (definition (mission-review--definition policy))
+           (item       (list :name (format nil "review-~A" (getf policy :id))
+                              :agent "reviewer" :context background
+                              :task "Perform the configured independent review. Return a concise plain-text review with findings and summary.")))
     (unless (and (typep parent 'agent) (not (typep parent 'task-child-agent)))
       (mission--reject ':review-authority "Only the primary agent may request mission review."))
     (unless (typep runtime 'task-orchestrator)
@@ -177,30 +176,20 @@ across changed snapshots and is not reset by retries or restarts."
 
 (-> mission-review--findings (list) list)
 (defun mission-review--findings (result)
-  "Validate the full native task output and return the advisory findings."
+  "Convert an ordinary child result into one useful advisory finding."
   (when (member (getf result :status) '(:aborted :cancelled))
-    (mission--reject ':review-cancelled "Reviewer was cancelled before completing its contract."))
-  (unless (and (eq (getf result :status) ':success)
-               (getf result :structured-output-present-p))
-    (mission--reject ':review-failed "Reviewer did not submit a successful structured result."))
-  (let* ((data (task-sexp->json (getf result :structured-output)))
-         (ids  nil))
-    (unless (task-output-schema-valid-p data
-                                      (task-output-schema-normalize *mission-review-output-schema*))
-      (mission--reject ':review-failed "Reviewer output violates its native contract."))
-    (loop for finding across (gethash "findings" data)
-          for id = (gethash "id" finding)
-          collect
-          (progn
-            (unless (and (non-empty-string-p id) (<= (length id) 128)
-                         (not (member id ids :test #'equal)))
-              (mission--reject ':review-failed "Reviewer finding IDs must be unique, nonempty strings of at most 128 characters."))
-            (push id ids)
-            (list :id id :severity (gethash "severity" finding)
-                  :confidence (gethash "confidence" finding)
-                  :summary    (mission--bounded-text (gethash "summary" finding))
-                  :evidence   (map 'list #'mission--bounded-text (gethash "evidence" finding))
-                  :decision ':pending :reason nil :decisions nil :decided-at nil)))))
+    (mission--reject ':review-cancelled "Reviewer was cancelled before completing."))
+  (unless (eq (getf result :status) ':success)
+    (mission--reject ':review-failed "Reviewer did not complete successfully."))
+  (let ((output (or (getf result :output) "")))
+    (unless (non-empty-string-p output)
+      (mission--reject ':review-failed "Reviewer returned no findings."))
+    (list (list :id "review-summary"
+                :severity "info"
+                :confidence "medium"
+                :summary (mission--bounded-text output)
+                :evidence nil
+                :decision ':pending :reason nil :decisions nil :decided-at nil))))
 
 (defvar *mission-review-live-runs* (make-hash-table :test #'eq :weakness ':key)
   "Ephemeral run identities distinguishing live work from interrupted snapshots.")

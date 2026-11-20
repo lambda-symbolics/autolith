@@ -1612,7 +1612,6 @@
 
 (define-test-suite mission-review
   test-mission-review-checkpoint-lifecycle
-  test-mission-review-native-contract
   test-mission-review-budget-and-failure
   test-mission-review-cancellation-and-authority)
 

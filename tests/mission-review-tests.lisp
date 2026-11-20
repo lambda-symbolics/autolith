@@ -129,34 +129,6 @@
         (mission-review-test--close application))))
   nil)
 
-(-> test-mission-review-native-contract () null)
-(defun test-mission-review-native-contract ()
-  "Reject malformed advice through the actual native yield schema boundary."
-  (with-test-configuration (configuration)
-    (let ((definition (mission-review--definition (mission-review-test--policy))))
-      (dolist (field '("id" "severity" "confidence" "evidence"))
-        (let* ((data    (mission-review-test--data))
-               (fixture (task-tests--yield-fixture configuration definition (format nil "review-missing-~A" field))))
-          (remhash field (aref (gethash "findings" data) 0))
-          (test-assert (not (tool-result-success-p
-                             (task-tests--execute-yield fixture
-                                                       (json-encode (json-object "status" "success" "data" data)))))
-                       "missing reviewer fields cannot complete the native output contract")))
-      (let ((data (mission-review-test--data)))
-        (setf (gethash "severity" (aref (gethash "findings" data) 0)) "invented")
-          (test-assert (not (task-output-schema-valid-p data
-                                                        (task-output-schema-normalize *mission-review-output-schema*)))
-                     "unidentified severity categories are rejected"))
-      (let* ((data    (mission-review-test--data))
-             (finding (aref (gethash "findings" data) 0)))
-        (setf (gethash "findings" data) (vector finding finding))
-        (test-assert
-         (handler-case (progn (mission-review--findings
-                               (list :status ':success :structured-output-present-p t
-                                     :structured-output (task-json->sexp data))) nil)
-           (mission-error () t))
-         "duplicate finding IDs cannot become ambiguous primary decisions"))))
-  nil)
 
 (-> mission-review-test--acceptance-race () null)
 (defun mission-review-test--acceptance-race ()

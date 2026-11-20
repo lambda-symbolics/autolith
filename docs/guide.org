@@ -3159,12 +3159,9 @@ Example:
 #+END_SRC
 
 =child.roles= shows effective roles. =child.spawn= starts one task or an
-independent batch. Nonblocking work detaches by default. =blocking: true=
-waits. A role with =:blocking-p t= always waits. Each child must finish
-with one =yield.submit= of =success=, =failed=, or =aborted=.
-Persisted child results must contain one data-only form with valid terminal
-status and field types. The default reading limits are 16 MiB, 128 nesting
-levels, and 262,144 tree nodes.
+independent batch. Spawned work runs independently; use =job.wait= when a
+result is needed. Persisted child results retain terminal status, output,
+progress and cancellation metadata.
 
 A child keeps its channel, name, role and history after its run. Its parent
 sends it more work through that channel, and =channel:current= lists the
