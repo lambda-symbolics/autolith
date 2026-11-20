@@ -264,7 +264,6 @@
                                           (:file "agent/compaction-reports")
                                           (:file "agent/runtime")
                                           (:file "task/contracts")
-                                          (:file "task/engineering-artifacts")
                                           (:file "inference/tools")
                                           (:file "inference/frame")
                                           (:file "inference/map")

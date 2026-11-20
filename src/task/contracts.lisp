@@ -115,7 +115,7 @@
     "reasoning-effort" "blocking-p" "type" "enum" "properties"
     "required" "additional-properties" "items" "min-items" "max-items"
     "all" "auto" "object" "array" "string" "number" "integer" "boolean"
-    "null" "engineering")
+    "null")
   "Native child-role keywords other than live reasoning-effort names.")
 
 (-> task-agent-native-keyword-name-p (string) boolean)
@@ -230,11 +230,10 @@
        (:definition-name (option string))) list)
 (defun task-output-schema-normalize
     (schema &key pathname (source ':programmatic) definition-name)
-  "Expand and validate native output SCHEMA with child-role provenance."
+  "Validate native output SCHEMA with child-role provenance."
   (handler-case
       (cl-llm-provider-api:output-schema-normalize
-       (task-engineering--expand-schema
-        schema :pathname pathname :source source :definition-name definition-name)
+       schema
        :maximum-nodes       *task-agent-form-maximum-nodes*
        :maximum-depth       *task-agent-form-maximum-depth*
        :property-name-limit *task-agent-string-maximum-characters*)
