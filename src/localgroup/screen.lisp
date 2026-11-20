@@ -481,7 +481,7 @@ highlight AGENT-NAME when known."
                                           (terminal-span ':agent-name agent-name)))))
              (lines         (cond
                               ((>= height 4)
-                                (list heading nil bar stage))
+                               (list heading nil bar stage))
                               ((>= height 2)
                                (list bar stage))
                               (t

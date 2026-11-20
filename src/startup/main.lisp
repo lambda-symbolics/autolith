@@ -1353,7 +1353,7 @@ only rediscovers the same endpoint; choosing another channel is explicit."
   "Render safe client startup information centered in the current pane."
   (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
     (let* ((content-width (max 1 (min 88 width)))
-           (terminal (localgroup-screen-terminal screen))
+           (terminal      (localgroup-screen-terminal screen))
            (metadata
              (list (list (terminal-span ':brand (format nil "AUTOLITH v~A" *autolith-version*)))
                    (application--banner-metadata-field "workspace"
@@ -1367,8 +1367,8 @@ only rediscovers the same endpoint; choosing another channel is explicit."
            (header
              (cond
                ((>= content-width (+ (application--banner-logo-width)
-                                      (text-cell-width *application-banner-gap*)
-                                      *application-banner-minimum-metadata-width*))
+                                     (text-cell-width *application-banner-gap*)
+                                     *application-banner-minimum-metadata-width*))
                 (application--banner-side-by-side-spans metadata content-width))
                (t
                 (application--banner-stacked-spans metadata content-width))))
@@ -1389,9 +1389,9 @@ only rediscovers the same endpoint; choosing another channel is explicit."
       (labels ((rows (content)
                  (wrap-styled-text (terminal--spans-text content)
                                    (terminal--render-spans terminal content) content-width)))
-        (let* ((lines (rows spans))
-               (warning (rows (list (terminal-span ':notice
-                               "! autolith executes model-generated code with your user privileges; sandboxing is no substitute for human oversight"))))
+        (let* ((lines    (rows spans))
+               (warning  (rows (list (terminal-span ':notice
+                                      "! autolith executes model-generated code with your user privileges; sandboxing is no substitute for human oversight"))))
                (tip-rows (when tip (rows tip))))
           (when (> (length lines) height)
             (setf lines
@@ -1403,9 +1403,9 @@ only rediscovers the same endpoint; choosing another channel is explicit."
           (when (and tip-rows (<= (+ (length lines) 1 (length tip-rows)) height))
             (setf lines (append lines (list (list "" "")) tip-rows)))
           (let* ((block-width (loop for (text) in lines maximize (text-cell-width text)))
-                 (top (max 0 (floor (- height (length lines)) 2)))
-                 (left (make-string (max 0 (floor (- width block-width) 2))
-                                    :initial-element #\Space)))
+                 (top         (max 0 (floor (- height (length lines)) 2)))
+                 (left        (make-string (max 0 (floor (- width block-width) 2))
+                                           :initial-element #\Space)))
             (clinedi:frame-snapshot-apply
              nil (loop for line in lines for row from top below height
                        collect (list row (concatenate 'string left (second line))))
@@ -1419,12 +1419,12 @@ only rediscovers the same endpoint; choosing another channel is explicit."
 (defun main--welcome-world-client
     (screen configuration directory &key immutable-p recovery-diagnosis recovery-conversation-id notice)
   "Read client welcome input, releasing its resize watch before channel loading."
-  (let ((terminal (localgroup-screen-terminal screen))
-        (tip (application--startup-tip-spans))
+  (let ((terminal     (localgroup-screen-terminal screen))
+        (tip          (application--startup-tip-spans))
         (resize-watch nil)
         (next-refresh 0)
-        (total nil)
-        (local nil))
+        (total        nil)
+        (local        nil))
     (unwind-protect
          (progn
            (terminal-start terminal)
@@ -1494,29 +1494,29 @@ Return success and bounded secondary cleanup metadata without replacing a primar
          (multiple-value-bind (session-id started-p)
              (if welcome-p
                  (values nil nil)
-             (main--call-with-channel-loading screen "Opening channel"
-                                              (lambda ()
-                                                (main--open-world-channel configuration
-                                                                          :permission-mode
-                                                                          permission-mode
-                                                                          :immutable-p immutable-p
-                                                                          :conversation-id
-                                                                          conversation-id
-                                                                          :pick-channel-p
-                                                                          pick-channel-p
-                                                                          :recovery-diagnosis
-                                                                          recovery-diagnosis
-                                                                          :launch launch :images
-                                                                          images))
-                                              :start-p
-                                              (and (config :fullscreen-p configuration)
-                                                   (not
-                                                    (null
-                                                     (terminal--terminal-mode-or-nil
-                                                      (localgroup-screen-terminal screen)))))
-                                              :boot-p
-                                              (and (config :fullscreen-p configuration)
-                                                   (config :boot-screen-p configuration))))
+              (main--call-with-channel-loading screen "Opening channel"
+                                               (lambda ()
+                                                 (main--open-world-channel configuration
+                                                                           :permission-mode
+                                                                           permission-mode
+                                                                           :immutable-p immutable-p
+                                                                           :conversation-id
+                                                                           conversation-id
+                                                                           :pick-channel-p
+                                                                           pick-channel-p
+                                                                           :recovery-diagnosis
+                                                                           recovery-diagnosis
+                                                                           :launch launch :images
+                                                                           images))
+                                               :start-p
+                                               (and (config :fullscreen-p configuration)
+                                                    (not
+                                                     (null
+                                                      (terminal--terminal-mode-or-nil
+                                                       (localgroup-screen-terminal screen)))))
+                                               :boot-p
+                                               (and (config :fullscreen-p configuration)
+                                                    (config :boot-screen-p configuration))))
            (loop with origin = nil
                  with switching-p = nil
                  with restoring-p = nil
@@ -1529,20 +1529,20 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                   screen configuration launch-directory
                                   :immutable-p immutable-p :recovery-diagnosis recovery-diagnosis
                                   :recovery-conversation-id conversation-id :notice (shiftf notice nil))
-                            (main--attach-world-channel configuration session-id attachment-mode
-                                                        :screen screen :notice
-                                                        (shiftf notice nil) :client-version
-                                                        (shiftf client-version nil)
-                                                        :attached-function
-                                                        (lambda ()
-                                                          (setf (world-sidebar-current panel)
-                                                                session-id
-                                                                last-channel session-id
-                                                                origin nil
-                                                                switching-p nil
-                                                                restoring-p nil
-                                                                recovering-p nil
-                                                                started-p nil))))
+                              (main--attach-world-channel configuration session-id attachment-mode
+                                                          :screen screen :notice
+                                                          (shiftf notice nil) :client-version
+                                                          (shiftf client-version nil)
+                                                          :attached-function
+                                                          (lambda ()
+                                                            (setf (world-sidebar-current panel)
+                                                                  session-id
+                                                                  last-channel session-id
+                                                                  origin nil
+                                                                  switching-p nil
+                                                                  restoring-p nil
+                                                                  recovering-p nil
+                                                                  started-p nil))))
                             (error (condition)
                                    (when started-p
                                      ; mallet:suppress no-ignore-errors -- preserve attachment failure while closing an unattached new channel
@@ -1605,7 +1605,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                      :immutable-p     immutable-p
                                                      :switch-p        (not (null target))))
                                 :agent-name (when target (world-sidebar-agent-name panel target))))
-                             (setf origin left switching-p t))
+                            (setf origin left switching-p t))
                            (error (condition)
                                   (setf notice (if target
                                                    (main--switch-failure target condition)
