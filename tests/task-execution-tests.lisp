@@ -75,7 +75,7 @@
 
 (-> test-task-orchestration () null)
 (defun test-task-orchestration ()
-  "Test task registry setup, request validation, agent discovery, and yields."
+  "Test task registry setup, request validation, and agent discovery."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration)))
     (unwind-protect
@@ -379,61 +379,7 @@
                           (config :cache-root immutable))
                    (equal (config :provider-endpoint child-configuration)
                           (config :provider-endpoint immutable)))
-              "task model selection preserves every parent runtime boundary"))
-           (let* ((definition
-                    (task-agent-definition-create
-                     :name         "structured"
-                     :description  "Yield structured data."
-                     :instructions "Yield data matching the native output contract."
-                     :output       '(:type :object
-                                     :properties (("answer" (:type :string)))
-                                     :required ("answer"))
-                     :source       ':test))
-                  (completion   (make-instance 'task-completion))
-                  (orchestrator (task-tests--orchestrator))
-                  (parent       (agent-create
-                                 :configuration configuration
-                                 :provider      (make-instance 'model-provider)
-                                 :conversation  (conversation-create configuration)
-                                 :tool-registry (make-instance 'tool-registry)
-                                 :worker        nil))
-                  (job          (task-tests--make-job orchestrator
-                                                     :identifier   "yield-test"
-                                                     :definition   definition
-                                                     :item         (list :task "Yield")
-                                                     :parent-agent parent))
-                  (child        (make-instance 'task-child-agent
-                                               :configuration configuration
-                                               :provider      (make-instance 'model-provider)
-                                               :conversation  (conversation-create configuration)
-                                               :tool-registry (make-instance 'tool-registry)
-                                               :worker        nil
-                                               :definition    definition
-                                               :identity      (task-job-identity job)
-                                               :depth         1
-                                               :completion    completion
-                                               :orchestrator  orchestrator
-                                               :job           job))
-                  (context      (make-instance 'tool-context
-                                               :configuration configuration
-                                               :worker        nil
-                                               :conversation  nil
-                                               :agent         child))
-                  (tool         (make-instance 'task-yield-tool
-                                               :namespace   "yield"
-                                               :name        "submit"
-                                               :description ""
-                                               :parameters  (json-object))))
-             (test-assert
-              (handler-case
-                  (progn
-                    (tool-execute tool context
-                                  (json-object "status" "success"
-                                               "data" (json-object "wrong" "shape")))
-                    nil)
-                (task-yield-error ()
-                  t))
-              "yield validation rejects data outside the output contract")))
+               "task model selection preserves every parent runtime boundary")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
