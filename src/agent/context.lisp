@@ -35,6 +35,17 @@
   `(with-recursive-lock-held (*extension-registry-transaction-lock*)
      ,@body))
 
+(defvar *extension-registry-generation*
+  0
+  "Monotonic version of registry state that feeds user-facing completions.")
+
+(-> extension-registry--advance-generation () integer)
+(defun extension-registry--advance-generation ()
+  "Advance and return the extension registry generation.
+The caller may already hold the extension registry transaction lock."
+  (with-extension-registry-transaction
+    (incf *extension-registry-generation*)))
+
 (defvar *context-lock* (make-lock "Autolith request-local context")
   "The lock protecting registrations, delivery state, and diagnostics.")
 
