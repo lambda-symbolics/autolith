@@ -73,10 +73,9 @@
                                          (let ((form (run-job-tests--request-form)))
                                            (when timeout-p (setf (getf (rest form) :timeout-seconds) 1))
                                            form)))
-             (definition                (task-agent-definition-create
-                                         :name "custom-runner" :description "Return a structured result."
-                                         :instructions "Yield the answer." :tools nil :source ':test
-                                         :output (run-job-request-output-contract request)))
+              (definition                (task-agent-definition-create
+                                           :name "custom-runner" :description "Return a result."
+                                           :instructions "Return the answer." :tools nil :source ':test))
              (provider                  (make-instance
                                          'run-job-test-provider :configuration configuration :block-on-empty-p timeout-p
                                          :results (list (agent-test-result
@@ -617,11 +616,11 @@
          (output (merge-pathnames "result.sexp" root)))
     (unwind-protect
          (progn
-           (task-tests--write-native-form
-            (merge-pathnames "custom-runner.sexp" agents)
-            (task-tests--role-form
-             "custom-runner" "Caller-defined seam" "Return contracted data."
-              :tools nil)
+            (task-tests--write-native-form
+             (merge-pathnames "custom-runner.sexp" agents)
+             (task-tests--role-form
+              "custom-runner" "Caller-defined seam" "Return data."
+              :tools nil))
            (task-tests--write-text
             input
             (run-job--write-data-sexp
@@ -740,4 +739,4 @@
                        ':process-failure))
               "non-error serious conditions publish a terminal result artifact")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
+nil
