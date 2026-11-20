@@ -3078,9 +3078,19 @@ the version the client says it is, when it says one."
 
                   (queued-grandchild (parent)
                     "Queue a detached assignment with its actual child execution as parent."
-                    (let ((job
-                           (task-tests--register-job (application--task-orchestrator app-a) parent
-                            (acp-extension-job-tests--definition) :name "grandchild")))
+                    (let* ((job    (task-tests--register-job (application--task-orchestrator app-a) parent
+                                                             (acp-extension-job-tests--definition) :name "grandchild"))
+                           (origin (task-assignment-origin parent))
+                           (sender (find ':agent
+                                         (world-channel-residents (world-load configuration)
+                                                                  (conversation-identifier (agent-conversation parent)))
+                                         :key #'participant-kind)))
+                      (test-assert (and (equal (getf origin :sender) (participant-identifier sender))
+                                        (equal (getf origin :sender-name) (participant-name sender)))
+                                   "admission captures the actual spawning world agent")
+                      (setf (slot-value job 'assignment-origin) origin)
+                      (world-participant-rename configuration (participant-identifier sender)
+                                                (format nil "after-~A" (participant-name sender)))
                       (setf (slot-value job 'completion-owner-conversation)
                             (conversation-identifier (agent-conversation parent))
                             (task-job-inherited-reference-p job) t
@@ -3097,13 +3107,21 @@ the version the client says it is, when it says one."
                      "a detached descendant is runnable after its participant parent departs")
                     (with-lock-held ((cl-jobpond::job--lock job))
                       (setf (job-state job) ':running))
-                    (let* ((result (task-run-child job))
+                    (let* ((origin     (task-job-assignment-origin job))
+                           (result     (task-run-child job))
                            (conversation
-                            (participant-state-conversation (task-job-participant-state job)))
-                           (reference
-                            (find ':inherited-reference
-                                  (conversation--read-records (conversation-pathname conversation))
-                                  :key #'first)))
+                             (participant-state-conversation (task-job-participant-state job)))
+                           (records    (conversation--read-records (conversation-pathname conversation)))
+                           (reference  (find ':inherited-reference records :key #'first))
+                           (assignment (find-if (lambda (record)
+                                                  (and (eq (first record) ':message)
+                                                       (getf (rest record) :operation-request))) records))
+                           (message    (getf (getf (rest assignment) :operation-request) :message)))
+                      (test-assert (and (equal (getf message :sender) (getf origin :sender))
+                                        (equal (getf message :sender-name) (getf origin :sender-name))
+                                        (equal (getf message :source) parent-channel)
+                                        (equal (getf message :target) (conversation-identifier conversation)))
+                                   "the admitted sender identity and name survive rename and departure")
                       (test-assert
                        (and (eq (getf result :status) ':success)
                             (equal (conversation-parent-identifier conversation) parent-channel)

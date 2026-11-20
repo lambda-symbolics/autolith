@@ -369,6 +369,12 @@ nesting depth, and lifecycle listeners."))
     :accessor      task-job-parent-agent
     :type          (option agent)
     :documentation "The parent session while this job remains live.")
+   (assignment-origin
+    :initarg       :assignment-origin
+    :initform      nil
+    :reader        task-job-assignment-origin
+    :type          list
+    :documentation "Sender identity, name and source channel captured when this assignment is admitted.")
    (mission-context
     :initarg       :mission-context
     :initform      nil

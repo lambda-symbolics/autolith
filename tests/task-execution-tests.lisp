@@ -949,3 +949,81 @@
               "task settlement persists the ordinary participant goal independently of its yield contract"))
         (lisp-worker-pool-stop-all (agent-worker parent)))))
   nil)
+
+(-> test-task-child-assignment-provenance () null)
+(defun test-task-child-assignment-provenance ()
+  "Exercise initial assignment attribution through child execution, reload and replay."
+  (with-test-configuration (configuration)
+    (let* ((source       (conversation-create configuration :parent-identifier "ancestor"
+                                                            :agent-name        "Original parent"))
+           (provider     (make-instance 'task-test-provider :mode ':concurrent))
+           (parent       (agent-create :configuration configuration :provider provider
+                                       :conversation  source
+                                       :tool-registry (make-default-tool-registry)))
+           (orchestrator (task-tests--orchestrator))
+           (definition   (task-find-agent-definition (task-bundled-agent-definitions) "task"))
+           (assignment   "Complete the assigned review.")
+           (job          (task-tests--make-job orchestrator :identifier "atlas-release-planner"
+                                              :definition definition :parent-agent parent
+                                              :root-identifier          "ancestor"
+                                              :item                     (list :task assignment)))
+           (application  (application-tests--ui-application :columns 100 :compact-view-p nil)))
+      (unwind-protect
+           (progn
+             (conversation-append-user-message source "Delegate the review.")
+             (let ((sender (world-session-participant configuration source :create-inbox-p nil)))
+               (world-participant-rename configuration (participant-identifier sender) "Dennis")
+               (setf (participant-state-identity (agent-participant-state parent)) sender)
+               (setf (slot-value job 'completion-owner-conversation) (conversation-identifier source))
+               (with-lock-held ((cl-jobpond::job--lock job))
+                 (setf (job-state job) ':running))
+               (test-assert (eq (getf (task-run-child job) :status) ':success)
+                            "the real child executes its initial assignment through terminal yield")
+               (let* ((conversation (participant-state-conversation (task-job-participant-state job)))
+                      (identity     (conversation-pathname conversation)))
+                 ;; Identical text from the person must retain its own provenance.
+                 (conversation-append-user-message conversation assignment)
+                 (labels ((check-records (records)
+                            "Check agent and person attribution in one durable transcript view."
+                            (let* ((messages (remove-if-not
+                                              (lambda (record)
+                                                (and (eq (first record) ':message)
+                                                     (eq (getf (rest record) :role) ':user)))
+                                              records))
+                                   (initial  (find-if (lambda (record)
+                                                        (getf (rest record) :operation-request)) messages))
+                                   (personal (find-if (lambda (record)
+                                                        (null (getf (rest record) :operation-request))) messages))
+                                   (request  (getf (rest initial) :operation-request))
+                                   (message  (getf request :message))
+                                   (entry    (conversation-record-entry application initial))
+                                   (name     (find ':agent-name (rest entry) :key #'terminal-span-style)))
+                              (test-assert
+                               (and (= (length messages) 2)
+                                    (getf (rest initial) :automatic-p)
+                                    (equal (getf (rest initial) :content) assignment)
+                                    (equal (getf message :sender) (participant-identifier sender))
+                                    (equal (getf message :sender-name) "Dennis")
+                                    (equal (getf message :source) (conversation-identifier source))
+                                    (equal (getf message :target) (conversation-identifier conversation)))
+                               "assignment provenance identifies the immediate spawning agent, not the person or ancestor")
+                              (test-assert (and name (string= (terminal-span-text name) "Dennis"))
+                                           "the child transcript presents its assignment under the spawning agent")
+                              (test-assert
+                               (and personal
+                                    (null (getf (rest personal) :automatic-p))
+                                    (equal (conversation-record-entry application personal)
+                                           (application--user-message-entry
+                                            application assignment (getf (rest personal) :time))))
+                               "identical genuine user input uses the person's own transcript presentation"))))
+                   (check-records (conversation-records-newest conversation 100))
+                   (world-reconcile-sessions configuration)
+                   (check-records (conversation-records-newest (conversation-load identity) 100))
+                   (check-records
+                    (map 'list #'conversation-replay-record-record
+                         (conversation-replay-session-records
+                          (conversation-replay-create (conversation-replay-load-identity identity)))))))))
+        (lisp-worker-pool-stop-all (agent-worker parent))
+        (test-assert (task-orchestrator-close orchestrator)
+                     "the fixture joins task writers before removing its state"))))
+  nil)

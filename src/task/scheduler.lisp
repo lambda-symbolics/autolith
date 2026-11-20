@@ -780,6 +780,7 @@ that check atomic with cascading cancellation."
          (root-conversation-identifier
            (task-parent-root-conversation-identifier parent-agent))
          (owner-identifiers         (task-parent-owner-identifiers parent-agent))
+         (assignment-origin         (task-assignment-origin parent-agent))
          (reference-enabled-entries (make-hash-table :test #'eq))
          (reference-byte-limit      nil)
          (inherited-reference-items nil))
@@ -838,6 +839,7 @@ that check atomic with cascading cancellation."
                               :definition            (getf entry :definition)
                               :item                  item
                               :parent-agent          parent-agent
+                              :assignment-origin     assignment-origin
                               :mission-context       mission-context
                               :review-checkpoint     (getf entry :review-checkpoint)
                               :inherited-reference-p inherited-p

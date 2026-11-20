@@ -733,6 +733,37 @@ Live executions retain their pool ownership and remain inspectable after return.
                            internal-time-units-per-second))))
     executions))
 
+(-> task-assignment-origin (agent) list)
+(defun task-assignment-origin (parent)
+  "Snapshot PARENT's sender identity, name and source channel before an assignment can wait."
+  (let* ((source        (agent-conversation parent))
+         (configuration (agent-configuration parent))
+         (identifier    (conversation-identifier source))
+         (world         (world-load configuration))
+         (identity      (participant-state-identity (agent-participant-state parent)))
+         (mapping       (find identifier (world-session-mappings configuration)
+                              :key #'world-session-mapping-conversation :test #'string=))
+         (sender        (or (and identity (world-participant-find world (participant-identifier identity)))
+                            (world-session--mapped-participant world mapping identifier)
+                            identity
+                            (and (not (world-channel-find world identifier))
+                                 (world-session-participant configuration source :create-inbox-p nil)))))
+    (list :sender      (and sender (participant-identifier sender))
+          :sender-name (if sender
+                           (participant-name sender)
+                           (or (conversation-agent-name source) "autolith"))
+          :source      (conversation-identifier source))))
+
+(-> task-child-assignment-request (task-job conversation) list)
+(defun task-child-assignment-request (job conversation)
+  "Return JOB's admitted assignment provenance, independent of its parent's current residence."
+  (list :operation "child.spawn"
+        :summary   (getf (task-job-item job) :task)
+        :message   (append (or (task-job-assignment-origin job)
+                               (task-assignment-origin (task-job-parent-agent job)))
+                           (list :target (conversation-identifier conversation)
+                                 :kind   ':post))))
+
 (-> task-run-child (task-job) list)
 (defun task-run-child (job)
   "Create and run JOB's real in-process child session through terminal yield."
@@ -826,8 +857,10 @@ Live executions retain their pool ownership and remain inspectable after return.
                      (agent-run-user-turn
                       child
                       (getf (task-job-item job) :task)
-                      :observer     observer
-                      :goal-context (task-child-goal-context job configuration))))
+                      :observer          observer
+                      :automatic-p       t
+                      :operation-request (task-child-assignment-request job conversation)
+                       :goal-context     (task-child-goal-context job configuration))))
                (task--assemble-child-result
                 job :provider-result result
                     :child           child

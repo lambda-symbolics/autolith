@@ -1519,6 +1519,7 @@
   test-task-child-execution-job-controls
   test-task-child-cancels-lisp-executions
   test-task-participant-state
+  test-task-child-assignment-provenance
   test-task-child-shared-agent-loop)
 
 (define-test-suite inference
