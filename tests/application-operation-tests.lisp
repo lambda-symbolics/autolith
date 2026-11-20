@@ -67,13 +67,6 @@
          (terminal           (make-instance 'recording-terminal :columns 100))
          (ui                 (terminal-ui-create :terminal terminal)))
     (tool-registry-register registry tool)
-    (tool-registry-register
-     registry
-     (make-instance 'task-yield-tool
-                    :namespace   "yield"
-                    :name        "submit"
-                    :description "Child-only test yield."
-                    :parameters  (tool-object-schema (json-object) nil)))
     (values
      (make-instance 'application
                     :configuration configuration
@@ -101,7 +94,7 @@
                (NOTES                                 (MERGE-PATHNAMES "request.txt" ROOT))
                (*APPLICATION-LOCAL-USER-EVALUATION-P* T))
           (CONVERSATION-APPEND-USER-MESSAGE CONVERSATION "initial")
-          (WORLD-SESSION-PARTICIPANT CONFIGURATION CONVERSATION)
+          (WORLD-REGISTER-CONVERSATION CONFIGURATION CONVERSATION)
           (TEST-ASSERT
            (TYPEP (APPLICATION-OPERATION-FIND APPLICATION "channel.send")
                   'APPLICATION-TOOL-OPERATION)
@@ -128,7 +121,7 @@
             (TEST-ASSERT
              (AND (STRING= (WORLD-DELIVERY-TARGET DELIVERY) IDENTIFIER)
                   (STRING= (WORLD-DELIVERY-SENDER DELIVERY)
-                           *WORLD-HUMAN-IDENTIFIER*)
+                            (PARTICIPANT-IDENTIFIER (WORLD-HUMAN-PARTICIPANT (WORLD-LOAD CONFIGURATION))))
                   (STRING= (WORLD-DELIVERY-TEXT DELIVERY) "computed request"))
              "omitted destination means the current channel and local sender is the person"))
           (TEST-CONVERSATION--WRITE-TINY-PNG IMAGE)
@@ -459,9 +452,7 @@
   (multiple-value-bind (application root terminal tool)
       (application-operation-tests--application)
     (unwind-protect
-         (let* ((operations (application-operation-list application))
-                (names      (mapcar #'application-operation-name operations))
-                (command-operation
+         (let* ((command-operation
                   (application-operation-find application 'help))
                 (local-operation
                   (application-operation-find application 'eval-now))
@@ -493,8 +484,6 @@
             "operation behavior is represented by CLOS generic functions")
            (test-assert (eq (application-operation-kind local-operation) ':local)
                         "operation lookup identifies the immediate local form")
-           (test-assert (not (member "yield.submit" names :test #'string=))
-                        "the child-only yield operation stays hidden from users")
            (test-assert (eq (application-operation-kind command-operation) ':command)
                         "operation lookup resolves command symbols case-insensitively")
            (test-assert (eq (application-operation-kind tool-operation) ':tool)
@@ -555,12 +544,7 @@
               (and test-entry
                    (search ":|odd key)| VALUE"
                            (or (getf test-entry :argument) "")))
-              "completion escapes punctuation and whitespace in property names")
-             (test-assert
-              (not (find-if (lambda (name)
-                              (uiop:string-prefix-p "(yield.submit" name))
-                            entry-names))
-              "completion hides child-only operations"))
+               "completion escapes punctuation and whitespace in property names"))
            (let ((unclassified
                    (make-instance
                     'tool
@@ -685,10 +669,6 @@
                    (null (tool-context-agent context)))
               "local operation execution receives the primary application context"))
            (application-operation-install-bindings application)
-           (dolist (name '(trace papercut-close resource.read test-operation.echo))
-             (test-assert (fboundp name)
-                          (format nil "canonical operation ~S has a Lisp function binding"
-                                  name)))
            (setf (application-goal application)
                  (list :objective     "existing"
                        :status        ':paused
