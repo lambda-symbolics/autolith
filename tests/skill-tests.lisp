@@ -271,6 +271,152 @@
       (skill-tests--delete-root site-root)))
   nil)
 
+(-> skill-tests--extra-root-setting () null)
+(defun skill-tests--extra-root-setting ()
+  "Test the public extra-root setting, persistence, validation and user init."
+  (with-test-configuration (configuration root)
+    (let* ((roots       (list (namestring (merge-pathnames "extra/" root))
+                              #P"relative-skills/"))
+           (application (make-instance 'application
+                                       :configuration configuration
+                                       :conversation  (conversation-create configuration)
+                                       :ui            (terminal-ui-create
+                                                       :terminal (make-instance 'recording-terminal)))))
+      (test-assert (null (config :extra-skill-roots configuration))
+                   "additional skill roots default to an empty list")
+      (test-assert
+       (eq (application-lisp-evaluation-status
+            (application-lisp-evaluate
+             (format nil "(settings :extra-skill-roots '~S)" roots)
+             :application application))
+           ':ok)
+       "the public settings operation accepts native root lists")
+      (test-assert
+       (and (equal (config :extra-skill-roots configuration) roots)
+            (equal (config :extra-skill-roots (preferences-tests--create configuration)) roots))
+       "string and pathname roots survive preference persistence")
+      (let ((saved (uiop:read-file-string (configuration-preferences-path configuration))))
+        (dolist (invalid (list 42 "not-a-list" '(nil) '("") '("valid/" 42)
+                               (cons "valid/" "not-a-list")))
+          (test-assert
+           (handler-case
+               (progn
+                 (application-operation-call application 'settings ':extra-skill-roots invalid)
+                 nil)
+             (setting-invalid () t))
+           "extra skill roots require a proper list of directory designators"))
+        (test-assert
+         (and (equal (config :extra-skill-roots configuration) roots)
+              (string= saved
+                       (uiop:read-file-string (configuration-preferences-path configuration))))
+         "invalid root lists do not change configuration or preferences"))
+      (skill-tests--write
+       (config :config-root configuration) "init.lisp"
+       "(setf (config :extra-skill-roots) '(\"~/init-skills/\"))")
+      (user-init-load configuration)
+      (test-assert (equal (config :extra-skill-roots configuration) '("~/init-skills/"))
+                   "init.lisp configures the same extra-root setting")
+      (application-operation-call application 'settings ':extra-skill-roots nil)
+      (test-assert
+       (and (null (config :extra-skill-roots configuration))
+            (null (config :extra-skill-roots (preferences-tests--create configuration))))
+       "NIL clears the additional roots durably")))
+  nil)
+
+(-> skill-tests--extra-root-discovery () null)
+(defun skill-tests--extra-root-discovery ()
+  "Test extra-root order, duplicate directories and string home expansion."
+  (with-test-configuration (base root)
+    (let* ((home          (merge-pathnames "home/" root))
+           (extra-a       (merge-pathnames "extra-a/" home))
+           (extra-b       (merge-pathnames "extra-b/" root))
+           (source-root   (merge-pathnames "source/" root))
+           (bundled       (merge-pathnames "skills/" source-root))
+           (configuration (configuration-copy base :source-root source-root)))
+      (ensure-directories-exist home)
+      (dolist (fixture (list (list bundled "bundled-over-extra" "Bundled instructions.")
+                             (list extra-a "bundled-over-extra" "Extra instructions.")
+                             (list extra-a "ordered-extra" "First extra instructions.")
+                             (list extra-b "ordered-extra" "Second extra instructions.")
+                             (list extra-a "extra-only" "External instructions.")))
+        (destructuring-bind (directory name instructions) fixture
+          (skill-tests--write directory (format nil "~A/SKILL.sexp" name)
+                              (skill-tests--definition name "Extra-root fixture." instructions))))
+      (with-test-environment (("HOME" (namestring home))
+                              ("USERPROFILE" (namestring home)))
+        (let ((standard-roots (skill-roots configuration)))
+          (setf (config :extra-skill-roots configuration)
+                (list "~/extra-a/" extra-a extra-a (namestring extra-a) bundled extra-b))
+          (let ((roots (skill-roots configuration)))
+            (test-assert (equal (subseq roots 0 (length standard-roots)) standard-roots)
+                         "additional roots follow every standard and bundled root")
+            (test-assert (and (= 1 (count extra-a roots :test #'equal))
+                              (= 1 (count bundled roots :test #'equal)))
+                         "repeated root designators retain their first position"))
+          (let ((catalog (skill-catalog-for-configuration configuration)))
+            (dolist (case '(("bundled-over-extra" "Bundled instructions.")
+                            ("ordered-extra" "First extra instructions.")
+                            ("extra-only" "External instructions.")))
+              (destructuring-bind (name instructions) case
+                (let ((metadata (skill-catalog-find catalog name)))
+                  (test-assert (and metadata (string= (skill-metadata-read metadata) instructions))
+                               "discovery applies bundled and extra-root precedence"))))
+            (test-assert
+             (= 1 (count "extra-only" (skill-catalog-skills catalog)
+                         :key #'skill-metadata-name :test #'string=))
+             "canonical aliases produce one catalog entry"))
+          (setf (config :extra-skill-roots configuration) '("~/extra-a/"))
+          (test-assert (skill-catalog-find (skill-catalog-for-configuration configuration) "extra-only")
+                       "a string root expands the isolated user home")
+          (setf (config :extra-skill-roots configuration)
+                (list (make-pathname :directory '(:relative "~" "extra-a"))))
+          (test-assert (null (skill-catalog-find (skill-catalog-for-configuration configuration) "extra-only"))
+                       "a pathname root does not expand a literal tilde")))))
+  nil)
+
+(-> skill-tests--extra-root-confinement () null)
+(defun skill-tests--extra-root-confinement ()
+  "Test canonical confinement of configured roots and linked Skill files."
+  (with-test-fixture (':symbolic-links "extra skill root canonical confinement")
+    (with-test-configuration (configuration root)
+      (let* ((allowed      (merge-pathnames "allowed/" root))
+             (outside      (merge-pathnames "outside/" root))
+             (alias        (merge-pathnames "allowed-alias" root))
+             (escape       (merge-pathnames "escape" allowed))
+             (file-escape  (merge-pathnames "file-escape/SKILL.sexp" allowed))
+             (outside-file (skill-tests--write
+                            outside "rogue/SKILL.sexp"
+                            (skill-tests--definition "extra-escape" "Outside fixture."
+                                                     "Outside instructions."))))
+        (skill-tests--write allowed "safe/SKILL.sexp"
+                            (skill-tests--definition "extra-safe" "Inside fixture."
+                                                     "Inside instructions."))
+        (ensure-directories-exist file-escape)
+        (test-fixture-make-symbolic-link *platform* (namestring allowed) (namestring alias))
+        (test-fixture-make-symbolic-link *platform* (namestring outside) (namestring escape))
+        (test-fixture-make-symbolic-link *platform* (namestring outside-file) (namestring file-escape))
+        (unwind-protect
+             (progn
+               (setf (config :extra-skill-roots configuration)
+                     (list allowed (uiop:ensure-directory-pathname alias)))
+               (let ((catalog (skill-catalog-for-configuration configuration)))
+                 (test-assert (skill-catalog-find catalog "extra-safe")
+                              "an explicitly configured directory alias resolves canonically")
+                 (test-assert (null (skill-catalog-find catalog "extra-escape"))
+                              "directory and file links cannot introduce unconfigured roots")
+                 (test-assert (find ':outside-root (skill-catalog-diagnostics catalog)
+                                    :key #'skill-diagnostic-kind)
+                              "outside-root traversal has a discovery diagnostic"))
+               (setf (config :extra-skill-roots configuration)
+                     (list (uiop:ensure-directory-pathname alias) outside))
+               (test-assert (skill-catalog-find (skill-catalog-for-configuration configuration)
+                                               "extra-escape")
+                            "an external directory participates when configured explicitly"))
+          (test-fixture-remove-link *platform* (namestring file-escape))
+          (test-fixture-remove-link *platform* (namestring escape))
+          (test-fixture-remove-link *platform* (namestring alias))))))
+  nil)
+
 
 ;;;; -- Ephemeral Selection Tests --
 

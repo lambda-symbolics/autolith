@@ -168,6 +168,12 @@ Ordinary native defaults remain lazy and follow the current environment."
                     (gethash configuration *configuration-legacy-xdg-root-choices*)))
             root)))))
 
+(-> skill-root-list-p (t) boolean)
+(defun skill-root-list-p (value)
+  "Return whether VALUE is a proper list of nonempty strings or pathnames."
+  (and (proper-list-p value)
+       (every (lambda (root) (typep root '(or non-empty-string pathname))) value)))
+
 
 ;;;; -- Settings --
 
@@ -204,6 +210,14 @@ Ordinary native defaults remain lazy and follow the current environment."
   :scope                          :process
   :environment                    "AUTOLITH_SITE_CONFIG_ROOT"
   :default                        nil)
+
+(define-setting :extra-skill-roots (setting)
+  :label                         "Extra skill roots"
+  :group                         :paths
+  :documentation                 "The additional skill directories are scanned in order after standard and bundled roots."
+  :scope                         :durable
+  :type                          '(satisfies skill-root-list-p)
+  :default                       nil)
 
 (define-setting :data-root (directory-setting)
   :label                   "Data root"

@@ -81,6 +81,28 @@ Autolith scans these roots recursively, with earlier roots taking precedence:
 3. =~/.agents/skills/=, the cross-agent user root shared with other agents
 4. =<site-config-root>/skills/=
 5. bundled Skill roots
+6. each directory in the =:extra-skill-roots= setting, in the given order
+
+Set additional roots through the prompt:
+
+#+BEGIN_SRC lisp
+(settings :extra-skill-roots '("~/myskills/" #P"/srv/shared-skills/"))
+#+END_SRC
+
+Use the same setting in =init.lisp=:
+
+#+BEGIN_SRC lisp
+(setf (config :extra-skill-roots) '("~/myskills/"))
+#+END_SRC
+
+Changes through =(settings)= are saved in your preferences. The default is
+=nil=. Set =nil= to clear the additional roots. For string roots, =~= expands
+to your home directory. Pathname roots follow your Lisp's native pathname
+semantics: SBCL reads =#P"~/skills/"= with a home-directory component, not a
+literal =~= component. Additional roots have lower precedence than standard
+and bundled roots. Discovery is confined to the configured canonical roots.
+Add an external directory to the setting instead of linking it from a root
+that does not contain it.
 
 Outside Git, the workspace directory is the project root. Only the exact,
 case-sensitive filenames =SKILL.sexp= and =SKILL.md= count. Within one
