@@ -534,8 +534,7 @@ Keep the override until the captured thread exits; replacement threads pass thro
         (list (list 'world-server--start-host
                     (lambda (candidate &key conversation-id directory arguments)
                       (declare (ignore candidate directory))
-                      (push (list conversation-id (getf arguments :switch-p)
-                                  (getf arguments :fullscreen-p))
+                      (push (list conversation-id (getf arguments :switch-p))
                             started)
                       nil)))
         (lambda ()
@@ -549,10 +548,9 @@ run once the wake has."
                      (funcall *world-message-unserved-function* identifier)
                      (world-server--enqueue server (lambda () (setf done-p t)))
                      (task-tests--wait-until (lambda () done-p) 10))))
-            (setf (world-server-fullscreen-p server) t)
             (wake "bwake11")
-            (test-assert (equal started '(("bwake11" t t)))
-                         "a message to an agent's unserved channel serves it without a boot screen, as terminals last opened channels")
+            (test-assert (equal started '(("bwake11" t)))
+                         "a message to an agent's unserved channel serves it without a boot screen")
             (wake (world-tests--inbox configuration))
             (test-assert (null started) "a message for the person in the inbox serves nothing")
             (wake "bnone11")
@@ -914,7 +912,7 @@ the version the client says it is, when it says one."
        (lambda (server configuration root)
          (let* ((entry       (world-client-entry configuration))
                 (first-id    (getf (rest (world-server-tests--open
-                                          entry (world-tests--workspace root "new") :fullscreen-p t))
+                                          entry (world-tests--workspace root "new")))
                                   :session-id))
                 (application (world-host-application (world-server--find-host server first-id)))
                 (ui          (application-ui application))
@@ -1612,39 +1610,24 @@ the version the client says it is, when it says one."
                                 ':full-access))
                        "a channel running a job keeps its permission mode and refuses the open that would change it")))
        (test-assert (handler-case
-                        (progn (localgroup-query-record
-                                entry ':open
-                                (list :channel id :launch '(:fullscreen-p t)
-                                      :rows 30 :columns 90 :styled-p nil))
-                               nil)
-                      (autolith-error (condition)
-                        (search "--fullscreen" (autolith-error-message condition))))
-                    "a running channel refuses an option it cannot change, naming it")
-       (test-assert (handler-case
                         (progn (world-server-tests--open entry (world-tests--workspace root "b")
                                                          :launch '(:provider "other"))
                                nil)
                       (autolith-error (condition)
                         (search "--provider" (autolith-error-message condition))))
                     "a provider without a model is refused for a new channel, as on the command line")
-       (let ((other (getf (rest (world-server-tests--open entry workspace
-                                                          :launch '(:fullscreen-p t)))
-                          :session-id)))
-         (test-assert (and other (not (string= other id))
-                           (config :fullscreen-p
+       (let* ((workspace (world-tests--workspace root "immutable"))
+              (original  (getf (rest (world-server-tests--open entry workspace))
+                               :session-id))
+              (other     (getf (rest (world-server-tests--open entry workspace
+                                                             :launch '(:immutable-p t)))
+                               :session-id)))
+         (test-assert (and other (not (string= other original))
+                           (config :immutable-p
                                    (application-configuration
                                     (world-host-application
                                      (world-server--find-host server other)))))
-                      "a workspace open with a conflicting option gets another channel that takes it")
-         (test-assert (handler-case
-                          (progn (localgroup-query-record
-                                  entry ':open
-                                  (list :channel other :launch '(:plain-p t)
-                                        :rows 30 :columns 90 :styled-p nil))
-                                 nil)
-                        (autolith-error (condition)
-                          (search "--plain" (autolith-error-message condition))))
-                      "a fullscreen channel refuses a plain open, naming the option")))))
+                      "a workspace open with a conflicting option gets another channel that takes it")))))
   nil)
 
 (-> test-world-server-resume-order () null)
@@ -2991,9 +2974,9 @@ the version the client says it is, when it says one."
                 (handler-case (progn (main--open-world-channel configuration) nil)
                   (localgroup-error (failure)
                     (autolith-error-message failure)))))))
-      (test-assert (search "cannot take --fullscreen"
+      (test-assert (search "cannot take --immutable"
                            (open-with (make-condition 'localgroup-error
-                                                      :message   "Channel b-first1 is already running and cannot take --fullscreen."
+                                                      :message   "Channel b-first1 is already running and cannot take --immutable."
                                                       :operation ':open)))
                    "a refusal the server answered ends the start with its reason")
       (test-assert (search "The world server is not available: Localgroup session world is unavailable."

@@ -2826,8 +2826,7 @@ The current value and its source sit in aligned columns of their own."
                               (append
                                (list :directory    (namestring (config :working-directory configuration))
                                      :new-p        t
-                                     :switch-p     t
-                                     :fullscreen-p (not (null (config :fullscreen-p configuration))))
+                                     :switch-p     t)
                                presentation)))
                        :session-id))
                (display (conversation-identifier-display identifier)))

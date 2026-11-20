@@ -535,13 +535,6 @@ exist yet, and is only put in directory form."
   :documentation            "Whether requests carry hurry-up guidance favoring direct work."
   :scope                    :session)
 
-(define-setting :fullscreen-p (boolean-setting)
-  :label                      "Fullscreen"
-  :group                      :terminal
-  :documentation              "Whether interactive sessions use the fullscreen terminal UI; false keeps the transcript in the terminal's own scrollback."
-  :scope                      :durable
-  :default                    t)
-
 (define-setting :prompt-padding (integer-setting)
   :label                        "Prompt padding"
   :group                        :terminal

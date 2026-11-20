@@ -535,7 +535,6 @@
          (prompt        "SYNTHETIC-AUTH-PROMPT")
          (boot-called-p nil)
          (output        (make-string-output-stream)))
-    (setf (config :fullscreen-p configuration) t)
     (unwind-protect
          (progn
            (test-call-with-function-replacements

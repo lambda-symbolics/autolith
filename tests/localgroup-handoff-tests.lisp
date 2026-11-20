@@ -40,8 +40,6 @@ With PERSISTED-P its conversation holds a message."
                  root (test-configuration-root configuration))
            (let ((handoff-pathname (merge-pathnames "handoff.sexp" root)))
              (dolist (enabled-p '(nil t))
-               (configuration-set configuration (configuration-setting configuration :fullscreen-p)
-                                  enabled-p :source ':override)
                (let ((arguments
                        (localgroup-handoff--arguments
                         configuration handoff-pathname
@@ -54,9 +52,8 @@ With PERSISTED-P its conversation holds a message."
                           (platform-session-launch-command
                              *platform* (config :source-root configuration))
                           (list "--permissions" "auto")
-                          (if enabled-p
-                              (list "--immutable" "--pristine" "--fullscreen")
-                              (list "--plain"))
+                          (when enabled-p
+                            (list "--immutable" "--pristine"))
                           (list "--site-config-root"
                                 (namestring
                                    (config :site-config-root configuration))

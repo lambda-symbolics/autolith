@@ -151,7 +151,6 @@ sharing one it already served."
                                   (list :switch-p t))
                                 (list :progress-p         t
                                       :permission-mode    permission-mode
-                                      :fullscreen-p       (not (null (config :fullscreen-p configuration)))
                                       :pick-channel-p     (not (null pick-channel-p))
                                       :recovery-diagnosis recovery-diagnosis
                                       :rows               rows

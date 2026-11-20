@@ -153,7 +153,7 @@ offered only while the typed prefix no longer matches its primary."
        completion-function completion-root path-search-function mention-function
        fullscreen-p message-header-prefixes (prompt-padding 1)
        (clock-function #'terminal-ui--monotonic-seconds))
-  "Create an inline or opt-in fullscreen UI for interactive TERMINAL.
+  "Create a stream UI or a fullscreen viewport for TERMINAL.
 
 MESSAGE-HEADER-PREFIXES name the transcript lines the fullscreen viewport
 jumps between as messages. MENTION-FUNCTION completes @ participant names."

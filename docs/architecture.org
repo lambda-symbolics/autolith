@@ -565,11 +565,9 @@ lost. =src/emacs/tools.lisp= holds the action tools, =emacs.visit= and
 
 * Terminal
 
-By default the fullscreen terminal UI owns the transcript viewport in an
-alternate screen, keeps application scrollback, and pins the composer to the
-bottom. Plain mode uses the primary screen and leaves finalized output in
-normal scrollback. The persistent setting is stored in the global preferences
-record; =--fullscreen= and =--plain= override it for one launch.
+Interactive sessions use a fullscreen transcript viewport in an alternate
+screen with application scrollback and a bottom-pinned composer. Headless
+and scripted sessions use stream output without terminal control sequences.
 
 Application presentation records carry an explicit entry kind, spacing group,
 and optional tool outcome state. Producers choose spacing; terminal renderers

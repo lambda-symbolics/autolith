@@ -305,9 +305,6 @@ before any shell is involved."
      (list "--immutable"))
    (when pristine-p
      (list "--pristine"))
-   (if (config :fullscreen-p configuration)
-       (list "--fullscreen")
-       (list "--plain"))
    (let ((site-config-root (config :site-config-root configuration)))
      (when site-config-root
        (list "--site-config-root" (namestring site-config-root))))

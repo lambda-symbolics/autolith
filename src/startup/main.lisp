@@ -138,10 +138,6 @@
     ((:plain "Configuring a language server in ")
      (:code "lsp.sexp")
      (:plain " under your Autolith config directory adds definition, hover, and diagnostics tools for workspace code."))
-    ((:code "autolith --plain")
-     (:plain " keeps the transcript in your terminal's own scrollback instead of fullscreen. Save the choice for future launches with ")
-     (:code "(setf (config :fullscreen-p) nil)")
-     (:plain "; t restores the fullscreen default."))
     ((:plain "Claude caches a prompt for five minutes. If you often pause longer, ")
      (:code "(setf (config :prompt-cache-ttl) :1h)")
      (:plain " asks Anthropic and OpenRouter Claude models for one hour, at twice the cache-write price."))
@@ -434,8 +430,7 @@ controller's exit reason."
          (recovery-input-storage-ready-p
            (or (not recovery-startup-p)
                (application-recovery-input-vault-import application))))
-    (when (and (config :fullscreen-p (application-configuration application))
-               (not (terminal-ui-fullscreen-p ui)))
+    (unless (terminal-ui-fullscreen-p ui)
       (change-class ui 'fullscreen-terminal-ui))
     (when (terminal-ui-fullscreen-p ui)
       (setf (terminal-ui-fullscreen-welcome-p ui) t))
@@ -915,17 +910,6 @@ state, including an empty list after successful or pristine startup."
                                :defer-provider-validation-p t
                                (append (main--site-root-arguments command)
                                        (main--model-arguments command)))))
-              ;; The command line beats the saved preference; provider
-              ;; validation stays deferred until executable user init.
-             (when (and (getopt* command ':plain) (getopt* command ':fullscreen))
-               (error 'configuration-error
-                      :message "--plain cannot be combined with --fullscreen."))
-              (when (getopt* command ':fullscreen)
-                (configuration-set base (configuration-setting base :fullscreen-p) t
-                                   :source ':override))
-              (when (getopt* command ':plain)
-                (configuration-set base (configuration-setting base :fullscreen-p) nil
-                                   :source ':override))
               (terminal-theme-install (config :terminal-theme base))
               base))
          (permission-mode          (or (config :permission-mode configuration) ':ask))
@@ -1158,11 +1142,7 @@ request it conflicts with from one that says nothing."
           (when (and permission-mode (getopt* command ':permissions))
             (list :permission-mode permission-mode))
           (when (getopt* command ':immutable)
-            (list :immutable-p t))
-          (when (getopt* command ':fullscreen)
-            (list :fullscreen-p t))
-          (when (getopt* command ':plain)
-            (list :plain-p t))))
+            (list :immutable-p t))))
 
 (-> main--switch-failure (string condition) string)
 (defun main--switch-failure (identifier condition)
@@ -1400,11 +1380,9 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                  :latest-p           latest-p
                                                  :recovery-diagnosis recovery-diagnosis
                                                 :launch             launch)))
-                 :start-p (and (config :fullscreen-p configuration)
-                               (not (null (terminal--terminal-mode-or-nil
-                                           (localgroup-screen-terminal screen)))))
-                 :boot-p  (and (config :fullscreen-p configuration)
-                               (config :boot-screen-p configuration)))))
+                 :start-p (not (null (terminal--terminal-mode-or-nil
+                                     (localgroup-screen-terminal screen))))
+                 :boot-p  (config :boot-screen-p configuration))))
            (when welcome-p
              (world-sidebar-start panel))
            (loop with origin = nil
@@ -1529,16 +1507,6 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                 :parameter   "PROVIDER"
                 :persistent  t
                 :description "select the registered provider for --model")
-   (make-option ':flag
-                :long-name   "fullscreen"
-                :key         ':fullscreen
-                :persistent  t
-                :description "use a scrollable alternate-screen UI with a pinned composer")
-   (make-option ':flag
-                :long-name   "plain"
-                :key         ':plain
-                :persistent  t
-                :description "keep the transcript in the terminal's own scrollback instead of fullscreen")
    (make-option ':flag
                 :long-name   "immutable"
                 :key         ':immutable

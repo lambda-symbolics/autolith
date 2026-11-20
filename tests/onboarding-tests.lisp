@@ -8,7 +8,7 @@
   (with-test-configuration (configuration root)
     (setf configuration
           (configuration-copy configuration :working-directory root :onboarding-p t
-                              :fullscreen-p fullscreen-p :boot-screen-seconds 0))
+                              :boot-screen-seconds 0))
     (let* ((*terminal-theme*       *terminal-theme*)
            (*terminal-style-table* *terminal-style-table*)
            (terminal               (make-instance 'queued-recording-terminal :columns 100 :rows 32))
@@ -57,14 +57,13 @@
 
 (-> test-onboarding-first-startup () null)
 (defun test-onboarding-first-startup ()
-  "Present first-run onboarding in fullscreen even when inline is the saved preference."
+  "Present first-run onboarding and acknowledge completed lessons."
   (onboarding-tests--call
    (lambda (application controller configuration terminal)
      (declare (ignore terminal))
      (let ((presented  nil)
            (boot-count 0)
            (ui         (application-ui application)))
-       (test-assert (not (config :fullscreen-p configuration)) "fixture begins with an inline preference")
        (test-call-with-function-replacements
         (list (list 'terminal-ui-boot-sequence
                     (lambda (target &rest options)
@@ -98,8 +97,7 @@
                     "first startup presents every current lesson in catalog order")
        (test-assert (null (onboarding-state-pending configuration (onboarding-pages configuration)))
                     "completed lesson callbacks acknowledge the tour")
-       (test-assert (not (terminal-ui-fullscreen-p ui)) "first-run presentation restores inline mode")
-       (test-assert (not (config :fullscreen-p configuration)) "onboarding does not overwrite fullscreen preference"))))
+       (test-assert (not (terminal-ui-fullscreen-p ui)) "first-run presentation restores the original UI"))))
   nil)
 
 (-> test-onboarding-startup-input () null)

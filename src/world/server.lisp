@@ -139,12 +139,6 @@ the process could fork, and a new thread serves the application again."))
                                                                                           :accessor      world-server--generation-warning-taken-p
                                                                                           :type          boolean
                                                                                           :documentation "Whether a channel already presented the checkpoint health warning.")
-                                                                                         (fullscreen-p
-                                                                                          :initarg       :fullscreen-p
-                                                                                          :initform      nil
-                                                                                          :accessor      world-server-fullscreen-p
-                                                                                          :type          boolean
-                                                                                          :documentation "The presentation terminals last opened channels with, which a channel served for a message takes too.")
                                                                                          (checkpoint-cancel-p
                                                                                           :initform      nil
                                                                                           :accessor      world-server-checkpoint-cancel-p
@@ -279,8 +273,6 @@ pristine: a pristine rescue session runs apart from it."
          (server       (make-instance 'world-server
                                       :configuration            bootstrapped
                                       :permission-mode          permission-mode
-                                      :fullscreen-p             (not (null (config :fullscreen-p
-                                                                                   bootstrapped)))
                                       :mutation-replay-failures failures))
          (completed-p  nil))
     (unwind-protect
@@ -534,10 +526,7 @@ channel that cannot be served keeps its message waiting."
                                                           (channel-workspace
                                                            channel)
                                                           :arguments
-                                                          (list :switch-p t
-                                                                :fullscreen-p
-                                                                (world-server-fullscreen-p
-                                                                 server)))))
+                                                           (list :switch-p t))))
                             (error (condition)
                                    (format *error-output*
                                            "~&World server could not serve channel ~A for its message: ~A~%"
@@ -799,8 +788,7 @@ An unhosted target is served before admitting Lisp; prose keeps durable message 
         (let* ((host        (world-server--start-host
                              server :conversation-id identifier
                                     :directory       (channel-workspace target)
-                                    :arguments       (list :switch-p     t
-                                                           :fullscreen-p (world-server-fullscreen-p server))))
+                                     :arguments       (list :switch-p t)))
                (application (world-host-application (world-server--wait-ready server host))))
           (application-input-controller--handle-submission
            (application-input-controller application) text :interactive-p nil))
@@ -891,7 +879,7 @@ An unhosted target is served before admitting Lisp; prose keeps durable message 
   "Open the channel ARGUMENTS select and answer with its session identifier.
 
 ARGUMENTS name a :CHANNEL or a :DIRECTORY, and carry the client's
-:PERMISSION-MODE, :FULLSCREEN-P, :PICK-CHANNEL-P, :RECOVERY-DIAGNOSIS,
+:PERMISSION-MODE, :PICK-CHANNEL-P, :RECOVERY-DIAGNOSIS,
 :ROWS, :COLUMNS and :STYLED-P. The answer arrives once the channel's endpoint
 is published, so the client can attach at once. A workspace channel whose
 conversation cannot be loaded is passed over, and the channel that opens
@@ -899,9 +887,6 @@ instead says so."
   (let ((*world-server-open-deadline* (world-server--open-deadline)))
     (world-server--call-with-open-admission server
      (lambda ()
-       (unless (getf arguments :switch-p)
-         (setf (world-server-fullscreen-p server)
-               (not (null (getf arguments :fullscreen-p)))))
        (multiple-value-bind (host started-p skipped)
            (world-server--host-for server arguments)
          (channel-loading-report 5 "Starting channel")
@@ -1286,9 +1271,9 @@ opening. Return NIL for the host when no channel qualifies."
 (defun world-server--launch-conflict (host launch)
   "Return the option of LAUNCH that channel HOST runs differently and cannot change, or NIL.
 
-The model, provider, immutable mode, and fullscreen or plain presentation
-are fixed when a channel's application is built. The permission mode
-changes only while the channel is not working: a turn or a job already
+The model, provider and immutable mode are fixed when a channel's
+application is built. The permission mode changes only while the channel
+is not working: a turn or a job already
 running keeps the mode it started under."
   (let* ((application   (world-host-application host))
          (configuration (application-configuration application))
@@ -1306,10 +1291,6 @@ running keeps the mode it started under."
        (format nil "--provider ~A" provider))
       ((and (getf launch :immutable-p) (not (config :immutable-p configuration)))
        "--immutable")
-      ((and (getf launch :fullscreen-p) (not (config :fullscreen-p configuration)))
-       "--fullscreen")
-      ((and (getf launch :plain-p) (config :fullscreen-p configuration))
-       "--plain")
       (t
        nil))))
 
@@ -1583,11 +1564,6 @@ forgotten again when no thread could start."
           (apply #'configuration-copy base :working-directory
                  (uiop/pathname:ensure-directory-pathname directory)
                  (append
-                  (list :fullscreen-p
-                        (not
-                         (null
-                          (or (getf arguments :fullscreen-p)
-                              (getf launch :fullscreen-p)))))
                   (when (getf launch :model)
                     (list :model (getf launch :model) :model-provider
                           (or (getf launch :provider) "")

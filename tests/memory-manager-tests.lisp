@@ -6,7 +6,7 @@
 (defun memory-manager-tests--call (function &key (columns 80) (rows 24) events)
   "Call FUNCTION with an isolated fullscreen application and scripted terminal."
   (with-test-configuration (base root)
-    (let* ((configuration (configuration-copy base :working-directory root :fullscreen-p t))
+    (let* ((configuration (configuration-copy base :working-directory root))
            (terminal      (make-instance 'scripted-terminal :columns columns :rows rows :styled-p t :events events))
            (ui            (terminal-ui-create :terminal terminal :fullscreen-p t))
            (application   (make-instance 'application :configuration configuration :ui ui
