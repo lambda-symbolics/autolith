@@ -4,6 +4,9 @@
 
 ;;; The application keeps the world in step with the conversation it hosts.
 
+(defparameter *world-agent-name* "autolith"
+  "The display name for an application without a named resident.")
+
 (-> application-hosted-p (application) boolean)
 (defun application-hosted-p (application)
   "Return true when a world server hosts APPLICATION beside other channels."

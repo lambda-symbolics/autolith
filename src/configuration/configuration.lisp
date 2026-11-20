@@ -922,11 +922,6 @@ selects its own registration, rather than inheriting the previous provider."
   "Return the pathname of the append-only participants and channels log."
   (merge-pathnames "world/world.sexp" (config :data-root configuration)))
 
-(-> configuration-world-sessions-path (configuration) pathname)
-(defun configuration-world-sessions-path (configuration)
-  "Return the pathname of the legacy conversation-to-participant mapping."
-  (merge-pathnames "world/sessions.sexp" (config :data-root configuration)))
-
 (-> configuration-image-commit-root (configuration) pathname)
 (defun configuration-image-commit-root (configuration)
   "Return the directory containing immutable private image commits."

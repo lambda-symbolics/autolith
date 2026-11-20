@@ -926,20 +926,16 @@ Each transcript event takes a line of its own."
            (world-tests--persisted-conversation configuration "b6uouHJ" 1000)
            (world-tests--persisted-conversation configuration "c6uouHJ" 2000)
            (world-tests--persisted-conversation configuration "e6uouHJ" 3000)
-           (world-tests--persisted-conversation configuration "fpark11" 4000)
            (let ((inbox (conversation-create configuration
                                              :identifier "h777777" :inbox-p t)))
              (conversation-append-record inbox
                                          (list :title  :value *world-inbox-designator*
                                                :source ':initial)))
-           (world-reconcile-sessions configuration)
-           (world-participant-rename configuration "al-b6uouHJ" "builder")
-           (world-participant-rename configuration "al-e6uouHJ" "cold-agent")
-           (world-participant-rename configuration "al-fpark11" "parked-agent")
-           (world-participant-park configuration "al-fpark11")
+           (world-participant-rename configuration "b6uouHJ" "builder")
+           (world-participant-rename configuration "e6uouHJ" "cold-agent")
            (check-targets nil)
            (dolist (selector '("b6uouHJ" "b-6uouHJ" "b-6" "builder" "BUILDER"
-                               "@builder" "@BUILDER" "al-b6uouHJ" "@al-b6uouHJ"))
+                               "@builder" "@BUILDER"))
              (check-targets selector))
            (test-assert (not (probe-file (localgroup-registry-pathname configuration "d6uouHJ")))
                         "a stale endpoint is removed while selecting the sole live endpoint")
@@ -950,8 +946,7 @@ Each transcript event takes a line of its own."
              (reject arguments ':discover '("b6uouHJ" "c6uouHJ")))
            (check-targets "b")
            (reject '("pause" "6uouHJ") ':discover '("b6uouHJ" "c6uouHJ" "e6uouHJ"))
-           (dolist (selector '("cold-agent" "@cold-agent" "parked-agent" "@parked-agent"
-                               "@nobody" "inbox"))
+           (dolist (selector '("cold-agent" "@cold-agent" "@nobody" "inbox"))
              (reject (list "pause" selector) ':discover nil))
            ;; Explicit unavailable targets fail rather than falling back to a live one.
            (publish "d6uouHJ" 3)

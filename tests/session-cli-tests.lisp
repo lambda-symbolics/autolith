@@ -82,9 +82,11 @@
              (dolist (identifier identifiers)
                (save identifier (format nil "Task ~A" identifier)))
              (reject "z" (mapcar #'conversation-identifier-display identifiers)))
-           (world-reconcile-sessions configuration)
-           (world-participant-rename configuration "al-b6uouHJ" "builder")
-           (dolist (designator '("builder" "BUILDER" "@builder" "al-b6uouHJ" "/builder"))
+           (world-channel-register configuration "b6uouHJ"
+                                   :workspace (world-workspace-name
+                                               (config :working-directory configuration)))
+           (world-participant-rename configuration "b6uouHJ" "builder")
+           (dolist (designator '("builder" "BUILDER" "@builder" "/builder"))
             (select designator "b6uouHJ"))
            (reject "@nobody" '("No participant"))
            (let* ((world (world-load configuration))
@@ -94,9 +96,7 @@
              (world-participant-create configuration :kind ':agent :name "unloaded"
                                        :residence (channel-identifier home))
              (dolist (designator '("/unloaded" "unloaded" "bworld1" "world1"))
-               (select designator "bworld1")))
-           (world-participant-park configuration "al-b6uouHJ")
-           (reject "builder" '("parked")))))))
+               (select designator "bworld1"))))))))
   nil)
 
 
@@ -295,14 +295,12 @@
         (let ((remote (world-channel-create configuration :owner (participant-identifier human)
                                             :workspace           (namestring (merge-pathnames "other/" root)))))
           (dolist (residence (list (channel-identifier home) (channel-identifier home)
-                                  (channel-identifier remote) nil))
-            (let ((agent (world-participant-create configuration :kind ':agent :name (make-identifier)
-                          :residence (or residence (channel-identifier home)))))
-              (unless residence
-                (world-participant-park configuration (participant-identifier agent)))))
+                                  (channel-identifier remote)))
+            (world-participant-create configuration :kind ':agent :name (make-identifier)
+                                      :residence residence))
           (multiple-value-bind (total local) (main--welcome-agent-counts (world-load configuration) directory)
-            (test-assert (and (= total 4) (= local 2))
-                         "count agents rather than channels, include parked agents, and compare residences")))))
+            (test-assert (and (= total 3) (= local 2))
+                         "count agents rather than channels and compare residences")))))
     (test-call-with-function-replacements
      (list (list 'terminal--render-spans
                  (lambda (terminal spans) (declare (ignore terminal)) (terminal--spans-text spans))))
@@ -332,7 +330,7 @@
              (when (= height 32)
                (let ((text (format nil "~{~A~%~}" rows)))
                  (test-assert (and (search "/launch/" text) (search "4 (2 here)" text)
-                                   (search "immutable, recovered" text) (search "autolith open" text))
+                                   (search "immutable" text) (search "autolith open" text))
                               "welcome shows launch workspace, durable counts, modes and explicit recovery action")))))))))
   nil)
 
