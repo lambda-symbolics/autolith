@@ -213,21 +213,6 @@
             ""))
       ""))
 
-(-> run-job--definition-with-contract (task-agent-definition list) task-agent-definition)
-(defun run-job--definition-with-contract (definition contract)
-  "Return a validated copy of DEFINITION using CONTRACT for this run only."
-  (task-agent-definition-create
-   :name             (task-agent-definition-name definition)
-   :description      (task-agent-definition-description definition)
-   :instructions     (task-agent-definition-instructions definition)
-   :tools            (task-agent-definition-tools definition)
-   :spawns           (task-agent-definition-spawns definition)
-   :models           (task-agent-definition-models definition)
-   :reasoning-effort (task-agent-definition-reasoning-effort definition)
-   :output           contract
-   :blocking-p       (task-agent-definition-blocking-p definition)
-   :source           (task-agent-definition-source definition)
-   :pathname         (task-agent-definition-pathname definition)))
 
 (-> run-job--write-data-sexp (t &key (:pretty-p boolean)) string)
 (defun run-job--write-data-sexp (value &key pretty-p)
@@ -348,7 +333,7 @@
 
 (-> run-job--resolve-definition (configuration run-job-request) task-agent-definition)
 (defun run-job--resolve-definition (configuration request)
-  "Discover REQUEST's role and return an output-contract override copy."
+  "Discover REQUEST's role and return its definition."
   (multiple-value-bind (definitions diagnostics)
       (task-discover-agents configuration)
     (let ((definition
@@ -362,8 +347,7 @@
               (error diagnostic)
               (run-job--error ':unknown-role "Unknown task role ~S."
                               (run-job-request-role request)))))
-      (run-job--definition-with-contract
-       definition (run-job-request-output-contract request)))))
+      definition)))
 
 (-> run-job--close-application ((option application)) null)
 (defun run-job--close-application (application)
