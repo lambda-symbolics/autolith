@@ -896,10 +896,8 @@ An unhosted target is served before admitting Lisp; prose keeps durable message 
 
 ARGUMENTS name a :CHANNEL or a :DIRECTORY, and carry the client's
 :PERMISSION-MODE, :FULLSCREEN-P, :PICK-CHANNEL-P, :RECOVERY-DIAGNOSIS,
-:ROWS, :COLUMNS and :STYLED-P. :IMAGES, absolute namestrings of local
-images, replace the channel's composer draft, whether the channel started
-now or ran already. The answer arrives once the channel's endpoint is
-published, so the client can attach at once. A workspace channel whose
+:ROWS, :COLUMNS and :STYLED-P. The answer arrives once the channel's endpoint
+is published, so the client can attach at once. A workspace channel whose
 conversation cannot be loaded is passed over, and the channel that opens
 instead says so."
   (let ((*world-server-open-deadline* (world-server--open-deadline)))
@@ -922,12 +920,6 @@ instead says so."
                                                 (conversation-identifier-display
                                                  identifier)
                                                 message))))
-         (let ((images (getf arguments :images)))
-           (when images
-             (terminal-ui-set-input
-              (application-ui (world-host-application host))
-              (terminal-ui-image-draft
-               (mapcar #'image-input-validate-pathname images)))))
          (list :ok :session-id (world-host-channel host) :started-p
                (not (null started-p))))))))
 

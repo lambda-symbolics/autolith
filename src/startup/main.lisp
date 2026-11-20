@@ -839,24 +839,6 @@ dependencies."
                   (provider-model-provider-name model) model)))))
   nil)
 
-(-> main--image-pathnames (list) list)
-(defun main--image-pathnames (image-values)
-  "Return validated pathnames from repeated comma-separable IMAGE-VALUES."
-  (let ((values
-          (loop for value in image-values
-                append (uiop:split-string value :separator '(#\,)))))
-    (when (some (lambda (value)
-                  (not (non-empty-string-p value)))
-                values)
-      (error 'configuration-error
-             :message "Every --image value must name a local image."))
-    (mapcar #'image-input-validate-pathname values)))
-
-(-> main--initial-image-input (list) (option user-message-input))
-(defun main--initial-image-input (image-values)
-  "Return a labelled initial composer draft for IMAGE-VALUES' local images."
-  (terminal-ui-image-draft (main--image-pathnames image-values)))
-
 (-> main--connect-application
     (&key (:configuration configuration)
           (:conversation-id (option string))
@@ -937,7 +919,6 @@ state, including an empty list after successful or pristine startup."
          (immutable-p              (or pristine-p
                                        (not (null (getopt* command ':immutable)))))
          (explicit-permission-mode (getopt* command ':permissions))
-         (image-values             (getopt* command ':images))
          (configuration
             (let ((base (apply #'configuration-create
                                :immutable-p                 immutable-p
@@ -1016,9 +997,7 @@ state, including an empty list after successful or pristine startup."
       (unless (main--interactive-input-p)
         (error 'configuration-error :message "Read-only opening requires an interactive terminal."))
       (when explicit-permission-mode
-        (error 'configuration-error :message "--read-only cannot be combined with --permissions."))
-      (when image-values
-        (error 'configuration-error :message "--read-only cannot be combined with --image.")))
+        (error 'configuration-error :message "--read-only cannot be combined with --permissions.")))
     (when (and (string-equal (software-type) "Linux")
                (not (application--command-sandbox-available-p)))
       (format *error-output* "~&Autolith: ~A~%"
@@ -1037,11 +1016,10 @@ state, including an empty list after successful or pristine startup."
                      :attachment-mode    attachment-mode
                      :inbox-p            inbox-p
                      :latest-p           latest-p
-                      :welcome-p          (and inbox-p (null image-values))
-                     :recovery-diagnosis recovery-diagnosis
-                    :launch              (main--launch-options
-                                          command :permission-mode explicit-permission-mode)
-                    :images              (mapcar #'namestring (main--image-pathnames image-values)))
+                      :welcome-p          inbox-p
+                      :recovery-diagnosis recovery-diagnosis
+                      :launch             (main--launch-options
+                                           command :permission-mode explicit-permission-mode))
                    (progn
                       (apply #'world-client-run-script configuration
                              :conversation-id conversation-id
@@ -1103,9 +1081,8 @@ state, including an empty list after successful or pristine startup."
                                       (null effective-open-id)
                                       "(open)")
              :initial-input
-             (if handoff-record
-                 (localgroup-handoff-initial-input handoff-record)
-                 (main--initial-image-input image-values))
+             (when handoff-record
+               (localgroup-handoff-initial-input handoff-record))
              :recovery-diagnosis recovery-diagnosis
              :adaptation-offer-p (null recovery-diagnosis)))
         (main-launcher-exit-condition (condition)
@@ -1145,18 +1122,17 @@ detached sessions, and a booted generation's resume, under
                          (:inbox-p boolean) (:latest-p boolean) (:attach-expected-p boolean)
                         (:recovery-diagnosis (option string))
                         (:launch list)
-                        (:new-p boolean)
-                        (:images list))
+                        (:new-p boolean))
     (values string boolean))
 (defun main--open-world-channel
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        pick-channel-p recovery-diagnosis launch new-p images inbox-p latest-p
+                        pick-channel-p recovery-diagnosis launch new-p inbox-p latest-p
                         (attach-expected-p t))
   "Open this terminal's channel in the world server and return its session identifier.
 
 CONVERSATION-ID opens that channel; otherwise the launch directory selects
-or creates one, and NEW-P creates one. IMAGES become the channel's composer
-draft. The second value says whether the server started the channel for
+or creates one, and NEW-P creates one. The second value says whether the
+server started the channel for
 this terminal. When ATTACH-EXPECTED-P is false, prepare the channel without
 a client view. A server that refuses the open, or cannot be started or reached,
 ends the start with the reason; no session runs in this terminal instead."
@@ -1173,8 +1149,7 @@ ends the start with the reason; no session runs in this terminal instead."
                          :switch-p           (not attach-expected-p)
                          :recovery-diagnosis recovery-diagnosis
                          :launch             launch
-                         :new-p              new-p
-                         :images             images)
+                       :new-p              new-p)
     (error (condition)
       (when (main--world-refusal-p condition)
         (error condition))
@@ -1466,12 +1441,12 @@ only rediscovers the same endpoint; choosing another channel is explicit."
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
      (:conversation-id (option string)) (:attachment-mode (member :control :read-only))
      (:pick-channel-p boolean) (:inbox-p boolean) (:latest-p boolean) (:welcome-p boolean)
-     (:recovery-diagnosis (option string)) (:launch list) (:images list))
+     (:recovery-diagnosis (option string)) (:launch list))
     (values boolean list))
 (defun main--run-world-client
        (configuration
         &key (permission-mode ':ask) immutable-p conversation-id (attachment-mode ':control)
-        pick-channel-p inbox-p latest-p welcome-p recovery-diagnosis launch images)
+        pick-channel-p inbox-p latest-p welcome-p recovery-diagnosis launch)
   "Serve one terminal across channel switches, committing navigation after attachment acknowledgment.
 Discovery, endpoint refresh and the attach handshake share a bounded switch transaction.
 A failed switch restores its source, or reports a disconnected terminal if that source disappeared.
@@ -1511,8 +1486,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                  :inbox-p            inbox-p
                                                  :latest-p           latest-p
                                                  :recovery-diagnosis recovery-diagnosis
-                                                 :launch             launch
-                                                 :images             images)))
+                                                :launch             launch)))
                  :start-p (and (config :fullscreen-p configuration)
                                (not (null (terminal--terminal-mode-or-nil
                                            (localgroup-screen-terminal screen)))))
@@ -1683,13 +1657,6 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                ("sandbox" . :sandboxed)
                                ("full" . :full-access))
                 :description "initial command authorization mode")
-   (make-option ':list
-                :short-name  #\i
-                :long-name   "image"
-                :key         ':images
-                :parameter   "FILE"
-                :persistent  t
-                :description "preload a local image into the composer; repeatable and comma-separable")
    (make-option ':string
                 :long-name   "localgroup-handoff"
                 :key         ':localgroup-handoff

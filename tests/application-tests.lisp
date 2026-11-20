@@ -7211,22 +7211,6 @@
         (if (rest entry)
             (platform-setenv (first entry) (rest entry))
             (platform-unsetenv (first entry))))))
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (image         (merge-pathnames "initial.png" root)))
-    (unwind-protect
-         (progn
-           (test-conversation--write-tiny-png image)
-           (let ((input
-                   (main--initial-image-input
-                    (list (namestring image)))))
-             (test-assert
-              (and (typep input 'user-message-input)
-                   (string= (user-message-input-text input) "[Image #1]")
-                   (equal (user-message-input-image-pathnames input)
-                          (list (truename image))))
-              "command-line images preload a labelled composer draft")))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((base-configuration (test-configuration))
          (root               (test-configuration-root base-configuration))
          (current-workspace  (merge-pathnames "current-workspace/" root))

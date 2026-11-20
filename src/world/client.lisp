@@ -87,22 +87,21 @@ other."
                         (:permission-mode keyword) (:immutable-p boolean)
                         (:pick-channel-p boolean)
                         (:recovery-diagnosis (option string)) (:launch list) (:new-p boolean)
-                         (:images list) (:mcp-servers list) (:switch-p boolean)
+                        (:mcp-servers list) (:switch-p boolean)
                          (:inbox-p boolean) (:latest-p boolean)
                          (:attach-expected-p boolean))
     (values string boolean))
 (defun world-client-open
     (configuration &key directory channel (permission-mode ':ask) immutable-p
-                        pick-channel-p recovery-diagnosis launch new-p images mcp-servers
+                        pick-channel-p recovery-diagnosis launch new-p mcp-servers
                         inbox-p latest-p
                         switch-p (attach-expected-p t))
   "Open CHANNEL, or a channel for DIRECTORY, in CONFIGURATION's world server.
 
 INBOX-P opens the person's inbox. LATEST-P selects the latest durable
 channel for DIRECTORY regardless of residency or attachment status.
-NEW-P opens a new channel for DIRECTORY instead of its latest one. IMAGES,
-absolute namestrings of local images, become the opened channel's composer
-draft. MCP-SERVERS, an editor's server declarations in portable form, join
+NEW-P opens a new channel for DIRECTORY instead of its latest one.
+MCP-SERVERS, an editor's server declarations in portable form, join
 the tools of a channel that starts for this open. SWITCH-P says a terminal
 moves here from another channel, so a channel that starts for it skips its
 startup presentation.
@@ -146,8 +145,6 @@ sharing one it already served."
                                   (list :launch launch))
                                 (when new-p
                                   (list :new-p t))
-                                (when images
-                                  (list :images images))
                                 (when mcp-servers
                                   (list :mcp-servers mcp-servers))
                                 (when switch-p

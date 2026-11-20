@@ -55,7 +55,6 @@
                     (("--provider" "custom" "--model" "shared" "acp") t)
                     (("--model" "acp") nil)
                     (("--provider" "acp") nil)
-                    (("--image" "acp") nil)
                     (("--permissions" "acp") nil)
                     (("replay" "acp") nil)))
       (destructuring-bind (arguments expected) case

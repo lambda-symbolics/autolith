@@ -42,7 +42,7 @@
 ;;;; -- Launcher Options --
 
 (defparameter *launcher-value-options*
-  '("--permissions" "--image" "-i" "--localgroup-handoff" "--id" "--input"
+  '("--permissions" "--localgroup-handoff" "--id" "--input"
     "--prompt" "--role" "--timeout-seconds" "--output" "--events" "--generation"
     "--status" "--capsule" "--original-argument" "--workspace" "--token"
     "--days" "--examples")
