@@ -2614,7 +2614,14 @@ A parent that writes @parent to its own child reaches nobody but the child."
                                            :channel  "exec-two"
                                            :text     text
                                            :notify-p nil)
-                       :channels))))
+                       :channels)))
+
+             (addressed (name)
+               "Resolve NAME as a message destination from the checker."
+               (let* ((world   (world-load configuration))
+                      (checker (find ':agent (world-channel-residents world "exec-two")
+                                     :key #'participant-kind)))
+                 (channel-identifier (world-channel-designated world configuration name :sender checker)))))
         (test-assert (equal (reached "@parent done") '("exec-one"))
                      "@parent reaches the sender's parent agent")
         (flet ((told (sender channel)
@@ -2634,11 +2641,15 @@ A parent that writes @parent to its own child reaches nobody but the child."
         (world-park-agent configuration planner)
         (test-assert (equal (reached "@parent done again") '("broot11"))
                      "with the parent parked, @parent reaches the grandparent")
+        (test-assert (equal (addressed "@parent") "broot11")
+                     "with the parent parked, an explicit @parent address targets the grandparent")
         (world-park-agent configuration root)
         (test-assert (equal (reached "@Parent anyone?")
                             (list (participant-residence (world-human-participant
                                                           (world-load configuration)))))
                      "with every ancestor agent parked, @parent reaches the person")
+        (test-assert (equal (addressed "@Parent") (participant-residence human))
+                     "an explicit @parent address falls back to the person's inbox")
         (test-assert (handler-case
                          (progn (world-participant-rename configuration (participant-identifier human) "parent")
                                 nil)

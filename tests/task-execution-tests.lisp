@@ -1027,3 +1027,59 @@
         (test-assert (task-orchestrator-close orchestrator)
                      "the fixture joins task writers before removing its state"))))
   nil)
+
+(-> test-task-child-sends-to-parent () null)
+(defun test-task-child-sends-to-parent ()
+  "Send to @parent from a spawned child's first provider turn."
+  (with-test-configuration (configuration)
+    (let* ((provider     (make-instance 'task-test-provider :mode ':concurrent))
+           (parent       (agent-create :configuration configuration :provider provider
+                                       :tool-registry (make-default-tool-registry)))
+           (conversation (agent-conversation parent))
+           (orchestrator (task-tests--orchestrator))
+           (definition   (task-find-agent-definition (task-bundled-agent-definitions) "task"))
+           (job          (task-tests--make-job orchestrator
+                                              :identifier   "send-to-parent"
+                                              :definition   definition
+                                              :parent-agent parent
+                                              :item         (list :task "Send a message to your parent.")))
+           (stream-turn  (fdefinition 'provider-stream-turn))
+           (text         "Child delivery to its parent.")
+           (sent-p       nil))
+      (unwind-protect
+           (progn
+             (conversation-append-user-message conversation "Delegate a message.")
+             (setf (participant-state-identity (agent-participant-state parent))
+                   (world-session-participant configuration conversation)
+                   (slot-value job 'completion-owner-conversation)
+                   (conversation-identifier conversation))
+             (with-lock-held ((cl-jobpond::job--lock job))
+               (setf (job-state job) ':running))
+             (test-call-with-function-replacements
+              (list (list 'provider-stream-turn
+                          (lambda (provider conversation &rest arguments)
+                            (if sent-p
+                                (apply stream-turn provider conversation arguments)
+                                (progn
+                                  (setf sent-p t)
+                                  (agent-test-result
+                                   "send-to-parent"
+                                   (list (agent-test-call
+                                          :call-id "send-to-parent" :namespace "channel" :name "send"
+                                          :arguments (json-encode
+                                                      (json-object "channel" "@parent" "text" text))))))))))
+              (lambda ()
+                (test-assert (eq (getf (task-run-child job) :status) ':success)
+                             "the spawned child completes the task")))
+             (let* ((state    (task-job-participant-state job))
+                    (child    (participant-state-identity state))
+                    (target   (conversation-identifier conversation))
+                    (delivery (find text (world-inbox-deliveries configuration target)
+                                    :key #'world-delivery-text :test #'string=)))
+               (test-assert (and delivery
+                                 (equal (world-delivery-sender delivery) (participant-identifier child)))
+                            "explicit @parent reaches the parent channel under the child's identity")))
+        (lisp-worker-pool-stop-all (agent-worker parent))
+        (test-assert (task-orchestrator-close orchestrator)
+                     "the fixture joins task writers before removing its state"))))
+  nil)

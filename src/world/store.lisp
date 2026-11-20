@@ -901,21 +901,22 @@ need hundreds of suffixes."
     (and (= (length named) 1) (first named))))
 
 (-> world-channel-designated
-    (world configuration string &key (:error-p boolean)) (option channel))
-(defun world-channel-designated (world configuration designator &key (error-p t))
+    (world configuration string &key (:error-p boolean) (:sender (option participant))) (option channel))
+(defun world-channel-designated (world configuration designator &key (error-p t) sender)
   "Return the channel DESIGNATOR names in WORLD by identifier, legacy alias, agent or fragment.
 
 The word inbox names the person's inbox, and @NAME the participant NAME's
-residence. A full channel identifier, including a retained legacy alias of
-CONFIGURATION, takes priority over a bare participant name or identifier.
-Otherwise resolve a channel ID fragment. With ERROR-P NIL, return NIL for
-an unknown fragment; ambiguous or parked targets still signal an error."
+residence. With SENDER, @parent names the residence of its parent recipient.
+A full channel identifier, including a retained legacy alias of CONFIGURATION,
+takes priority over a bare participant name or identifier. Otherwise resolve
+a channel ID fragment. With ERROR-P NIL, return NIL for an unknown fragment;
+ambiguous or parked targets still signal an error."
   (when (uiop:string-prefix-p "/" designator)
     (return-from world-channel-designated (world-channel-at-path world designator :error-p error-p)))
   (or (and (string-equal designator *world-inbox-designator*)
            (world-inbox-channel world))
       (and (uiop:string-prefix-p "@" designator)
-           (world--residence-channel world (subseq designator 1)))
+           (world--residence-channel world (subseq designator 1) :sender sender))
       (let ((resolved (handler-case
                           (conversation-identifier-migration-resolve configuration designator)
                         ((or conversation-error conversation-identifier-error) ()
@@ -961,10 +962,10 @@ A channel whose parent is not among MEMBERS is a root."
             (push node (rest parent))
             (push node roots))))))
 
-(-> world--residence-channel (world string) channel)
-(defun world--residence-channel (world name)
-  "Return the channel where the participant NAME, an identifier or a name, resides."
-  (let ((participant (world-message-participant world name)))
+(-> world--residence-channel (world string &key (:sender (option participant))) channel)
+(defun world--residence-channel (world name &key sender)
+  "Return the residence of NAME, which may name SENDER's parent recipient."
+  (let ((participant (world-message-participant world name :sender sender)))
     (cond
       ((null participant)
        (error 'world-error

@@ -55,14 +55,15 @@
   "The channel: an agent name, @name, exact absolute channel path, identifier or unique ID fragment; inbox names the person's inbox."
   "How every channel tool describes the channel it acts on.")
 
-(-> channel-tool--channel (tool-context hash-table) string)
-(defun channel-tool--channel (context arguments)
-  "Return the identifier of the channel ARGUMENTS designate, as every channel tool resolves it."
+(-> channel-tool--channel (tool-context hash-table &key (:sender (option participant))) string)
+(defun channel-tool--channel (context arguments &key sender)
+  "Return the designated channel ID, with SENDER for a relative message address."
   (let ((configuration (tool-context-configuration context)))
     (channel-identifier
      (world-channel-designated (world-load configuration)
                                configuration
-                               (tool-argument arguments "channel" :required t)))))
+                               (tool-argument arguments "channel" :required t)
+                               :sender (and sender (eq (participant-kind sender) ':agent) sender)))))
 
 (-> channel-tool--current-channel (tool-context participant) string)
 (defun channel-tool--current-channel (context sender)
@@ -121,7 +122,8 @@
                           (if (and (eq operation ':send)
                                    (null (tool-argument arguments "channel")))
                               (channel-tool--current-channel context sender)
-                              (channel-tool--channel context arguments))))
+                              (channel-tool--channel context arguments
+                                                     :sender (and (eq operation ':send) sender)))))
          (display       (conversation-identifier-display channel)))
     (case operation
       (:send
@@ -166,7 +168,7 @@
                            :description description
                            :parameters  (tool-object-schema properties required)))))
     (register "send"
-              "Send a message with optional images. Omit channel to address the current channel. It reaches residents, subscribers and @mentions. @parent reaches your parent agent, or the nearest active ancestor or person."
+              "Send a message with optional images. Omit channel to address the current channel. It reaches residents, subscribers and @mentions. Set channel to @parent to reach your parent agent, or the nearest active ancestor or person."
               :class    'channel-send-tool
               :properties
               (json-object "channel" (tool-string-property *channel-tool-channel-description*)

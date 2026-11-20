@@ -2033,9 +2033,10 @@ for an agent, a child agent included: it is the resident of its nested
 channel and messages as that participant under its role's ordinary tool
 policy. A message reaches the channel's residents, every subscriber of
 the channel and every participant it mentions as =@name= or =@id=, wherever
-they reside. =@parent= names the sender's parent; when that parent is parked,
-the message goes to the nearest ancestor agent that is not, and to you when
-none is left. In a message to the sender's own child, =@parent= in the text
+they reside. An agent can use =@parent= as the channel in =channel.send= or
+as a mention. It names the sender's parent; when that parent is parked, the
+message goes to the nearest ancestor agent that is not, and to you when none
+is left. In a message to the sender's own child, =@parent= in the text
 reaches nobody else: the child reads it as the sender, as in "report to
 =@parent= when done". An idle agent wakes with the message; a working one
 receives it as a steer labeled with the sender and the channel. The transcript
