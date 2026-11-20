@@ -70,7 +70,6 @@
                                 (make-instance 'refinement-test-tool :namespace (first owner) :name (rest owner)
                                                :state state :description "Fixture owner"
                                                :parameters (tool-object-schema (json-object) nil))))
-      (refinement-register-tools registry)
       (funcall function configuration context state)))
   nil)
 
@@ -305,30 +304,6 @@
          (fiveam:is (eq :invalid (refinement-tests--error-code
                                   (lambda () (refinement-tests--run context pending :evaluate))))))))))
 
-(-> test-refinement-tool-boundary nil null)
-(defun test-refinement-tool-boundary ()
-  "Invoke delegation through the unified operation while rejecting model efficacy claims."
-  (refinement-tests--fixture
-   (lambda (configuration context state)
-     (let* ((registry (tool-context-registry context))
-            (proposal (refinement-tests--proposal configuration context :target :memory))
-            (claim    (tool-registry-execute-call
-                       registry (json-object "namespace" "self" "name" "refine"
-                                             "arguments" "{\"action\":\"assess\",\"verdict\":\"passed\"}") context)))
-       (fiveam:is (not (tool-result-success-p claim)))
-       (fiveam:is (eq :invalid (refinement-tests--error-code
-                                (lambda () (refinement-tests--run context proposal :experiment)))))
-       (let ((result (tool-registry-execute-call
-                      registry (json-object "namespace" "self" "name" "refine"
-                                            "arguments" (json-encode
-                                                         (json-object "action" "experiment" "id" (getf proposal :id)
-                                                                      "revision" 1
-                                                                      "operation" (refinement-tests--operation "resource" "edit")
-                                                                      "guard" (refinement-tests--operation "self" "diff")))) context)))
-         (fiveam:is (tool-result-success-p result))
-         (fiveam:is (= 1 (refinement-test-changes state)))
-         (fiveam:is (eq (refinement-test-context state) context)))))))
-
 (-> test-refinement-journal-integrity nil null)
 (defun test-refinement-journal-integrity ()
   "Handle interrupted tails, confine workspaces and reject discontinuous revisions."
@@ -358,24 +333,3 @@
                                   (lambda () (refinement-list configuration)))))
          (fiveam:is (eq :corrupt (refinement-tests--error-code
                                   (lambda () (refinement-find configuration (getf proposal :id)))))))))))
-
-(-> test-refinement-immutable-registry nil null)
-(defun test-refinement-immutable-registry ()
-  "Offer refinement in the mutable default registry and omit it from immutable mode."
-  (with-test-configuration (configuration root)
-    (let* ((configuration (configuration-copy configuration :working-directory root))
-           (mutable       (make-default-tool-registry :configuration configuration))
-           (immutable     (make-default-tool-registry :configuration configuration :immutable-p t)))
-      (unwind-protect
-           (let* ((conversation (conversation-create configuration))
-                  (context      (make-instance 'tool-context :configuration configuration :worker nil
-                                               :registry mutable :conversation conversation)))
-             (fiveam:is (not (null (tool-registry-find mutable "self" "refine"))))
-             (fiveam:is (null (tool-registry-find immutable "self" "refine")))
-             (fiveam:is (tool-result-success-p
-                         (tool-registry-execute-call
-                          mutable (json-object "namespace" "self" "name" "refine"
-                                               "arguments" "{\"action\":\"status\"}") context))))
-        (tool-registry-close-runtime-state mutable)
-        (tool-registry-close-runtime-state immutable))))
-  nil)

@@ -1197,7 +1197,6 @@ socket."
     (when (emacs-server-available-p configuration)
       (emacs-register-tools registry))
     (default-tools--register-self registry)
-    (refinement-register-tools registry)
     (rlm-register-tools registry)
     (mission-register-tools registry)
     (mission-review-augment-tool-registry registry)

@@ -1666,9 +1666,7 @@
   test-refinement-authority
   test-refinement-interrupted-recovery
   test-refinement-pending-owner
-  test-refinement-tool-boundary
-  test-refinement-journal-integrity
-  test-refinement-immutable-registry)
+  test-refinement-journal-integrity)
 
 (when (find-class 'win32-platform nil)
   (define-test-suite windows-sandbox

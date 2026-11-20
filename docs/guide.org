@@ -3041,12 +3041,8 @@ active turn, the command waits in the idle queue.
 
 ** Refinement
 
-Use =self.refine= to record trajectory evidence, choose the smallest useful target
-or =none=, and exercise existing memory, context, skill, role, RLM or mutation
-operations. Every transition names the proposal ID and its observed revision.
-Evaluation records actual task observations separately from owner compile/replay
-checks. Inspect proposals with =(refine)= and supply a local assessment before
-promotion:
+Inspect recorded refinement proposals with =(refine)=. To record a local
+task-level assessment before promotion:
 
 #+BEGIN_SRC lisp
 (refine :assess "PROPOSAL-ID" :revision 3 :verdict :passed
