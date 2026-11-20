@@ -3116,8 +3116,7 @@ A higher-precedence malformed role is reported, not silently replaced.
 A role is one bounded UTF-8 =*.sexp= property list:
 
 - required: =:name=, =:description=, =:instructions=
-- optional: =:tools=, =:spawns=, =:models=, =:reasoning-effort=,
-  =:blocking-p=
+- optional: =:tools=, =:spawns=, =:models=, =:reasoning-effort=
 
 Roles cannot grant =self.*=, =task.*=, or =yield.*=. Grant =job.*= when a role
 needs to inspect, await, or cancel asynchronous work. Children can access only
@@ -3140,13 +3139,13 @@ Example:
  :tools            ("resource.read" "search.*")
  :spawns           nil
  :models           ("@parent")
- :reasoning-effort :high
- :blocking-p t)
+ :reasoning-effort :high)
 #+END_SRC
 
-=child.roles= shows effective roles. =child.spawn= starts one task. Use
-=job.wait= when a result is needed. The child's ordinary final response is
-available as bounded output in =job.get=, with status and cancellation details.
+=child.roles= shows effective roles. =child.spawn= starts one task in the
+background. Use =job.wait= when you need a result. =job.get= returns bounded
+output from the child's ordinary final response, with status and cancellation
+details.
 
 A child keeps its channel, name, role and history after its run. Its parent
 sends it more work through that channel, and =channel:current= lists the

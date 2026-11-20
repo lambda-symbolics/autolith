@@ -18,8 +18,7 @@
                       pathname
                       (task-tests--role-form
                        "native" "Native role" "Use native Lisp data."
-                       :tools      '("resource.read")
-                       :blocking-p t))
+                       :tools '("resource.read")))
                      :project)))
              (test-assert
               (and (string= (task-agent-definition-name definition) "native")
@@ -27,7 +26,6 @@
                             "Use native Lisp data.")
                    (equal (task-agent-definition-tools definition)
                           '("resource.read"))
-                   (task-agent-definition-blocking-p definition)
                    (eq (task-agent-definition-source definition) :project)
                    (equal (task-agent-definition-pathname definition)
                           pathname))
@@ -455,7 +453,7 @@
                       (every
                        (lambda (field) (field-present-p allowed field))
                          '(:description :source :pathname :models
-                           :reasoning-effort :tools :spawns :blocking-p))
+                           :reasoning-effort :tools :spawns))
                       "role discovery exposes stable policy and source fields")
                      (test-assert
                       (and (not (field-present-p allowed :instructions))

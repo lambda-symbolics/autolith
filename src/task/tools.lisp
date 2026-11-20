@@ -40,42 +40,6 @@
     (t
      nil)))
 
-(-> task--json-boolean (t string) boolean)
-(defun task--json-boolean (value field)
-  "Return JSON boolean VALUE or reject FIELD's non-boolean value."
-  (cond
-    ((eq value t)
-     t)
-    ((json-false-p value)
-     nil)
-    (t
-     (error 'task-error
-            :message   (format nil "Task field ~S must be a boolean." field)
-            :tool-name "child.spawn"))))
-
-(-> task--blocking-policy (json-object (option boolean) string) boolean)
-(defun task--blocking-policy (object inherited-p location)
-  "Return OBJECT's explicit blocking policy or inherited INHERITED-P.
-
-The primary blocking field and legacy inverse async field are mutually exclusive."
-  (multiple-value-bind (blocking blocking-present-p)
-      (gethash "blocking" object)
-    (multiple-value-bind (async async-present-p)
-        (gethash "async" object)
-      (when (and blocking-present-p async-present-p)
-        (error 'task-error
-               :message
-               (format nil "child.spawn cannot combine blocking and async in ~A."
-                       location)
-               :tool-name "child.spawn"))
-      (cond
-        (blocking-present-p
-         (task--json-boolean blocking "blocking"))
-        (async-present-p
-         (not (task--json-boolean async "async")))
-        (t
-         (and inherited-p t))))))
-
 (-> task--validate-json-fields (json-object list string) null)
 (defun task--validate-json-fields (object allowed-fields location)
   "Reject fields outside ALLOWED-FIELDS in task JSON OBJECT at LOCATION."
@@ -89,25 +53,22 @@ The primary blocking field and legacy inverse async field are mutually exclusive
   nil)
 
 (-> task--normalize-item
-    (t &key (:shared-context (option string)) (:top-blocking-p boolean)
-       (:top-completion-policy keyword))
+    (t &key (:shared-context (option string)) (:top-completion-policy keyword))
     list)
 (defun task--normalize-item
-    (object &key shared-context top-blocking-p (top-completion-policy ':continue))
+    (object &key shared-context (top-completion-policy ':continue))
   "Validate and normalize one flat task OBJECT."
   (unless (json-object-p object)
     (error 'task-error :message "Every tasks item must be a JSON object."
            :tool-name           "child.spawn"))
   (task--validate-json-fields
-   object '("name" "agent" "task" "context" "blocking" "async" "isolation"
+   object '("name" "agent" "task" "context" "isolation"
             "completion-policy")
    "a task item")
   (let ((task    (task--repair-prose (json-get object "task")))
         (name    (json-get object "name"))
         (agent   (or (json-get object "agent") "task"))
-        (context (task--repair-prose (json-get object "context")))
-        (blocking-p
-          (task--blocking-policy object top-blocking-p "a task item")))
+        (context (task--repair-prose (json-get object "context"))))
     (unless (non-empty-string-p task)
       (error 'task-error :message
              "Every child requires a non-empty task assignment." :tool-name
@@ -136,29 +97,18 @@ The primary blocking field and legacy inverse async field are mutually exclusive
           :task      task
           :context   (task--combine-context shared-context context)
           :isolation (task-worktree-normalize-options (json-get object "isolation"))
-          :blocking  blocking-p
           :completion-policy
           (tool-completion-policy-argument
-           object :tool-name "child.spawn" :default top-completion-policy)
-          :async     (not blocking-p))))
+           object :tool-name "child.spawn" :default top-completion-policy))))
 
-(-> task-normalize-arguments (hash-table &key (:definitions list)) list)
-(defun task-normalize-arguments (arguments &key definitions)
+(-> task-normalize-arguments (hash-table) list)
+(defun task-normalize-arguments (arguments)
   "Return the validated single child description shared by execution and presentation."
   (task--validate-json-fields
-   arguments '("name" "agent" "task" "context" "blocking" "async" "isolation"
-               "completion-policy")
+   arguments '("name" "agent" "task" "context" "isolation" "completion-policy")
    "the top-level call")
-  (let* ((item (task--normalize-item arguments))
-         (definition
-           (task-find-agent-definition definitions (getf item :agent))))
-    (list (append item
-                  (list :index 1
-                        :mode (if (or (getf item :blocking)
-                                      (and definition
-                                           (task-agent-definition-blocking-p definition)))
-                                  ':synchronous
-                                  ':detached))))))
+  (list (append (task--normalize-item arguments)
+                (list :index 1 :mode ':detached))))
 
 (-> task--resolve-items
     (agent task-orchestrator list
@@ -890,8 +840,7 @@ poll a job whose completion will wake it."
          (task-agent-definition-tools definition))
         :spawns
         (task--agent-policy-presentation
-         (task-agent-definition-spawns definition))
-        :blocking-p (and (task-agent-definition-blocking-p definition) t)))
+        (task-agent-definition-spawns definition))))
 
 (-> task--agent-diagnostic-native-record (condition) list)
 (defun task--agent-diagnostic-native-record (diagnostic)
@@ -1000,16 +949,8 @@ poll a job whose completion will wake it."
                    :jobs        selected)))
       (values form (task--write-readable-sexp form :pretty-p t)))))
 
-(-> task-run--cancel-synchronous-jobs (list) null)
-(defun task-run--cancel-synchronous-jobs (jobs)
-  "Cancel unfinished synchronous JOBS after child.spawn exits non-locally."
-  (dolist (job jobs)
-    (unless (task-job-detached-p job)
-      (task-job-cancel job :signal)))
-  nil)
-
 (defmethod tool-execute ((tool task-run-tool) (context tool-context) arguments)
-  "Validate, fan out, and aggregate synchronous and detached child agents."
+  "Validate, admit, and detach one child agent."
   (let ((parent (tool-context-agent context)))
     (unless (typep parent 'agent)
       (error 'task-error :message
@@ -1019,65 +960,40 @@ poll a job whose completion will wake it."
         (task-discover-agents (agent-configuration parent))
       (let* ((orchestrator
               (task-orchestrator-refresh (task-run-tool-orchestrator tool)))
-             (items       (task-normalize-arguments arguments :definitions definitions))
+             (items (task-normalize-arguments arguments))
              (resolved
               (task--resolve-items
                parent orchestrator definitions
                :items       items
                :diagnostics diagnostics
                :registry    (agent-tool-registry parent)))
-             (jobs        nil)
-             (synchronous nil)
-             (completed-p nil))
-        (unwind-protect
-           (progn
-             (multiple-value-bind (admitted inline)
-                 (task-orchestrator-start-jobs
-                  orchestrator
-                  parent
-                  resolved
-                  :parent-call-id (tool-context-call-id context)
-                  :command-authorization-function
-                  (tool-context-command-authorization-function context)
-                  :tool-authorization-function
-                  (tool-context-tool-authorization-function context))
-               (setf jobs admitted
-                     synchronous
-                     (remove-if #'task-job-detached-p admitted))
-               (dolist (job inline)
-                 (job-run-inline job)))
-             (dolist (job synchronous) (task-job-await job nil))
-             (let* ((snapshots (mapcar #'task-job-snapshot jobs))
-                    (synchronous-snapshots
-                      (remove-if
-                       (lambda (snapshot) (getf snapshot :detached))
-                       snapshots))
-                    (success-p
-                      (every
-                       (lambda (snapshot)
-                         (eq (getf (getf snapshot :result) :status) :success))
-                       synchronous-snapshots))
-                    (duration
-                     (if jobs
-                         (task--milliseconds-between
-                          (reduce #'min jobs :key #'job-created-at)
-                          (get-internal-real-time))
-                         0))
-                    (artifact-root
-                      (namestring
-                       (task--artifact-group-root
-                        (agent-configuration parent)
-                        (task-parent-root-conversation-identifier parent)))))
-               (multiple-value-bind (form content)
-                   (task--task-run-native-form
-                    jobs snapshots
-                    :duration-milliseconds duration
-                    :artifact-root         artifact-root
-                    :success-p             success-p)
-                 (setf completed-p t)
-                 (task-tool-result content form :success-p success-p))))
-           (unless completed-p
-             (task-run--cancel-synchronous-jobs jobs)))))))
+             (jobs
+              (task-orchestrator-start-jobs
+               orchestrator parent resolved
+               :parent-call-id (tool-context-call-id context)
+               :command-authorization-function
+               (tool-context-command-authorization-function context)
+               :tool-authorization-function
+               (tool-context-tool-authorization-function context)))
+             (snapshots (mapcar #'task-job-snapshot jobs))
+             (duration
+              (if jobs
+                  (task--milliseconds-between
+                   (reduce #'min jobs :key #'job-created-at)
+                   (get-internal-real-time))
+                  0))
+             (artifact-root
+              (namestring
+               (task--artifact-group-root
+                (agent-configuration parent)
+                (task-parent-root-conversation-identifier parent)))))
+        (multiple-value-bind (form content)
+            (task--task-run-native-form
+             jobs snapshots
+             :duration-milliseconds duration
+             :artifact-root         artifact-root
+             :success-p             t)
+          (task-tool-result content form))))))
 
 (defmethod tool-execute
     ((tool task-agents-tool) (context tool-context) arguments)
@@ -1274,11 +1190,7 @@ poll a job whose completion will wake it."
     "task" (tool-string-property "Self-contained child assignment.")
     "context" (tool-string-property "Optional background for this child.")
     "isolation" (task-worktree-options-schema)
-    "blocking" (tool-boolean-property
-                 "Wait for this child instead of detaching it; defaults to false.")
-    "completion-policy" (tool-completion-policy-property)
-    "async" (tool-boolean-property
-              "Compatibility inverse: true detaches and false blocks; cannot combine with blocking."))
+    "completion-policy" (tool-completion-policy-property))
    nil))
 
 (-> task-agents-parameters-schema () hash-table)
@@ -1327,7 +1239,7 @@ poll a job whose completion will wake it."
                             (make-instance 'task-run-tool :orchestrator
                                            orchestrator :namespace "child" :name
                                            "spawn" :description
-                                           "Spawn a real in-process child agent or a concurrency-limited batch. Non-blocking roles detach by default; set blocking to wait. Children have explicit identities, restricted tools, recursion policy, progress, artifacts, and a required yield protocol."
+                                          "Spawn one detached in-process child agent with explicit identity, restricted tools, recursion policy, progress, and artifacts."
                                            :parameters
                                            (task-run-parameters-schema)))
     (tool-registry-register registry

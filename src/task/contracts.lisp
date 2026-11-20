@@ -87,7 +87,7 @@
 
 (defparameter *task-agent-definition-fields*
   '(:name :description :instructions :tools :spawns :models
-    :reasoning-effort :blocking-p)
+    :reasoning-effort)
   "The complete native child-role plist vocabulary.")
 
 (defparameter *task-forbidden-child-tool-namespaces*
@@ -100,7 +100,7 @@
 
 (defparameter *task-agent-native-keyword-names*
   '("name" "description" "instructions" "tools" "spawns" "models"
-    "reasoning-effort" "blocking-p" "type" "enum" "properties"
+    "reasoning-effort" "type" "enum" "properties"
     "required" "additional-properties" "items" "min-items" "max-items"
     "all" "auto" "object" "array" "string" "number" "integer" "boolean"
     "null")

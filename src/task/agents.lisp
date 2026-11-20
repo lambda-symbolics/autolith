@@ -42,12 +42,6 @@
     :reader        task-agent-definition-reasoning-effort
     :type          (option keyword)
     :documentation "The optional child reasoning effort or :AUTO sentinel.")
-   (blocking-p
-    :initarg       :blocking-p
-    :initform      nil
-    :reader        task-agent-definition-blocking-p
-    :type          boolean
-    :documentation "True when this agent must complete inline even in async mode.")
    (source
     :initarg       :source
     :reader        task-agent-definition-source
@@ -254,11 +248,11 @@
 (-> task-agent-definition-create
     (&key (:name t) (:description t) (:instructions t) (:tools t)
           (:spawns t) (:models t) (:reasoning-effort t)
-          (:blocking-p t) (:source keyword) (:pathname (option pathname)))
+          (:source keyword) (:pathname (option pathname)))
     task-agent-definition)
 (defun task-agent-definition-create
     (&key name description instructions tools spawns models reasoning-effort
-          blocking-p (source :programmatic) pathname)
+          (source :programmatic) pathname)
   "Create and fully validate one native child-agent definition."
   (let ((normalized-name
           (and (stringp name) (string-downcase name)))
@@ -285,11 +279,6 @@
        :pathname pathname :source source :field ':instructions
        :cause           "The instructions must be non-empty and within their character bound."
        :definition-name normalized-name))
-    (unless (typep blocking-p 'boolean)
-      (task-agent-definition--error
-       :pathname pathname :source source :field ':blocking-p
-       :cause           ":BLOCKING-P must be T or NIL."
-       :definition-name normalized-name))
     (make-instance
      'task-agent-definition
      :name         normalized-name
@@ -312,7 +301,6 @@
       reasoning-effort
       :pathname pathname :source source
       :definition-name normalized-name)
-     :blocking-p   blocking-p
      :source       source
      :pathname     pathname)))
 
@@ -347,7 +335,6 @@
     :spawns           '("scout")
     :models           '("@slow")
     :reasoning-effort ':high
-    :blocking-p       t
     :source           ':bundled)
    (task-agent-definition-create
     :name             "librarian"
@@ -502,7 +489,6 @@ walking, cycle detection, node limits, and string limits stay in sexp-config."
      :spawns           (rest (assoc :spawns pairs :test #'eq))
      :models           (rest (assoc :models pairs :test #'eq))
      :reasoning-effort (rest (assoc :reasoning-effort pairs :test #'eq))
-     :blocking-p       (rest (assoc :blocking-p pairs :test #'eq))
      :source           source
      :pathname         pathname)))
 

@@ -229,61 +229,7 @@
                                (json-object "task" "Inspect the parser."
                                             "agent" "SCOUT")))))
              (test-assert (string= (getf item :agent) "scout")
-                          "task normalization canonicalizes agent names")
-             (test-assert (and (getf item :async)
-                               (null (getf item :blocking)))
-                          "task normalization detaches children by default"))
-           (let ((item (first (task-normalize-arguments
-                               (json-object "task" "Stay synchronous."
-                                            "blocking" t)))))
-             (test-assert (and (getf item :blocking)
-                               (null (getf item :async)))
-                          "task blocking is an explicit opt-in"))
-           (let ((item (first (task-normalize-arguments
-                               (json-object "task" "Use legacy blocking."
-                                            "async" (json-false))))))
-             (test-assert (and (getf item :blocking)
-                               (null (getf item :async)))
-                          "legacy JSON false remains a blocking override"))
-           (let* ((registry
-                    (task-augment-tool-registry
-                     (make-default-tool-registry)))
-                  (conversation
-                    (conversation-create
-                     configuration :identifier "task-null-dispatch"))
-                  (parent
-                    (agent-create
-                     :configuration configuration
-                     :provider      (make-instance 'model-provider)
-                     :conversation  conversation
-                     :tool-registry registry
-                     :worker        nil))
-                  (context
-                    (make-instance 'tool-context
-                                   :configuration configuration
-                                   :worker        nil
-                                   :conversation  conversation
-                                   :registry      registry
-                                   :agent         parent))
-                  (tool
-                    (tool-registry-find registry "child" "spawn"))
-                  (orchestrator (task-run-tool-orchestrator tool)))
-             (unwind-protect
-                  (let ((result
-                          (tool-registry-execute-call
-                           registry
-                           (json-object
-                            "namespace" "child"
-                            "name" "spawn"
-                            "arguments"
-                            "{\"task\":\"Reject null async.\",\"async\":null}")
-                           context)))
-                    (test-assert
-                     (and (not (tool-result-success-p result))
-                          (null
-                           (task-orchestrator-list-jobs orchestrator)))
-                     "registry child.spawn decoding rejects JSON null before job admission"))
-               (tool-registry-close-runtime-state registry)))
+                          "task normalization canonicalizes agent names"))
            (test-assert
             (handler-case
                 (progn
@@ -293,25 +239,6 @@
                   nil)
               (task-error () t))
             "task normalization rejects the removed isolated field")
-           (test-assert
-            (handler-case
-                (progn
-                  (task-normalize-arguments
-                   (json-object "task" "Reject bad booleans."
-                                "async" "false"))
-                  nil)
-              (task-error () t))
-            "task normalization rejects non-boolean async values")
-           (test-assert
-            (handler-case
-                (progn
-                  (task-normalize-arguments
-                   (json-object "task" "Reject conflicting policy."
-                                "blocking" t
-                                "async" t))
-                  nil)
-              (task-error () t))
-            "task normalization rejects combined blocking and async fields")
            (let* ((agent-directory (merge-pathnames ".autolith/agents/" root))
                   (agent-path      (merge-pathnames "scout.sexp" agent-directory))
                   (project-configuration

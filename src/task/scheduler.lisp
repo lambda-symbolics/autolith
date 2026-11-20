@@ -127,9 +127,7 @@
           (task--compact-native-value
            (task-agent-definition-models definition) 1000)
           :reasoning-effort
-          (task-agent-definition-reasoning-effort definition)
-          :blocking-p
-          (and (task-agent-definition-blocking-p definition) t))))
+          (task-agent-definition-reasoning-effort definition))))
 
 (-> task-job--lifecycle-event (task-job keyword list) list)
 (defun task-job--lifecycle-event (job state result)

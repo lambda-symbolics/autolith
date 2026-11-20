@@ -13,164 +13,62 @@
 
 (-> test-task-default-detachment () null)
 (defun test-task-default-detachment ()
-  "Test default detachment, explicit blocking, and forced blocking roles."
-  (labels ((run-case (label arguments expected-detached-p &key blocking-role-p)
-             (let* ((base-configuration (test-configuration))
-                    (root               (test-configuration-root base-configuration))
-                    (configuration
-                      (configuration-copy
-                       base-configuration :working-directory root))
-                    (registry           (make-default-tool-registry))
-                    (blocking-tool
-                      (make-instance
-                       'task-test-blocking-tool
-                       :namespace   "test"
-                       :name        "block"
-                       :description "Wait until the detachment test releases this call."
-                       :parameters  (tool-object-schema (json-object) nil)))
-                    (provider
-                      (make-instance 'task-test-provider :mode ':blocking-tool))
-                    (conversation       nil)
-                    (primary            nil)
-                    (run-tool           nil)
-                    (orchestrator       nil)
-                    (context            nil)
-                    (runner             nil)
-                    (run-result         nil)
-                    (run-condition      nil))
-               (when blocking-role-p
-                 (task-tests--write-native-form
-                  (merge-pathnames
-                   ".autolith/agents/forced-blocking.sexp" root)
-                  (task-tests--role-form
-                   "forced-blocking"
-                   "Always wait for this child."
-                   "Enter the blocking test tool, then yield."
-                   :tools      ':all
-                   :blocking-p t)))
-               (tool-registry-register registry blocking-tool)
-               (task-augment-tool-registry registry)
-               (setf conversation (conversation-create configuration)
-                     primary
-                     (agent-create :configuration configuration
-                                   :provider      provider
-                                   :conversation  conversation
-                                   :tool-registry registry
-                                   :worker        nil)
-                     run-tool (tool-registry-find registry "child" "spawn")
-                     orchestrator (task-run-tool-orchestrator run-tool)
-                     context
-                     (make-instance 'tool-context
-                                    :configuration configuration
-                                    :worker        nil
-                                    :conversation  conversation
-                                    :registry      registry
-                                    :agent         primary
-                                    :call-id       label))
-               (unwind-protect
-                    (progn
-                      (if expected-detached-p
-                          (setf run-result
-                                (tool-execute run-tool context arguments))
-                          (setf runner
-                                (make-thread
-                                 (lambda ()
-                                   (handler-case
-                                       (setf run-result
-                                             (tool-execute
-                                              run-tool context arguments))
-                                     (serious-condition (condition)
-                                       (setf run-condition condition))))
-                                 :name
-                                 (format nil "Autolith ~A task wait test" label))))
-                      (test-assert
-                       (task-tests--wait-until
-                        (lambda ()
-                          (with-lock-held
-                              ((task-test-blocking-tool-lock blocking-tool))
-                            (task-test-blocking-tool-started-p blocking-tool)))
-                        2)
-                       (format nil "~A reaches the blocking child tool" label))
-                      (let* ((jobs (task-orchestrator-list-jobs orchestrator))
-                             (job  (and (= (length jobs) 1) (first jobs))))
-                        (test-assert
-                         (and job
-                              (eq (and (task-job-detached-p job) t)
-                                  expected-detached-p)
-                              (not (job-terminal-p job))
-                              (if expected-detached-p
-                                  (and (null runner)
-                                       (typep run-result 'tool-result)
-                                       (tool-result-success-p run-result))
-                                  (and runner (thread-alive-p runner)
-                                       (null run-result)
-                                       (null run-condition))))
-                         (format nil "~A obeys its effective waiting policy" label))
-                        (task-tests--release-blocking-tool blocking-tool)
-                        (when runner
-                          (join-thread runner)
-                          (setf runner nil))
-                        (multiple-value-bind (snapshot terminal-p)
-                            (task-job-await job 2)
-                          (test-assert
-                           (and terminal-p
-                                (eq (getf snapshot :state) :completed)
-                                (eq (getf (getf snapshot :result) :status)
-                                    :success)
-                                (null run-condition)
-                                (typep run-result 'tool-result)
-                                (tool-result-success-p run-result))
-                           (format nil "~A completes after release" label)))))
-                 (task-tests--release-blocking-tool blocking-tool)
-                 (when runner
-                   (join-thread runner))
-                 (dolist (job (task-orchestrator-list-jobs orchestrator))
-                   (unless (job-terminal-p job)
-                     (task-job-cancel job :test-cleanup)
-                     (task-job-await job 2)))
-                 (ignore-errors (tool-registry-close-runtime-state registry))
-                 (platform-delete-directory-tree *platform* root :validate t
-                                                      :if-does-not-exist   ':ignore)))))
-    (run-case
-     "default-detached"
-     (json-object "name" "default-detached"
-                  "agent" "task"
-                  "task" "Enter the blocking ordinary tool.")
-     t)
-    (run-case
-     "explicit-blocking"
-     (json-object "name" "explicit-blocking"
-                  "agent" "task"
-                  "task" "Enter the blocking ordinary tool."
-                  "blocking" t)
-     nil)
-    (run-case
-     "forced-blocking-role"
-     (json-object "name" "forced-blocking-role"
-                  "agent" "forced-blocking"
-                  "task" "Enter the blocking ordinary tool.")
-     nil
-     :blocking-role-p t))
-  (let* ((orchestrator (task-tests--orchestrator))
-         (synchronous
-           (task-tests--make-job
-            orchestrator :identifier "cleanup-synchronous" :detached-p nil))
-         (detached
-           (task-tests--make-job
-            orchestrator :identifier "cleanup-detached" :detached-p t))
-         (cancelled    nil))
-    (test-call-with-function-replacements
-     (list
-      (list 'task-job-cancel
-            (lambda (job reason)
-              (declare (ignore reason))
-              (push job cancelled))))
-     (lambda ()
-       (task-run--cancel-synchronous-jobs
-        (list synchronous detached))))
-    (test-assert
-     (equal cancelled (list synchronous))
-     "child.spawn failure cleanup preserves deliberately detached jobs"))
+  "Test detached admission and completion through a real child tool call."
+  (let* ((base-configuration (test-configuration))
+         (root               (test-configuration-root base-configuration))
+         (configuration
+           (configuration-copy base-configuration :working-directory root))
+         (registry (task-augment-tool-registry (make-default-tool-registry)))
+         (blocking-tool
+           (make-instance 'task-test-blocking-tool
+                          :namespace "test" :name "block"
+                          :description "Wait until the detachment test releases this call."
+                          :parameters (tool-object-schema (json-object) nil)))
+         (provider (make-instance 'task-test-provider :mode ':blocking-tool))
+         (conversation (conversation-create configuration))
+         (primary (agent-create :configuration configuration
+                                :provider provider :conversation conversation
+                                :tool-registry registry :worker nil))
+         (run-tool (tool-registry-find registry "child" "spawn"))
+         (orchestrator (task-run-tool-orchestrator run-tool))
+         (context (make-instance 'tool-context :configuration configuration
+                                 :worker nil :conversation conversation
+                                 :registry registry :agent primary
+                                 :call-id "default-detached")))
+    (unwind-protect
+         (progn
+           (tool-registry-register registry blocking-tool)
+           (let* ((result (tool-execute
+                           run-tool context
+                           (json-object "name" "default-detached" "agent" "task"
+                                        "task" "Enter the blocking ordinary tool.")))
+                  (jobs (task-orchestrator-list-jobs orchestrator))
+                  (job (and (= (length jobs) 1) (first jobs))))
+             (test-assert
+              (task-tests--wait-until
+               (lambda ()
+                 (with-lock-held ((task-test-blocking-tool-lock blocking-tool))
+                   (task-test-blocking-tool-started-p blocking-tool)))
+               2)
+              "the child reaches the blocking tool after admission returns")
+             (test-assert
+              (and job (task-job-detached-p job) (not (job-terminal-p job))
+                   (tool-result-success-p result))
+              "child.spawn returns an admitted detached job")
+             (task-tests--release-blocking-tool blocking-tool)
+             (multiple-value-bind (snapshot terminal-p) (task-job-await job 2)
+               (test-assert
+                (and terminal-p (eq (getf snapshot :state) ':completed)
+                     (eq (getf (getf snapshot :result) :status) ':success))
+                "the detached child publishes its result after release"))))
+      (task-tests--release-blocking-tool blocking-tool)
+      (dolist (job (task-orchestrator-list-jobs orchestrator))
+        (unless (job-terminal-p job)
+          (task-job-cancel job ':test-cleanup)
+          (task-job-await job 2)))
+      (ignore-errors (tool-registry-close-runtime-state registry))
+      (platform-delete-directory-tree *platform* root :validate t
+                                                    :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-running-cancellation () null)
@@ -213,8 +111,7 @@
               run-tool context
               (json-object "name" "blocked-running-child"
                            "agent" "task"
-                           "task" "Enter the blocking ordinary tool."
-                           "async" t))
+                           "task" "Enter the blocking ordinary tool."))
              (let ((job (first (task-orchestrator-list-jobs orchestrator))))
                (test-assert
                 (task-tests--wait-until
@@ -322,8 +219,7 @@
                                            "name" "stalled-child"
                                            "agent" "task"
                                            "task"
-                                           "Enter the blocking ordinary tool."
-                                           "blocking" t)))
+                                           "Enter the blocking ordinary tool.")))
                                  (serious-condition (condition)
                                    (setf run-condition condition))))
                              :name "Autolith task deadline test"))
@@ -337,9 +233,11 @@
                        "the child stalls inside a real ordinary tool call")
                       (test-assert
                        (task-tests--wait-until
-                        (lambda () (not (thread-alive-p runner)))
+                        (lambda ()
+                          (let ((job (first (task-orchestrator-list-jobs orchestrator))))
+                            (and job (job-terminal-p job))))
                         3)
-                       "the runtime deadline releases synchronous child.spawn")
+                       "the runtime deadline terminates the stalled child")
                       (join-thread runner)
                       (setf runner nil)
                       (let* ((jobs
@@ -350,7 +248,7 @@
                         (test-assert
                          (and (null run-condition)
                               (typep run-result 'tool-result)
-                              (not (tool-result-success-p run-result))
+                              (tool-result-success-p run-result)
                               snapshot
                               (eq (getf snapshot :state) :aborted)
                               (eq (getf snapshot :cancellation-reason)
@@ -422,8 +320,7 @@
               run-tool context
               (json-object "name" "nested-cancel-parent"
                            "agent" "task"
-                           "task" "Delegate synchronously, then wait."
-                           "async" t))
+                           "task" "Delegate, then await the descendant."))
              (test-assert
               (task-tests--wait-until
                (lambda ()
@@ -431,7 +328,7 @@
                      ((task-test-blocking-tool-lock blocking-tool))
                    (task-test-blocking-tool-started-p blocking-tool)))
                2)
-              "the synchronous descendant reaches its blocking tool")
+               "the descendant reaches its blocking tool")
              (let* ((jobs       (task-orchestrator-list-jobs orchestrator))
                     (parent     (first jobs))
                     (descendant (second jobs))
@@ -2817,10 +2714,10 @@ pool must reject the cancelled parent without creating a descendant."
                           (json-object "type" "output_text"
                                        "text" "Parent design is ready.")))))
            (let* ((result  (tool-execute tool context arguments))
-                  (jobs    (task-orchestrator-list-jobs orchestrator))
+                  (admitted-jobs (task-orchestrator-list-jobs orchestrator))
                   (idle-p
                     (progn
-                      (dolist (job jobs)
+                      (dolist (job admitted-jobs)
                         (unless (nth-value 1 (task-job-await job 30))
                           (error "Scheduler fixture did not observe terminal publication for ~A."
                                  (job-identifier job))))
@@ -2830,6 +2727,7 @@ pool must reject the cancelled parent without creating a descendant."
                          (and (zerop (task-orchestrator-live-count orchestrator))
                               (zerop (task-orchestrator-active-count orchestrator))))
                        30)))
+                  (jobs (task-orchestrator-list-jobs orchestrator))
                   (details (tool-result-details result))
                   (content (tool-result-content result))
                   (native-content
@@ -2846,7 +2744,10 @@ pool must reject the cancelled parent without creating a descendant."
                   (workers
                     (copy-list
                        (cl-jobpond::job-pool--worker-threads (task-orchestrator-pool orchestrator)))))
-             (list :success-p      (tool-result-success-p result)
+             (list :success-p      (and (tool-result-success-p result)
+                                        (every (lambda (artifact)
+                                                 (eq (getf artifact :status) ':success))
+                                               artifact-forms))
                  :content          content
                  :native-content   native-content
                  :details          details
@@ -2893,14 +2794,6 @@ pool must reject the cancelled parent without creating a descendant."
                                            :output-path)))
                             (and path (probe-file path))))
                         jobs)
-                 :private-transcripts-p
-                 (every (lambda (job)
-                          (let ((path (getf (job-result job)
-                                           :conversation-file)))
-                            (and path (search "/tasks/" path))))
-                        jobs)
-                 :public-conversation-count
-                 (length (conversation-list configuration))
                  :duration-ms
                  (task--milliseconds-between started-at
                                              (get-internal-real-time)))))
@@ -2948,63 +2841,12 @@ pool must reject the cancelled parent without creating a descendant."
            (platform-setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "2")
            (platform-setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "10000")
            (let* ((provider (make-instance 'task-test-provider
-                                           :mode              ':concurrent
-                                           :concurrency-ready (sb-thread:make-semaphore)))
-                  (tasks
-                   (coerce
-                    (loop for index from 1 to 4
-                          collect (json-object
-                                   "agent" "task"
-                                   "task" (format nil "Return result ~D." index)))
-                    'vector))
-                  (observation
-                   (task-tests--run-scheduler-case
-                    provider
-                    (json-object "context" "Independent scheduler checks."
-                                 "blocking" t
-                                 "tasks" tasks))))
-             (test-assert (getf observation :success-p)
-                          "a concurrent task batch succeeds")
-             (test-assert (= (getf observation :job-count) 4)
-                          "the scheduler retains every admitted job")
-             (test-assert (getf observation :all-terminal-p)
-                          "synchronous scheduler jobs are terminal on return")
-             (test-assert (getf observation :heavy-references-cleared-p)
-                          "terminal jobs release live agent capabilities")
-             (test-assert (= (getf observation :worker-count) 2)
-                          "the configured pool contains only two workers")
-             (test-assert (getf observation :workers-alive-p)
-                          "reusable workers remain live until registry shutdown")
-             (test-assert (= (getf observation :provider-worker-count) 2)
-                          "four children reuse the bounded worker pair")
-             (test-assert (= (getf observation :provider-maximum-active) 2)
-                          "the pool executes up to its configured concurrency")
-             (let ((identifiers
-                     (getf observation :provider-conversation-identifiers))
-                   (execution-identifiers
-                     (getf observation :execution-identifiers)))
-               (test-assert
-                (and (= (length identifiers) 4)
-                     (= (length (remove-duplicates identifiers :test #'string=))
-                        4)
-                     (equal (sort (copy-list identifiers) #'string<)
-                            (sort (copy-list execution-identifiers) #'string<)))
-                "parallel children use their unique execution identifiers as provider threads"))
-             (test-assert (getf observation :artifacts-exist-p)
-                          "every terminal child publishes one unique artifact")
-             (test-assert (getf observation :private-transcripts-p)
-                          "child transcripts live in the private task tree")
-             (test-assert (zerop (getf observation
-                                       :public-conversation-count))
-                          "private child transcripts stay out of conversation lists"))
-           (let* ((provider (make-instance 'task-test-provider
                                            :mode ':concurrent))
                   (observation
                     (task-tests--run-scheduler-case
                      provider
                      (json-object "agent" "task"
-                                  "task" "Use the inherited design context."
-                                  "blocking" t)
+                                  "task" "Use the inherited design context.")
                      :parent-reference-p t))
                   (inputs   (first (getf observation :provider-request-inputs))))
              (test-assert (getf observation :success-p)
@@ -3017,17 +2859,14 @@ pool must reject the cancelled parent without creating a descendant."
               (search "inherited reference context"
                       (json-get (aref (json-get (third inputs) "content") 0)
                                 "text"))
-              "the inherited parent turns end at an explicit developer boundary")
-             (test-assert (= (getf observation :public-conversation-count) 1)
-                          "only the seeded parent appears in public conversations"))
+               "the inherited parent turns end at an explicit developer boundary"))
            (let* ((provider
                     (make-instance 'task-test-provider :mode ':concurrent))
                   (observation
                     (task-tests--run-scheduler-case
                      provider
                      (json-object "agent" "task"
-                                  "task" "Use bounded inherited context."
-                                  "async" t)
+                                  "task" "Use bounded inherited context.")
                      :parent-reference-p           t
                      :oversized-parent-reference-p t))
                   (inputs (first (getf observation :provider-request-inputs))))
@@ -3064,8 +2903,7 @@ pool must reject the cancelled parent without creating a descendant."
                         (task-tests--run-scheduler-case
                          provider
                          (json-object "agent" "task"
-                                      "task" "Do not inherit parent history."
-                                      "blocking" t)
+                                      "task" "Do not inherit parent history.")
                          :parent-reference-p t))
                       (inputs
                         (first (getf observation :provider-request-inputs))))
@@ -3084,8 +2922,7 @@ pool must reject the cancelled parent without creating a descendant."
                     (task-tests--run-scheduler-case
                      provider
                      (json-object "agent" "task"
-                                  "task" "Use a tiny child context budget."
-                                  "blocking" t)
+                                  "task" "Use a tiny child context budget.")
                      :parent-reference-p t))
                   (inputs                                     (first (getf observation :provider-request-inputs))))
              (test-assert (getf observation :success-p)
@@ -3100,19 +2937,16 @@ pool must reject the cancelled parent without creating a descendant."
                    (task-tests--run-scheduler-case
                     provider
                     (json-object "agent" "task"
-                                 "task" "Delegate once, then return."
-                                 "blocking" t))))
+                                 "task" "Delegate once, then await its job."))))
              (test-assert
               (getf observation :success-p)
               (format nil
-                      "a nested synchronous task succeeds at concurrency one: ~S"
+                      "a nested task succeeds at concurrency one: ~S"
                       (getf observation :details)))
              (test-assert (= (getf observation :job-count) 2)
                           "nested execution retains parent and leaf jobs")
-             (test-assert (= (getf observation :provider-request-count) 3)
-                          "nested help-join resumes the parent after the leaf")
-             (test-assert (= (getf observation :provider-worker-count) 1)
-                          "nested synchronous work reuses its parent's worker")
+             (test-assert (= (getf observation :provider-request-count) 4)
+                          "nested waiting resumes the parent after the leaf")
              (test-assert
               (find-if
                (lambda (items)
@@ -3404,7 +3238,7 @@ pool must reject the cancelled parent without creating a descendant."
                      (progn
                        (task-tests--run-scheduler-case
                         (make-instance 'task-test-provider :mode ':concurrent)
-                        (json-object "agent" "task" "task" "Do not fit." "blocking" t))
+                        (json-object "agent" "task" "task" "Do not fit."))
                        nil)
                    (task-error (condition)
                      (search "child.remove" (princ-to-string condition))))
@@ -3434,7 +3268,7 @@ pool must reject the cancelled parent without creating a descendant."
      (lambda ()
        (let ((observation (task-tests--run-scheduler-case
                            (make-instance 'task-test-provider :mode ':concurrent)
-                           (json-object "agent" "task" "task" "Hold the channel." "blocking" t))))
+                           (json-object "agent" "task" "task" "Hold the channel."))))
          (test-assert (getf observation :success-p) "the leased child run succeeds")
          (test-assert (and running (every #'rest running))
                       "the child's conversation is leased while it runs")

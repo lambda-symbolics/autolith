@@ -25,8 +25,7 @@
                            :|Mixed case| :|has space| 'application-lisp-render-value
                            '(1 . 2) '(a b (c . d))
                            '(:name "scout" :source :bundled :models ("@smol")
-                             :tools ("resource.read" "search.*" "web_search")
-                             :blocking-p nil)
+                             :tools ("resource.read" "search.*" "web_search"))
                            '(:outer (:first "value" :second (one two three))
                              :other "another value")))
         (let ((text (application-lisp-render-value value :columns columns)))
@@ -40,7 +39,7 @@
 (defun test-application-lisp-value-layout ()
   "Use structural line breaks and aligned fields within the supplied width."
   (let* ((value  '(:name "scout" :source :bundled :models ("@smol")
-                   :tools ("resource.read" "search.*" "web_search") :blocking-p nil))
+                   :tools ("resource.read" "search.*" "web_search")))
          (narrow (application-lisp-render-value value :columns 60))
          (wide   (application-lisp-render-value value :columns 120)))
     (test-assert (find #\Newline narrow)

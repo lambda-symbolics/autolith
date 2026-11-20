@@ -250,17 +250,27 @@
     ((provider task-test-provider)
      (conversation conversation)
      &key tool-namespaces event-callback goal-context compaction-p)
-  "Return a deterministic yield or nested task call for PROVIDER."
+  "Return a deterministic final response or nested task call for PROVIDER."
   (declare (ignore tool-namespaces goal-context compaction-p))
-  (let ((request-number nil))
+  (let* ((request-number nil)
+         (inputs (conversation-input-items-for-request conversation))
+         (spawn-output
+           (find-if (lambda (item)
+                      (and (equal (json-get item "type") "function_call_output")
+                           (equal (json-get item "call_id") "nested-task")))
+                    inputs))
+         (wait-output
+           (find-if (lambda (item)
+                      (and (equal (json-get item "type") "function_call_output")
+                           (equal (json-get item "call_id") "nested-wait")))
+                    inputs)))
     (with-lock-held ((task-test-provider-lock provider))
       (incf (task-test-provider-request-count provider))
       (incf (task-test-provider-active-count provider))
       (push (conversation-identifier conversation)
             (task-test-provider-conversation-identifiers provider))
       (push
-       (mapcar (lambda (item) (json-decode (json-encode item)))
-               (conversation-input-items-for-request conversation))
+       (mapcar (lambda (item) (json-decode (json-encode item))) inputs)
        (task-test-provider-request-inputs provider))
       (pushnew (current-thread) (task-test-provider-threads provider) :test #'eq)
       (setf request-number (task-test-provider-request-count provider)
@@ -295,33 +305,34 @@
                  :arguments
                  (json-encode
                   (json-object "agent" "task"
-                               "task" "Return the nested leaf result."
-                               "blocking" t))))
+                               "task" "Return the nested leaf result."))))
+               ((and spawn-output (not wait-output))
+                (let* ((form (read-one-form (json-get spawn-output "output")
+                                            :read-eval nil))
+                       (child (first (getf (rest form) :results))))
+                  (agent-test-call
+                   :call-id "nested-wait" :namespace "job" :name "wait"
+                   :arguments (json-encode
+                               (json-object "id" (getf child :id)
+                                            "timeout-seconds" 5)))))
                ((or (and (eq (task-test-provider-mode provider)
                              :blocking-tool)
                          (= request-number 1))
                     (and (eq (task-test-provider-mode provider)
                              :nested-cancel)
-                         (= request-number 2)))
+                         (not spawn-output)
+                         (not (find-if
+                               (lambda (item)
+                                 (and (equal (json-get item "type") "function_call_output")
+                                      (equal (json-get item "call_id") "blocking-tool")))
+                               inputs))))
                 (agent-test-call
                  :call-id   "blocking-tool"
                  :namespace "test"
                  :name      "block"
                  :arguments "{}"))
                (t
-                (agent-test-call
-                 :call-id   (format nil "yield-~D" request-number)
-                 :namespace "yield"
-                 :name      "submit"
-                 :arguments
-                 (json-encode
-                  (json-object
-                   "status" "success"
-                   "text"
-                   (if (and (eq (task-test-provider-mode provider) :manifest)
-                            (= request-number 1))
-                       (make-string 100000 :initial-element #\X)
-                       (format nil "result ~D" request-number))))))))))
+                (agent-test-message (format nil "result ~D" request-number)))))))
       (with-lock-held ((task-test-provider-lock provider))
         (decf (task-test-provider-active-count provider))))))
 

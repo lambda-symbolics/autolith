@@ -987,8 +987,7 @@
                                          :description      "All original fields."
                                          :pathname #P"roles/scout.md" :models ("@smol")
                                          :reasoning-effort :medium
-                                           :tools ("resource.read" "search.*") :spawns nil
-                                           :blocking-p nil))) nil)
+                                         :tools ("resource.read" "search.*") :spawns nil))) nil)
                       (list '(:goal :id "review" :objective "Retain native data"
                               :status :active :gates ((:id "output" :accepted-p nil))
                               :budget (:tokens 10000000 :calls 1000)) t)
@@ -1163,7 +1162,7 @@
       (unwind-protect
            (let* ((evaluation
                     (application-lisp-evaluate
-                     "(list :name \"scout\" :source :bundled :models '(\"@smol\") :tools '(\"resource.read\" \"search.*\" \"web_search\") :blocking-p nil)"
+                     "(list :name \"scout\" :source :bundled :models '(\"@smol\") :tools '(\"resource.read\" \"search.*\" \"web_search\"))"
                      :application application))
                   (text  (terminal--spans-text (application-lisp--result-entry evaluation)))
                   (lines (uiop:split-string text :separator '(#\Newline))))
@@ -1171,7 +1170,7 @@
                           "Breakable result rows and their prefix fit the terminal width.")
              (test-assert (equal (read-from-string (subseq text 2))
                                  '(:name "scout" :source :bundled :models ("@smol")
-                                   :tools ("resource.read" "search.*" "web_search") :blocking-p nil))
+                                 :tools ("resource.read" "search.*" "web_search")))
                           "Prefix-aware terminal layout preserves the displayed Lisp value."))
         (ignore-errors (terminal-ui-stop (application-ui application)))
         (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))

@@ -1199,9 +1199,7 @@ structural discriminator as a readable heading instead."
 (defun application--task-run-rows (application arguments)
   "Lay out the same normalized descriptions used to execute child.spawn."
   (handler-case
-      (let* ((definitions
-               (task-discover-agents (application-configuration application)))
-             (items (task-normalize-arguments arguments :definitions definitions)))
+      (let ((items (task-normalize-arguments arguments)))
         (if (application-compact-view-p application)
             (application--task-run-compact-item-rows application items)
             (loop for item in items
