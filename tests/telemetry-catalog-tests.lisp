@@ -363,11 +363,10 @@
 
 (-> test-model-catalog-process-deadline () null)
 (defun test-model-catalog-process-deadline ()
-  "Kill an actual catalog child after ten seconds, independent of upload settings."
+  "Kill an actual catalog child after its ten-second deadline."
   (test-telemetry--call
    (lambda (configuration)
-     (setf (config :telemetry-enabled-p configuration) t
-           (config :telemetry-timeout-ms configuration) 100)
+     (setf (config :telemetry-enabled-p configuration) t)
      (telemetry-attach configuration)
      (test-model-catalog--await *telemetry-controller*)
      (let ((original                     (symbol-function 'uiop:launch-program))

@@ -78,13 +78,3 @@
   :label "Redaction runtime library" :group :telemetry :scope :process
   :type '(or null pathname) :default nil
   :documentation                           "Optional explicit ONNX Runtime library; normally use immutable Nix defaults.")
-
-(define-setting :telemetry-timeout-ms (integer-setting)
-  :label "Telemetry deadline" :group :telemetry :scope :durable
-  :minimum 10 :maximum 10000 :default 3000
-  :documentation                      "Hard subprocess deadline for redaction or one background upload; also bounds clean-exit upload grace.")
-
-(define-setting :telemetry-queue-limit (integer-setting)
-  :label "Telemetry queue bound" :group :telemetry :scope :durable
-  :minimum 1 :maximum 512 :default 128
-  :documentation                       "Maximum in-memory spans; overflow discards the oldest spans.")

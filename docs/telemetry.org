@@ -312,8 +312,8 @@ response bodies and error diagnostics are discarded.
 
 * Runtime bounds
 
-=:telemetry-queue-limit= bounds the in-memory FIFO to 1 through 512 spans
-(default 128); overflow discards the oldest span. One background uploader batches
+The in-memory FIFO is bounded to 128 spans; overflow discards the oldest span.
+One background uploader batches
 completed model, tool, report and repair events every five seconds while their
 owning goal or turn remains active. Individual streamed tokens are not uploaded.
 The final root outcome and totals are queued only when the owning run finishes;
@@ -321,14 +321,14 @@ completion wakes the uploader immediately and never waits for the server.
 At most one upload snapshot is in flight in addition to the bounded pending FIFO.
 Failed snapshots are discarded without retries.
 
-=:telemetry-timeout-ms= bounds each native redaction
-operation and the complete upload (default 3000, maximum 10000 milliseconds).
+Each native redaction operation and complete upload has a 3000-millisecond
+deadline.
 Each operation uses a supervised one-shot SBCL subprocess, booted from the
 configured matching =:active-image-core=. The deadline supervisor terminates
 and reaps the process. Revocation terminates registered workers synchronously.
 Checkpoint quiescence also discards pending spans and joins the uploader before
 forking or saving. Clean process shutdown closes admissions and gives final
-uploads at most one configured deadline (three seconds by default) to finish,
+uploads at most three seconds to finish,
 then cancels and joins remaining work. Immediate shutdown with =:drain-p nil=
 skips that grace period. Revocation, checkpointing and replacement of the owning
 configuration cancel uploads instead of draining them.

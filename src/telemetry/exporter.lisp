@@ -91,9 +91,8 @@
                                               (remove-if (lambda (pair) (null (rest pair))) attributes))) 'vector))))
     (unless root-p (setf (gethash "parentSpanId" span) (telemetry-run-span-id run)))
     (unless (telemetry-controller-closing controller)
-      (let* ((queue (telemetry-controller-queue controller))
-             (limit (config :telemetry-queue-limit (telemetry-controller-owner controller))))
-        (when (>= (length queue) limit) (setf queue (rest queue)))
+      (let ((queue (telemetry-controller-queue controller)))
+        (when (>= (length queue) 128) (setf queue (rest queue)))
         (setf (telemetry-controller-queue controller) (nconc queue (list span)))
         (telemetry--schedule-upload controller)))
     span))
@@ -250,7 +249,7 @@
          record request
          :seconds  (if (eq (first request) ':catalog)
                        *model-catalog-request-seconds*
-                       (/ (config :telemetry-timeout-ms configuration) 1000))
+                       3)
          :start
          (lambda (install)
            ;; Admission, registration, and I/O thread installation share the

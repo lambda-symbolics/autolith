@@ -746,12 +746,11 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
 
 (-> test-telemetry-redaction-failures () null)
 (defun test-telemetry-redaction-failures ()
-  "Native failure drops text, preserves numerical events, and bounds queue overflow."
+  "Native failure drops diagnostic text without blocking event upload."
   (test-telemetry--call
    (lambda (configuration)
      (setf (config :telemetry-enabled-p configuration) t
-           (config :telemetry-diagnostics-p configuration) t
-           (config :telemetry-queue-limit configuration) 2)
+           (config :telemetry-diagnostics-p configuration) t)
      (telemetry-attach configuration)
      (let ((body nil) (redactions 0) (reads 0))
        (let ((*telemetry-process-function*
@@ -771,11 +770,9 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
             (telemetry-note-repair :target "self.redefine" :repair-kind "redefine_function" :outcome "failed"
                                    :summary-function (lambda () (incf reads) "private replacement")))))
        (test-assert (= reads redactions 2) "Each diagnostic goes through native redaction.")
-       (test-assert (= (length (test-telemetry--spans body)) 2) "Overflow retains only the bounded tail.")
        (test-assert (not (search "autolith.diagnostic.summary" body)) "Redactor failure never falls back to text.")
        (test-assert (not (search "private" body)) "Failed raw text never enters the queue.")
        (test-assert (null (telemetry-controller-queue *telemetry-controller*)) "Failed upload drops its snapshot."))
-     (setf (config :telemetry-queue-limit configuration) 128)
      (let ((body nil))
        (let ((*telemetry-process-function*
                (lambda (run request)
@@ -874,8 +871,7 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
                    "Unlisted parent environment values are not passed to children.")))
   (test-telemetry--call
    (lambda (configuration)
-     (setf (config :telemetry-enabled-p configuration) t
-           (config :telemetry-timeout-ms configuration) 100)
+     (setf (config :telemetry-enabled-p configuration) t)
      (telemetry-attach configuration)
      (let ((original                     (symbol-function 'uiop:launch-program))
            (ready-path                   (merge-pathnames "telemetry-stall.ready" (config :cache-root configuration)))
@@ -892,12 +888,11 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
           (let* ((run (telemetry--begin-run configuration)) (start (get-internal-real-time)))
             (test-assert (null (telemetry--process run '(:redact "fixture" "en" nil nil)))
                          "Hung child times out without unsafe native interruption.")
-            (test-assert (< (/ (- (get-internal-real-time) start) internal-time-units-per-second) 3)
+            (test-assert (< (/ (- (get-internal-real-time) start) internal-time-units-per-second) 5)
                          "Hard deadline returns within a bounded allowance.")
             (test-assert (probe-file ready-path)
                          (test-telemetry--stalled-child-diagnostic process ready-path))
             (test-assert (not (uiop:process-alive-p process)) "Timeout kills and reaps the child."))
-          (setf (config :telemetry-timeout-ms configuration) 5000)
           (let* ((run    (telemetry--begin-run configuration))
                  (thread (bt:make-thread (lambda () (telemetry--process run '(:redact "fixture" "en" nil nil)))
                                          :name "test inflight telemetry")))
@@ -917,8 +912,7 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
                    (test-assert (null (telemetry-controller-processes *telemetry-controller*)) "No live children after revocation."))
               (bt:join-thread thread)))))
        ;; Keep the real saved-core argv and retain controlled startup failures.
-       (setf (config :telemetry-enabled-p configuration) t
-             (config :telemetry-timeout-ms configuration) 10000)
+       (setf (config :telemetry-enabled-p configuration) t)
        (let ((run                          (telemetry--begin-run configuration))
              (*telemetry-process-function* nil)
              (stderr-path                  (merge-pathnames "worker-ping.stderr" (config :cache-root configuration)))
@@ -996,8 +990,7 @@ The caller owns termination. Keep startup stderr beside READY-PATH for failures.
     (test-telemetry--call
      (lambda (configuration)
        (setf (config :telemetry-enabled-p configuration) t
-             (config :telemetry-diagnostics-p configuration) t
-             (config :telemetry-timeout-ms configuration) 10000)
+             (config :telemetry-diagnostics-p configuration) t)
        (telemetry-attach configuration)
        (let ((body nil) (process-function (symbol-function 'telemetry--process)))
          (let ((*telemetry-process-function*

@@ -147,11 +147,10 @@
 
 (-> telemetry--drain-uploads (telemetry-controller) null)
 (defun telemetry--drain-uploads (controller)
-  "Close admissions and allow at most one configured upload deadline for clean exit."
+  "Close admissions and allow at most three seconds for clean-exit uploads."
   (let ((thread   nil)
         (deadline (+ (get-internal-real-time)
-                     (ceiling (* (config :telemetry-timeout-ms (telemetry-controller-owner controller))
-                                 internal-time-units-per-second) 1000))))
+                     (* 3 internal-time-units-per-second))))
     (bt:with-lock-held ((telemetry-controller-lock controller))
       (setf (telemetry-controller-closing controller) t
             (telemetry-controller-upload-now-p controller) t)
