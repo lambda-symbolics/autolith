@@ -633,7 +633,7 @@ Completion status persists until the next input or model turn starts.
 Input selectors report =blocked= with =kind=question=;
 command and tool approvals use =kind=permission=, and provider authentication
 uses =kind=auth=. These reports contain no prompt text or credentials. Reports
-use the interactive terminal transport in inline and fullscreen mode.
+use the interactive terminal transport.
 
 Root reports include the current conversation title. Autolith reports no
 records for child agents or background tool jobs; their progress stays in the
