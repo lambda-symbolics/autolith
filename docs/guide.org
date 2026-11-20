@@ -12,11 +12,12 @@ Launch Autolith from your terminal:
 autolith
 #+END_SRC
 
-An interactive =autolith= launch opens your home channel (=inbox=). In
-fullscreen mode, the Autolith mascot appears during loading if the boot screen
-is enabled. Use the sidebar to switch channels, or run =autolith open= to
-open the most recently touched top-level channel in the current workspace.
-Use =autolith open ID= to open a specific channel.
+An interactive =autolith= launch loads your home channel (=inbox=) on the
+world server. Fullscreen mode shows the mascot while it loads if the boot
+screen is enabled. Then the Autolith banner fills the transcript pane, with
+no channel selected. Select home or another channel in the sidebar, or run
+=autolith open= for the most recently touched top-level channel in the current
+workspace. Use =autolith open ID= to open a specific channel.
 
 If you haven't authenticated yet, follow the [[file:../README.org][README]] instructions.
 
@@ -1603,7 +1604,8 @@ Use a terminal for colored output; redirected output is plain text. Set
 *** Starting and switching channels
 
 One background server hosts your channels. An interactive =autolith= launch
-connects to it, starting the server if needed, and opens your inbox.
+starts it if needed and preloads your inbox there. The terminal shows the
+Autolith banner until you select a channel in the sidebar.
 =autolith open= opens the top-level channel in the current workspace whose
 conversation file changed last, or creates one if the workspace has none.
 Use =autolith open TARGET= to open a specific channel. If another terminal

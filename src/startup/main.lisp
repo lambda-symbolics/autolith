@@ -1058,7 +1058,7 @@ state, including an empty list after successful or pristine startup."
                      :attachment-mode    attachment-mode
                      :inbox-p            inbox-p
                      :latest-p           latest-p
-                     :welcome-p          (and inbox-p (not (null recovery-diagnosis)))
+                      :welcome-p          (and inbox-p (null image-values))
                      :recovery-diagnosis recovery-diagnosis
                     :launch              (main--launch-options
                                           command :permission-mode explicit-permission-mode)
@@ -1163,7 +1163,7 @@ detached sessions, and a booted generation's resume, under
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
                         (:pick-channel-p boolean)
-                        (:inbox-p boolean) (:latest-p boolean)
+                         (:inbox-p boolean) (:latest-p boolean) (:attach-expected-p boolean)
                         (:recovery-diagnosis (option string))
                         (:launch list)
                         (:new-p boolean)
@@ -1171,15 +1171,16 @@ detached sessions, and a booted generation's resume, under
     (values string boolean))
 (defun main--open-world-channel
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        pick-channel-p recovery-diagnosis launch new-p images inbox-p latest-p)
+                        pick-channel-p recovery-diagnosis launch new-p images inbox-p latest-p
+                        (attach-expected-p t))
   "Open this terminal's channel in the world server and return its session identifier.
 
 CONVERSATION-ID opens that channel; otherwise the launch directory selects
 or creates one, and NEW-P creates one. IMAGES become the channel's composer
-draft. The second value says whether the server started the channel
-for this terminal. Only the world server runs a channel's agent, so a server
-that refuses the open, or cannot be started or reached, ends the start with
-the reason; no session runs in this terminal's own process instead."
+draft. The second value says whether the server started the channel for
+this terminal. When ATTACH-EXPECTED-P is false, prepare the channel without
+a client view. A server that refuses the open, or cannot be started or reached,
+ends the start with the reason; no session runs in this terminal instead."
   (handler-case
       (world-client-open configuration
                          :directory          (config :working-directory configuration)
@@ -1189,6 +1190,8 @@ the reason; no session runs in this terminal's own process instead."
                          :pick-channel-p     pick-channel-p
                          :inbox-p            inbox-p
                          :latest-p           latest-p
+                         :attach-expected-p  attach-expected-p
+                         :switch-p           (not attach-expected-p)
                          :recovery-diagnosis recovery-diagnosis
                          :launch             launch
                          :new-p              new-p
@@ -1434,6 +1437,9 @@ only rediscovers the same endpoint; choosing another channel is explicit."
     (unwind-protect
          (progn
            (terminal-start terminal)
+           ;; Measure the banner in the transcript pane, not the fullscreen boot panel.
+           (with-lock-held ((localgroup-screen-lock screen))
+             (localgroup-screen--take-whole-screen screen nil))
            (setf resize-watch
                  (platform-watch-terminal-resize *platform*
                   (lambda () (setf *terminal-resize-pending-p* t))))
@@ -1496,28 +1502,41 @@ Return success and bounded secondary cleanup metadata without replacing a primar
          (cleanup-failures nil))
     (unwind-protect
         (progn
-         (world-sidebar-start panel)
+         (unless welcome-p
+           (world-sidebar-start panel))
          (multiple-value-bind (session-id started-p)
-              (if welcome-p
-                  (values nil nil)
-                  (main--call-with-channel-loading
-                   screen "Opening channel"
-                   (lambda ()
-                     (main--open-world-channel configuration
-                                               :permission-mode    permission-mode
-                                               :immutable-p        immutable-p
-                                               :conversation-id    conversation-id
-                                               :pick-channel-p     pick-channel-p
-                                               :inbox-p            inbox-p
-                                               :latest-p           latest-p
-                                               :recovery-diagnosis recovery-diagnosis
-                                               :launch             launch
-                                               :images             images))
-                   :start-p (and (config :fullscreen-p configuration)
-                                 (not (null (terminal--terminal-mode-or-nil
-                                             (localgroup-screen-terminal screen)))))
-                   :boot-p  (and (config :fullscreen-p configuration)
-                                 (config :boot-screen-p configuration))))
+             (cond
+               ((and welcome-p recovery-diagnosis)
+                (values nil nil))
+               (t
+                (main--call-with-channel-loading
+                 screen (if welcome-p "Loading home" "Opening channel")
+                 (lambda ()
+                   (if welcome-p
+                       (progn
+                         (main--open-world-channel configuration
+                                                   :permission-mode   permission-mode
+                                                   :immutable-p       immutable-p
+                                                   :inbox-p           t
+                                                   :attach-expected-p nil)
+                         (values nil nil))
+                       (main--open-world-channel configuration
+                                                 :permission-mode    permission-mode
+                                                 :immutable-p        immutable-p
+                                                 :conversation-id    conversation-id
+                                                 :pick-channel-p     pick-channel-p
+                                                 :inbox-p            inbox-p
+                                                 :latest-p           latest-p
+                                                 :recovery-diagnosis recovery-diagnosis
+                                                 :launch             launch
+                                                 :images             images)))
+                 :start-p (and (config :fullscreen-p configuration)
+                               (not (null (terminal--terminal-mode-or-nil
+                                           (localgroup-screen-terminal screen)))))
+                 :boot-p  (and (config :fullscreen-p configuration)
+                               (config :boot-screen-p configuration)))))
+           (when welcome-p
+             (world-sidebar-start panel))
            (loop with origin = nil
                  with switching-p = nil
                  with restoring-p = nil
