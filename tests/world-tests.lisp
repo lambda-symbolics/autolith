@@ -432,7 +432,7 @@
 
 (-> test-world-participant-availability () null)
 (defun test-world-participant-availability ()
-  "Test an agent is online exactly while a process serves its channel, and parked when it resides nowhere."
+  "Test an agent is online exactly while a process serves its channel."
   (flet ((participant (kind residence)
            (make-instance 'participant
                           :identifier "al-x" :kind kind :name "x" :residence residence
@@ -440,7 +440,6 @@
     (loop for (kind residence served expected)
             in '((:agent "bserved" ("bserved") "online")
                  (:agent "bidle11" ("bserved") "offline")
-                 (:agent nil       ("bserved") "parked")
                  (:human "binbox1" ()          nil))
           do (test-assert (equal (channel-resource--availability
                                   (participant kind residence) served)
@@ -1886,14 +1885,14 @@
                                                                                    "bkid11"))
                                        "keeper")
                               "a parent renames its child by its name")
-                   (let ((lease (conversation-lease-acquire configuration "bkid11")))
-                     (unwind-protect
-                          (test-assert
-                           (refused-p (lambda ()
-                                        (call 'child-remove-tool
-                                              (json-object "children" (vector "keeper"))))))
-                           "a busy child cannot be removed")
-                       (conversation-lease-release lease)))
+                 (let ((lease (conversation-lease-acquire configuration "bkid11")))
+                   (unwind-protect
+                        (test-assert
+                         (refused-p (lambda ()
+                                      (call 'child-remove-tool
+                                            (json-object "children" (vector "keeper")))))
+                         "a busy child cannot be removed")
+                     (conversation-lease-release lease)))
                  (let ((compacted nil))
                    (test-call-with-function-replacements
                     (list (list 'agent-compact-conversation
@@ -1920,7 +1919,7 @@
                                      (null (conversation-task-pathname-for-id configuration "bkid11"))
                                      (null (conversation-task-pathname-for-id configuration "bgrand11"))
                                      (null (world-participant-find world "bkid11")))
-                                 "a removed child leaves no channel, agent or history"))
+                                 "a removed child leaves no channel, agent or history")))
             (task-orchestrator-close orchestrator))))))
   nil)
 
@@ -2175,7 +2174,7 @@
 
 (-> test-world-parent-mention () null)
 (defun test-world-parent-mention ()
-  "Test @parent reaches the sender's parent, passes parked ancestors on to the next one, and ends with the person.
+  "Test @parent reaches the sender's parent and ends with the person.
 
 A parent that writes @parent to its own child reaches nobody but the child."
   (with-test-configuration (configuration)
@@ -2197,14 +2196,7 @@ A parent that writes @parent to its own child reaches nobody but the child."
                                            :channel  "exec-two"
                                            :text     text
                                            :notify-p nil)
-                       :channels)))
-
-             (addressed (name)
-               "Resolve NAME as a message destination from the checker."
-               (let* ((world   (world-load configuration))
-                      (checker (find ':agent (world-channel-residents world "exec-two")
-                                     :key #'participant-kind)))
-                 (channel-identifier (world-channel-designated world configuration name :sender checker)))))
+                        :channels))))
         (test-assert (equal (reached "@parent done") '("exec-one"))
                      "@parent reaches the sender's parent agent")
         (flet ((told (sender channel)

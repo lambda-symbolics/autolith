@@ -160,16 +160,11 @@
 
 (-> channel-resource--availability (participant list) (option string))
 (defun channel-resource--availability (participant served)
-  "Return whether agent PARTICIPANT is online, given the SERVED channel identifiers, or NIL for the person.
-
-An agent is online while a process serves the channel it resides in, and
-parked while it resides nowhere."
+  "Return whether PARTICIPANT's channel is served, or NIL for the person."
   (let ((residence (participant-residence participant)))
     (cond
       ((eq (participant-kind participant) ':human)
        nil)
-      ((null residence)
-       "parked")
       ((member residence served :test #'equal)
        "online")
       (t
