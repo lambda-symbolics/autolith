@@ -509,7 +509,7 @@ reaches; see `world-message-parent-recipient'."
              (world-message-parent-recipient world sender))
         (world-participant-find world designator)
         (and canonical (world-participant-find world canonical))
-        (world-participant-named world designator))))
+        (world--participant-name-target world designator))))
 
 (-> world-message-parent-recipient (world participant) (option participant))
 (defun world-message-parent-recipient (world sender)

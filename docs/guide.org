@@ -1778,25 +1778,48 @@ the distinct observer PIDs. The endpoint's =:pid= identifies its hosting process
 
 =idle= means that the process is at input with no active work of any kind.
 
-Start an unattended session, or resume one by conversation ID or a part of it:
+Start an unattended session, or open a channel by agent name, path or ID:
 
 #+BEGIN_SRC sh
 autolith --detached
 autolith open b-6
 autolith open researcher --read-only
+autolith open /researcher/reviewer
 autolith open
 #+END_SRC
 
 Use =autolith --detached= to start a new unattended channel and print its full
 conversation ID and session PID. This works with closed stdin. Open an existing
-channel in this terminal with =autolith open TARGET=, using its ID or its agent's
-name with or without =@=. Omit the target for the =(open)= channel picker. Use
-=--read-only= to observe without taking control, including after switching
-channels. An exact canonical or displayed ID wins; otherwise any part of an
-ID selects the one conversation containing it, without regard to case. An
-ambiguous part reports every matching ID with its available title, workspace,
-time, and preview. Running conversations, including empty new sessions, are
-selectable; opening one attaches to it.
+channel in this terminal with =autolith open TARGET=, using its agent's name
+with or without =@=, an exact channel path, or its ID. Omit the target for the
+=(open)= channel picker. Use =--read-only= to observe without taking control,
+including after switching channels. Exact channel IDs take precedence over bare
+agent names. Unique ID fragments and legacy saved or live IDs also work.
+Ambiguous targets report candidate paths, with IDs and metadata for legacy
+conversations that have no durable channel. Names and paths work for unloaded
+agents too; opening their channel loads it.
+
+Use the same addresses with =(open "researcher")=, =(open "/researcher/reviewer")=,
+=(tell "/researcher/reviewer" "Review this change")= and =channel.send=. Read
+=channel:list= or open the channel and agent pickers to find current paths. Agent
+operations such as =(rename "/researcher/reviewer" "critic")= also accept a path
+when exactly one agent resides in that channel.
+
+A path starts at =/= and follows channel ancestry. Each component is the sole
+resident agent's name. The person's inbox is =/inbox=; its children start directly
+at =/NAME=, as do independent root channels. For a channel with no agent, several
+agents, or a conflicting sibling name, use the displayed channel
+identifier component shown in its path. Legacy name characters such as =/=
+and =%= are percent-encoded within a component. Copy a path exactly, including
+case and escapes; partial paths, extra slashes and filesystem-style =..= do not
+select channels.
+
+Renaming or moving an agent can change its path and descendant paths. Stable
+channel IDs, native resource identities and ACP session IDs identify the same
+channels across those changes. A parked agent has no channel path; find it by
+name in the agent picker, or mention its name in a channel message. If a legacy
+name is ambiguous, choose one of the reported paths or the parked agent's ID.
+
 Launch-only overrides such as =--model= are rejected when resuming a
 running conversation. For hosted channels, =--permissions= may be used when
 no terminal is attached, as described under Checkpoints and launch options.

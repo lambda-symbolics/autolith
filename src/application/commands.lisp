@@ -1493,6 +1493,7 @@ An item names the channel's agent, or else its title or identifier, and says
 what the channel is about and whether a terminal session serves it. Resolve
 presentation groups once before building items, using the sidebar's policy."
   (let* ((world   (handler-case (application-world application) (autolith-error nil nil)))
+         (paths   (and world (world-channel-paths world)))
          (current (conversation-identifier (application-conversation application)))
          (served  (world-channel-served-identifiers (application-configuration application))))
     (when world
@@ -1522,7 +1523,7 @@ presentation groups once before building items, using the sidebar's policy."
                            :value identifier :argument nil :group group :description
                            (format nil "~@[~A · ~]~A~:[~; · open~]"
                                    (and agent (channel-title channel))
-                                   (conversation-identifier-display identifier)
+                                   (world-channel-path world channel :paths paths)
                                    (member identifier served :test #'equal)))))
 
                  (items (node depth group)
@@ -1707,12 +1708,23 @@ searches every task directory."
             collect (let* ((residence (participant-residence participant))
                            (channel   (and residence (world-channel-find world residence))))
                       (list :name        (participant-name participant)
-                            :value       (participant-name participant)
+                            :value       (cond
+                                           ((handler-case
+                                                (eq participant (world-participant-designated
+                                                                 world (participant-name participant)))
+                                              (world-error () nil))
+                                            (participant-name participant))
+                                           ((and channel (= 1 (count ':agent
+                                                                    (world-channel-residents world residence)
+                                                                    :key #'participant-kind)))
+                                            (world-channel-path world channel))
+                                           (t
+                                            (conversation-identifier-display (participant-identifier participant))))
                             :argument    nil
                             :description (if residence
                                              (format nil "in ~@[~A · ~]~A"
                                                      (and channel (channel-title channel))
-                                                     (conversation-identifier-display residence))
+                                                    (world-channel-path world channel))
                                              "parked in no channel"))))))
 
 (-> application--pick-agent (application &key (:title string) (:usage string)) (option string))
@@ -2902,18 +2914,17 @@ A channel opened moments ago has no durable record and so no world channel
 yet, but its session is published, so the running sessions are searched when
 the world knows no such channel. A conversation saved since the world server
 last started is not in its world either, so the saved conversations come last."
-  (let ((configuration (application-configuration application)))
-    (handler-case
-        (application-world-channel-identifier application designator)
-      (world-error (condition)
-        (or (handler-case
-                (localgroup--record-session-id
-                 (rest (localgroup--find-record configuration designator)))
-              (localgroup-error ()
-                nil))
-            (handler-case (main-resolve-conversation configuration designator)
-              (configuration-error ()
-                (error condition))))))))
+  (let* ((configuration (application-configuration application))
+         (channel       (world-channel-designated (world-load configuration) configuration designator
+                                                  :error-p nil)))
+    (or (and channel (channel-identifier channel))
+        (handler-case
+            (localgroup--record-session-id (rest (localgroup--find-record configuration designator)))
+          (localgroup-error () nil))
+        (handler-case (main-resolve-conversation configuration designator)
+          (configuration-error (condition)
+            (error 'world-error :message (autolith-error-message condition)
+                   :pathname nil :operation ':resolve :identifier designator))))))
 
 (-> application--channel-or-ask (application string &key (:title string) (:usage string)) (option string))
 (defun application--channel-or-ask (application designator &key title usage)
@@ -2929,10 +2940,9 @@ show."
       (application--pick-among application designator (world-channel-ambiguous-channels condition)
                                :title title
                                :usage usage))
-    (world-error ()
+    (world-error (condition)
       (application-present application
-                           (application-failure-line
-                            (format nil "no channel matches ~S; (open) picks one" designator)))
+                           (application-failure-line (autolith-error-message condition)))
       nil)))
 
 (-> application--pick-among (application string list &key (:title string) (:usage string)) (option string))
@@ -2954,12 +2964,12 @@ show."
           (application-present
            application
            (append (application-failure-line
-                    (format nil "~S matches ~D channels; name one by more of its identifier:"
+                    (format nil "~S matches ~D channels; use an exact channel path:"
                             designator (length channels)))
                    (loop for channel in channels
                          append (list (terminal-span ':plain (format nil "~%  "))
-                                      (terminal-span ':code (conversation-identifier-display
-                                                             (channel-identifier channel)))
+                                      (terminal-span ':code
+                                       (world-channel-path (application-world application) channel))
                                       (terminal-span ':dim (format nil "~@[  ~A~]" (channel-title channel)))))))
           nil))))
 
@@ -2967,9 +2977,9 @@ show."
     (:name              "/open"
      :help-topic        :channels
      :help-order        1
-     :argument          "[ID]"
+     :argument          "[TARGET]"
      :description       "move this terminal to another channel"
-     :tip               "takes a channel ID or a unique fragment of one, or picks one without; the channel you leave keeps running."
+     :tip               "takes an agent name, @name, exact channel path or unique ID fragment; picks a channel without arguments. The channel you leave keeps running."
      :busy-behavior     :execute
      :terminal-behavior :exclusive-without-arguments
      :callable          t)
@@ -2981,7 +2991,7 @@ show."
          (identifier (and designator
                           (application--channel-or-ask application (princ-to-string designator)
                                                        :title "open which channel?"
-                                                       :usage "Usage: (open \"ID\")")))
+                                                       :usage "Usage: (open \"NAME-OR-PATH\")")))
          (display    (and identifier (conversation-identifier-display identifier)))
          (current    (and identifier
                           (conversation-identifier (application-conversation application))))

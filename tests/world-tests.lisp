@@ -1915,7 +1915,9 @@
                           (= (length lines) 3)
                           (every (lambda (identifier)
                                    (= 1 (count-if (lambda (line) (search identifier line)) (rest lines))))
-                                 '("bsame1" "bsame2")))
+                                 (loop for channel in (remove-if #'channel-inbox-p
+                                                                 (world-channels (world-load configuration)))
+                                       collect (world-channel-path (world-load configuration) channel))))
                      "the matching channels are listed one per line"))))
   nil)
 
@@ -1974,6 +1976,162 @@
                      "a send says where the message went, what waits, and who was parked"))))
   nil)
 
+(-> test-world-channel-paths () null)
+(defun test-world-channel-paths ()
+  "Exercise canonical addresses through durable rename, discovery, commands and ambiguity."
+  (with-test-configuration (configuration)
+    (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
+      (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent "broot11"
+                                                           :name "helper" :created-at 1500)
+      (world-tests--child-conversation configuration "bpeer11" :root "broot11" :parent "broot11"
+                                                            :name "peer" :created-at 1600)
+      (world-reconcile-sessions configuration :now 2000)
+      (world-participant-rename configuration "al-broot11" "lead")
+      (labels ((resolve (address identifier)
+                 "Assert ADDRESS resolves to the same stable IDENTIFIER."
+                 (test-assert (string= identifier
+                                      (channel-identifier (world-channel-designated
+                                                           (world-load configuration) configuration address)))
+                              "a human address resolves to its durable channel"))
+
+               (legacy-name (identifier name)
+                 "Append a valid legacy name record, including names no longer accepted by rename."
+                 (world--transact
+                  configuration
+                  (lambda (world)
+                    (let ((participant (world--copy-participant
+                                        (world-participant-find world identifier) :name name)))
+                      (values (list (world--participant-record participant)) participant)))))
+
+               (reject (address &rest details)
+                 "Refuse ADDRESS without selecting a candidate and report every useful DETAIL."
+                 (let ((condition (handler-case
+                                      (progn (world-channel-designated (world-load configuration)
+                                                                       configuration address) nil)
+                                    (world-error (condition) condition))))
+                   (test-assert (and condition
+                                     (every (lambda (detail) (search detail (autolith-error-message condition)))
+                                            details))
+                                "unresolved and ambiguous addresses explain the available destinations"))))
+        (resolve "/lead/helper" "bkid11")
+        (resolve "@helper" "bkid11")
+        (resolve "helper" "bkid11")
+        (resolve "bkid11" "bkid11")
+        (resolve "/inbox" (channel-identifier (world-inbox-channel (world-load configuration))))
+        (dolist (address '("/lead" "/lead/helper"))
+          (test-assert (string= (main-resolve-conversation configuration address)
+                               (if (string= address "/lead") "broot11" "bkid11"))
+                       "CLI paths resolve durable channels without endpoint discovery"))
+        (dolist (address '("/helper" "/lead/help" "/lead/helper/" "/LEAD/helper" "/lead/../helper"))
+          (reject address "exact path"))
+        (let* ((world       (world-load configuration))
+               (application (make-instance 'application :configuration configuration :conversation root
+                              :ui (terminal-ui-create :terminal (make-instance 'recording-terminal :columns 80))))
+               (opened      nil)
+               (sent        nil))
+          (test-assert (and (search "/lead/helper" (channel-resource--list-text world nil :query "/lead/helper"))
+                            (find "/lead/helper" (application--channel-items application)
+                                  :key (lambda (item) (getf item :description)) :test #'search)
+                            (search "/lead/helper" (getf (find "helper" (application--agent-items application)
+                                                               :key (lambda (item) (getf item :name)) :test #'string=)
+                                                         :description)))
+                       "channel and agent catalogues expose usable ancestry paths for unloaded agents")
+          (test-call-with-function-replacements
+           (list (list 'application-resume-conversation
+                       (lambda (candidate identifier) (declare (ignore candidate)) (setf opened identifier)))
+                 (list 'application-render-records (lambda (candidate) (declare (ignore candidate)) nil))
+                 (list 'application-world-send
+                       (lambda (candidate &key channel text mentions)
+                         (declare (ignore candidate text mentions)) (setf sent channel)
+                         (list :channels (list channel)))))
+           (lambda ()
+             (application--builtin-open-command application "/lead/helper")
+             (application--builtin-tell-command application "/lead/helper" "hello")
+             (test-assert (and (equal opened "bkid11") (equal sent "bkid11"))
+                          "open and tell invoke their existing operations with the same stable channel ID"))))
+        (world-participant-rename configuration "al-broot11" "captain")
+        (reject "/lead/helper" "exact path")
+        (resolve "/captain/helper" "bkid11")
+        (legacy-name "al-bpeer11" "helper")
+        (let* ((world (world-load configuration))
+               (kid   (world-channel-path world (world-channel-find world "bkid11")))
+               (peer  (world-channel-path world (world-channel-find world "bpeer11"))))
+          (test-assert (and (not (string= kid peer))
+                            (string= kid (format nil "/captain/~A" (conversation-identifier-display "bkid11"))))
+                       "sibling name collisions use distinct stable fallback components")
+          (resolve kid "bkid11")
+          (resolve peer "bpeer11")
+          (reject "helper" kid peer)
+          (test-assert (string= (participant-identifier (world-participant-designated world kid)) "al-bkid11")
+                       "an exact channel path addresses its sole resident agent"))
+        (world-participant-park configuration "al-bpeer11")
+        (reject "@helper" "/captain/helper" "parked")
+        (resolve "/captain/helper" "bkid11")
+        (legacy-name "al-broot11" "ops/team%lead")
+        (resolve "/ops%2Fteam%25lead/helper" "bkid11")
+        (reject "/ops/team%lead/helper" "exact path")
+        (world-participant-rename configuration "al-bkid11" (conversation-identifier-display "bpeer11"))
+        (let* ((world (world-load configuration))
+               (paths (world-channel-paths world)))
+          (test-assert (string= (gethash "bkid11" paths)
+                               (format nil "/ops%2Fteam%25lead/~A" (conversation-identifier-display "bkid11")))
+                       "an agent name cannot shadow a sibling's unnamed fallback component")
+          (dolist (channel (world-channels world))
+            (resolve (world-channel-path world channel :paths paths) (channel-identifier channel)))))))
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "broot11" 1000)
+    (world-reconcile-sessions configuration :now 2000)
+    (let* ((world (world-load configuration))
+           (human (world-human-participant world))
+           (inbox (world-inbox-channel world))
+           (root  (world-channel-find world "broot11")))
+      (world-channel-create configuration :id "bstand1"
+                            :owner            (participant-identifier human)
+                            :workspace (channel-workspace root) :now 2001)
+      (let ((standalone (world-participant-create configuration :kind ':agent :name "standalone"
+                                                 :residence "bstand1" :now 2002)))
+        (test-assert (string= "/standalone"
+                              (world-channel-path (world-load configuration)
+                                                  (world-channel-find (world-load configuration) "bstand1")))
+                     "an independent root channel shares the address root with inbox children")
+        (world--transact
+         configuration
+         (lambda (world)
+           (values
+            (loop for identifier in (list "al-broot11" (participant-identifier standalone))
+                  collect (world--participant-record
+                           (world--copy-participant (world-participant-find world identifier) :name "inbox")))
+            nil)))
+        (let* ((world (world-load configuration))
+               (paths (world-channel-paths world)))
+          (test-assert (and (string= "/inbox" (gethash (channel-identifier inbox) paths))
+                            (string= (format nil "/~A" (conversation-identifier-display "broot11"))
+                                     (gethash "broot11" paths))
+                            (string= (format nil "/~A" (conversation-identifier-display "bstand1"))
+                                     (gethash "bstand1" paths)))
+                       "legacy inbox handles cannot shadow the inbox across structural and independent roots")
+          (dolist (channel (world-channels world))
+            (test-assert (eq channel (world-channel-at-path world (gethash (channel-identifier channel) paths)))
+                         "every root address resolves exactly after fallback collisions")))
+        (world--transact
+         configuration
+         (lambda (world)
+           (values (list (world--participant-record
+                          (world--copy-participant
+                           (world-participant-find world (participant-identifier standalone))
+                           :residence "broot11")))
+                   nil)))
+        (let ((world (world-load configuration)))
+          (dolist (identifier '("broot11" "bstand1"))
+            (test-assert
+             (handler-case
+                 (progn (world-participant-designated world
+                                                      (world-channel-path world (world-channel-find world identifier)))
+                        nil)
+               (world-error () t))
+             "agent operations refuse shared and agentless channel paths"))))))
+  nil)
+
 (-> test-world-agent-children () null)
 (defun test-world-agent-children ()
   "Test an agent's children are the channels nested in its own, counted once, and its channel lists them."
@@ -1984,7 +2142,9 @@
       (world-reconcile-sessions configuration :now 2000)
       (let ((text (world-tests--read configuration root "current")))
         (test-assert (and (search "Children, 1 of the 32" text)
-                          (search "helper (scout) channel bkid11, idle" text))
+                          (search (format nil "helper (scout) channel ~A, idle"
+                                          (world-channel-path (world-load configuration)
+                                                              (world-channel-find (world-load configuration) "bkid11"))) text))
                      "the parent's channel lists each child with its role, channel and state"))
       (let ((agent        (agent-create :configuration configuration
                                         :provider      (make-instance 'model-provider)

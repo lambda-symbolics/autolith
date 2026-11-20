@@ -664,10 +664,146 @@ batch that would leave a dangling reference is refused whole."
   "Return WORLD's channel IDENTIFIER, or NIL."
   (values (gethash identifier (world--channel-table world))))
 
-(-> world--channel-label (channel) string)
-(defun world--channel-label (channel)
-  "Return CHANNEL's display identifier followed by its title, when it has one."
-  (format nil "~A~@[  ~A~]"
+(-> world-channel-paths (world) hash-table)
+(defun world-channel-paths (world)
+  "Return current absolute ancestry paths keyed by channel ID, without changing durable identity.
+Each component is a sole resident agent's escaped name, or the displayed channel
+ID when unnamed, shared or conflicting with a sibling name or fallback ID.
+The inbox is the address root: its own path is /inbox; its children start at /."
+  (let ((channels   (world-channels world))
+        (residents  (make-hash-table :test #'equal))
+        (siblings   (make-hash-table :test #'equal))
+        (preferred  (make-hash-table :test #'equal))
+        (components (make-hash-table :test #'equal))
+        (paths      (make-hash-table :test #'equal))
+        (visiting   (make-hash-table :test #'equal)))
+    (dolist (participant (world-participants world))
+      (when (and (eq (participant-kind participant) ':agent) (participant-residence participant))
+        (push participant (gethash (participant-residence participant) residents))))
+    (dolist (channel channels)
+      (let* ((identifier (channel-identifier channel))
+             (agents     (gethash identifier residents))
+             (parent     (and (channel-parent channel)
+                              (world-channel-find world (channel-parent channel)))))
+        (push channel (gethash (and parent (not (channel-inbox-p parent))
+                                   (channel-identifier parent)) siblings))
+        (setf (gethash identifier preferred)
+              (resource-item-encode-identifier
+               (cond
+                 ((channel-inbox-p channel)
+                  *world-inbox-designator*)
+                 ((and agents (null (rest agents)))
+                  (participant-name (first agents)))
+                 (t
+                  (conversation-identifier-display identifier)))))))
+    (maphash
+     (lambda (parent members)
+       (declare (ignore parent))
+       (let ((names       (make-hash-table :test #'equalp))
+             (identifiers (make-hash-table :test #'equalp)))
+         (dolist (channel members)
+           (let ((identifier (channel-identifier channel)))
+             (incf (gethash (gethash identifier preferred) names 0))
+             (setf (gethash (resource-item-encode-identifier
+                             (conversation-identifier-display identifier)) identifiers) identifier)))
+         (dolist (channel members)
+           (let* ((identifier (channel-identifier channel))
+                  (name       (gethash identifier preferred))
+                  (reserved   (gethash name identifiers)))
+             (setf (gethash identifier components)
+                   (if (or (channel-inbox-p channel)
+                           (and (= (gethash name names) 1)
+                                (or (null reserved) (equal reserved identifier))))
+                       name
+                       (resource-item-encode-identifier (conversation-identifier-display identifier))))))))
+     siblings)
+    (labels ((path (channel)
+               "Compute CHANNEL's path once, refusing cyclic ancestry."
+               (let ((identifier (channel-identifier channel)))
+                 (or (gethash identifier paths)
+                     (progn
+                       (when (gethash identifier visiting)
+                         (error 'world-error :message "Channel ancestry is cyclic."
+                                :pathname nil :operation ':resolve :identifier identifier))
+                       (setf (gethash identifier visiting) t)
+                       (let ((parent (and (channel-parent channel)
+                                          (world-channel-find world (channel-parent channel)))))
+                         (prog1
+                             (setf (gethash identifier paths)
+                                   (format nil "~A/~A" (if (and parent (not (channel-inbox-p parent)))
+                                                           (path parent) "")
+                                           (gethash identifier components)))
+                           (remhash identifier visiting))))))))
+      (dolist (channel channels) (path channel)))
+    paths))
+
+(-> world-channel-path (world channel &key (:paths hash-table)) string)
+(defun world-channel-path (world channel &key (paths (world-channel-paths world)))
+  "Return CHANNEL's exact current human address; PATHS may reuse a catalogue's computed paths."
+  (gethash (channel-identifier channel) paths))
+
+(-> world-channel-at-path (world string &key (:error-p boolean)) (option channel))
+(defun world-channel-at-path (world path &key (error-p t))
+  "Resolve an exact canonical PATH, never a prefix, suffix or normalized filesystem path."
+  (let* ((paths   (world-channel-paths world))
+         (matches (remove-if-not (lambda (channel)
+                                   (string= path (world-channel-path world channel :paths paths)))
+                                 (world-channels world))))
+    (cond
+      ((rest matches)
+       (error 'world-channel-ambiguous :message (format nil "Channel path ~S is ambiguous." path)
+              :channels matches :pathname nil :operation ':resolve :identifier path))
+      (matches
+       (first matches))
+      (error-p
+       (error 'world-error :message (format nil "No channel has the exact path ~S." path)
+              :pathname nil :operation ':resolve :identifier path)))))
+
+(-> world--participant-name-target (world string) (option participant))
+(defun world--participant-name-target (world name)
+  "Resolve NAME exactly ignoring case, reporting all ambiguous residents and parked agents."
+  (let ((matches (remove-if-not (lambda (participant) (string-equal name (participant-name participant)))
+                                (world-participants world))))
+    (when (rest matches)
+      (error 'world-error :pathname nil :operation ':resolve :identifier name
+             :message (format nil "Agent name ~S is ambiguous. Candidates:~%~{  ~A~^~%~}" name
+                              (sort (loop for participant in matches
+                                          for residence = (participant-residence participant)
+                                          for channel = (and residence (world-channel-find world residence))
+                                          collect (cond
+                                                    ((and channel
+                                                          (= 1 (count ':agent
+                                                                (world-channel-residents world residence)
+                                                                :key #'participant-kind)))
+                                                     (world-channel-path world channel))
+                                                    (channel
+                                                     (format nil "~A (agent ~A)" (world-channel-path world channel)
+                                                             (conversation-identifier-display
+                                                              (participant-identifier participant))))
+                                                    (t
+                                                     (format nil "~A (parked, ~A)" (participant-name participant)
+                                                             (conversation-identifier-display
+                                                              (participant-identifier participant))))))
+                                    #'string<))))
+    (first matches)))
+
+(-> world--path-participant (world string) (option participant))
+(defun world--path-participant (world path)
+  "Return the sole agent residing at PATH; refuse an agentless or shared channel."
+  (let* ((channel (world-channel-at-path world path))
+         (agents  (remove-if-not (lambda (participant) (eq (participant-kind participant) ':agent))
+                                 (world-channel-residents world (channel-identifier channel)))))
+    (unless (and agents (null (rest agents)))
+      (error 'world-error :pathname nil :operation ':resolve :identifier path
+             :message (format nil "Channel ~A has ~D resident agents; address an agent by name."
+                              path (length agents))))
+    (first agents)))
+
+(-> world--channel-label (world channel) string)
+(defun world--channel-label (world channel)
+  "Return CHANNEL's current path followed by its stable identifier and available title."
+  (format nil "~A  ~A~@[  ~A~]"
+          (world-channel-path world channel)
           (conversation-identifier-display (channel-identifier channel))
           (channel-title channel)))
 
@@ -692,7 +828,7 @@ nothing. No match signals an error unless ERROR-P is NIL."
        (error 'world-channel-ambiguous
               :message    (format nil "Channel ID ~S is ambiguous. Matching channels:~%~{  ~A~^~%~}"
                                   fragment
-                                  (mapcar #'world--channel-label matches))
+                                  (mapcar (lambda (channel) (world--channel-label world channel)) matches))
               :channels   matches
               :pathname   nil
               :operation  ':resolve
@@ -742,19 +878,18 @@ need hundreds of suffixes."
 
 (-> world-participant-designated (world string) (option participant))
 (defun world-participant-designated (world designator)
-  "Return the participant DESIGNATOR names by identifier, display identifier, unique name or unique fragment, or NIL."
-  (or (let ((canonical (handler-case (identifier-normalize designator)
-                         (identifier-error ()
-                           nil))))
-        (or (world-participant-find world designator)
-            (and canonical (world-participant-find world canonical))))
-      (world-participant-named world designator)
-      (let ((matches (identifier-match designator
-                                       (loop for participant being the hash-values
-                                               of (world--participant-table world)
-                                             collect participant)
-                                       :key #'participant-identifier)))
-        (and (= (length matches) 1) (first matches)))))
+  "Return the participant named by ID, @name, exact channel path or unique ID fragment."
+  (let ((designator (if (uiop:string-prefix-p "@" designator) (subseq designator 1) designator)))
+    (if (uiop:string-prefix-p "/" designator)
+        (world--path-participant world designator)
+        (or (let ((canonical (handler-case (identifier-normalize designator)
+                               (identifier-error () nil))))
+              (or (world-participant-find world designator)
+                  (and canonical (world-participant-find world canonical))))
+            (world--participant-name-target world designator)
+            (let ((matches (identifier-match designator (world-participants world)
+                                              :key #'participant-identifier)))
+              (and (= (length matches) 1) (first matches)))))))
 
 (-> world-participant-named (world string) (option participant))
 (defun world-participant-named (world name)
@@ -775,6 +910,8 @@ residence. A full channel identifier, including a retained legacy alias of
 CONFIGURATION, takes priority over a bare participant name or identifier.
 Otherwise resolve a channel ID fragment. With ERROR-P NIL, return NIL for
 an unknown fragment; ambiguous or parked targets still signal an error."
+  (when (uiop:string-prefix-p "/" designator)
+    (return-from world-channel-designated (world-channel-at-path world designator :error-p error-p)))
   (or (and (string-equal designator *world-inbox-designator*)
            (world-inbox-channel world))
       (and (uiop:string-prefix-p "@" designator)
@@ -784,7 +921,7 @@ an unknown fragment; ambiguous or parked targets still signal an error."
                         ((or conversation-error conversation-identifier-error) ()
                           nil))))
         (and resolved (world-channel-find world resolved)))
-      (and (or (world-participant-named world designator)
+      (and (or (world--participant-name-target world designator)
                (world-participant-find world designator))
            (world--residence-channel world designator))
       (world-channel-resolve world designator :error-p error-p)))

@@ -217,6 +217,7 @@ parked while it resides nowhere."
                 (and parent (conversation-identifier-display parent)))
               (conversation-replay-timestamp-string (channel-created-at channel))
               (conversation-replay-timestamp-string (channel-updated-at channel)))
+      (format stream "Path: ~A.~%" (world-channel-path world channel))
       (format stream "Residents: ~A.~%"
               (channel-resource--participants-text (world-channel-residents world identifier)
                                                    served))
@@ -245,7 +246,7 @@ parked while it resides nowhere."
               (t
                "no agent"))
             (getf header :role)
-            (conversation-identifier-display identifier)
+            (world-channel-path world channel)
             (conversation-lease-busy-p configuration identifier))))
 
 (-> channel-resource--list-text
@@ -267,15 +268,16 @@ names contain it, ignoring case."
       (if (null channels)
           (format stream "~:[No channels exist yet.~;No channel matches ~:*~S.~]~%" query)
           (progn
-            (format stream "~D of ~D channel~:P~@[ matching ~S~], most recently changed first.~:[~; Narrow them with query, or raise max-results up to ~D.~] Read channel:id/<id> for one channel's history.~%"
+            (format stream "~D of ~D channel~:P~@[ matching ~S~], most recently changed first.~:[~; Narrow them with query, or raise max-results up to ~D.~] Use an exact path or @name to address a channel; read channel:id/<id> for its history.~%"
                     (length channels) (length matching) query
                     (< (length channels) (length matching))
                     *channel-resource-list-maximum-results*)
             (dolist (channel channels)
               (let ((identifier (channel-identifier channel)))
-                (format stream "~A~@[ ~S~] workspace ~A; residents: ~A; subscribers: ~A~%"
+                (format stream "~A~@[ ~S~] path ~A workspace ~A; residents: ~A; subscribers: ~A~%"
                         (conversation-identifier-display identifier)
                         (channel-title channel)
+                        (world-channel-path world channel)
                         (channel-workspace channel)
                         (channel-resource--participants-text
                          (world-channel-residents world identifier) served)
@@ -315,6 +317,7 @@ names contain it, ignoring case."
                  (and text (search query text :test #'char-equal)))
                (append (list identifier
                              (conversation-identifier-display identifier)
+                             (world-channel-path world channel)
                              (channel-title channel)
                              (channel-workspace channel))
                        (mapcar #'participant-name

@@ -1397,9 +1397,11 @@ the version the client says it is, when it says one."
                                            (equal (getf (rest event) :session-id) id-b)))
                                 "the controller is sent the switch request naming the channel"))
               (localgroup-client-close connection)))
+          (setf presented nil)
           (test-assert (and (eq (application--builtin-open-command application "zzzzzzz") ':continue)
-                            (search "no channel matches" (terminal--spans-text (first presented))))
-                       "an unknown channel is said in a line, not signaled"))))))
+                            (= 1 (length presented))
+                            (search "zzzzzzz" (terminal--spans-text (first presented))))
+                       "an unknown channel is identified in one presented line, not signaled"))))))
   nil)
 
 (-> test-world-server-startup-reservations () null)
