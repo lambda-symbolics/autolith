@@ -51,6 +51,12 @@ A world the follower returns again unchanged needs no second check.")
     :reader        participant-identifier
     :type          non-empty-string
     :documentation "The stable participant identifier.")
+   (legacy-identifier
+    :initarg       :legacy-identifier
+    :initform      nil
+    :reader        participant-legacy-identifier
+    :type          (option non-empty-string)
+    :documentation "A historical agent ID that may address this channel's agent in old records.")
    (kind
     :initarg       :kind
     :reader        participant-kind
@@ -167,6 +173,11 @@ A world the follower returns again unchanged needs no second check.")
     :reader        world--participant-table
     :type          hash-table
     :documentation "Participants by identifier.")
+   (participant-aliases
+    :initform      (make-hash-table :test #'equal)
+    :reader        world--participant-aliases
+    :type          hash-table
+    :documentation "One historical identifier per converted agent, indexed to the channel ID.")
    (channels
     :initform      (make-hash-table :test #'equal)
     :reader        world--channel-table
@@ -284,6 +295,7 @@ records stays plain, portable text."
   (list :participant
         :version       *world-format-version*
         :id            (world-portable-string (participant-identifier participant))
+        :legacy-id     (world-portable-string (participant-legacy-identifier participant))
         :kind          (participant-kind participant)
         :name          (world-portable-string (participant-name participant))
         :name-source   (participant-name-source participant)
@@ -316,6 +328,11 @@ records stays plain, portable text."
   (let ((properties (rest record)))
     (unless (and (eql (getf properties :version) *world-format-version*)
                  (non-empty-string-p (getf properties :id))
+                 (or (null (getf properties :legacy-id))
+                     (and (eq (getf properties :kind) ':agent)
+                          (equal (getf properties :id) (getf properties :residence))
+                          (non-empty-string-p (getf properties :legacy-id))
+                          (not (equal (getf properties :id) (getf properties :legacy-id)))))
                  (typep (getf properties :kind) 'participant-kind)
                  (world--name-p (getf properties :name))
                  (member (getf properties :name-source ':explicit) '(:initial :generated :explicit))
@@ -337,6 +354,7 @@ records stays plain, portable text."
                            (and (stringp identifier) identifier))))
     (make-instance 'participant
                    :identifier    (getf properties :id)
+                   :legacy-identifier (getf properties :legacy-id)
                    :kind          (getf properties :kind)
                    :name          (getf properties :name)
                    :name-source   (getf properties :name-source ':explicit)
@@ -407,6 +425,7 @@ records stays plain, portable text."
   (apply #'make-instance 'participant
          (append changes
                  (list :identifier    (participant-identifier participant)
+                       :legacy-identifier (participant-legacy-identifier participant)
                        :kind          (participant-kind participant)
                        :name          (participant-name participant)
                        :name-source   (participant-name-source participant)
@@ -440,6 +459,9 @@ records stays plain, portable text."
     (maphash (lambda (identifier participant)
                (setf (gethash identifier (world--participant-table copy)) participant))
              (world--participant-table world))
+    (maphash (lambda (old identifier)
+               (setf (gethash old (world--participant-aliases copy)) identifier))
+             (world--participant-aliases world))
     (maphash (lambda (identifier channel)
                (setf (gethash identifier (world--channel-table copy)) channel))
              (world--channel-table world))
@@ -453,13 +475,26 @@ records stays plain, portable text."
   "Apply one RECORD to fresh WORLD state read from PATHNAME."
   (case (first record)
     (:participant
-     (let ((participant (world--record->participant pathname record)))
-       (setf (gethash (participant-identifier participant)
-                      (world--participant-table world))
-             participant)))
+     (let* ((participant (world--record->participant pathname record))
+            (identifier  (participant-identifier participant))
+            (previous    (gethash identifier (world--participant-table world)))
+            (alias       (participant-legacy-identifier participant)))
+       (when (and previous (participant-legacy-identifier previous))
+         (remhash (participant-legacy-identifier previous) (world--participant-aliases world)))
+       (when alias
+         (let ((mapped (gethash alias (world--participant-aliases world))))
+           (when (or (gethash alias (world--participant-table world))
+                     (and mapped (not (equal mapped identifier))))
+             (error 'world-error :message "A historical agent identifier is not unique."
+                    :pathname pathname :operation ':read :identifier alias)))
+         (setf (gethash alias (world--participant-aliases world)) identifier))
+       (setf (gethash identifier (world--participant-table world)) participant)))
     (:participant-deleted
-     (remhash (world--tombstone-identifier pathname record)
-              (world--participant-table world)))
+     (let* ((identifier (world--tombstone-identifier pathname record))
+            (previous   (gethash identifier (world--participant-table world))))
+       (when (and previous (participant-legacy-identifier previous))
+         (remhash (participant-legacy-identifier previous) (world--participant-aliases world)))
+       (remhash identifier (world--participant-table world))))
     (:channel
      (let ((channel (world--record->channel pathname record)))
        (remhash (channel-identifier channel) (world--deleted-channel-table world))
@@ -656,8 +691,9 @@ batch that would leave a dangling reference is refused whole."
 
 (-> world-participant-find (world string) (option participant))
 (defun world-participant-find (world identifier)
-  "Return WORLD's participant IDENTIFIER, or NIL."
-  (values (gethash identifier (world--participant-table world))))
+  "Return the participant or resolve an old agent ID to its canonical channel."
+  (values (gethash (or (gethash identifier (world--participant-aliases world)) identifier)
+                   (world--participant-table world))))
 
 (-> world-channel-find (world string) (option channel))
 (defun world-channel-find (world identifier)
@@ -1055,6 +1091,26 @@ Only the matches get sorted, not every channel."
               (parent     (and identifier (world-channel-find world identifier))))
          (or (null identifier) (and parent (channel-inbox-p parent) t)))))
 
+(-> world-channel-latest-top-level (configuration string) (option string))
+(defun world-channel-latest-top-level (configuration workspace)
+  "Return the ID of the latest written top-level channel in WORKSPACE.
+
+Compare storage timestamps without reading any conversation records."
+  (let ((world        (world-load configuration))
+        (latest       nil)
+        (latest-write -1))
+    (loop for channel being the hash-values of (world--channel-table world)
+          when (and (world-channel-top-level-p world channel)
+                    (string= workspace (channel-workspace channel)))
+            do (let* ((identifier (channel-identifier channel))
+                      (written    (conversation-storage-write-date
+                                   (conversation-pathname-for-id configuration identifier))))
+                 (when (or (null latest)
+                           (> written latest-write)
+                           (and (= written latest-write) (string< identifier latest)))
+                   (setf latest       identifier
+                         latest-write written))))
+    latest))
 (-> world-participant-children (world string) list)
 (defun world-participant-children (world participant-identifier)
   "Return the participants whose parent is PARTICIPANT-IDENTIFIER."
@@ -1238,6 +1294,146 @@ names the caller in refusals."
                    :title                (and title (world--validate-name title operation))
                    :created-at           now
                    :updated-at           now)))
+
+(-> world-ensure-channel-identities (configuration) null)
+(defun world-ensure-channel-identities (configuration)
+  "Convert legacy active agent IDs to their existing channel IDs in one world transaction.
+
+Only catalogue metadata changes. Original agent IDs are historical aliases;
+inactive records and all conversation and transfer files are left alone."
+  (world--transact
+   configuration
+   (lambda (world)
+     (let ((identifiers (make-hash-table :test #'equal))
+           (retired     nil)
+           (records     nil)
+           (now         (get-universal-time)))
+       (maphash (lambda (identifier agent)
+                  (let ((channel (participant-residence agent)))
+                    (when (and (eq (participant-kind agent) ':agent)
+                               channel (not (equal identifier channel)))
+                      (when (world-participant-find world channel)
+                        (error 'world-error :operation ':channel-identities :identifier channel
+                               :message "A participant already uses a channel's canonical identity."))
+                      (setf (gethash identifier identifiers) channel)
+                      (push (list :participant-deleted :version *world-format-version*
+                                  :id identifier :time now)
+                            retired))))
+                (world--participant-table world))
+       (unless (zerop (hash-table-count identifiers))
+         (maphash
+          (lambda (identifier participant)
+            (let ((channel (gethash identifier identifiers))
+                  (parent  (gethash (participant-parent participant) identifiers)))
+              (when (or channel parent)
+                (push (world--participant-record
+                       (world--copy-participant participant
+                                                :identifier (or channel identifier)
+                                                :legacy-identifier (if channel identifier
+                                                                       (participant-legacy-identifier participant))
+                                                :parent (or parent (participant-parent participant))))
+                      records))))
+          (world--participant-table world))
+         (maphash (lambda (identifier channel)
+                    (declare (ignore identifier))
+                    (let ((owner (gethash (channel-owner channel) identifiers)))
+                      (when owner
+                        (push (world--channel-record (world--copy-channel channel :owner owner)) records))))
+                  (world--channel-table world)))
+       (values (nconc retired records) nil))))
+  nil)
+
+(-> world-ensure-inbox (configuration &key (:now timestamp)) channel)
+(defun world-ensure-inbox (configuration &key (now (get-universal-time)))
+  "Return the person's durable inbox, creating it without consulting session history."
+  (or (world-inbox-channel (world-load configuration))
+      (world--transact
+       configuration
+       (lambda (world)
+         (let ((existing (world-inbox-channel world)))
+           (if existing
+               (values nil existing)
+               (let* ((person       (world-human-participant world))
+                      (owner        (if person (participant-identifier person) "user"))
+                      (workspace    (namestring (user-homedir-pathname)))
+                      (conversation (conversation-create configuration :inbox-p t
+                                                         :origin-directory workspace :created-at now))
+                      (identifier   (conversation-identifier conversation))
+                      (inbox        (make-instance 'channel :identifier identifier :owner owner
+                                                    :workspace workspace :title *world-inbox-designator*
+                                                    :inbox-p t :created-at now :updated-at now)))
+                 (when (and (null person) (world-participant-find world owner))
+                   (error 'world-error :operation ':register-inbox :identifier owner
+                          :message "The person identifier belongs to another participant."))
+                 (conversation-append-record conversation
+                                             (list :title :value *world-inbox-designator* :source ':initial))
+                 (values (list (world--channel-record inbox)
+                               (world--participant-record
+                                (if person
+                                    (world--copy-participant person :residence identifier
+                                                             :updated-at (max now (participant-updated-at person)))
+                                    (make-instance 'participant :identifier owner :kind ':human :name "user"
+                                                   :residence identifier :created-at now :updated-at now))))
+                         inbox))))))))
+
+(-> world-channel-register
+    (configuration string &key (:workspace string) (:parent (option string)) (:title (option string))
+                   (:name (option string)) (:settings list) (:now timestamp))
+    (values channel participant))
+(defun world-channel-register (configuration identifier &key workspace parent title name settings
+                                                            (now (get-universal-time)))
+  "Register IDENTIFIER as a durable channel and agent, returning those two records.
+
+IDENTIFIER is the already selected conversation ID. Existing channel and
+agent metadata wins over startup defaults. Registration never reads or changes
+the channel's history."
+  (conversation-identifier-validate-path-component identifier)
+  (world-ensure-channel-identities configuration)
+  (world-ensure-inbox configuration :now now)
+  (values-list
+   (world--transact
+    configuration
+    (lambda (world)
+      (world-inbox-refuse-agent world identifier ':register-channel)
+      (let* ((existing (world-channel-find world identifier))
+             (resident (and existing (find ':agent (world-channel-residents world identifier)
+                                           :key #'participant-kind))))
+        (if resident
+            (values nil (list existing resident))
+            (let* ((person (world-human-participant world))
+                   (owner  (if existing
+                               (channel-owner existing)
+                               (or (and parent
+                                        (find ':agent (world-channel-residents world parent)
+                                              :key #'participant-kind))
+                                   person)))
+                   (keeper (if (stringp owner) owner (participant-identifier owner)))
+                   (channel (or existing
+                                (world--new-channel configuration world
+                                                    :home (list :id identifier :workspace workspace
+                                                                :title title :parent parent)
+                                                    :owner keeper :now now :operation ':register-channel))))
+              (when (world-participant-find world identifier)
+                (error 'world-error :operation ':register-channel :identifier identifier
+                       :message "The channel identifier belongs to another participant."))
+              (unless (world-settings-p settings)
+                (error 'world-error :operation ':register-channel :identifier identifier
+                       :message "The agent settings are not portable."))
+              (let ((agent (make-instance
+                            'participant :identifier identifier :kind ':agent
+                            :name (if name
+                                      (world-unique-handle world (world-handle-base name))
+                                      (prezdivka:unique-name
+                                       identifier
+                                       (lambda (handle)
+                                         (or (world-participant-named-p world handle)
+                                             (world-handle-reserved-p handle)))))
+                            :name-source (if name ':explicit ':initial)
+                            :parent keeper :residence identifier :settings settings
+                            :created-at (channel-created-at channel) :updated-at now)))
+                (values (append (unless existing (list (world--channel-record channel)))
+                                (list (world--participant-record agent)))
+                        (list channel agent))))))))))
 
 (-> world-participant-create
     (configuration &key (:kind participant-kind) (:name string) (:residence (option string))
