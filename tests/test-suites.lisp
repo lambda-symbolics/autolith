@@ -893,13 +893,7 @@
   test-preferences-mixed-provider-selection
   test-preferences-provider-selection-restoration
   test-preferences-provider-aliases
-  test-preferences-xdg-migration
-  test-preferences-xdg-migration-failure
-  test-preferences-xdg-migration-cleanup
-  test-xdg-file-migration-concurrent
-  test-preferences-xdg-fallback-handoff
-  test-preferences-xdg-malformed-legacy
-  test-legacy-xdg-migration-removal)
+  test-preferences-shared-root)
 
 (define-test-suite prompt-cache
   test-prompt-cache-miss-detection
@@ -1231,9 +1225,7 @@
   test-openai-api-responses
   test-openai-compatible-provider-discovery-is-on-demand
   test-openai-compatible-provider-model-cache-boundary
-  test-provider-model-cache-xdg-migration
-  test-provider-model-cache-xdg-cleanup
-  test-provider-model-cache-xdg-fallback-handoff
+  test-provider-model-cache-shared-root
   test-openai-compatible-provider-authentication-bootstrap
   test-openai-compatible-provider-discovery
   test-openai-compatible-provider-registration-identity
@@ -2052,10 +2044,8 @@
   test-long-symbolic-link-fixture
   test-platform-copy-file-permissions
   test-xdg-native-directory-roots
-  test-xdg-legacy-backslash-roots
-  test-xdg-configuration-root-choices
-  test-xdg-explicit-roots-bypass-legacy
-  test-xdg-legacy-root-scan)
+  test-xdg-configuration-native-defaults
+  test-xdg-explicit-roots)
 
 (define-test-suite test-runner
   test-runner-identifier-isolation

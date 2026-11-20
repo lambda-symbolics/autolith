@@ -458,17 +458,17 @@ match a new library version is never the correct repair."
 
 (-> test-conversation-cache--with-legacy-paths (function) t)
 (defun test-conversation-cache--with-legacy-paths (function)
-  "Call FUNCTION with the complete pre-relocation cache pathname protocol."
+  "Simulate a writer using the pre-relocation cache filenames."
   (test-call-with-function-replacements
-   (list
-    (list 'conversation-picker-metadata-pathname
-          #'conversation-sidecar-data-pathname)
-    (list 'conversation-picker-search-pathname
-          (lambda (pathname)
-            (second (conversation-cache-legacy-pathnames pathname))))
-    (list 'conversation-input-history-pathname
-          (lambda (pathname)
-            (third (conversation-cache-legacy-pathnames pathname)))))
+   (list (list 'conversation-picker-metadata-pathname #'conversation-sidecar-data-pathname)
+         (list 'conversation-picker-search-pathname
+               (lambda (pathname)
+                 (let ((base (conversation-sidecar-data-pathname pathname)))
+                   (make-pathname :name (format nil "~A.search" (pathname-name base)) :defaults base))))
+         (list 'conversation-input-history-pathname
+               (lambda (pathname)
+                 (let ((base (conversation-sidecar-data-pathname pathname)))
+                   (make-pathname :name (format nil "~A.inputs" (pathname-name base)) :defaults base)))))
    function))
 
 (-> test-conversation-cache-relocation () null)
@@ -489,9 +489,7 @@ match a new library version is never the correct repair."
       (let* ((identity (conversation-pathname conversation))
              (anchor   (conversation-context-anchors-pathname identity))
              (sources  (conversation-storage-pathnames identity))
-             (contents (mapcar #'uiop:read-file-string sources))
-             (legacy   (conversation-cache-legacy-pathnames identity))
-             (old-data (mapcar #'uiop:read-file-string legacy)))
+             (contents (mapcar #'uiop:read-file-string sources)))
         (with-open-file (stream anchor :direction ':output :if-exists ':supersede
                                        :if-does-not-exist ':create)
           (write-string "(:authoritative-context-anchor)" stream))
@@ -539,9 +537,8 @@ match a new library version is never the correct repair."
          "both durable source revisions retain their historical DATA paths")
         (test-assert
          (and (equal contents (mapcar #'uiop:read-file-string sources))
-              (equal old-data (mapcar #'uiop:read-file-string legacy))
               (string= "(:authoritative-context-anchor)" (uiop:read-file-string anchor)))
-         "reconstruction preserves every source, old cache file and authoritative anchor")
+         "reconstruction preserves every source and authoritative anchor")
         (dolist (pathname (conversation-picker-sidecar-pathnames identity))
           (when (probe-file pathname)
             (delete-file pathname)))

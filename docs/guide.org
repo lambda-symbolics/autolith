@@ -1817,31 +1817,14 @@ Autolith roots have mode =0700=.
 POSIX XDG directory values are native filesystem names, including literal
 brackets, asterisks, and backslashes.
 
-Until 0.68.0, Autolith moves a populated root to the native path once if an
-older release stripped backslashes from the path it used to write the root.
-Runtime and launcher migration use the same lock.
-
-The move can replace an absent native root or one containing only directories.
-Precreated directory trees are preserved in a hidden sibling backup. If both
-roots contain files, choose one explicitly rather than merging installations.
-
-If the move fails, Autolith warns and uses the legacy root. Autolith retries
-the move with a fresh configuration. Warnings and conflicts name both paths.
-Autolith skips this compatibility lookup for explicitly set roots.
-
-Provider discovery metadata uses =CACHE/provider-models.sexp=. On upgrade, the old
-state-directory cache moves there once. Publication is atomic; the old file is
-removed only after the target exists. Existing target metadata wins. Failed
-publication warns and loads the old metadata offline; interrupted source removal
-is retried without reimporting it. Remove this compatibility lookup in 0.68.0.
+Provider discovery metadata uses =CACHE/provider-models.sexp=.
 
 Generated conversation picker, search, and input-history indexes use
 =CACHE/conversation-picker/<source-directory-hash>/=. Missing indexes rebuild from
 authoritative conversation records, including retired segments. Context anchors,
 source locks, and source-invalidation revisions use their original data-directory
-paths. Old generated sidecars are retained for older releases; no whole-directory
-migration is performed. Nix ASDF output uses =CACHE/nix/asdf-cache/<identity>/=;
-durable images use the data directory. After upgrading, you may remove old
+paths. Nix ASDF output uses =CACHE/nix/asdf-cache/<identity>/=; durable images
+use the data directory. After upgrading, you may remove old
 =DATA/nix/asdf-cache/= compilation output.
 
 On Windows the same four roots are, unless an absolute XDG variable overrides
@@ -2063,13 +2046,8 @@ model. For the context window, Autolith first uses a declared model value. If
 none is available, it uses the catalog value, or the default if neither value
 is available.
 
-On upgrade, Autolith moves the state-directory =preferences.sexp= into the config
-directory once, preserving unknown keys. Existing config preferences take
-precedence. The old file is removed under both writer locks after atomic
-publication. Failed publication warns and continues reading and saving the old
-file until migration succeeds. Interrupted source removal is retried using the
-config file, without importing stale values again. Session records and pending
-inputs use the state directory. Remove this compatibility path in 0.68.0.
+The config directory holds =preferences.sexp=. Session records and pending
+inputs use the state directory.
 
 A durable value is chosen at startup from the first source that supplies it:
 an explicit command-line choice, the setting's environment variable, then the

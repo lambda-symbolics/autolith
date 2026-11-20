@@ -346,19 +346,6 @@ only changes replaceable output; its source lock and anchors never move."
                    :type     "revision"
                    :defaults base)))
 
-;;; Remove the legacy generated-payload cleanup helper at 0.68.0.
-;;; Durable revision, lock and anchor paths do not change during cache relocation.
-
-(-> conversation-cache-legacy-pathnames (pathname) list)
-(defun conversation-cache-legacy-pathnames (conversation-pathname)
-  "Return individually removable pre-0.68 payload caches, excluding source coordination."
-  (let ((base (conversation-sidecar-data-pathname conversation-pathname)))
-    (list base
-          (make-pathname :name     (format nil "~A.search" (pathname-name base))
-                         :defaults base)
-          (make-pathname :name     (format nil "~A.inputs" (pathname-name base))
-                         :defaults base))))
-
 (-> conversation-picker-sidecar-pathnames (pathname) list)
 (defun conversation-picker-sidecar-pathnames (conversation-pathname)
   "Return regenerable picker/search caches and the complete paged input projection."
@@ -374,7 +361,6 @@ only changes replaceable output; its source lock and anchors never move."
 (defun conversation-sidecar-pathnames (conversation-pathname)
   "Return every sidecar CONVERSATION-PATHNAME may own, including its context anchors."
   (append (conversation-picker-sidecar-pathnames conversation-pathname)
-          (conversation-cache-legacy-pathnames conversation-pathname)
           (list (conversation-context-anchors-pathname conversation-pathname)
                 (conversation-picker-revision-pathname conversation-pathname)
                 (conversation-picker-search-revision-pathname conversation-pathname))))

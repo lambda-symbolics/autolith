@@ -293,15 +293,8 @@ receive separate namespaces even when identifiers coincide. Durable context anch
 source locks, and source-invalidation revisions retain their DATA paths so old and
 new writers coordinate through the same lock and revision counters.
 
-Before 0.68.0, provider cache loading moves legacy state metadata into CACHE under
-both source and target locks. Existing target metadata wins. After successful
-atomic publication, the source is removed. If publication fails, legacy metadata
-is used offline. After interrupted source removal, cleanup is retried without
-reimporting metadata. At 0.68.0 remove this migration, the preferences migration,
-legacy POSIX root compatibility, configuration-local choice cache and constructor
-bypass, old conversation payload cleanup helpers, and channel deliveries read
-without a =:sender-kind=; then remove =test-legacy-xdg-migration-removal=.
-The test fails for that version and every later version.
+The temporary reader for channel deliveries without a =:sender-kind= is due
+for removal by 0.68.0.
 
 | State         | Components                                               |
 |---------------+----------------------------------------------------------|

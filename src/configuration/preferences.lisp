@@ -36,90 +36,26 @@ name; unknown keys survive rewrites so releases can share one file.")
   (list* ':preferences ':version *preferences-version* plist))
 
 (-> preferences--store
-    (configuration &key (:pathname pathname) (:recover-read-error (or null function)))
+    (configuration &key (:recover-read-error (or null function)))
     sexp-store:snapshot-store)
-(defun preferences--store
-    (configuration &key (pathname (configuration-preferences-path configuration)) recover-read-error)
-  "Construct a validated transactional preferences store at PATHNAME."
-  (make-instance 'sexp-store:snapshot-store
-                 :pathname           pathname
-                 :lock-pathname      (make-pathname :type "lock" :defaults pathname)
-                 :initial-state      #'list
-                 :validator          #'preferences--form-p
-                 :decoder            #'preferences--form->plist
-                 :encoder            #'preferences--plist->form
-                 :duplicate-keys     ':first
-                 :recover-read-error recover-read-error))
-
-(-> preferences--migrate-legacy
-    (configuration &key (:recover-read-error (or null function))) pathname)
-(defun preferences--migrate-legacy (configuration &key recover-read-error)
-  "Move legacy state preferences into config once, returning the usable pathname.
-
-Hold both writer locks until the target is published and the source is removed.
-Existing config preferences win, including after interrupted source cleanup.
-Failed publication keeps using legacy values; failed cleanup retries without
-importing them again. Remove at 0.68.0."
-  (let ((target (configuration-preferences-path configuration))
-        (legacy (merge-pathnames "preferences.sexp" (config :state-root configuration))))
-    (flet ((target-present-p ()
-             (handler-case (probe-file target)
-               (file-error () nil))))
-      (if (and (probe-file legacy)
-               (not (or (uiop:pathname-equal target legacy)
-                        (handler-case
-                            (and (target-present-p)
-                                 (uiop:pathname-equal (platform-truename *platform* target)
-                                                      (platform-truename *platform* legacy)))
-                          (file-error () nil)))))
-          (handler-case
-              (progn
-                (configuration-ensure-root-directory configuration ':config-root)
-                (call-with-file-lock
-                 (make-pathname :type "lock" :defaults legacy)
-                 (lambda ()
-                   (when (probe-file legacy)
-                     (sexp-store:store-transact
-                      (preferences--store configuration)
-                      (lambda (current)
-                        (if (target-present-p)
-                            (values current nil nil)
-                            (values
-                             (sexp-store:store-read
-                              (preferences--store configuration :pathname legacy
-                                                   :recover-read-error    recover-read-error)
-                              :lock-held-p t)
-                             nil t)))
-                      :publish (lambda (committed)
-                                 (declare (ignore committed))
-                                 (delete-file legacy))))))
-                target)
-            (error (cause)
-              (when (and (not (target-present-p))
-                         (typep cause 'sexp-store:store-error)
-                         (equal legacy (sexp-store:store-error-pathname cause)))
-                (error cause))
-              (warn 'preferences-migration-warning :source legacy :target target :cause cause)
-              (if (target-present-p)
-                  target
-                  legacy)))
-          target))))
+(defun preferences--store (configuration &key recover-read-error)
+  "Construct a validated transactional preferences store."
+  (let ((pathname (configuration-preferences-path configuration)))
+    (make-instance 'sexp-store:snapshot-store
+                   :pathname           pathname
+                   :lock-pathname      (make-pathname :type "lock" :defaults pathname)
+                   :initial-state      #'list
+                   :validator          #'preferences--form-p
+                   :decoder            #'preferences--form->plist
+                   :encoder            #'preferences--plist->form
+                   :duplicate-keys     ':first
+                   :recover-read-error recover-read-error)))
 
 (-> preferences--read (configuration) list)
 (defun preferences--read (configuration)
   "Read CONFIGURATION's durable values from its version 8 preferences file."
   (handler-case
-      (let* ((target   (configuration-preferences-path configuration))
-             (pathname (preferences--migrate-legacy configuration)))
-        (if (uiop:pathname-equal pathname target)
-            (sexp-store:store-read (preferences--store configuration))
-            (call-with-file-lock
-             (make-pathname :type "lock" :defaults pathname)
-             (lambda ()
-               (let ((redirect-p (or (probe-file target) (not (probe-file pathname)))))
-                 (sexp-store:store-read
-                  (preferences--store configuration :pathname (if redirect-p target pathname))
-                  :lock-held-p (not redirect-p)))))))
+      (sexp-store:store-read (preferences--store configuration))
     ((or sexp-store:store-error file-error) (cause)
       (let ((pathname (or (etypecase cause
                             (sexp-store:store-error
@@ -169,33 +105,13 @@ return NIL. Reading never repairs or rewrites a corrupt file."
                     nil)))
     (handler-case
         (progn
-          (setf pathname (preferences--migrate-legacy configuration :recover-read-error recover))
-          (configuration-ensure-root-directory
-           configuration
-           (if (equal pathname (configuration-preferences-path configuration))
-               ':config-root
-               ':state-root))
-          (flet ((replace-value (current)
-                   (let ((replacement (copy-list current)))
-                     (setf (getf replacement name) value)
-                     (values replacement nil t))))
-            (sexp-store:store-transact
-             (preferences--store configuration :pathname pathname :recover-read-error recover)
-             (lambda (current)
-               (let ((target (configuration-preferences-path configuration)))
-                 (if (and (not (uiop:pathname-equal pathname target))
-                          (or (probe-file target) (not (probe-file pathname))))
-                     (progn
-                       (configuration-ensure-root-directory configuration ':config-root)
-                       (sexp-store:store-transact
-                        (preferences--store configuration :recover-read-error recover)
-                        #'replace-value
-                        :publish (lambda (committed)
-                                   (declare (ignore committed))
-                                   (when (probe-file pathname)
-                                     (delete-file pathname))))
-                       (values current nil nil))
-                     (replace-value current)))))))
+          (configuration-ensure-root-directory configuration ':config-root)
+          (sexp-store:store-transact
+           (preferences--store configuration :recover-read-error recover)
+           (lambda (current)
+             (let ((replacement (copy-list current)))
+               (setf (getf replacement name) value)
+               (values replacement nil t)))))
       ((or sexp-store:store-error file-error) (cause)
         (error 'preferences-error
                :message   (format nil "Could not persist preferences at ~A: ~A" pathname cause)
@@ -205,20 +121,3 @@ return NIL. Reading never repairs or rewrites a corrupt file."
   nil)
 
 (setf *configuration-store* *preferences-store*)
-
-(define-condition preferences-migration-warning (warning)
-  ((source :initarg       :source
-           :reader        preferences-migration-warning-source
-           :documentation "The legacy preferences pathname to remove after publication.")
-   (target :initarg       :target
-           :reader        preferences-migration-warning-target
-           :documentation "The desired configuration preferences pathname.")
-   (cause  :initarg       :cause
-           :reader        preferences-migration-warning-cause
-           :documentation "The condition that prevented publication or source cleanup."))
-  (:documentation "Preferences migration is incomplete and will be retried.")
-  (:report (lambda (condition stream)
-             (format stream "Could not finish migrating preferences from ~A to ~A: ~A. Migration will be retried."
-                     (preferences-migration-warning-source condition)
-                     (preferences-migration-warning-target condition)
-                     (preferences-migration-warning-cause condition)))))

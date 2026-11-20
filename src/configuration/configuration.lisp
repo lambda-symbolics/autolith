@@ -139,35 +139,6 @@ exist yet, and is only put in directory form."
                     "AUTOLITH_MANAGEMENT_REPL_TRANSPORT=unix needs filesystem sockets, which this platform lacks; use tcp."))
   nil)
 
-
-;;;; -- Temporary Legacy XDG Choices --
-
-(defparameter *configuration-legacy-xdg-root-choices*
-  (make-hash-table :test #'eq :weakness ':key)
-  "Compatibility choices keyed by configuration identity; remove before 0.68.0.
-Values contain only root kinds and pathnames, never configurations. New runtime
-configurations cannot inherit choices made while building a saved image.")
-
-(defparameter *configuration-legacy-xdg-root-lock*
-  (make-recursive-lock "configuration legacy XDG choices")
-  "Serialize compatibility selection, allowing condition handlers to read other roots.
-Remove this temporary lock before 0.68.0.")
-
-(-> configuration--legacy-xdg-root (configuration platform-root-kind) pathname)
-(defun configuration--legacy-xdg-root (configuration kind)
-  "Remember compatibility choices for this configuration until 0.68.0.
-Ordinary native defaults remain lazy and follow the current environment."
-  (with-recursive-lock-held (*configuration-legacy-xdg-root-lock*)
-    (let ((choice (assoc kind (gethash configuration *configuration-legacy-xdg-root-choices*))))
-      (if choice
-          (rest choice)
-          (let* ((*legacy-xdg-root-choice-p* nil)
-                 (root                       (platform-application-root *platform* kind)))
-            (when *legacy-xdg-root-choice-p*
-              (push (cons kind root)
-                    (gethash configuration *configuration-legacy-xdg-root-choices*)))
-            root)))))
-
 (-> skill-root-list-p (t) boolean)
 (defun skill-root-list-p (value)
   "Return whether VALUE is a proper list of nonempty strings or pathnames."
@@ -201,7 +172,8 @@ Ordinary native defaults remain lazy and follow the current environment."
   :documentation             "The root for user-editable Autolith configuration."
   :visible-p                 nil
   :default                   (lambda (configuration)
-                               (configuration--legacy-xdg-root configuration ':config)))
+                               (declare (ignore configuration))
+                               (platform-application-root *platform* ':config)))
 
 (define-setting :site-config-root (site-config-directory-setting)
   :label                          "Site config root"
@@ -225,7 +197,8 @@ Ordinary native defaults remain lazy and follow the current environment."
   :documentation           "The root for durable user data such as conversations."
   :visible-p               nil
   :default                 (lambda (configuration)
-                             (configuration--legacy-xdg-root configuration ':data)))
+                             (declare (ignore configuration))
+                             (platform-application-root *platform* ':data)))
 
 (define-setting :active-image-core (absolute-file-setting)
   :label                           "Active image core"
@@ -243,7 +216,8 @@ Ordinary native defaults remain lazy and follow the current environment."
   :documentation            "The root for mutable runtime state such as queues and journals."
   :visible-p                nil
   :default                  (lambda (configuration)
-                              (configuration--legacy-xdg-root configuration ':state)))
+                              (declare (ignore configuration))
+                              (platform-application-root *platform* ':state)))
 
 (define-setting :cache-root (directory-setting)
   :label                    "Cache root"
@@ -251,7 +225,8 @@ Ordinary native defaults remain lazy and follow the current environment."
   :documentation            "The root for replaceable caches and temporary artifacts."
   :visible-p                nil
   :default                  (lambda (configuration)
-                              (configuration--legacy-xdg-root configuration ':cache)))
+                              (declare (ignore configuration))
+                              (platform-application-root *platform* ':cache)))
 
 (define-setting :codex-auth-path (pathname-setting)
   :label                         "Codex auth file"
@@ -733,10 +708,9 @@ Ordinary native defaults remain lazy and follow the current environment."
 Ignore the environment and preferences file. Apply overrides in setting
 order, with the model before its reasoning effort. PROVIDER-VALIDATION-P NIL
 defers model checks until the provider registry is available."
-  (let ((*legacy-xdg-root-bypass* (configuration--legacy-xdg-root-bypass overrides)))
-    (setinka:make-configuration
-     :overrides             (configuration--overrides overrides '(:provider-validation-p))
-     :validation-deferred-p (not provider-validation-p))))
+  (setinka:make-configuration
+   :overrides             (configuration--overrides overrides '(:provider-validation-p))
+   :validation-deferred-p (not provider-validation-p)))
 
 (-> configuration-copy
     (configuration &rest t &key (:provider-validation-p t) &allow-other-keys)
@@ -750,11 +724,10 @@ defers model checks until the provider registry is available."
 
 PROVIDER-VALIDATION-P defaults to the original value; NIL defers model checks.
 Change listeners are not copied."
-  (let ((*legacy-xdg-root-bypass* (configuration--legacy-xdg-root-bypass overrides)))
-    (setinka:configuration-copy
-     configuration
-     :overrides             (configuration--overrides overrides '(:provider-validation-p) configuration)
-     :validation-deferred-p (not provider-validation-p))))
+  (setinka:configuration-copy
+   configuration
+   :overrides             (configuration--overrides overrides '(:provider-validation-p) configuration)
+   :validation-deferred-p (not provider-validation-p)))
 
 (-> configuration-create (&rest t) configuration)
 (defun configuration-create
@@ -767,30 +740,10 @@ then its default. A durable value that no longer validates is dropped rather
 than applied. DEFER-PROVIDER-VALIDATION-P leaves model checks to
 CONFIGURATION-VALIDATE-DEFERRED once executable user initialization has
 registered providers. DURABLE-P NIL skips the preferences file."
-  (let ((*legacy-xdg-root-bypass* (configuration--legacy-xdg-root-bypass overrides)))
-    (setinka:configuration-load
-     :overrides             (configuration--overrides
-                             overrides '(:defer-provider-validation-p :durable-p))
-     :validation-deferred-p defer-provider-validation-p
-     :durable-p             durable-p)))
-
-(-> configuration--legacy-xdg-root-bypass (list) list)
-(defun configuration--legacy-xdg-root-bypass (overrides)
-  "Bypass legacy XDG selection for explicitly supplied roots until removal at 0.68.0.
-Setinka evaluates an old default before storing an override, even during construction."
-  (append
-   (loop for tail on overrides by (partial #'nthcdr 2)
-         for variable = (case (first tail)
-                          (:config-root
-                           "XDG_CONFIG_HOME")
-                          (:data-root
-                           "XDG_DATA_HOME")
-                          (:state-root
-                           "XDG_STATE_HOME")
-                          (:cache-root
-                           "XDG_CACHE_HOME"))
-         when variable collect variable)
-   *legacy-xdg-root-bypass*))
+  (setinka:configuration-load
+   :overrides             (configuration--overrides overrides '(:defer-provider-validation-p :durable-p))
+   :validation-deferred-p defer-provider-validation-p
+   :durable-p             durable-p))
 
 (-> configuration--overrides (list list &optional (option configuration)) list)
 (defun configuration--overrides (arguments options &optional configuration)

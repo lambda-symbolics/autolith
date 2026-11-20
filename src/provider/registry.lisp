@@ -266,57 +266,10 @@ compatibility path at 0.68.0."
 
 (-> provider--read-model-cache (configuration) t)
 (defun provider--read-model-cache (configuration)
-  "Move legacy metadata once, then read only the cache-root copy.
-
-Delete the source only after atomic publication, while both writer locks are
-held. Use an existing target, even when retrying interrupted source cleanup.
-If publication fails, use legacy metadata offline. Remove this branch at 0.68.0."
-  (block nil
-    (let ((target (configuration-provider-model-cache-path configuration))
-          (legacy (merge-pathnames "provider-models.sexp" (config :state-root configuration))))
-      (flet ((target-present-p ()
-               (handler-case (probe-file target)
-                 (file-error () nil))))
-        (when (and (probe-file legacy)
-                   (not (or (uiop:pathname-equal target legacy)
-                            (handler-case
-                                (and (target-present-p)
-                                     (uiop:pathname-equal (platform-truename *platform* target)
-                                                          (platform-truename *platform* legacy)))
-                              (file-error () nil)))))
-          (handler-case
-              (progn
-                (configuration-ensure-root-directory configuration ':cache-root)
-                (call-with-file-lock
-                 (make-pathname :type "lock" :defaults legacy)
-                 (lambda ()
-                   (when (probe-file legacy)
-                     (sexp-store:store-transact
-                      (provider--model-cache-store configuration)
-                      (lambda (current)
-                        (if (target-present-p)
-                            (values current nil nil)
-                            (let ((form (read-portable-form legacy)))
-                              (values form nil t))))
-                      :publish (lambda (committed)
-                                 (declare (ignore committed))
-                                 (delete-file legacy)))))))
-            (error (cause)
-              (warn 'provider-model-cache-migration-warning :source legacy :target target :cause cause)
-              (unless (target-present-p)
-                (return
-                  (handler-case (read-portable-form legacy)
-                    ((or sexp-store:store-error file-error) (condition)
-                      ;; Publication may have consumed the source before it opened.
-                      (cond
-                        ((target-present-p)
-                         (read-portable-form target))
-                        ((probe-file legacy)
-                         (error condition))
-                        (t
-                         nil)))))))))
-        (when (target-present-p)
-          (read-portable-form target))))))
+  "Read the cache-root copy of provider metadata."
+  (let ((pathname (configuration-provider-model-cache-path configuration)))
+    (when (probe-file pathname)
+      (read-portable-form pathname))))
 
 (-> provider--write-model-cache (configuration list) null)
 (defun provider--write-model-cache (configuration form)
@@ -328,23 +281,6 @@ If publication fails, use legacy metadata offline. Remove this branch at 0.68.0.
      (declare (ignore current))
      (values form nil t)))
   nil)
-
-(define-condition provider-model-cache-migration-warning (warning)
-  ((source :initarg       :source
-           :reader        provider-model-cache-migration-warning-source
-           :documentation "The legacy model cache pathname to remove after publication.")
-   (target :initarg       :target
-           :reader        provider-model-cache-migration-warning-target
-           :documentation "The desired XDG cache pathname.")
-   (cause  :initarg       :cause
-           :reader        provider-model-cache-migration-warning-cause
-           :documentation "The condition that prevented publication or source cleanup."))
-  (:documentation "Provider cache migration is incomplete and will be retried.")
-  (:report (lambda (condition stream)
-             (format stream "Could not finish migrating model cache from ~A to ~A: ~A. Migration will be retried."
-                     (provider-model-cache-migration-warning-source condition)
-                     (provider-model-cache-migration-warning-target condition)
-                     (provider-model-cache-migration-warning-cause condition)))))
 
 
 ;;;; -- Effective Registry Views --
