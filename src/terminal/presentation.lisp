@@ -356,12 +356,11 @@ The layouts a resident record needs are rebuilt from its data."
 
 (-> presentation--markdown->wire (list) list)
 (defun presentation--markdown->wire (markdown)
-  "Return a Markdown publication's plist with its header and marker as wire entries."
+  "Return a Markdown publication's plist with its header as a wire entry."
   (list :source     (getf markdown :source)
         :finished-p (getf markdown :finished-p)
         :stream-p   (getf markdown :stream-p)
-        :header     (presentation-entry->wire (getf markdown :header))
-        :marker     (presentation-entry->wire (getf markdown :marker))))
+        :header     (presentation-entry->wire (getf markdown :header))))
 
 (-> presentation--wire->markdown (t) list)
 (defun presentation--wire->markdown (wire)
@@ -370,8 +369,7 @@ The layouts a resident record needs are rebuilt from its data."
     (list :source     (if (stringp (getf fields :source)) (getf fields :source) "")
           :finished-p (not (null (getf fields :finished-p)))
           :stream-p   (not (null (getf fields :stream-p)))
-          :header     (presentation-wire->entry (getf fields :header))
-          :marker     (presentation-wire->entry (getf fields :marker)))))
+          :header     (presentation-wire->entry (getf fields :header)))))
 
 
 ;;;; -- The Server's Model --
@@ -1336,7 +1334,7 @@ Clients that already saw the stream keep it, with the durable record marks."
   nil)
 
 (defmethod terminal-ui-stream-markdown
-    ((ui channel-presentation) identifier &key source header marker finished-p)
+    ((ui channel-presentation) identifier &key source header finished-p)
   "Send one streamed Markdown block's new source to the clients, which render it.
 
 Only what was added since the last update travels; a source that changed
@@ -1351,7 +1349,6 @@ otherwise is sent whole."
            (delta-p  (and previous (string-prefix-p previous source)))
            (shared   (list :identifier (first stream)
                            :header     (presentation-entry->wire header)
-                           :marker     (presentation-entry->wire marker)
                            :finished-p finished-p))
            (whole    (list* :ui :operation ':markdown :source source shared))
            (cell     (third stream)))
@@ -1722,7 +1719,7 @@ method does not name."))
 
 (defmethod presentation-apply
     ((ui fullscreen-terminal-ui) (operation (eql :markdown))
-     &key identifier source delta header marker finished-p &allow-other-keys)
+     &key identifier source delta header finished-p &allow-other-keys)
   "Render one streamed Markdown block again from its whole source.
 
 A DELTA extends the source this UI already holds for the block."
@@ -1739,7 +1736,6 @@ A DELTA extends the source this UI already holds for the block."
       (terminal-ui-stream-markdown ui identifier
                                    :source     source
                                    :header     (presentation-wire->entry header)
-                                   :marker     (presentation-wire->entry marker)
                                    :finished-p (not (null finished-p)))
       (terminal-ui-note-status-progress ui)))
   nil)

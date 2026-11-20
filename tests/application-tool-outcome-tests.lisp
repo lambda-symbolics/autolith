@@ -71,39 +71,37 @@
 
 (-> test-transcript-schema-coalescing () null)
 (defun test-transcript-schema-coalescing ()
-  "Coalesce adjacent resident schema lookups across batches, styles and relayout."
-  (dolist (style '(:labels :repl))
-    (dolist (batch-p '(nil t))
-      (with-test-configuration (configuration)
-        (setf (config :transcript-style configuration) style)
-        (let* ((application (application-tool-outcome-tests--application configuration))
-               (ui          (application-ui application))
-               (viewport    (fullscreen-terminal-ui-viewport ui))
-               (records     (list (application-tool-outcome-tests--schemas 1 '("web" "search"))
-                                  (application-tool-outcome-tests--schemas 2 nil)
-                                  (application-tool-outcome-tests--schemas
-                                   3 '("skill" "search" "shodan"))
-                                  (application-tool-outcome-tests--schemas 4 '("web")))))
-          (if batch-p
-              (application--present-conversation-records application records)
-              (dolist (record records)
-                (application--present-conversation-record application record)))
-          (test-assert (= 1 (clinedi:transcript-viewport-chunk-count viewport))
-                       "consecutive visible lookups share one resident chunk")
-          (test-assert (search "web, search, skill, shodan"
-                               (application-tool-outcome-tests--text application))
-                       "merged namespaces retain first discovery order without repeats")
-          (application--present-conversation-records application records)
-          (test-assert (= 1 (clinedi:transcript-viewport-chunk-count viewport))
-                       "replayed merged identifiers do not produce duplicate chunks")
-          (clinedi:transcript-viewport-resize viewport 28)
-          (test-assert (every (lambda (row) (<= (text-cell-width row) 28))
-                              (application-tool-outcome-tests--rows application))
-                       "merged schema rows respect the resized viewport")
-          (clinedi:transcript-viewport-resize viewport 100)
-          (test-assert (search "web, search, skill, shodan"
-                               (application-tool-outcome-tests--text application))
-                       "widening recovers all merged names from semantic sources")))))
+  "Coalesce adjacent resident schema lookups across batches and relayout."
+  (dolist (batch-p '(nil t))
+    (with-test-configuration (configuration)
+      (let* ((application (application-tool-outcome-tests--application configuration))
+             (ui          (application-ui application))
+             (viewport    (fullscreen-terminal-ui-viewport ui))
+             (records     (list (application-tool-outcome-tests--schemas 1 '("web" "search"))
+                                (application-tool-outcome-tests--schemas 2 nil)
+                                (application-tool-outcome-tests--schemas
+                                 3 '("skill" "search" "shodan"))
+                                (application-tool-outcome-tests--schemas 4 '("web")))))
+        (if batch-p
+            (application--present-conversation-records application records)
+            (dolist (record records)
+              (application--present-conversation-record application record)))
+        (test-assert (= 1 (clinedi:transcript-viewport-chunk-count viewport))
+                     "consecutive visible lookups share one resident chunk")
+        (test-assert (search "web, search, skill, shodan"
+                             (application-tool-outcome-tests--text application))
+                     "merged namespaces retain first discovery order without repeats")
+        (application--present-conversation-records application records)
+        (test-assert (= 1 (clinedi:transcript-viewport-chunk-count viewport))
+                     "replayed merged identifiers do not produce duplicate chunks")
+        (clinedi:transcript-viewport-resize viewport 28)
+        (test-assert (every (lambda (row) (<= (text-cell-width row) 28))
+                            (application-tool-outcome-tests--rows application))
+                     "merged schema rows respect the resized viewport")
+        (clinedi:transcript-viewport-resize viewport 100)
+        (test-assert (search "web, search, skill, shodan"
+                             (application-tool-outcome-tests--text application))
+                     "widening recovers all merged names from semantic sources"))))
   (with-test-configuration (configuration)
     (let* ((application  (application-tool-outcome-tests--application configuration))
            (presentation (application-terminal-ui-create
@@ -159,45 +157,43 @@
 (-> test-transcript-schema-interruptions () null)
 (defun test-transcript-schema-interruptions ()
   "Keep schema groups separate when any visible entry interrupts discovery."
-  (dolist (style '(:labels :repl))
-    (dolist (interruption '(:side-status :message :call :stream :tail :cleared-tail))
-      (with-test-configuration (configuration)
-        (setf (config :transcript-style configuration) style)
-        (let* ((application (application-tool-outcome-tests--application configuration))
-               (ui          (application-ui application))
-               (viewport    (fullscreen-terminal-ui-viewport ui)))
-          (setf (terminal-interactive-p (terminal-ui-terminal ui)) t)
-          (with-terminal-ui (ui ui)
+  (dolist (interruption '(:side-status :message :call :stream :tail :cleared-tail))
+    (with-test-configuration (configuration)
+      (let* ((application (application-tool-outcome-tests--application configuration))
+             (ui          (application-ui application))
+             (viewport    (fullscreen-terminal-ui-viewport ui)))
+        (setf (terminal-interactive-p (terminal-ui-terminal ui)) t)
+        (with-terminal-ui (ui ui)
+          (application-tool-outcome-tests--present
+           application (application-tool-outcome-tests--schemas 1 '("web" "search")))
+          (case interruption
+            (:side-status
+             (application-tool-outcome-tests--present
+              application (list :side-status :seq 2 :spans (list (terminal-span ':notice "child note")))))
+            (:message
+             (application-tool-outcome-tests--present
+              application (list :message :seq 2 :role ':user :content "interruption" :time 0)))
+            (:call
+             (application-tool-outcome-tests--present
+              application (application-tool-outcome-tests--call 2 "ordinary-call")))
+            (:stream
+             (terminal-ui-stream-update
+              ui :rows (list (list (terminal-span ':plain "streamed text")))))
+            ((:tail :cleared-tail)
+             (terminal-ui-stream-update ui :tail "unfinished streamed text")
+             (when (eq interruption ':cleared-tail)
+               (terminal-ui-stream-update ui :tail nil))))
+          (let ((before (clinedi:transcript-viewport-chunk-count viewport)))
             (application-tool-outcome-tests--present
-             application (application-tool-outcome-tests--schemas 1 '("web" "search")))
-            (case interruption
-              (:side-status
-               (application-tool-outcome-tests--present
-                application (list :side-status :seq 2 :spans (list (terminal-span ':notice "child note")))))
-              (:message
-               (application-tool-outcome-tests--present
-                application (list :message :seq 2 :role ':user :content "interruption" :time 0)))
-              (:call
-               (application-tool-outcome-tests--present
-                application (application-tool-outcome-tests--call 2 "ordinary-call")))
-              (:stream
-               (terminal-ui-stream-update
-                ui :rows (list (list (terminal-span ':plain "streamed text")))))
-              ((:tail :cleared-tail)
-               (terminal-ui-stream-update ui :tail "unfinished streamed text")
-               (when (eq interruption ':cleared-tail)
-                 (terminal-ui-stream-update ui :tail nil))))
-            (let ((before (clinedi:transcript-viewport-chunk-count viewport)))
-              (application-tool-outcome-tests--present
-               application (application-tool-outcome-tests--schemas 3 '("skill" "shodan")))
-              (application-tool-outcome-tests--present
-               application (application-tool-outcome-tests--schemas 4 '("skill")))
-              (test-assert (= (+ before (if (eq interruption ':tail) 2 1))
-                              (clinedi:transcript-viewport-chunk-count viewport))
-                           "only uninterrupted visible lookups share the next schema chunk")
-              (test-assert (not (search "search, skill"
-                                       (application-tool-outcome-tests--text application)))
-                           "an interruption prevents merging back into an earlier schema row")))))))
+             application (application-tool-outcome-tests--schemas 3 '("skill" "shodan")))
+            (application-tool-outcome-tests--present
+             application (application-tool-outcome-tests--schemas 4 '("skill")))
+            (test-assert (= (+ before (if (eq interruption ':tail) 2 1))
+                            (clinedi:transcript-viewport-chunk-count viewport))
+                         "only uninterrupted visible lookups share the next schema chunk")
+            (test-assert (not (search "search, skill"
+                                     (application-tool-outcome-tests--text application)))
+                         "an interruption prevents merging back into an earlier schema row"))))))
   nil)
 
 (-> test-application-resource-edit-failure-placement () null)

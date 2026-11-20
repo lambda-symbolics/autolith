@@ -250,7 +250,7 @@ and keyword arguments in multi-line calls.
 ### Command notation
 
 Document Autolith commands in canonical Common Lisp form, such as `(status)` or
-`(settings :transcript-style :repl)`. Prompt commands use this form; slash-prefixed
+`(settings :compact-view-p nil)`. Prompt commands use this form; slash-prefixed
 registry names are metadata.
 
 ### Conditions, Restarts, and Returns

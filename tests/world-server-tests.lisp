@@ -4142,7 +4142,7 @@ terminal publication and join the serving owner before restoring the provider."
 (defun test-world-server-open-running-child ()
   "Attach real clients through pooled output, settlement and ordinary follow-up."
   ;; Build the cold syntax backend before timing ordinary command delivery.
-  (application-lisp-code-spans "(settings :transcript-style :repl)")
+  (application-lisp-code-spans "(settings :turn-timestamps-p t)")
   (world-server-tests--call-running-child
    (lambda (context)
      (destructuring-bind (&key root parent job host application thread release statistics
@@ -4245,10 +4245,10 @@ terminal publication and join the serving owner before restoring the provider."
                                   (getf (localgroup-client-call (second connections) ':state) :state))
                              "detaching the first controller leaves the second connected and usable")
                 (localgroup-client-call (second connections) ':submit
-                                        :text "(settings :transcript-style :repl)")
+                                        :text "(settings :turn-timestamps-p t)")
                 (test-assert
                  (task-tests--wait-until
-                  (lambda () (eq (config :transcript-style (application-configuration application)) ':repl)) 10)
+                  (lambda () (config :turn-timestamps-p (application-configuration application))) 10)
                  "the remaining controlling client can execute an ordinary command")
                 (let ((observed (funcall statistics)))
                   (test-assert (and (= (getf observed :maximum-active) 1)

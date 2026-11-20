@@ -397,32 +397,6 @@ Choose how many blank lines to leave above and below the prompt.
 Use 0 for a compact prompt, 1 for the default spacing, or 2 for more room.
 You can change this later in =(settings)=.
 
-* Message style
-:PROPERTIES:
-:ID: transcript-style
-:VERSION: 1
-:EXERCISE: choose
-:SETTING: transcript-style
-:CHOICES: :labels :repl
-:END:
-Decide if you want labeled headers:
-
-@@user:❯ you@@
-  hi!
-
-@@brand:● autolith@@
-  Hello, I am Autolith. How can I help you today?
-
-Or Lisp REPL prompts:
-
-@@dim:  2026-10-26 21:30@@
-@@user:>@@ hi!
-
-@@dim:  2026-10-26 21:30@@
-@@brand:<@@ Hello, I am Autolith. How can I help you today?
-
-The timestamps you see in this example are configurable in =(settings)=.
-
 * Work in channels
 :PROPERTIES:
 :ID: channels

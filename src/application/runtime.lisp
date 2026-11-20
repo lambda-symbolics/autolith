@@ -514,10 +514,6 @@ told its client's pane with CHANNEL-PRESENTATION-SET-GEOMETRY."
 The fullscreen viewport jumps between these lines, so a reader can follow the
 exchange without scrolling through reasoning and tool activity.")
 
-(defparameter *application-message-markers*
-  '(:user (:user "> ") :assistant (:brand "< "))
-  "The style and text marking a REPL-style message's first line, by role.")
-
 (defparameter *application-placeholder*
   "Ask Autolith anything. Type (help) for operations."
   "The dim hint shown on the prompt row while input is empty.")
@@ -2469,16 +2465,10 @@ roleless inbox handoff. That handoff retires the former child role with its runt
 (defun application--markdown-presentation
     (application text timestamp &key (finished-p t) stream-p)
   "Retain TEXT and immutable message decorations without retaining APPLICATION."
-  (let ((repl-p (application--repl-transcript-p application)))
-    (list :source (sanitize-text text)
-          :finished-p finished-p :stream-p stream-p
-          :header (if repl-p
-                      (let ((row (application--message-timestamp-row application timestamp)))
-                        (when row
-                          (append row (list (terminal-span ':plain (string #\Newline))))))
-                      (application--message-entry application :role ':assistant
-                                                  :timestamp timestamp :body nil))
-          :marker (when repl-p (copy-list (getf *application-message-markers* :assistant))))))
+  (list :source (sanitize-text text)
+        :finished-p finished-p :stream-p stream-p
+        :header (application--message-entry application :role ':assistant
+                                            :timestamp timestamp :body nil)))
 
 (-> application--stream-markdown-update
     (application t &key (:source string) (:timestamp (option timestamp)) (:finished-p boolean))
@@ -2491,7 +2481,7 @@ roleless inbox handoff. That handoff retires the former child role with its runt
     (terminal-ui-stream-markdown
      (application-ui application) identifier
      :source (getf publication :source) :header (getf publication :header)
-     :marker (getf publication :marker) :finished-p finished-p)))
+     :finished-p finished-p)))
 
 (-> application--timestamp-text
     ((option timestamp))
@@ -2513,60 +2503,21 @@ roleless inbox handoff. That handoff retires the former child role with its runt
   (and (application-turn-timestamps-p application)
        (application--timestamp-text timestamp)))
 
-(-> application--repl-transcript-p (application) boolean)
-(defun application--repl-transcript-p (application)
-  "Return true when APPLICATION marks messages like a REPL exchange."
-  (eq (config :transcript-style (application-configuration application)) ':repl))
-
-(-> application--marked-row (list (member :user :assistant)) list)
-(defun application--marked-row (spans role)
-  "Return SPANS with their leading two-space indent replaced by ROLE's REPL marker.
-
-The marker takes the indent's two cells, so the following lines stay aligned."
-  (destructuring-bind (style text) (getf *application-message-markers* role)
-    (let* ((first   (first spans))
-           (content (and first
-                         (not (termdown:widget-p first))
-                         (terminal-span-text first)))
-           (marker  (terminal-span style text)))
-      (if (and content (uiop:string-prefix-p "  " content))
-          (append (list marker)
-                  (when (> (length content) 2)
-                    (list (terminal-span (terminal-span-style first) (subseq content 2))))
-                  (rest spans))
-          (cons marker spans)))))
-
-(-> application--message-timestamp-row (application (option timestamp)) list)
-(defun application--message-timestamp-row (application timestamp)
-  "Return the indented timestamp spans above a REPL-style message, or NIL."
-  (let ((text (application--turn-timestamp-text application timestamp)))
-    (when text
-      (list (terminal-span ':dim (format nil "  ~A" text))))))
-
 (-> application--message-entry
     (application &key (:role (member :user :assistant)) (:timestamp (option timestamp))
                       (:body list))
     list)
 (defun application--message-entry (application &key role timestamp body)
-  "Return one user or assistant message entry over its indented BODY spans.
-
-The labels style puts a header with ROLE's name and TIMESTAMP above BODY. The
-REPL style marks BODY's first line with > or < instead, with TIMESTAMP on the
-line above."
-  (if (application--repl-transcript-p application)
-      (append (let ((row (application--message-timestamp-row application timestamp)))
-                (when row
-                  (append row (list (terminal-span ':plain (string #\Newline))))))
-              (application--marked-row body role))
-      (append (application--transcript-entry
-               application
-               :style     (if (eq role ':user) ':user ':brand)
-               :header    (if (eq role ':user)
-                              "❯ you"
-                              (format nil "● ~A" (application-agent-name application)))
-               :timestamp timestamp)
-              (list (terminal-span ':plain (string #\Newline)))
-              body)))
+  "Return ROLE's labeled header and TIMESTAMP above its indented BODY spans."
+  (append (application--transcript-entry
+           application
+           :style     (if (eq role ':user) ':user ':brand)
+           :header    (if (eq role ':user)
+                          "❯ you"
+                          (format nil "● ~A" (application-agent-name application)))
+           :timestamp timestamp)
+          (list (terminal-span ':plain (string #\Newline)))
+          body))
 
 (-> application--user-message-entry (application string (option timestamp)) list)
 (defun application--user-message-entry (application text timestamp)
@@ -4388,7 +4339,6 @@ clients as :TEXT, :REASONING and :STATUS events."
         (stream-presentation      nil)
         (stream-pending           "")
         (stream-open-p            nil)
-        (stream-marker-pending-p  nil)
         (stream-started-at        nil)
         (stream-renderer          nil))
     (labels ((stream-call (callback)
@@ -4431,25 +4381,7 @@ clients as :TEXT, :REASONING and :STATUS events."
                        stream-pending ""
                        stream-open-p nil
                        stream-presentation nil
-                       stream-marker-pending-p nil
                        stream-renderer nil)))
-
-             (stream-mark (rows)
-               "Mark ROWS' first content row as the REPL-style reply while it is pending."
-               (let ((position (position-if-not #'null rows)))
-                 (if (and stream-marker-pending-p position)
-                     (progn
-                       (setf stream-marker-pending-p nil)
-                       (append (subseq rows 0 position)
-                               (list (application--marked-row (nth position rows) ':assistant))
-                               (nthcdr (1+ position) rows)))
-                     rows)))
-
-             (stream-tail-mark (tail)
-               "Show TAIL's first row marked while the reply's first line is still arriving."
-               (if (and stream-marker-pending-p (consp tail) (consp (first tail)))
-                   (cons (application--marked-row (first tail) ':assistant) (rest tail))
-                   tail))
 
              (reasoning-flush ()
                "Finalize the visible reasoning summary before assistant output."
@@ -4500,27 +4432,20 @@ clients as :TEXT, :REASONING and :STATUS events."
                            stream-renderer (application--markdown-renderer
                                             application))
                      (application-set-activity application "receiving response")
-                     (if (application--repl-transcript-p application)
-                         (let ((row (application--message-timestamp-row
-                                     application stream-started-at)))
-                           (setf stream-marker-pending-p t)
-                           (when row
-                             (push row rows)))
-                         (push
-                          (application--transcript-entry
-                           application
-                           :style     ':brand
-                           :header    (format nil "● ~A" (application-agent-name application))
-                           :timestamp stream-started-at)
-                          rows)))
+                     (push
+                      (application--transcript-entry
+                       application
+                       :style     ':brand
+                       :header    (format nil "● ~A" (application-agent-name application))
+                       :timestamp stream-started-at)
+                      rows))
                    (loop for newline = (position #\Newline stream-pending)
                          while newline
                          do (setf rows
                                   (append rows
-                                          (stream-mark
-                                           (application--markdown-rows
-                                            stream-renderer
-                                            (subseq stream-pending 0 newline))))
+                                          (application--markdown-rows
+                                           stream-renderer
+                                           (subseq stream-pending 0 newline)))
                                   stream-pending
                                   (subseq stream-pending (1+ newline))))
                    (multiple-value-bind (overflow-rows tail-rows retained)
@@ -4528,8 +4453,8 @@ clients as :TEXT, :REASONING and :STATUS events."
                      (setf stream-pending retained)
                      (terminal-ui-stream-update
                       ui
-                      :rows (append rows (stream-mark overflow-rows))
-                      :tail (stream-tail-mark tail-rows))))))
+                      :rows (append rows overflow-rows)
+                      :tail tail-rows)))))
 
              (stream-flush ()
                "Finish the streamed block from its semantic source or native renderer."
@@ -4540,18 +4465,15 @@ clients as :TEXT, :REASONING and :STATUS events."
                       :timestamp stream-started-at :finished-p t)
                      (terminal-ui-stream-update
                       ui
-                      :rows (append (stream-mark
-                                     (append (when (plusp (length stream-pending))
-                                               (application--markdown-rows stream-renderer
-                                                                           stream-pending))
-                                             (termdown:markdown-render-finish stream-renderer)))
+                      :rows (append (when (plusp (length stream-pending))
+                                      (application--markdown-rows stream-renderer stream-pending))
+                                    (termdown:markdown-render-finish stream-renderer)
                                     (list nil))
                       :tail nil))
                  (text-buffer-clear stream-source)
                  (setf stream-pending ""
                        stream-open-p nil
                        stream-presentation nil
-                       stream-marker-pending-p nil
                        stream-renderer nil))))
       (callback-agent-observer-create
        :text-callback

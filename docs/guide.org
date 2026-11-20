@@ -47,10 +47,6 @@ as a follow-up while a turn runs. If you press =Tab= while typing an unfinished
 form such as =(job.continuity :=, nothing happens. Finish the form before submitting it.
 
 The work indicator displays =REPL= with one letter highlighted in sequence.
-Use =(settings :transcript-style :repl)= to show messages as a Lisp REPL
-exchange, with =>= before yours and =<= before Autolith's. When turn timestamps
-are enabled, the time appears on the line above. Set the style to =:labels= to
-restore the =❯ you= and =● autolith= headers.
 
 * Terminal diagrams
 

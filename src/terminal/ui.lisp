@@ -2300,25 +2300,6 @@ and the modeline last, so the response being received stays in view."
                                          (list ':copy source))
                                         span))))))
 
-(-> terminal-ui--markdown-mark (list list) list)
-(defun terminal-ui--markdown-mark (rows marker)
-  "Replace the first content row's indent with the immutable MARKER specification."
-  (let ((position (and marker (position-if-not #'null rows))))
-    (if (null position)
-        rows
-        (let* ((row    (nth position rows))
-               (first  (first row))
-               (text   (and (not (termdown:widget-p first))
-                            (terminal-span-text first)))
-               (marked (cons (terminal-span (first marker) (second marker))
-                             (if (and text (uiop:string-prefix-p "  " text))
-                                 (append (when (> (length text) 2)
-                                           (list (terminal-span (terminal-span-style first)
-                                                                (subseq text 2))))
-                                         (rest row))
-                                 row))))
-          (append (subseq rows 0 position) (list marked) (nthcdr (1+ position) rows))))))
-
 (-> terminal-ui--markdown-render (list integer) (values list list))
 (defun terminal-ui--markdown-render (publication width)
   "Replay PUBLICATION's source at WIDTH, returning committed spans and speculative rows.
@@ -2350,15 +2331,13 @@ flushes the renderer; resizing an open stream does not complete its pending line
             (declare (ignore retained))
             (setf rows (nconc rows committed)
                   tail speculative))))
-    (let* ((marker   (getf publication :marker))
-           (marked-p (and marker (some #'identity rows))))
-      (values
-       (append (getf publication :header)
-               (loop for row in (terminal-ui--markdown-mark rows marker)
-                     append (append row (list (terminal-span ':plain (string #\Newline))))))
-       (if marked-p tail (terminal-ui--markdown-mark tail marker))))))
+    (values
+     (append (getf publication :header)
+             (loop for row in rows
+                   append (append row (list (terminal-span ':plain (string #\Newline))))))
+     tail)))
 
-(defgeneric terminal-ui-stream-markdown (ui identifier &key source header marker finished-p)
+(defgeneric terminal-ui-stream-markdown (ui identifier &key source header finished-p)
   (:documentation "Publish a semantic Markdown stream under a stable IDENTIFIER at UI's pane width."))
 
 (-> terminal-ui--stream-output (terminal list) (values string string))

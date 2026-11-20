@@ -3575,55 +3575,6 @@
         (terminal-ui-stop (application-ui application)))))
   nil)
 
-(-> test-repl-transcript-style () null)
-(defun test-repl-transcript-style ()
-  "Test messages open with REPL markers and timestamps above in the REPL style."
-  (with-test-configuration (configuration)
-    (setf (config :turn-timestamps-p configuration) t)
-    (let* ((terminal    (make-instance 'recording-terminal :columns 60))
-           (application (make-instance 'application
-                                       :configuration configuration
-                                       :conversation  (conversation-create
-                                                       configuration :identifier "repl-style")
-                                       :tool-registry (make-default-tool-registry)
-                                       :ui            (terminal-ui-create :terminal terminal)))
-           (user-record (list :message :role :user :content "hi!" :time 3990000000)))
-      (flet ((lines (entry)
-               (uiop:split-string (string-right-trim '(#\Newline) (test-terminal-row-text entry))
-                                  :separator '(#\Newline))))
-        (test-assert (equal (second (lines (conversation-record-entry application user-record)))
-                            "  hi!")
-                     "the labels style keeps the header above the indented message")
-        (setf (config :transcript-style configuration) ':repl)
-        (let ((user  (lines (conversation-record-entry application user-record)))
-              (reply (lines (response-item-entry application
-                                                 (agent-test-message "Hello, how can I help?")
-                                                 :timestamp 3990000000))))
-          (test-assert (and (= 2 (length user))
-                            (uiop:string-prefix-p "  " (first user))
-                            (search (application--timestamp-text 3990000000) (first user))
-                            (string= (second user) "> hi!"))
-                       "a REPL-style user message has its time above and > before it")
-          (test-assert (and (string= (second reply) "< Hello, how can I help?")
-                            (notany (lambda (line) (search "autolith" line)) reply))
-                       "a REPL-style reply opens with < instead of a header"))
-        (let* ((observer (application-agent-observer application))
-               (send     (callback-agent-observer-text-callback observer)))
-          (terminal-ui-start (application-ui application))
-          (unwind-protect
-               (progn
-                 (funcall (callback-agent-observer-status-callback observer)
-                          :provider-request-started nil)
-                 (funcall send (format nil "Streamed first line~%second line~%"))
-                 (let ((output (clinedi:ansi-strip (recording-terminal-output terminal))))
-                   (test-assert (and (search "< Streamed first line" output)
-                                     (search "  second line" output)
-                                     (not (search "< second line" output))
-                                     (not (search "● autolith" output)))
-                                "a streamed REPL-style reply marks only its first line")))
-            (terminal-ui-stop (application-ui application)))))))
-  nil)
-
 (-> test-recovery-diagnosis-prompt () null)
 (defun test-recovery-diagnosis-prompt ()
   "Test recovered crash context becomes one bounded diagnosis-only prompt."

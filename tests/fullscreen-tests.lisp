@@ -1560,21 +1560,20 @@
            (and (= 1 (terminal-tests--substring-count "PIPE-FIRST" output))
                 (= 1 (terminal-tests--substring-count "PIPE-SECOND" output)))
            "a plain output sink emits each incremental prefix once"))))
-    ;; A REPL fragment without a newline has no committed header or native chunk.
+    ;; A fragment without a newline has no committed header or native chunk.
     (let* ((terminal (make-instance 'recording-terminal :columns 32 :rows 12))
            (ui       (fullscreen-test--ui terminal))
-           (source   "A pending REPL fragment whose wrapping changes with the pane width."))
+           (source   "A pending fragment whose wrapping changes with the pane width."))
       (with-terminal-ui (active ui)
-        (terminal-ui-stream-markdown active ':pending :source source :marker '(:brand "● "))
+        (terminal-ui-stream-markdown active ':pending :source source)
         (terminal-ui-resize active 72 :rows 12)
         (multiple-value-bind (spans tail)
             (terminal-ui--markdown-render
-             (list :source source :stream-p t :marker '(:brand "● ")) 72)
+             (list :source source :stream-p t) 72)
           (declare (ignore spans))
           (test-assert (equalp tail (terminal-ui-stream-tail active))
-                       "tail-only REPL fragments reflow before their first committed row"))
-        (terminal-ui-stream-markdown active ':pending :source source
-                                     :marker '(:brand "● ") :finished-p t)
+                       "tail-only fragments reflow before their first committed row"))
+        (terminal-ui-stream-markdown active ':pending :source source :finished-p t)
         (test-assert (and (= 1 (fullscreen-test--chunk-count active))
                           (null (terminal-ui-stream-tail active)))
                      "finishing a tail-only stream commits it once"))))
