@@ -63,8 +63,7 @@
                          form)))
          (definition  (task-agent-definition-create
                        :name "custom-runner" :description "Exercise terminal telemetry."
-                       :instructions "Yield the answer." :tools tools :source ':test
-                       :output (run-job-request-output-contract request)))
+                       :instructions "Return the answer." :tools tools :source ':test))
          (bodies      nil)
          (results     nil)
          (lock        (bt:make-lock "captured job telemetry")))
