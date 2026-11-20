@@ -53,6 +53,7 @@ claims."
      pool
      :maximum-concurrency          maximum-concurrency
      :maximum-live-jobs            maximum-live-jobs
+     :maximum-batch-size            1
      :maximum-runtime-milliseconds maximum-runtime-milliseconds))
   nil)
 
