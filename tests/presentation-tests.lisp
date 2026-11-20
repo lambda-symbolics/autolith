@@ -224,6 +224,25 @@
   (presentation-tests--tool-entry-reflow)
   nil)
 
+(-> test-presentation-repl-marker-wire () null)
+(defun test-presentation-repl-marker-wire ()
+  "Test a REPL marker crosses the Markdown wire as the same styled entry."
+  (with-test-configuration (configuration)
+    (setf (config :transcript-style configuration) ':repl)
+    (let* ((application (make-instance 'application :configuration configuration
+                                                   :tool-registry  (make-default-tool-registry)
+                                                   :conversation   (conversation-create configuration)))
+           (publication (application--markdown-presentation application "reply" nil))
+           (marker      (getf publication :marker)))
+      (test-assert (equal marker (list (terminal-span ':brand "< ")))
+                   "a REPL publication builds its marker as one styled span")
+      (let* ((wire (client-portable (presentation--markdown->wire publication)))
+             (back (presentation--wire->markdown wire)))
+        (test-assert (equal (getf wire :marker) '((:brand "< ")))
+                     "the marker travels as one portable style and text pair")
+        (test-assert (equal (getf back :marker) marker)
+                     "a client reconstructs the same marker span")))))
+
 (-> test-presentation-model-publishes () null)
 (defun test-presentation-model-publishes ()
   "Test a presentation tells its clients each change once and replays what it shows."
@@ -501,6 +520,33 @@
         (test-assert (= 1 (presentation-tests--shown ui "shown to the client"))
                      "a second replay clears first, so nothing shows twice"))))
   nil)
+
+(-> test-presentation-repl-marker-replay () null)
+(defun test-presentation-repl-marker-replay ()
+  "Test a streamed REPL marker publishes and replays through a channel."
+  (with-test-configuration (configuration)
+    (setf (config :transcript-style configuration) ':repl)
+    (let ((ui (presentation-tests--model)))
+      (let ((application (make-instance 'application :configuration configuration
+                                                   :tool-registry   (make-default-tool-registry)
+                                                   :conversation    (conversation-create configuration)
+                                                   :ui              ui)))
+        (application--stream-markdown-update application (gensym "STREAM")
+                                             :source "reply" :finished-p t)
+        (let* ((replay   (mapcar #'client-portable (channel-presentation-replay ui)))
+               (markdown (remove ':markdown replay
+                                 :key      (lambda (event) (getf (rest event) :operation))
+                                 :test-not #'eq)))
+          (test-assert (= 1 (length markdown))
+                       "the stream leaves one Markdown block in the channel replay")
+          (test-assert (equal (getf (rest (first markdown)) :marker) '((:brand "< ")))
+                       "the marker reaches the replay as one portable styled span")
+          (with-terminal-ui (client (fullscreen-test--ui
+                                     (make-instance 'recording-terminal :columns 60 :rows 20)))
+            (dolist (event replay)
+              (apply #'presentation-apply client (getf (rest event) :operation) (rest event)))
+            (test-assert (= 1 (presentation-tests--shown client "< reply"))
+                         "the client renders the reply with its REPL marker")))))))
 
 (-> presentation-tests--hosted-completion (application function function) null)
 (defun presentation-tests--hosted-completion (application seen await)

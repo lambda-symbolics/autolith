@@ -2325,7 +2325,7 @@ and the modeline last, so the response being received stays in view."
 
 (-> terminal-ui--markdown-mark (list list) list)
 (defun terminal-ui--markdown-mark (rows marker)
-  "Replace the first content row's indent with the immutable MARKER specification."
+  "Replace the first content row's indent with MARKER's leading styled span."
   (let ((position (and marker (position-if-not #'null rows))))
     (if (null position)
         rows
@@ -2333,7 +2333,7 @@ and the modeline last, so the response being received stays in view."
                (first  (first row))
                (text   (and (not (termdown:widget-p first))
                             (terminal-span-text first)))
-               (marked (cons (terminal-span (first marker) (second marker))
+               (marked (cons (first marker)
                              (if (and text (uiop:string-prefix-p "  " text))
                                  (append (when (> (length text) 2)
                                            (list (terminal-span (terminal-span-style first)

@@ -2459,6 +2459,12 @@ roleless inbox handoff. That handoff retires the former child role with its runt
               (list :source text :finished-p t)
               (application--transcript-columns application))))
 
+(-> application--message-marker-span ((member :user :assistant)) cons)
+(defun application--message-marker-span (role)
+  "Return ROLE's REPL marker as one styled span."
+  (destructuring-bind (style text) (getf *application-message-markers* role)
+    (terminal-span style text)))
+
 (-> application--markdown-presentation
     (application string (option timestamp) &key (:finished-p boolean) (:stream-p boolean)) list)
 (defun application--markdown-presentation
@@ -2473,7 +2479,7 @@ roleless inbox handoff. That handoff retires the former child role with its runt
                           (append row (list (terminal-span ':plain (string #\Newline))))))
                       (application--message-entry application :role ':assistant
                                                   :timestamp timestamp :body nil))
-          :marker (when repl-p (copy-list (getf *application-message-markers* :assistant))))))
+          :marker (when repl-p (list (application--message-marker-span :assistant))))))
 
 (-> application--stream-markdown-update
     (application t &key (:source string) (:timestamp (option timestamp)) (:finished-p boolean))
@@ -2518,18 +2524,17 @@ roleless inbox handoff. That handoff retires the former child role with its runt
   "Return SPANS with their leading two-space indent replaced by ROLE's REPL marker.
 
 The marker takes the indent's two cells, so the following lines stay aligned."
-  (destructuring-bind (style text) (getf *application-message-markers* role)
-    (let* ((first   (first spans))
-           (content (and first
-                         (not (termdown:widget-p first))
-                         (terminal-span-text first)))
-           (marker  (terminal-span style text)))
-      (if (and content (uiop:string-prefix-p "  " content))
-          (append (list marker)
-                  (when (> (length content) 2)
-                    (list (terminal-span (terminal-span-style first) (subseq content 2))))
-                  (rest spans))
-          (cons marker spans)))))
+  (let* ((first   (first spans))
+         (content (and first
+                       (not (termdown:widget-p first))
+                       (terminal-span-text first)))
+         (marker  (application--message-marker-span role)))
+    (if (and content (uiop:string-prefix-p "  " content))
+        (append (list marker)
+                (when (> (length content) 2)
+                  (list (terminal-span (terminal-span-style first) (subseq content 2))))
+                (rest spans))
+        (cons marker spans))))
 
 (-> application--message-timestamp-row (application (option timestamp)) list)
 (defun application--message-timestamp-row (application timestamp)

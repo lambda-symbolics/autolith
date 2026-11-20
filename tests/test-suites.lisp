@@ -825,6 +825,8 @@
 
 (define-test-suite presentation
   test-presentation-wire-forms
+  test-presentation-repl-marker-wire
+  test-presentation-repl-marker-replay
   test-presentation-model-publishes
   test-presentation-transport-batches
   test-presentation-applies
