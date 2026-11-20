@@ -1101,7 +1101,6 @@
   test-conversation-native-compaction
   test-conversation-chunk-storage
   test-conversation-pending-input-identifier-order
-  test-tool-failure-survey
   test-conversation-segment-validation
   test-conversation-legacy-storage
   test-conversation-working-seconds

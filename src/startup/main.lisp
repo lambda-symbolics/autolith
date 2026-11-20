@@ -1819,33 +1819,6 @@ Return success and bounded secondary cleanup metadata without replacing a primar
         (first arguments)
         (rest arguments))))))
 
-(-> main--tool-failures-command () clingon:command)
-(defun main--tool-failures-command ()
-  "Return the read-only failed tool call survey sub-command definition."
-  (make-command
-   :name        "tool-failures"
-   :description "list recent failed tool calls with their arguments, grouped by error"
-   :usage       "[ID ...] [--days N] [--examples N]"
-   :options
-   (list
-    (make-option ':integer :long-name "days" :key ':days :initial-value 7
-                 :parameter "N" :description "survey segments written in the last N days")
-    (make-option ':integer :long-name "examples" :key ':examples :initial-value 3
-                 :parameter "N" :description "examples printed for each error shape"))
-   :handler
-   (lambda (command)
-     (let ((days     (getopt* command ':days))
-           (examples (getopt* command ':examples)))
-       (unless (and (integerp days) (plusp days) (integerp examples) (>= examples 0))
-         (error 'configuration-error
-                :message "tool-failures needs a positive --days and a non-negative --examples."))
-       (tool-failures-report
-        (tool-failures (configuration-create :immutable-p                 t
-                                             :defer-provider-validation-p t)
-                       :days        days
-                       :identifiers (command-arguments command))
-        :examples examples)))))
-
 (-> main--fork-command () clingon:command)
 (defun main--fork-command ()
   "Return the durable conversation fork sub-command definition."
@@ -2149,7 +2122,6 @@ autolith uninstall removes the installation and keeps user data."
    :sub-commands (list (main--open-command)
                        (main--new-command)
                        (main--replay-command)
-                       (main--tool-failures-command)
                        (main--fork-command)
                        (main--acp-command)
                        (main--auth-command)

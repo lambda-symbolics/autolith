@@ -337,7 +337,6 @@
                                           (:file "application/clipboard")
                                           (:file "application/compaction-reports")
                                           (:file "conversation/replay")
-                                          (:file "conversation/tool-failures")
                                           (:file "conversation/search")
                                           (:file "resource/conversation")
                                           (:file "world/resource")
