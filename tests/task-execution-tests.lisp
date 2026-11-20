@@ -6,7 +6,7 @@
     (task-agent-definition task-orchestrator)
     tool-registry)
 (defun task-tests--child-registry (definition orchestrator)
-  "Return a child registry with authorization, yield, and trailing-effect tools."
+  "Return a child registry with the ordinary command-authorization fixture."
   (let ((registry
           (task-child-tool-registry
            (make-instance 'tool-registry)
@@ -19,13 +19,6 @@
                     :namespace   "test"
                     :name        "authorize"
                     :description "Authorize a harmless command."
-                    :parameters  (tool-object-schema (json-object) nil)))
-    (tool-registry-register
-     registry
-     (make-instance 'task-test-effect-tool
-                    :namespace   "test"
-                    :name        "effect"
-                    :description "Record an observable test effect."
                     :parameters  (tool-object-schema (json-object) nil)))
     registry))
 
@@ -426,14 +419,14 @@
 
 (-> test-task-child-shared-agent-loop () null)
 (defun test-task-child-shared-agent-loop ()
-  "Test child yield uses the ordinary provider and tool execution path."
+  "Test ordinary child responses share the provider and tool execution path."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (definition
            (task-agent-definition-create
             :name         "runtime"
             :description  "Exercise the shared child runtime."
-            :instructions "Yield after checking authorization."
+            :instructions "Check authorization, then finish."
             :source       ':test))
          (orchestrator  (task-tests--orchestrator))
          (parent
@@ -449,7 +442,6 @@
                                  :definition   definition
                                  :item         (list :task "Exercise the shared loop.")
                                  :parent-agent parent))
-         (completion    (make-instance 'task-completion))
          (conversation
            (conversation-create configuration :identifier "task-shared-loop"))
          (provider
@@ -458,20 +450,12 @@
             :results
             (list
              (agent-test-result
-              "child-yield"
-              (list
-               (agent-test-call :call-id   "authorize"
-                                :namespace "test"
-                                :name      "authorize")
-               (agent-test-call
-                :call-id   "yield"
-                :namespace "yield"
-                :name      "submit"
-                :arguments
-                "{\"status\":\"success\",\"text\":\"done\"}")
-               (agent-test-call :call-id   "effect"
-                                :namespace "test"
-                                :name      "effect"))))))
+              "child-authorize"
+              (list (agent-test-call :call-id   "authorize"
+                                     :namespace "test"
+                                     :name      "authorize")))
+             (agent-test-result "child-final"
+                                (list (agent-test-message "done"))))))
          (child
            (make-instance 'task-child-agent
                           :configuration configuration
@@ -483,7 +467,6 @@
                           :definition    definition
                           :identity      (task-job-identity job)
                           :depth         1
-                          :completion    completion
                           :orchestrator  orchestrator
                           :job           job))
          (observer
@@ -496,34 +479,22 @@
       (setf (job-state job) ':running))
     (task-job--set-progress-state job ':running)
     (unwind-protect
-         (let ((*task-test-command-decision* nil)
-               (*task-test-effect-count*     0))
-           (agent-run-user-turn child "Run the shared loop." :observer observer)
-           (test-assert (task-completion-called-p completion)
-                        "yield.submit completes a child through the shared loop")
-           (test-assert (eq *task-test-command-decision* ':sandboxed)
-                        "child tools receive the ordinary command authorization path")
-           (test-assert (zerop *task-test-effect-count*)
-                        "calls after terminal yield are not executed")
-           (let* ((records (conversation--read-records
-                            (conversation-pathname conversation)))
-                  (results (remove-if-not
-                            (lambda (record)
-                              (eq (first record) :tool-result))
-                            records)))
-             (test-assert
-              (equal (mapcar (lambda (record)
-                               (getf (rest record) :status))
-                             results)
-                     '(:ok :ok :error))
-              "yield retains its result and rejects every trailing call")
-             (test-assert
-              (and (every (lambda (record)
-                            (typep (getf (rest record) :cpu-microseconds)
-                                   '(integer 0)))
-                          (subseq results 0 2))
-                   (null (getf (rest (third results)) :cpu-microseconds)))
-              "executed child calls retain timings while rejected calls omit them")))
+         (let* ((result (agent-run-user-turn child "Run the shared loop."
+                                           :observer observer))
+                (records (conversation--read-records
+                          (conversation-pathname conversation)))
+                (authorization
+                  (find-if (lambda (record)
+                             (and (eq (first record) :tool-result)
+                                  (equal (getf (rest record) :call-id) "authorize")))
+                           records)))
+           (test-assert (agent-turn-complete-p child result)
+                        "an ordinary final response completes the child turn")
+           (test-assert
+            (and authorization
+                 (eq (getf (rest authorization) :category) ':success)
+                 (equal (getf (rest authorization) :output) "sandboxed"))
+            "child tools receive the ordinary command authorization path"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -621,7 +592,7 @@
   (with-test-configuration (configuration)
     (let* ((definition        (task-agent-definition-create
                                :name "state" :description "Check participant setup."
-                               :instructions "Yield this assignment."
+                               :instructions "Complete this assignment."
                                :tools '("resource.read" "resource.edit") :source ':test))
            (orchestrator      (task-tests--orchestrator))
            (provider          (make-instance 'task-test-provider :mode ':concurrent))
@@ -771,7 +742,7 @@
                        (conversation-load (conversation-pathname
                                            (participant-state-conversation state)))))
                      (participant-state-goal state))
-              "task settlement persists the ordinary participant goal independently of its yield contract"))
+              "task settlement persists the ordinary participant goal"))
         (lisp-worker-pool-stop-all (agent-worker parent)))))
   nil)
 
@@ -803,7 +774,7 @@
                (with-lock-held ((cl-jobpond::job--lock job))
                  (setf (job-state job) ':running))
                (test-assert (eq (getf (task-run-child job) :status) ':success)
-                            "the real child executes its initial assignment through terminal yield")
+                            "the real child completes its initial assignment through an ordinary response")
                (let* ((conversation (participant-state-conversation (task-job-participant-state job)))
                       (identity     (conversation-pathname conversation)))
                  ;; Identical text from the person must retain its own provenance.
