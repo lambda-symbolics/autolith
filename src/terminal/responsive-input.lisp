@@ -93,6 +93,12 @@
     :reader        application-input-controller-initial-work-items
     :type          deque
     :documentation "Ordered startup work excluded from durable pending input.")
+   (project-adaptation-offer-p
+    :initarg       :project-adaptation-offer-p
+    :initform      nil
+    :accessor      application-input-controller-project-adaptation-offer-p
+    :type          boolean
+    :documentation "Whether one attached-client project adaptation offer remains deferred until a completed turn reaches genuine idle.")
    (steering-items
     :initform      (make-deque)
     :reader        application-input-controller-steering-items
@@ -168,6 +174,11 @@
     :accessor      application-input-controller-prompt-marker-status
     :type          (integer 0)
     :documentation "The completion status for current marked prompt work.")
+   (completed-turn-p
+    :initform      nil
+    :accessor      application-input-controller-completed-turn-p
+    :type          boolean
+    :documentation "Whether current work completed an ordinary model turn.")
    (prompt-marker-reopen-p
     :initform      nil
     :accessor      application-input-controller-prompt-marker-reopen-p
@@ -2977,24 +2988,26 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
 (-> application-input-controller-create
     (application
      &key (:initial-work-items list)
+          (:project-adaptation-offer-p boolean)
           (:load-pending-p boolean)
           (:pending-persistence-enabled-p boolean)
           (:start-reader-p boolean))
     application-input-controller)
 (defun application-input-controller-create
     (application
-     &key initial-work-items (load-pending-p t)
+     &key initial-work-items project-adaptation-offer-p (load-pending-p t)
           (pending-persistence-enabled-p t) (start-reader-p t))
   "Create CONTROLLER for APPLICATION and optionally start its terminal reader."
   (let* ((controller
            (make-instance 'application-input-controller
-                          :application application
+                          :application                application
                           :initial-work-items
                           (make-deque
                            :initial-contents (copy-tree initial-work-items))
+                          :project-adaptation-offer-p project-adaptation-offer-p
                           :pending-persistence-enabled-p
                           pending-persistence-enabled-p
-                          :main-thread (current-thread))))
+                          :main-thread                (current-thread))))
     (setf (application-input-controller application) controller)
     (when (slot-boundp application 'ui)
       (setf (terminal-ui-exclusive-input-function (application-ui application))
@@ -3252,7 +3265,8 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
     null)
 (defun application-input-controller--finish-work (controller)
   "Finish current work and promote unconsumed steering at its ordered position."
-  (let ((clear-notice-p nil)
+  (let ((application    (application-input-controller-application controller))
+        (clear-notice-p nil)
         (pause-notice   nil)
         (marker-work-p  nil)
         (continuation-p nil)
@@ -3261,23 +3275,23 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
     (with-lock-held ((application-input-controller-lock controller))
       (sb-sys:without-interrupts
         (unless (application-input-controller-stopping-p controller)
-          (let* ((active    (application-input-controller-active-work controller))
-                 (input     (or (application-input-controller-active-command-input controller)
-                                (and active (typep (second active) 'command-message-input)
-                                     (second active))))
-                 (in-flight (application-input-controller-steering-in-flight-items controller))
-                 (entry     (and input
-                                 (find (command-message-input-identifier input) (deque->list in-flight)
-                                       :key #'agent-steering-input-identifier :test #'string=))))
-            (when (and input (or entry active))
-              (when entry
-                (deque-delete (agent-steering-input-identifier entry) in-flight
-                              :key #'agent-steering-input-identifier :test #'string=))
-              (deque-push-front (application-input-controller-work-items controller)
-                                (input-work-from-input input))
-              (incf (application-input-controller-steering-promotion-prefix-count controller))
-              (when (application-input-controller-follow-up-edit-index controller)
-                (incf (application-input-controller-follow-up-edit-index controller))))))
+            (let* ((active    (application-input-controller-active-work controller))
+                   (input     (or (application-input-controller-active-command-input controller)
+                                  (and active (typep (second active) 'command-message-input)
+                                       (second active))))
+                   (in-flight (application-input-controller-steering-in-flight-items controller))
+                   (entry     (and input
+                                   (find (command-message-input-identifier input) (deque->list in-flight)
+                                         :key #'agent-steering-input-identifier :test #'string=))))
+             (when (and input (or entry active))
+               (when entry
+                 (deque-delete (agent-steering-input-identifier entry) in-flight
+                               :key #'agent-steering-input-identifier :test #'string=))
+               (deque-push-front (application-input-controller-work-items controller)
+                                 (input-work-from-input input))
+               (incf (application-input-controller-steering-promotion-prefix-count controller))
+               (when (application-input-controller-follow-up-edit-index controller)
+                 (incf (application-input-controller-follow-up-edit-index controller))))))
         (setf (application-input-controller-active-command-input controller) nil)
         (unless (application-input-controller-stopping-p controller)
           (let* ((work-items
@@ -3326,14 +3340,22 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
               marker-status
               (application-input-controller-prompt-marker-status controller)
               reopen-p
-              (application-input-controller-prompt-marker-reopen-p controller)
-              (application-input-controller-active-p controller) nil
+              (application-input-controller-prompt-marker-reopen-p controller))
+        (when (and (application-input-controller-completed-turn-p controller)
+                   (zerop marker-status)
+                   (application-input-controller-project-adaptation-offer-p controller)
+                   (application--project-adaptation-offer-idle-locked-p application controller))
+          (deque-push-back (application-input-controller-work-items controller)
+                           (list ':project-adaptation-offer))
+          (setf (application-input-controller-project-adaptation-offer-p controller) nil))
+        (setf (application-input-controller-active-p controller) nil
               (application-input-controller-active-work-kind controller) nil
               (application-input-controller-active-work controller) nil
               (application-input-controller-active-work-identifier controller) nil
               (application-input-controller-active-work-interactive-p controller) nil
               (application-input-controller-prompt-marker-work-p controller) nil
               (application-input-controller-prompt-marker-status controller) 0
+              (application-input-controller-completed-turn-p controller) nil
               (application-input-controller-prompt-marker-reopen-p controller) nil
               (application-input-controller-turn-cancellation-p controller) nil
               (application-input-controller-turn-cancellation-delivery-pending-p controller) nil
@@ -3570,6 +3592,7 @@ submission-time sharing request."
   "Initialize prompt-marker state and begin execution for interactive WORK."
   (setf (application-input-controller-prompt-marker-work-p controller) nil
         (application-input-controller-prompt-marker-status controller) 0
+        (application-input-controller-completed-turn-p controller) nil
         (application-input-controller-prompt-marker-reopen-p controller) t)
   (when (application-input-controller--continuation-work-p (first work))
     (let* ((application (application-input-controller-application controller))

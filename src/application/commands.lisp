@@ -1814,14 +1814,50 @@ searches every task directory."
          :argument    nil
          :description "never ask again for this repository or path")))
 
+(-> application--project-adaptation-offer-idle-locked-p
+    (application application-input-controller)
+    boolean)
+(defun application--project-adaptation-offer-idle-locked-p (application controller)
+  "Check for attached idle while CONTROLLER's lock is held."
+  (and (deque-empty-p (application-input-controller-initial-work-items controller))
+       (deque-empty-p (application-input-controller-work-items controller))
+       (deque-empty-p (application-input-controller-steering-items controller))
+       (deque-empty-p (application-input-controller-steering-in-flight-items controller))
+       (deque-empty-p (application-input-controller-pending-apply-items controller))
+       (null (application-input-controller-follow-up-edit-index controller))
+       (not (application-input-controller-turn-cancellation-p controller))
+       (not (application-input-controller-stopping-p controller))
+       (not (application-input-controller-failure controller))
+       (not (application-input-controller-queued-work-paused-p controller))
+       (not (application-localgroup-paused-p application))
+       (not (application-world-held-p application))
+       (not (application-job-completions-awaited-p application))
+       (application-clients-attached-p application)))
+
+(-> application--project-adaptation-offer-idle-p
+    (application application-input-controller)
+    boolean)
+(defun application--project-adaptation-offer-idle-p (application controller)
+  "Return whether CONTROLLER is attached and has no blocking work."
+  (with-lock-held ((application-input-controller-lock controller))
+    (application--project-adaptation-offer-idle-locked-p application controller)))
+
 (-> application-maybe-offer-project-adaptation (application) null)
 (defun application-maybe-offer-project-adaptation (application)
-  "Offer voluntary AUTOLITH.org creation after a qualifying command-line resume."
+  "Offer voluntary AUTOLITH.org creation after qualifying attached work."
   (let* ((configuration (application-configuration application))
          (ui            (application-ui application))
+         (controller    (application-input-controller application))
          (project-root
            (workspace-project-root
             (config :working-directory configuration))))
+    (when controller
+      (unless (application-clients-attached-p application)
+        (return-from application-maybe-offer-project-adaptation nil))
+      (unless (application--project-adaptation-offer-idle-p application controller)
+        (with-lock-held ((application-input-controller-lock controller))
+          (setf (application-input-controller-project-adaptation-offer-p controller) t))
+        (return-from application-maybe-offer-project-adaptation nil)))
     (when (terminal-interactive-p (terminal-ui-terminal ui))
       (handler-case
           (when (and (project-adaptation-offer-due-p
@@ -1829,40 +1865,47 @@ searches every task directory."
                      (project-adaptation-resume-qualifies-p
                       configuration
                       (application-conversation application)))
-            (project-adaptation-offer-defer configuration project-root)
-            (application-present
-             application
-             "AUTOLITH.org is an optional record of project-specific Autolith adaptations.")
-            (let ((choice
-                    (application--pick-identifier
-                     application
-                     :title "create AUTOLITH.org?"
-                     :items (application--project-adaptation-offer-items)
-                     :usage "Choose create, not-now, or never.")))
-              (case choice
-                (:create
-                 (handler-case
-                     (let ((pathname
-                             (project-adaptation-notes-create project-root)))
+            (if (or (null controller)
+                    (application--project-adaptation-offer-idle-p application controller))
+                (progn
+                  (project-adaptation-offer-defer configuration project-root)
+                  (application-present
+                   application
+                   "AUTOLITH.org is an optional record of project-specific Autolith adaptations.")
+                  (let ((choice
+                          (application--pick-identifier
+                           application
+                           :title "create AUTOLITH.org?"
+                           :items (application--project-adaptation-offer-items)
+                           :usage "Choose create, not-now, or never.")))
+                    (case choice
+                      (:create
+                       (handler-case
+                           (let ((pathname
+                                   (project-adaptation-notes-create project-root)))
+                             (application-present
+                              application
+                              (format nil "Created ~A" (namestring pathname))))
+                         (project-adaptation-error (condition)
+                           (project-adaptation--offer-retry
+                            configuration project-root)
+                           (error condition))))
+                      (:never
+                       (project-adaptation-offer-refuse configuration project-root)
                        (application-present
                         application
-                        (format nil "Created ~A" (namestring pathname))))
-                   (project-adaptation-error (condition)
-                     (project-adaptation--offer-retry
-                      configuration project-root)
-                     (error condition))))
-                (:never
-                 (project-adaptation-offer-refuse configuration project-root)
-                 (application-present
-                  application
-                  "AUTOLITH.org offers are disabled permanently for this path."))
-                (:not-now
-                 (application-present
-                  application
-                  "The AUTOLITH.org offer is deferred for five days.")))))
+                        "AUTOLITH.org offers are disabled permanently for this path."))
+                      (:not-now
+                       (application-present
+                        application
+                        "The AUTOLITH.org offer is deferred for five days.")))))
+                (when (and controller
+                           (application-clients-attached-p application))
+                  (with-lock-held ((application-input-controller-lock controller))
+                    (setf (application-input-controller-project-adaptation-offer-p controller) t)))))
         (project-adaptation-error (condition)
-          (application-handle-expected-error application condition)))))
-  nil)
+          (application-handle-expected-error application condition))))
+    nil))
 
 
 ;;;; -- Working Directory Command --

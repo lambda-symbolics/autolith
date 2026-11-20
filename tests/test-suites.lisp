@@ -1878,6 +1878,7 @@
   test-responsive-command-scheduling
   test-recovery-diagnosis-tool-surface
   test-input-reader-quiescence
+  test-project-adaptation-offer-lifecycle
   test-primary-prompt-admission
   test-command-turn-steering
   test-late-steering-promotion

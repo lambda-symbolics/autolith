@@ -6081,15 +6081,15 @@
                   "exclusive input restores the reader's initial lifecycle"))
             (application-input-controller-stop controller))))))
   (test-assert
-   (equal (application--initial-work-items nil nil t)
-          (list (list ':project-adaptation-offer)))
-   "explicit command-line resume queues interruptible adaptation work")
+   (equal (application--initial-work-items nil nil)
+          nil)
+   "startup without command or recovery does not queue adaptation work")
   (test-assert
-   (equal (application--initial-work-items "(resume)" nil t)
+   (equal (application--initial-work-items "(resume)" nil)
           (list (list ':lisp "(resume)")))
    "bare command-line resume runs through canonical local Lisp")
   (test-assert
-   (equal (application--initial-work-items nil "diagnose" nil)
+   (equal (application--initial-work-items nil "diagnose")
           (list (list ':recovery-diagnosis "diagnose")))
    "automatic crash recovery queues exactly one diagnostic model turn")
   nil)
@@ -6191,6 +6191,79 @@
                 (and accepted-p (eq delivery ':queued))
                 "prose queues again once the steering consumer ends")))
         (application-input-controller-stop controller))))
+  nil)
+
+(-> test-project-adaptation-offer-lifecycle () null)
+(defun test-project-adaptation-offer-lifecycle ()
+  "An attached channel offers once after successful turn work reaches idle."
+  (with-test-configuration (configuration)
+    (dolist (picker-p '(nil t))
+      (let* ((application (mission-test--application
+                           configuration :results (loop repeat 9 collect (mission-test--result "done"))))
+             (controller  (application-input-controller-create
+                           application
+                           :initial-work-items         (application--initial-work-items (and picker-p "(open)") nil)
+                           :project-adaptation-offer-p t
+                           :load-pending-p nil :start-reader-p nil))
+             (queue       (application-input-controller-work-items controller))
+             (attached-p  t)
+             (awaited-p   nil)
+             (completed-p nil)
+             (offers      0)
+             (episode     (make-instance 'prompt-cache-episode
+                                        :conversation (application-conversation application)
+                                        :provider     (application-provider application)
+                                        :model "fixture" :started-at 0)))
+        (unwind-protect
+             (test-call-with-function-replacements
+              (list (list 'application-clients-attached-p
+                          (lambda (ignored) (declare (ignore ignored)) attached-p))
+                    (list 'application-job-completions-awaited-p
+                          (lambda (ignored) (declare (ignore ignored)) awaited-p))
+                    (list 'application-world-before-turn (constantly nil))
+                    (list 'application-input-controller--run-idle-compaction (constantly nil))
+                    (list 'application-job-completions-run
+                          (lambda (controller ticket)
+                            (declare (ignore controller ticket))
+                            (when completed-p
+                              (application--run-turn application "job results" :continuation-p t))
+                            nil))
+                    (list 'application-maybe-offer-project-adaptation
+                          (lambda (ignored) (declare (ignore ignored)) (incf offers) nil)))
+              (lambda ()
+                (flet ((run (work &key cancelled-p)
+                         "Run one controller item through the production finish boundary."
+                         (setf (application-input-controller-active-p controller) t
+                               (application-input-controller-active-work-kind controller) (first work))
+                         (application-input-controller--run-work controller work)
+                         (setf (application-input-controller-turn-cancellation-p controller) cancelled-p)
+                         (application-input-controller--finish-work controller)))
+                  (when picker-p
+                    (test-assert (application-input-controller--next-work controller)
+                                 "picker startup supplies its initial work")
+                    (application-input-controller--finish-work controller))
+                  (run (list ':idle-compaction episode))
+                  (run (list ':recovery-diagnosis "diagnose"))
+                  (run (list ':message "cancelled") :cancelled-p t)
+                  (run (list ':job-completion nil))
+                  (test-assert (deque-empty-p queue)
+                               "startup, diagnostics, maintenance, cancellation and stale tickets do not offer")
+                  (setf awaited-p t)
+                  (run (list ':message "start work"))
+                  (test-assert (deque-empty-p queue) "a wake-authorized job blocks the offer")
+                  (setf awaited-p nil completed-p t attached-p nil)
+                  (run (list ':job-completion nil))
+                  (test-assert (deque-empty-p queue) "a detached completion does not offer")
+                  (setf attached-p t)
+                  (run (list ':job-completion nil))
+                  (test-assert (equal (deque->list queue) '((:project-adaptation-offer)))
+                               "the final attached completion schedules the offer")
+                  (run (deque-pop-front queue))
+                  (run (list ':message "after offer"))
+                  (test-assert (and (= offers 1) (deque-empty-p queue))
+                               "subsequent completed turns do not repeat the offer"))))
+          (application-input-controller-stop controller)
+          (terminal-ui-stop (application-ui application))))))
   nil)
 
 (-> test-primary-prompt-admission () null)

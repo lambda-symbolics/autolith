@@ -50,6 +50,40 @@
       (application-maybe-offer-project-adaptation application))
     (recording-terminal-output terminal)))
 
+(-> project-adaptation-tests--reverse-metadata (configuration pathname) null)
+(defun project-adaptation-tests--reverse-metadata (configuration project-root)
+  "Observe actual segment reads for matching and foreign project histories."
+  (let* ((conversation (conversation-create configuration :identifier "reverse-qualify"))
+         (identity     (conversation-pathname conversation))
+         (project-key  (project-adaptation--project-key project-root))
+         (options      (symbol-function 'conversation--segment-options))
+         (visited      nil))
+    (flet ((scan (key)
+             "Observe the actual segment headers read by the storage mapper."
+             (setf visited nil)
+             (test-call-with-function-replacements
+              (list (list 'conversation--segment-options
+                          (lambda (pathname &key on-header)
+                            (funcall options pathname :on-header
+                                     (lambda (segment)
+                                       (push (conversation-log-pathname segment) visited)
+                                       (when on-header (funcall on-header segment)))))))
+              (lambda () (project-adaptation--conversation-metadata identity key)))))
+      (conversation-append-user-message conversation "older")
+      (conversation-append-summary conversation (make-continuation :intent "First checkpoint"))
+      (project-adaptation-tests--append-late-turn conversation *project-adaptation-substantial-seconds*)
+      (conversation-append-summary conversation (make-continuation :intent "Second checkpoint"))
+      (project-adaptation-tests--append-late-turn conversation 1)
+      (let ((metadata (scan project-key)))
+        (test-assert (project-adaptation--substantial-conversation-p metadata)
+                     "a later sequence with a short timestamp does not hide a qualifying record")
+        (test-assert (equal (reverse visited)
+                            (subseq (reverse (conversation-storage-pathnames identity)) 0 2))
+                     "read the newest two real chunks and stop before the oldest"))
+      (test-assert (and (null (scan "foreign project")) (null visited))
+                   "a foreign header requires no record reads")))
+  nil)
+
 (-> test-project-adaptations () null)
 (defun test-project-adaptations ()
   "Test project notes, offer decisions, qualification, and ephemeral advice."
@@ -67,6 +101,8 @@
                   (notes        (workspace-autolith-notes-path nested))
                   (now          4000000000))
              (configuration-ensure-directories configuration)
+             (project-adaptation-tests--reverse-metadata configuration project-root)
+             (conversation-delete configuration "reverse-qualify")
              (test-assert (equal project-root (truename repository))
                           "project identity walks from a nested workspace to Git")
              (test-assert (equal notes (merge-pathnames "AUTOLITH.org" repository))
@@ -190,7 +226,7 @@
                  (write-char #\( stream))
                (test-assert
                 (project-adaptation--substantial-conversation-p
-                 (project-adaptation--conversation-metadata pathname))
+                  (project-adaptation--conversation-metadata pathname (project-adaptation--project-key project-root)))
                 "resume qualification tolerates an incomplete history tail"))
              (let ((touched
                      (conversation-create configuration
@@ -205,7 +241,7 @@
                 (not
                  (project-adaptation--substantial-conversation-p
                   (project-adaptation--conversation-metadata
-                   (conversation-pathname touched))))
+                    (conversation-pathname touched) (project-adaptation--project-key project-root))))
                 "filesystem timestamps do not masquerade as recorded activity"))
              (let ((legacy-pathname
                      (merge-pathnames
@@ -235,7 +271,7 @@
                  (write-char #\( stream))
                (test-assert
                 (project-adaptation--substantial-conversation-p
-                 (project-adaptation--conversation-metadata legacy-pathname))
+                  (project-adaptation--conversation-metadata legacy-pathname (project-adaptation--project-key project-root)))
                 "legacy fallback tolerates an incomplete final form"))
              (let* ((other-repository
                       (merge-pathnames "other-project/" temporary-root))

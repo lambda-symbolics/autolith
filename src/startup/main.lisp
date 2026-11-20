@@ -354,10 +354,10 @@ Attached clients report their own channel after releasing their shared screen."
       t)))
 
 (-> application--initial-work-items
-    ((option string) (option string) boolean)
+    ((option string) (option string))
     list)
 (defun application--initial-work-items
-    (initial-command recovery-diagnosis adaptation-offer-p)
+    (initial-command recovery-diagnosis)
   "Return ordered controller work for command-line and recovery startup behavior."
   (cond
     (initial-command
@@ -365,8 +365,6 @@ Attached clients report their own channel after releasing their shared screen."
        (when work (list work))))
     (recovery-diagnosis
      (list (list ':recovery-diagnosis recovery-diagnosis)))
-    (adaptation-offer-p
-     (list (list ':project-adaptation-offer)))
     (t
      nil)))
 
@@ -554,12 +552,12 @@ controller's exit reason."
                            :initial-work-items
                            (application--initial-work-items
                             initial-command
-                            recovery-diagnosis
-                            adaptation-offer-p)
-                           :load-pending-p (not recovery-startup-p)
+                            recovery-diagnosis)
+                           :project-adaptation-offer-p adaptation-offer-p
+                           :load-pending-p             (not recovery-startup-p)
                            :pending-persistence-enabled-p
                            recovery-input-storage-ready-p
-                           :start-reader-p nil))
+                           :start-reader-p             nil))
                     (application-assignment-begin input-controller)
                     (unless resume-p
                       (application-mission-schedules-recover application :startup-p t)
@@ -1128,7 +1126,7 @@ state, including an empty list after successful or pristine startup."
                  (localgroup-handoff-initial-input handoff-record)
                  (main--initial-image-input image-values))
              :recovery-diagnosis recovery-diagnosis
-             :adaptation-offer-p pick-channel-p))
+             :adaptation-offer-p (null recovery-diagnosis)))
         (main-launcher-exit-condition (condition)
           (multiple-value-bind (status message) (main--launcher-exit-text condition)
             (format *error-output* "~A~%" message)

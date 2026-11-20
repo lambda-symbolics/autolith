@@ -3413,14 +3413,10 @@ translating a condition signaled by the record visitor."
   (conversation--map-storage-records
    (conversation-pathname conversation) function))
 
-(-> conversation-map-records-reverse (conversation function) (values boolean integer))
-(defun conversation-map-records-reverse (conversation function)
-  "Call FUNCTION for durable records newest first, buffering one validated segment.
-
-A nonlocal callback exit leaves older segments unread. Return the active
-segment's incomplete-tail flag and the number of records visited."
-  (let ((identity (conversation-storage-identity-pathname
-                   (conversation-pathname conversation))))
+(-> conversation--map-storage-records-reverse (pathname function) (values boolean integer))
+(defun conversation--map-storage-records-reverse (pathname function)
+  "Visit PATHNAME's durable records newest first, buffering one validated segment."
+  (let ((identity (conversation-storage-identity-pathname pathname)))
     (conversation--call-with-record-mapper
      function
      (lambda (visit)
@@ -3430,6 +3426,14 @@ segment's incomplete-tail flag and the number of records visited."
                   (conversation--segment-options identity))
          (declare (ignore next))
          (values incomplete-p count))))))
+
+(-> conversation-map-records-reverse (conversation function) (values boolean integer))
+(defun conversation-map-records-reverse (conversation function)
+  "Call FUNCTION for durable records newest first, buffering one validated segment.
+
+A nonlocal callback exit leaves older segments unread. Return the active
+segment's incomplete-tail flag and the number of records visited."
+  (conversation--map-storage-records-reverse (conversation-pathname conversation) function))
 
 (-> conversation-pending-input-identifiers (conversation) list)
 (defun conversation-pending-input-identifiers (conversation)

@@ -1682,7 +1682,7 @@ forgotten again when no thread could start."
                                 :recovery-diagnosis
                                 (getf arguments :recovery-diagnosis)
                                 :adaptation-offer-p
-                                (not (null (getf arguments :pick-channel-p)))
+                                (null (getf arguments :recovery-diagnosis))
                                 :boot-screen-p
                                 (not (getf arguments :switch-p))))
      (error (condition)

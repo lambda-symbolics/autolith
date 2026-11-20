@@ -1171,22 +1171,15 @@
             (list
              (list
               'application-input-controller-create
-              (lambda (run-application
-                       &key initial-work-items (load-pending-p t)
-                            (pending-persistence-enabled-p t)
-                            (start-reader-p t))
+               (lambda (run-application &rest options
+                        &key (load-pending-p t) (pending-persistence-enabled-p t)
+                             (start-reader-p t) &allow-other-keys)
                 (setf observed-load-pending-p load-pending-p
                       observed-persistence-p pending-persistence-enabled-p
                       observed-start-reader-p start-reader-p
                       pending-at-create-p (not (null (probe-file pending-pathname)))
                       vault-at-create-p (not (null (probe-file vault-pathname))))
-                (funcall original-create
-                         run-application
-                         :initial-work-items initial-work-items
-                         :load-pending-p     load-pending-p
-                         :pending-persistence-enabled-p
-                         pending-persistence-enabled-p
-                         :start-reader-p     start-reader-p)))
+                (apply original-create run-application options)))
              (list
               'application-input-controller--run-work
               (lambda (controller work)
@@ -1320,20 +1313,13 @@
                      (funcall original-present run-application)))
              (list
               'application-input-controller-create
-              (lambda (run-application
-                       &key initial-work-items (load-pending-p t)
-                            (pending-persistence-enabled-p t)
-                            (start-reader-p t))
+               (lambda (run-application &rest options
+                        &key (load-pending-p t) (pending-persistence-enabled-p t)
+                             (start-reader-p t) &allow-other-keys)
                 (setf observed-load-pending-p load-pending-p
                       observed-persistence-p pending-persistence-enabled-p
                       observed-start-reader-p start-reader-p)
-                (funcall original-create
-                         run-application
-                         :initial-work-items initial-work-items
-                         :load-pending-p     load-pending-p
-                         :pending-persistence-enabled-p
-                         pending-persistence-enabled-p
-                         :start-reader-p     start-reader-p)))
+                (apply original-create run-application options)))
              (list
               'application-input-controller--run-work
               (lambda (controller work)
@@ -1467,20 +1453,13 @@
             (list
              (list
               'application-input-controller-create
-              (lambda (run-application
-                       &key initial-work-items (load-pending-p t)
-                            (pending-persistence-enabled-p t)
-                            (start-reader-p t))
+               (lambda (run-application &rest options
+                        &key (load-pending-p t) (pending-persistence-enabled-p t)
+                             (start-reader-p t) &allow-other-keys)
                 (setf observed-load-pending-p load-pending-p
                       observed-persistence-p pending-persistence-enabled-p
                       observed-start-reader-p start-reader-p)
-                (funcall original-create
-                         run-application
-                         :initial-work-items initial-work-items
-                         :load-pending-p     load-pending-p
-                         :pending-persistence-enabled-p
-                         pending-persistence-enabled-p
-                         :start-reader-p     start-reader-p)))
+                (apply original-create run-application options)))
              (list
               'application-input-controller--run-work
               (lambda (controller work)

@@ -5143,6 +5143,16 @@ refusal, as a secondary value."
       (application-set-activity application nil)
       (terminal-ui-stream-update ui :tail nil)
       (application-render-records application))
+    ;; Only a finished provider turn on this controller's owning lane counts.
+    ;; Recovery diagnostics use the same provider machinery but are startup work.
+    (let ((controller (application-input-controller application)))
+      (when (and (typep turn-result 'provider-result)
+                 controller
+                 (eq (current-thread) (application-input-controller-main-thread controller)))
+        (with-lock-held ((application-input-controller-lock controller))
+          (when (and (application-input-controller-active-p controller)
+                     (not (eq (application-input-controller-active-work-kind controller) ':recovery-diagnosis)))
+            (setf (application-input-controller-completed-turn-p controller) t)))))
     (values nil turn-result)))
 
 (-> application--run-goal-continuations

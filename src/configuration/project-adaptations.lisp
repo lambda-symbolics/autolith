@@ -254,33 +254,41 @@ discarded or obsolete candidates.
 
 ;;;; -- Resume Qualification --
 
-(-> project-adaptation--conversation-metadata (pathname) (option list))
-(defun project-adaptation--conversation-metadata (pathname)
-  "Return project identity and exact recorded activity from PATHNAME."
+(-> project-adaptation--conversation-metadata (pathname string) (option list))
+(defun project-adaptation--conversation-metadata (pathname project-key)
+  "Read a matching project header and enough records to decide qualification."
   (handler-case
-      (let ((header           (conversation-peek-header pathname))
-            (last-activity-at nil)
-            (user-turns       0))
-        (dolist (segment (conversation-storage-pathnames pathname))
-          (let ((header-seen-p nil))
-            (conversation--map-records
-             segment
-             (lambda (record)
-               (if header-seen-p
-                   (when (consp record)
-                     (let ((time (getf (rest record) :time)))
-                       (when (typep time 'timestamp)
-                         (setf last-activity-at
-                               (max (or last-activity-at 0) time))))
-                     (when (and (eq (first record) ':message)
-                                (eq (getf (rest record) :role) ':user))
-                       (incf user-turns)))
-                   (setf header-seen-p t))))))
-        (when (and (consp header)
-                   (eq (first header) ':conversation))
-          (let* ((properties (rest header))
-                 (created-at (getf properties :created-at))
-                 (directory  (getf properties :directory)))
+      (let* ((header     (conversation-peek-header pathname))
+             (properties (rest header))
+             (directory  (getf properties :directory))
+             (created-at (getf properties :created-at)))
+        (when (and header
+                   (equal project-key
+                          (project-adaptation--metadata-project-key (list :directory directory))))
+          (let ((last-activity-at nil)
+                (user-turns       0))
+            (block scan
+              (flet ((visit (record)
+                       "Collect the old duration and turn-count evidence."
+                       (let ((time (getf (rest record) :time)))
+                         (when (typep time 'timestamp)
+                           (setf last-activity-at (max (or last-activity-at 0) time))
+                           (when (and (typep created-at 'timestamp)
+                                      (>= (- time created-at) *project-adaptation-substantial-seconds*))
+                             (return-from scan nil))))
+                       (when (and (eq (first record) ':message)
+                                  (eq (getf (rest record) :role) ':user))
+                         (incf user-turns))))
+                ;; The old unsegmented format allowed a missing creation time.
+                ;; Count its turns with the legacy reader rather than rejecting it.
+                (if (and (eql (getf properties :version) 1)
+                         (not (typep created-at 'timestamp)))
+                    (conversation--map-records
+                     pathname (lambda (record)
+                                (when (consp record)
+                                  (unless (eq (first record) ':conversation)
+                                    (visit record)))))
+                    (conversation--map-storage-records-reverse pathname #'visit))))
             (list :directory        directory
                   :created-at       created-at
                   :last-activity-at last-activity-at
@@ -346,19 +354,18 @@ discarded or obsolete candidates.
                  current-metadata))))
     (or current-substantial-p
         (>=
-          (loop for pathname in (conversation-list configuration)
-                for metadata =
-                  (project-adaptation--conversation-metadata pathname)
-                when (and
-                      (string= project-key
-                               (or (project-adaptation--metadata-project-key
-                                    metadata)
-                                   ""))
-                      (project-adaptation--substantial-conversation-p metadata))
-                  count pathname into substantial-count
-                when (>= substantial-count 2)
-                  return substantial-count
-                finally (return substantial-count))
+            (loop for entry in
+                  (stable-sort (loop for pathname in (conversation-storage-identities
+                                                      (configuration-conversation-root configuration))
+                                     collect (cons pathname (conversation-storage-write-date pathname)))
+                               #'> :key #'rest)
+                  for identity = (first entry)
+                  for metadata = (project-adaptation--conversation-metadata identity project-key)
+                  when (project-adaptation--substantial-conversation-p metadata)
+                    count identity into substantial-count
+                  when (>= substantial-count 2)
+                    return substantial-count
+                  finally (return substantial-count))
          2))))
 
 
