@@ -1748,11 +1748,9 @@ and =%= are percent-encoded within a component. Copy a path exactly, including
 case and escapes; partial paths, extra slashes and filesystem-style =..= do not
 select channels.
 
-Renaming or moving an agent can change its path and descendant paths. Stable
-channel IDs, native resource identities and ACP session IDs identify the same
-channels across those changes. A parked agent has no channel path; find it by
-name in the agent picker, or mention its name in a channel message. If a legacy
-name is ambiguous, choose one of the reported paths or the parked agent's ID.
+Renaming an agent can change its path and its descendants' paths. The agent,
+channel and conversation use the same stable ID. Use that ID or an exact
+channel path to disambiguate legacy names.
 
 Launch-only overrides such as =--model= are rejected when resuming a
 running conversation. For hosted channels, =--permissions= may be used when
@@ -1797,8 +1795,8 @@ When exactly one endpoint is reachable, omit =TARGET= from =pause= or =detach=
 to select it. These commands require a hosted channel;
 =tell= also accepts cold channels. A message sent there, including a mention
 from another channel, starts its resident agent without attaching a terminal.
-A parked agent has no channel to receive it. Run =autolith start= to start
-the world server in the background before using =tell=.
+Run =autolith start= to start the world server in the background before using
+=tell=.
 =pause= cancels active work and holds queued primary work.
 
 On POSIX hosts, detaching hands a session to a supervised process group that
@@ -1862,10 +1860,8 @@ connections. A timer failure, failed repair or second accept-thread failure
 initiates normal world shutdown. The world lease is released after the channels
 and process services end.
 
-The sidebar and the =(open)= picker show the channels, and the =(move)=
-picker the agents, the parked ones too. Agents are all one kind of
-participant: an agent has a parent and may have children, and any agent,
-a child too, may create child agents. A child agent resides in a channel
+Use the sidebar or =(open)= picker to select a channel. Each agent belongs
+to one channel and can create child agents. A child's channel is
 nested under its parent's channel and belongs to its parent agent, so
 =channel:id/<execution id>= reads a child's transcript and a message to that
 channel steers it. How deep the tree grows is capped:
@@ -1886,41 +1882,9 @@ identifier or a part of it, yourself included. =(rename)= picks the agent,
 then leaves =(rename "WHO" "")= in the input for the new name. A name another participant
 has is refused, and so is =parent=, which always means the sender's parent.
 
-A channel has at most one resident agent. =(move "WHO")= moves the agent =WHO=
-names, by handle, identifier or a part of it, into this channel, and
-=(move "WHO" "ID")= into channel =ID=; =(move)= picks the agent, then the
-channel. The move stops the agent where it is
-the way a steer does: the tool call in flight finishes, no new request
-starts, and the prompts it had not started are dropped with a notice in
-the channel it leaves; nothing moves until the turn has stopped. In its new
-channel the agent keeps the context it had, followed by what is said there
-from the move onward, and its own model; the channel's earlier history stays
-readable at =channel:id/ID= but is not part of the agent's context. The
-context is kept on disk before anything else changes, so a restart, a
-failure partway through, or a channel opened only later, finds it, and the
-agent takes it up before its next turn. Its goal or mission goes with it, and
-the channel it leaves keeps none; a running mission arrives paused, its jobs
-cancelled, until =(mission :resume)=. The agent then waits: it works again
-when you write there or someone mentions it from another channel. Jobs it
-started keep running in the channel it left and leave their results in that
-channel's history, but they wake no agent there. Moves and parks happen one
-at a time. A move into a channel that already has an agent is refused, and
-so is a move into the inbox or of yourself: you stay in the inbox while a
-terminal shows you any channel. A move interrupts a child agent whose task
-is still running for its parent: the task is cancelled, the parent gets that
-result, and the child moves with the context it had. The tasks of the child's
-own children go on. An agent whose channel a pristine or recovery session has open
-is not moved or parked. =(dismiss "WHO")=, or =(dismiss)= with a picker, parks an agent instead, after it
-stops the same way: a parked agent resides in no channel and keeps
-its identity, its children and its context, and =(move "WHO")= brings it into
-a channel again. Parking never affects its children. A mention of a parked
-agent reaches nobody, and the send says the agent is parked. A channel
-without an agent, because its agent moved or was parked, keeps its history
-and its subscribers, runs no agent turn, and refuses typed prompts until =(move "WHO")=
-brings an agent or =(domestic)= creates a new one for it, named after the
-workspace and using this session's model and starting with no context but the channel's
-history to read. Messages sent to such a channel
-wait in its inbox until an agent is there to read them.
+The agent uses its own channel history, model settings and goal. Switch
+channels with =(open)=, or use =(new)= for a fresh conversation. The inbox
+is for you and does not run agent turns.
 
 Typing =@= in the composer completes participant handles the way it completes
 workspace paths; a token with a slash stays a path. A message you type that
@@ -1946,9 +1910,8 @@ channel and messages as that participant under its role's ordinary tool
 policy. A message reaches the channel's residents, every subscriber of
 the channel and every participant it mentions as =@name= or =@id=, wherever
 they reside. An agent can use =@parent= as the channel in =channel.send= or
-as a mention. It names the sender's parent; when that parent is parked, the
-message goes to the nearest ancestor agent that is not, and to you when none
-is left. In a message to the sender's own child, =@parent= in the text
+as a mention. It reaches the closest active ancestor, or you if there is
+none. In a message to the sender's own child, =@parent= in the text
 reaches nobody else: the child reads it as the sender, as in "report to
 =@parent= when done". An idle agent wakes with the message; a working one
 receives it as a steer labeled with the sender and the channel. The transcript

@@ -60,7 +60,7 @@
 
 (-> test-compaction-recovery-publication-preserves-tail-families () null)
 (defun test-compaction-recovery-publication-preserves-tail-families ()
-  "Publish adopted context recovery with concurrent arrivals and replay its private tail."
+  "Publish recovery with concurrent arrivals and replay its provider-specific tail."
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
                           ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
     (with-test-configuration (configuration)
@@ -90,15 +90,6 @@
                      "Fixture: current reasoning has its provider family.")
         (test-assert (member current (conversation-input-items-for-family conversation family :include-ephemeral-p nil))
                      "Fixture: current reasoning is visible before compaction.")
-        (let ((destination (conversation-create configuration)))
-          (conversation-append-user-message destination "Superseded resident projection.")
-          (conversation-append-context-adoption destination (conversation-context-rows conversation)
-                                                :participant "recovery-agent"
-                                                :source      (conversation-identifier conversation)
-                                                :transition  "recovery-move")
-          (setf conversation destination
-                agent (agent-create :configuration configuration :conversation destination
-                                    :provider provider :tool-registry (make-instance 'tool-registry))))
         (let ((tail          (mapcar #'json-encode (last (conversation-input-items conversation) 4)))
               (note-original (symbol-function 'agent--note-compaction-request)))
           (compaction-recovery-test-small-context
@@ -107,7 +98,7 @@
               (list (list 'agent--note-compaction-request
                           (lambda (owner observer &rest options)
                             (multiple-value-prog1 (apply note-original owner observer options)
-                              (conversation-append-user-message conversation "Concurrent adopted arrival.")
+                              (conversation-append-user-message conversation "Concurrent arrival.")
                               (setf tail (append tail (list (json-encode (first (last (conversation-input-items conversation)))))))))))
               (lambda ()
                 (handler-case (agent-compact-conversation agent (make-instance 'agent-observer))
@@ -147,18 +138,13 @@
           (test-assert (find "current encrypted" projection
                              :key (lambda (item) (json-get item "encrypted_content")) :test #'equal)
                        "Contract: replayed provider projection includes protected current reasoning.")
-          (test-assert (test-object-contains-string-p projection "Concurrent adopted arrival.")
-                       "Concurrent arrival survives adopted recovery publication and reload.")
-          (test-assert (not (test-object-contains-string-p projection "Superseded resident projection."))
-                       "Recovery replay does not resurrect replaced resident context.")
-          (test-assert (test-object-contains-string-p (conversation-records-newest loaded 100)
-                                                     "Superseded resident projection.")
-                       "Adoption preserves the canonical resident history.")
+          (test-assert (test-object-contains-string-p projection "Concurrent arrival.")
+                       "Concurrent arrival survives recovery publication and reload.")
           (test-assert (find "current-call" projection :key (lambda (item) (json-get item "call_id")) :test #'equal)
-                       "Adopted correlated tool work survives recovery replay.")
+                       "Correlated tool work survives recovery replay.")
           (test-assert (not (find "current encrypted" (conversation-input-items-for-family loaded :other-provider :include-ephemeral-p nil)
                                   :key (lambda (item) (json-get item "encrypted_content")) :test #'equal))
-                       "Adopted protected reasoning is private to its original provider family.")
+                       "Protected reasoning is private to its original provider family.")
           (dolist (item (conversation-input-items loaded))
             (when (equal "reasoning" (json-get item "type"))
               (test-assert (eq family (conversation-input-item-family loaded item))

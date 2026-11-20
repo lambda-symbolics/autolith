@@ -8,9 +8,8 @@
     (application notice &key ignore-reservations-p)
   "Require the notice's exact conversation and agent, and unspent authority, optionally ignoring temporary reservations.
 
-Only the agent that started a job continues from it, and only while it still
-resides in the channel: a job outliving its agent's move or park leaves its
-outcome in the channel's history without waking anyone."
+Match legacy owner attribution when a historical adoption record exists.
+A completion for a different owner is recorded without starting a turn."
   (let* ((goal         (application-goal application))
          (mission-id   (getf notice :mission-id))
          (conversation (application-conversation application)))

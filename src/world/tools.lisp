@@ -2,8 +2,7 @@
 
 ;;;; -- Channel Tools --
 
-;;; channel.send, channel.subscribe and channel.unsubscribe act as the
-;;; participant the requesting conversation was migrated onto. Reading
+;;; Channel tools act as the requesting conversation's participant. Reading
 ;;; channels is the channel: resource's job.
 
 (defclass channel-tool (tool)
@@ -42,11 +41,12 @@
 (defun channel-tool--sender (context tool-name)
   "Return the participant acting for CONTEXT's conversation, or signal for TOOL-NAME."
   (declare (special *application-local-user-evaluation-p*))
-  (let ((participant (world-session-participant (tool-context-configuration context)
-                                                (tool-context-conversation context))))
+  (let ((configuration (tool-context-configuration context)))
     (or (if *application-local-user-evaluation-p*
-            (world-human-participant (world-load (tool-context-configuration context)))
-            participant)
+            (progn
+              (world-ensure-inbox configuration)
+              (world-human-participant (world-load configuration)))
+            (world-register-conversation configuration (tool-context-conversation context)))
         (error 'tool-error
                :message   "This conversation has no participant yet; it gets one with its first durable message."
                :tool-name tool-name))))
@@ -102,11 +102,10 @@
                              "inbox"
                              (conversation-identifier-display identifier))))
                      identifiers)))
-      (format nil "Sent message ~A.~@[ Delivered to ~{~A~^, ~}; each resident reads it at its next turn boundary, or wakes for it.~]~@[ Not delivered yet to ~{~A~^, ~}; it is retried with the next message.~]~@[ Parked, so got no copy: ~{@~A~^, ~}.~]"
+      (format nil "Sent message ~A.~@[ Delivered to ~{~A~^, ~}; each resident reads it at its next turn boundary, or wakes for it.~]~@[ Not delivered yet to ~{~A~^, ~}; it is retried with the next message.~]"
               (getf result :id)
               (names (getf result :channels))
-              (names (getf result :pending))
-              (getf result :parked)))))
+              (names (getf result :pending))))))
 
 (defmethod tool-execute ((tool channel-tool) (context tool-context) arguments)
   "Send to, subscribe to or unsubscribe from a channel as the requesting participant."

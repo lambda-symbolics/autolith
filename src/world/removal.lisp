@@ -162,8 +162,6 @@ An exception leaves the intent on disk and exposes RETRY-CLEANUP."
             (let* ((plan       (channel--read-removal intent))
                    (channels   (getf plan :channels))
                    (identities (channel--removal-identities plan)))
-              ;; Do the most failure-prone work first. Contexts and mapping
-              ;; evidence survive until every history and worktree is cleaned.
               (dolist (identifier channels)
                 (task-worktree-discard configuration identifier :pathname (gethash identifier identities)))
               (task-child-delete-storage configuration channels :identities identities
@@ -175,13 +173,8 @@ An exception leaves the intent on disk and exposes RETRY-CLEANUP."
                     (when (conversation-storage-active-pathname pathname)
                       (conversation-delete-history configuration identifier :pathname pathname))
                     (conversation-delete-artifacts configuration identifier))))
-              (let ((world (world-load configuration)))
-                (dolist (participant (getf plan :participants))
-                  (unless (world-participant-find world participant)
-                    (world-context-delete configuration participant))))
               (dolist (identifier channels)
                 (world-inbox-delete configuration identifier))
-              (world-sessions-forget configuration channels)
               (delete-file intent)
               (return nil))
           (error (cause)

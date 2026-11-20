@@ -11,60 +11,37 @@
 
 (-> application-world-sync (application) null)
 (defun application-world-sync (application)
-  "Bring APPLICATION's own conversation into the world, once it is durable.
-
-The world server brings every conversation in as it starts; each channel
-then keeps its own in step. Viewing a channel moves nobody: the person
-resides in the inbox wherever the terminal is. Failures are reported as
-warnings: the world is a projection of the conversations and never blocks a
-session."
+  "Register APPLICATION's durable conversation and refresh its participant projection."
   (let* ((configuration (application-configuration application))
          (conversation  (and (slot-boundp application 'conversation)
                              (application-conversation application))))
     (handler-case
-        (when (and conversation (conversation-persisted-p conversation))
-          (world-reconcile-sessions configuration
-                                    :identities (list (conversation-pathname conversation)))
+        (when conversation
           (setf (participant-state-identity (application-participant-state application))
-                (find ':agent (world-channel-residents (world-load configuration)
-                                                       (conversation-identifier conversation))
-                      :key #'participant-kind)))
+                (world-register-conversation configuration conversation)))
       (error (cause)
-        (warn 'world-session-warning
-              :pathname (configuration-world-sessions-path configuration)
-              :cause    cause))))
+        (warn 'world-session-warning :pathname (configuration-world-path configuration) :cause cause))))
   nil)
 
 (-> application-world-sync-child (application list) null)
 (defun application-world-sync-child (application event)
-  "Bring the child conversation a task lifecycle EVENT names into the world.
-
-A child's channel appears once its job starts and its conversation is
-durable, and follows it until the job ends. Failures only warn, as for
-APPLICATION-WORLD-SYNC."
-  (let ((configuration (application-configuration application))
-        (root          (getf event :root))
-        (execution     (getf event :execution)))
-    (when (and (stringp root) (stringp execution))
-      (handler-case
-          (progn
-            (world-reconcile-sessions
-             configuration
-             :identities (list (list (conversation-task-identity-pathname configuration root execution)
-                                     root)))
-            (let* ((runtime (application--task-orchestrator application))
-                   (job     (and runtime
-                                 (find (getf event :id) (task-orchestrator-list-jobs runtime)
-                                       :test #'equal :key #'job-identifier)))
-                   (state   (and job (task-job-participant-state job))))
-              (when state
-                (setf (participant-state-identity state)
-                      (find ':agent (world-channel-residents (world-load configuration) execution)
-                            :key #'participant-kind)))))
-        (error (cause)
-          (warn 'world-session-warning
-                :pathname (configuration-world-sessions-path configuration)
-                :cause    cause)))))
+  "Assign the registered child participant to the task named by lifecycle EVENT."
+  (let ((execution (getf event :execution))
+        (runtime   (application--task-orchestrator application)))
+    (when (and runtime (stringp execution))
+      (let* ((job   (find (getf event :id) (task-orchestrator-list-jobs runtime)
+                          :test #'equal :key #'job-identifier))
+             (state (and job (task-job-participant-state job))))
+        (when state
+          (handler-case
+              (let* ((world (world-load (application-configuration application)))
+                     (agent (world-participant-find world execution)))
+                (when (and agent (equal execution (participant-residence agent)))
+                  (setf (participant-state-identity state) agent)))
+            (error (cause)
+              (warn 'world-session-warning
+                    :pathname (configuration-world-path (application-configuration application))
+                    :cause cause)))))))
   nil)
 
 
@@ -238,7 +215,7 @@ well, since the steer persists first and the queued turn then skips."
   "Return completion entries for the participants of WORLD that TOKEN matches, best first.
 
 TOKEN matches a name or the title of the participant's channel loosely: its
-letters in order. Without a TOKEN every participant is offered, by name."
+letters in order. Without a TOKEN, offer active participants by name."
   (flet ((channel (participant)
            (let ((residence (participant-residence participant)))
              (and residence (world-channel-find world residence)))))
@@ -247,7 +224,8 @@ letters in order. Without a TOKEN every participant is offered, by name."
                               (sort (world--participants-where
                                      world
                                      (lambda (participant)
-                                       (world-handle-p (participant-name participant))))
+                                        (and (participant-residence participant)
+                                             (world-handle-p (participant-name participant)))))
                                     #'string-lessp
                                     :key #'participant-name)
                               :key (lambda (participant)
@@ -257,13 +235,10 @@ letters in order. Without a TOKEN every participant is offered, by name."
           for residence = (participant-residence participant)
           for channel = (channel participant)
           collect (list :name        (format nil "@~A" (participant-name participant))
-                        :description (if residence
-                                         (format nil "~(~A~) in ~A~@[ ~A~]"
-                                                 (participant-kind participant)
-                                                 (conversation-identifier-display residence)
-                                                 (and channel (channel-title channel)))
-                                         (format nil "~(~A~), parked"
-                                                 (participant-kind participant)))))))
+                        :description (format nil "~(~A~) in ~A~@[ ~A~]"
+                                             (participant-kind participant)
+                                             (conversation-identifier-display residence)
+                                             (and channel (channel-title channel)))))))
 
 (-> application-world-mention-function (configuration) function)
 (defun application-world-mention-function (configuration)
@@ -374,16 +349,13 @@ read only warns."
       (when channel
         (handler-case
             (progn
-              (world-reconcile-sessions configuration
-                                        :identities (list (conversation-pathname
-                                                           (application-conversation application))))
+              (application-world-sync application)
               (application-world-deliver application)
               (application-world-show-person-unread application
                                                     (world-person-unread configuration)))
           (error (cause)
             (warn 'world-session-warning
-                  :pathname (configuration-world-sessions-path
-                             (application-configuration application))
+                  :pathname (configuration-world-path configuration)
                   :cause    cause))))))
   nil)
 
@@ -506,73 +478,9 @@ shares nothing. A delivery that fails is reported and never stops the turn."
 
 ;;;; -- Residents --
 
-(defclass execution-owner ()
-  ((configuration :initarg :configuration :reader execution-owner-configuration
-                  :documentation "The world configuration governing this claim.")
-   (participant :initarg :participant :reader execution-owner-participant
-                :documentation "The participant whose residence is expected.")
-   (channel :initarg :channel :reader execution-owner-channel
-            :documentation "The channel resolved before transition admission.")
-   (state :initform nil :accessor execution-owner-state
-          :documentation "The actual live participant, when this owner has one.")
-   (lease :initform nil :accessor execution-owner-lease
-          :documentation "Only the temporary lease acquired by this transition."))
-  (:documentation "A resolved participant execution with a transition lifecycle."))
-
-(defclass stored-execution-owner (execution-owner) ()
-  (:documentation "An unserved or parked participant backed by durable context."))
-
-(defclass hosted-execution-owner (execution-owner)
-  ((application :initarg :application :reader execution-owner-application
-                :documentation "The host retaining its process-lifetime lease."))
-  (:documentation "Execution in a hosted channel application."))
-
-(defclass pooled-execution-owner (stored-execution-owner)
-  ((job :initarg :job :reader execution-owner-job
-        :documentation "The existing task-pool job, not a second execution index."))
-  (:documentation "Execution of a participant by a task-pool assignment."))
-
-(defgeneric participant-execution-owner (environment configuration participant)
-  (:documentation "Resolve PARTICIPANT's execution once, preferring a pooled task to a host."))
-
-(defgeneric channel-execution-owner (environment configuration participant &key channel)
-  (:documentation "Resolve the prepared adoption endpoint for CHANNEL."))
-
-(defgeneric execution-owner-call-with-exclusion (owner function)
-  (:documentation "Call FUNCTION while OWNER's execution resources cannot retire."))
-
-(defgeneric execution-owner-claim (owner)
-  (:documentation "Quiesce OWNER and acquire exclusion before exporting context."))
-
-(defgeneric execution-owner-export (owner)
-  (:documentation "Return actual context rows, source channel and ordinary goal."))
-
-(defgeneric execution-owner-prepare (owner)
-  (:documentation "Return configuration and provider prepared before residence commitment."))
-
-(defgeneric execution-owner-depart (owner destination)
-  (:documentation "Detach the committed participant and return dropped input count."))
-
-(defgeneric execution-owner-adopt (owner state &key configuration provider)
-  (:documentation "Adopt committed STATE using prepared execution resources."))
-
-(defgeneric execution-owner-release (owner committed-p)
-  (:documentation "Release this claim, resuming a hosted source only on abort."))
-
-;;; A channel has at most one resident agent. Moving it elsewhere stops it at
-;;; a safe boundary, leaves the channel without an agent, and makes it the
-;;; destination's agent, idle there until addressed. The agent takes along
-;;; the provider context it built: a served destination tries to adopt it
-;;; durably, and any other keeps it waiting in the agent's context file until
-;;; the channel is served. The world store moves the identity only once the
-;;; agent stopped and its destination is ready.
-
 (defparameter *world-agent-turn-kinds*
   '(:message :operation-request :job-completion :recovery-diagnosis :idle-compaction)
-  "The work kinds in which a channel's agent is in a turn, the boundary a move or a park waits for.")
-
-(defparameter *world-agent-stop-seconds* 120
-  "How long a move or a park waits for the agent's turn to reach its safe boundary.")
+  "Work kinds in which a channel's agent is in a turn.")
 
 (-> application-world-agent-present-p (application) boolean)
 (defun application-world-agent-present-p (application)
@@ -592,10 +500,7 @@ cannot be read counts as present: the world never blocks a session."
 
 (-> application-world-agent-settings-update (application list) null)
 (defun application-world-agent-settings-update (application settings)
-  "Give the agent residing in APPLICATION's channel SETTINGS, its model, provider and effort.
-
-The agent keeps them wherever it moves. A world that cannot be written
-leaves the session's own choice in place: the world never blocks a session."
+  "Persist SETTINGS, the model, provider and effort for APPLICATION's channel."
   (let ((channel (application-world--served-channel application)))
     (when channel
       (handler-case
@@ -609,507 +514,17 @@ leaves the session's own choice in place: the world never blocks a session."
           nil))))
   nil)
 
-(-> application-world-stop-agent (application &key (:reason keyword)) null)
-(defun application-world-stop-agent (application &key (reason ':cancelled))
-  "Hold APPLICATION's new work and wait until its agent's turn reached a safe boundary.
-
-The active turn is cancelled the way steering is taken: the tool call in
-flight finishes and no new request starts. A (move) typed in this channel is
-not a turn and does not wait for itself. When the turn does not stop in time
-the channel's work resumes and the stop is refused."
-  (let ((controller (application-input-controller application)))
-    (when controller
-      ;; A session's pause asks for the cancellation itself; without one, as
-      ;; outside a world server, the turn is asked to stop directly.
-      (unless (application-localgroup-pause application :reason reason)
-        (unless (application-assignment-cancel application :reason reason)
-          (application-input-controller--request-active-turn-cancellation controller)))
-      (let ((deadline (+ (get-internal-real-time)
-                         (* *world-agent-stop-seconds* internal-time-units-per-second))))
-        (loop while (application-world--agent-turn-active-p application)
-              do (when (>= (get-internal-real-time) deadline)
-                   (application-localgroup-resume application)
-                   (error 'world-error
-                          :message   "The agent did not finish its turn in time; the move or park was refused."
-                          :pathname  nil
-                          :operation ':move))
-                 (sleep 0.05)))))
-  nil)
-
-(-> application-world-resume-agent (application) null)
-(defun application-world-resume-agent (application)
-  "Let APPLICATION's held work start again after a move or a park that did not happen."
-  (application-localgroup-resume application)
-  nil)
-
-(-> application-world-release-agent
-    (application participant &key (:destination (option string)))
-    (integer 0))
-(defun application-world-release-agent (application participant &key destination)
-  "Let APPLICATION's stopped agent PARTICIPANT go to channel DESTINATION, or parked, and return the queued messages dropped.
-
-The unstarted queue is dropped; running jobs stay with the channel. The
-channel's record of messages queued for the agent is forgotten, so the next
-resident receives every message the conversation has not durably received.
-The channel is told and its work resumes."
-  (let ((controller (application-input-controller application))
-        (removed    nil)
-        (dropped    0))
-    (when controller
-      (with-lock-held ((application-input-controller-lock controller))
-        (dolist (items (list (application-input-controller-work-items controller)
-                             (application-input-controller-steering-items controller)))
-          (loop until (deque-empty-p items)
-                  for item = (deque-pop-front items)
-                  do (push item removed)
-                     (incf dropped))))
-      ;; Finish removed requests outside the controller lock: their waiting
-      ;; callers and event listeners may submit fresh administrative work.
-      (dolist (item (nreverse removed))
-        (case (first item)
-          (:client-work
-           (job-cancel (second item) :reason (if destination ':moved ':dismissed)))
-          ((:message :command :lisp)
-           (let ((submission (if (eq (first item) ':message)
-                                 (user-message-input-submission (second item))
-                                 (getf (rest (rest item)) :submission))))
-             (when submission
-               (application-clients-publish
-                application
-                (list :work-finished
-                      :kind       (first item)
-                      :outcome    ':cancelled
-                      :submission submission
-                      :idle-p     (with-lock-held ((application-input-controller-lock controller))
-                                    (and (deque-empty-p (application-input-controller-work-items controller))
-                                         (deque-empty-p (application-input-controller-steering-items controller))
-                                         t)))))))))
-      ;; Receipts in the conversation say what was received; the queue's
-      ;; bookkeeping only kept a message from being queued twice.
-      (clrhash (application-world-deliveries application))
-      (application-localgroup-resume application)
-      (application-input-controller--publish-counts controller))
-    (application-present
-     application
-     (format nil "Agent ~A ~:[is parked~;moved to channel ~:*~A~]; this channel has no agent now~@[, and ~D queued message~:P ~:*~[~;was~:;were~] dropped~]. (move \"WHO\") brings an agent here, (domestic) creates a new one."
-             (participant-name participant)
-             (and destination (conversation-identifier-display destination))
-             (and (plusp dropped) dropped)))
-    dropped))
-
-(-> world-participant-configuration (configuration participant) configuration)
-(defun world-participant-configuration (base participant)
-  "Return BASE with agent PARTICIPANT's model, provider and effort, the configuration it runs under in any channel."
-  (let ((settings (participant-settings participant)))
-    (if (getf settings :model)
-        (configuration-copy base
-                            :model                      (getf settings :model)
-                            :model-provider             (or (getf settings :model-provider) "")
-                            :model-selection-override-p t
-                            :reasoning-effort           (or (getf settings :reasoning-effort)
-                                                            (config :reasoning-effort base)))
-        base)))
-
-(-> application-world-prepare-agent (application participant) (values configuration t))
-(defun application-world-prepare-agent (application participant)
-  "Return the configuration and provider PARTICIPANT runs under in APPLICATION's channel.
-
-They are built before a move commits, so a provider that cannot start
-refuses the move instead of leaving the agent without a runtime."
-  (let ((configuration (world-participant-configuration (application-configuration application)
-                                                        participant)))
-    (values configuration
-            (provider-create configuration
-                             :reasoning-summaries-p (application-reasoning-traces-p application)))))
-
-(-> application-world-install-agent
-    (application participant &key (:rows list) (:source (option string)) (:goal list)
-         (:transition (option string)) (:configuration (option configuration)) (:provider t)
-         (:participant-state (option participant-state)))
-    null)
-(defun application-world-install-agent
-    (application participant &key rows source goal transition configuration provider participant-state)
-  "Durably adopt PARTICIPANT, then attach its actual state to the prepared host.
-Retries reuse durable arrival stages and reconstruct state only when none is live."
-  (multiple-value-bind (configuration provider)
-      (if (and configuration provider)
-          (values configuration provider)
-          (application-world-prepare-agent application participant))
-    (application-world--record-arrival application participant configuration
-                                       :rows rows :source source :goal goal
-                                       :transition transition :arrival ':moved)
-    (let ((state (or participant-state (make-instance 'participant-state))))
-      (setf (participant-state-identity state) participant
-            (participant-state-conversation state) (application-conversation application)
-            (participant-state-goal state) (application-goal application))
-      (let ((agent (agent-create :configuration configuration :provider provider
-                                 :participant-state state
-                                 :tool-registry     (application-tool-registry application)
-                                 :hurry-up-p        (application-hurry-up-p application)
-                                 :worker            (application-worker application))))
-        (setf (application-configuration application) configuration
-              (application-provider application) provider
-              (application-participant-state application) state
-              (application-agent application) agent)))
-    (application-refresh-context-meter application)
-    (application-present
-     application
-     (application-notice-line
-      (format nil "agent ~A resides here now~@[, moved from channel ~A~]; it waits for your message"
-              (participant-name participant)
-              (and source (conversation-identifier-display source))))))
-  nil)
-
-(-> application-world--record-arrival
-    (application participant configuration &key (:rows list) (:source (option string))
-                                                (:goal list) (:transition (option string))
-                                                (:arrival keyword))
-    null)
-(defun application-world--record-arrival (application participant configuration
-                                          &key rows source goal transition arrival)
-  "Record durably that agent PARTICIPANT now speaks in APPLICATION's channel under CONFIGURATION.
-
-The conversation takes the agent's model selection, its provider context
-becomes ROWS, the context it brings from channel SOURCE, and an automatic
-message tells the agent where it is: ARRIVAL is :MOVED for an agent that came
-from elsewhere and :CREATED for a new one. The agent reads it on its next
-turn, which comes only when it is addressed. The channel's session then
-names the agent."
-  (let* ((conversation (application-conversation application))
-         (channel      (conversation-identifier conversation)))
-    (conversation-set-model-selection
-     conversation
-     (config :model configuration)
-     (config :reasoning-effort configuration)
-     :provider (let ((name (config :model-provider configuration)))
-                 (and (non-empty-string-p name) name)))
-    (unless (and transition
-                 (equal transition (conversation-adopted-transition conversation)))
-      (conversation-append-context-adoption conversation rows
-                                            :participant (participant-identifier participant)
-                                            :source      source
-                                            :transition  transition))
-    (if (conversation-adoption-stage-record conversation transition ':message)
-        ;; Repair a synchronous failure between the durable announcement and
-        ;; its projection without appending the announcement a second time.
-        (setf (slot-value conversation 'projection)
-              (conversation-projection (conversation-load (conversation-pathname conversation))))
-        (conversation-append-user-message
-         conversation
-         (format nil "[You, ~A, ~:[now live in~;were moved into~] channel ~A~@[ from channel ~A~]. ~:[~;Your context continues from where you were. ~]This channel's earlier history is at channel:id/~A. Nothing is expected of you until someone writes here or mentions you.]"
-                 (participant-name participant)
-                 (eq arrival ':moved)
-                 (conversation-identifier-display channel)
-                 (and source (conversation-identifier-display source))
-                 rows
-                 (conversation-identifier-display channel))
-         :automatic-p         t
-         :adoption-transition transition))
-    (application-world--install-goal application goal :transition transition)
-    (world-session-remap configuration channel (participant-identifier participant)))
-  nil)
-
-(-> application-world--install-goal (application list &key (:transition (option string))) null)
-(defun application-world--install-goal (application goal &key transition)
-  "Install an arriving agent's GOAL and durably record adoption TRANSITION once.
-
-A running mission arrives paused because its admitted jobs stayed behind.
-Retry mission restoration even when the goal record already reached disk."
-  (let* ((conversation (application-conversation application))
-         (record       (conversation-adoption-stage-record conversation transition ':goal))
-         (goal         (if record (goal-record->goal record) (copy-tree goal))))
-    (when (and (mission-goal-p goal) (eq (getf goal :status) ':active))
-      (setf (getf goal :status) ':paused))
-    (when (or record goal (application-goal application))
-      (setf (application-goal application) goal
-            (application-deferred-goal-continuation application) nil)
-      (unless record
-        (conversation-append-record
-         conversation
-         (append (goal->record goal)
-                 (when transition (list :adoption-transition transition)))))
-      (when (mission-goal-p goal)
-        (mission-restore application)
-        (application-mission-schedules application))))
-  nil)
-
-(-> world-agent-context (configuration participant)
-    (values list (option string) list))
-(defun world-agent-context (configuration participant)
-  "Return stored context rows, their source and ordinary goal for PARTICIPANT.
-Live owners export their participant state directly instead."
-  (let ((residence (participant-residence participant)))
-    (cond
-      ((world-context-waiting-p configuration participant)
-       (multiple-value-bind (rows source destination transition goal)
-           (world-context-read configuration (participant-identifier participant))
-         (declare (ignore destination transition))
-         (values rows source goal)))
-      ((world-agent--stored-channel-p configuration residence)
-       (let ((conversation (conversation-load-by-id configuration residence)))
-         (values (conversation-context-rows conversation) residence
-                 (goal-record->goal (conversation-latest-goal-record conversation)))))
-      (t
-       (values nil residence nil)))))
-
-(-> world-agent--stored-channel-p (configuration (option string)) boolean)
-(defun world-agent--stored-channel-p (configuration channel)
-  "Return true when CHANNEL has a conversation on disk."
-  (and channel
-       (conversation-storage-active-pathname (conversation-pathname-for-id configuration channel))
-       t))
-
-(-> world-move-agent (configuration participant string &key (:environment t)) list)
-(defun world-move-agent (configuration participant channel &key environment)
-  "Move PARTICIPANT into CHANNEL through its resolved execution owner.
-Context and ordinary goals follow the participant; task assignments do not."
-  (world-call-with-transition
-   configuration
-   (lambda ()
-     (let ((identifier (participant-identifier participant))
-           (source     (participant-residence participant))
-           (world      (world-load configuration)))
-       (world-agent--require-movable world participant ':move)
-       (when (equal source channel)
-         (error 'world-error
-                :message (format nil "~A already resides in channel ~A."
-                                 (participant-name participant)
-                                 (conversation-identifier-display channel))
-                :operation ':move :identifier identifier))
-       (world-inbox-refuse-agent world channel ':move)
-       (when (find ':agent (world-channel-residents world channel) :key #'participant-kind)
-         (error 'world-error
-                :message (format nil "Channel ~A already has an agent."
-                                 (conversation-identifier-display channel))
-                :operation ':move :identifier channel))
-       (list :source source :channel channel
-             :dropped (world-agent--transition configuration participant
-                                               :environment environment
-                                               :destination channel))))))
-
-(-> world-park-agent (configuration participant &key (:environment t)) list)
-(defun world-park-agent (configuration participant &key environment)
-  "Park PARTICIPANT through its execution owner, preserving identity, context and goal."
-  (world-call-with-transition
-   configuration
-   (lambda ()
-     (world-agent--require-movable (world-load configuration) participant ':park)
-     (list :channel (participant-residence participant)
-           :dropped (world-agent--transition configuration participant
-                                             :environment environment)))))
-
-(-> world-agent--require-movable (world participant keyword) null)
-(defun world-agent--require-movable (world participant operation)
-  "Refuse OPERATION unless PARTICIPANT is an agent that still resides where the caller found it."
-  (let ((current (world-participant-find world (participant-identifier participant))))
-    (unless (eq (participant-kind participant) ':agent)
-      (error 'world-error
-             :message    (format nil "~A is not an agent; only agents move or park."
-                                 (participant-name participant))
-             :pathname   nil
-             :operation  operation
-             :identifier (participant-identifier participant)))
-    (unless current
-      (error 'world-error
-             :message    (format nil "Agent ~A no longer exists." (participant-name participant))
-             :pathname   nil
-             :operation  operation
-             :identifier (participant-identifier participant)))
-    (world--require-residence current (participant-residence participant) operation))
-  nil)
-
-(-> world-agent--transition
-    (configuration participant &key (:environment t) (:destination (option string)))
-    (integer 0))
-(defun world-agent--transition (configuration participant &key environment destination)
-  "Transfer PARTICIPANT through one resolved source owner and adoption endpoint.
-Prepare before staging and expected-residence commitment. Restore staging and
-resume the source on precommit failure; committed residence never rolls back."
-  (let* ((identifier  (participant-identifier participant))
-         (source      (participant-residence participant))
-         (owner       (participant-execution-owner environment configuration participant))
-         (target      (and destination
-                           (channel-execution-owner environment configuration participant :channel destination)))
-         (previous    (and (probe-file (world-context-pathname configuration identifier))
-                           (multiple-value-list (world-context-read configuration identifier))))
-         (written-p   nil)
-         (committed-p nil))
-    (execution-owner-call-with-exclusion
-     owner
-     (lambda ()
-       (unwind-protect
-            (progn
-              (execution-owner-claim owner)
-              (multiple-value-bind (rows from goal) (execution-owner-export owner)
-                (multiple-value-bind (prepared provider)
-                    (if target (execution-owner-prepare target) (values nil nil))
-                  (setf written-p t)
-                  (world-context-write configuration identifier
-                                       :source from :rows rows :goal goal
-                                       :destination destination :transition (make-identifier))
-                  (let ((current (if destination
-                                     (world-participant-move configuration identifier destination
-                                                             :expected-residence source)
-                                     (world-participant-park configuration identifier
-                                                             :expected-residence source))))
-                    (setf committed-p t)
-                    (when (execution-owner-state owner)
-                      (setf (participant-state-identity (execution-owner-state owner)) current)))
-                  (let ((dropped (execution-owner-depart owner destination)))
-                    (when target
-                      (handler-case (world-session-remap configuration destination identifier)
-                        (autolith-error ()
-                          nil))
-                      (execution-owner-adopt target (execution-owner-state owner)
-                                             :configuration prepared :provider provider))
-                    dropped))))
-         (unwind-protect
-              (unless committed-p
-                (when written-p
-                  (if previous
-                      (destructuring-bind (rows from destination transition goal) previous
-                        (world-context-write configuration identifier
-                                             :source from :rows rows :goal goal
-                                             :destination destination :transition transition))
-                      (world-context-delete configuration identifier))))
-           (execution-owner-release owner committed-p)))))))
-
-(-> world-agent--lease (configuration participant) conversation-lease)
-(defun world-agent--lease (configuration participant)
-  "Hold the conversation of agent PARTICIPANT's unserved channel, or refuse while another process serves it."
-  (handler-case (conversation-lease-acquire configuration (participant-residence participant))
-    (conversation-in-use ()
-      (error 'world-error
-             :message    (format nil "Agent ~A's channel ~A is open in another Autolith process; the move or park was refused."
-                                 (participant-name participant)
-                                 (conversation-identifier-display (participant-residence participant)))
-             :pathname   nil
-             :operation  ':move
-             :identifier (participant-identifier participant)))))
-
-(-> application-world-surrender-goal (application) null)
-(defun application-world-surrender-goal (application)
-  "Clear the goal of APPLICATION's departed agent, which took it along.
-
-A mission still running stops as blocked first, which cancels the jobs it
-admitted: they worked for the agent, while the channel's other jobs stay."
-  (let ((goal (application-goal application)))
-    (when goal
-      (when (and (mission-goal-p goal)
-                 (member (getf goal :status) '(:active :paused :blocked)))
-        (application-mission-stop application ':blocked "The agent left this channel and took its mission along."))
-      (setf (application-goal application) nil)
-      (application--record-goal application)))
-  nil)
-
-(-> application-world-adopt-pending-context
-    (application &key (:strict-p boolean) (:configuration (option configuration))
-                      (:provider t) (:participant-state (option participant-state)))
-    boolean)
-(defun application-world-adopt-pending-context (application &key strict-p configuration provider participant-state)
-  "Let the agent residing in APPLICATION's channel adopt the context a move brought it, once, and return whether it did.
-
-The agent is the channel's resident in the world store: the channel may
-have been opened before it ever had a durable message, so its session
-mapping cannot be relied on. CONFIGURATION and PROVIDER come from
-`application-world-prepare-agent' when the move prepared them. Durable
-context, announcement and goal stages are reused on retry, but the runtime
-is installed again, including after restart. Delete the staged file only
-once every stage succeeds. A failure waits for the next try and is signalled
-with STRICT-P, else told in the channel; a turn must not start without it."
-  (let ((channel (application-world--served-channel application)))
-    (when channel
-      (handler-case
-          (let* ((world-configuration (application-configuration application))
-                 (agent               (find ':agent (world-channel-residents
-                                                     (application-world application) channel)
-                                            :key #'participant-kind))
-                 (identifier          (and agent (participant-identifier agent))))
-            (when (and agent (probe-file (world-context-pathname world-configuration identifier)))
-              (multiple-value-bind (rows source destination transition goal)
-                  (world-context-read world-configuration identifier)
-                (when (equal destination channel)
-                  (application-world-install-agent application agent
-                                                   :rows              rows
-                                                   :source            source
-                                                   :goal              goal
-                                                   :transition        transition
-                                                   :configuration     configuration
-                                                   :provider          provider
-                                                   :participant-state participant-state)
-                  (world-context-delete world-configuration identifier)
-                  t))))
-        (autolith-error (condition)
-          (if strict-p
-              (error condition)
-              (progn
-                (application-present
-                 application
-                 (application-failure-line
-                  (format nil "the context a moved agent brings could not be adopted yet: ~A It is tried again before the agent's next turn."
-                          condition)))
-                nil)))))))
-
 (-> application-world-before-turn (application keyword) null)
 (defun application-world-before-turn (application kind)
-  "Ready APPLICATION's agent for a turn of work KIND, or refuse the turn in a channel without an agent.
-
-The agent adopts any context a move brought it first. Idle compaction
-summarizes the channel's history for whoever speaks there next and needs no
-agent."
-  (when (member kind *world-agent-turn-kinds*)
-    (application-world-adopt-pending-context application :strict-p t)
-    (unless (or (eq kind ':idle-compaction)
-                (application-world-agent-present-p application))
-      (error 'world-error
-             :message   "This channel has no agent to take this turn; (move \"WHO\") or (domestic) brings one."
-             :pathname  nil
-             :operation ':turn)))
+  "Refuse work of KIND requiring an agent in a channel not yet registered for execution."
+  (when (and (member kind *world-agent-turn-kinds*)
+             (not (eq kind ':idle-compaction))
+             (not (application-world-agent-present-p application)))
+    (error 'world-error
+           :message   "This channel has no agent to take this turn."
+           :pathname  nil
+           :operation ':turn))
   nil)
-
-(-> application-world-domestic-agent (application) participant)
-(defun application-world-domestic-agent (application)
-  "Create a new agent participant resident in APPLICATION's channel and return it.
-
-The channel must be served and without an agent. The new agent takes the
-application's current model and effort, its short channel identifier as an
-initial handle, and the person as its parent. It starts with no context of its own; the
-channel's history is there for it to read."
-  (let* ((configuration (application-configuration application))
-         (channel       (or (application-world--served-channel application)
-                            (error 'world-error
-                                   :message   "This conversation is not a channel yet; it becomes one with its first durable message."
-                                   :pathname  nil
-                                   :operation ':domestic)))
-         (world         (world-load configuration))
-         (person        (world-human-participant world)))
-    (world-inbox-refuse-agent world channel ':domestic)
-    (when (find ':agent (world-channel-residents world channel) :key #'participant-kind)
-      (error 'world-error
-             :message    (format nil "Channel ~A already has an agent."
-                                 (conversation-identifier-display channel))
-             :pathname   nil
-             :operation  ':domestic
-             :identifier channel))
-    (let ((agent (world-participant-create
-                  configuration
-                  :kind        ':agent
-                  :name        (world-session--initial-handle world channel)
-                  :name-source ':initial
-                  :residence   channel
-                  :parent      (and person (participant-identifier person))
-                  :settings    (append (list :model (config :model configuration))
-                                       (let ((provider (config :model-provider configuration)))
-                                         (and (non-empty-string-p provider)
-                                              (list :model-provider provider)))
-                                       (let ((effort (config :reasoning-effort configuration)))
-                                         (and effort (list :reasoning-effort effort)))))))
-      ;; The new agent runs under this session's model, so the runtime stays;
-      ;; only its context starts fresh.
-      (application-world--record-arrival application agent configuration :arrival ':created)
-      (application-present application
-                           (format nil "Agent ~A now lives in this channel." (participant-name agent)))
-      agent)))
 
 (-> application-world-note-child-turn (application keyword) null)
 (defun application-world-note-child-turn (application kind)
@@ -1245,169 +660,3 @@ fullscreen each of its tokens is a widget that submits it when clicked."
           collect (if participant
                       (participant-name participant)
                       (conversation-identifier-display identifier)))))
-
-(defmethod participant-execution-owner ((environment null) configuration participant)
-  "Resolve an unserved participant without guessing a local host."
-  (make-instance 'stored-execution-owner :configuration configuration
-                 :participant participant :channel (participant-residence participant)))
-
-(defmethod channel-execution-owner ((environment null) configuration participant &key channel)
-  "Prepare a stored adoption endpoint."
-  (make-instance 'stored-execution-owner :configuration configuration
-                 :participant participant :channel channel))
-
-(defmethod participant-execution-owner ((application application) configuration participant)
-  "Find a live task before considering APPLICATION's own hosted execution."
-  (let* ((runtime (application--task-orchestrator application))
-         (job     (and runtime
-                       (find-if (lambda (job)
-                                  (and (typep job 'task-job)
-                                       (equal (task-job-execution-identifier job)
-                                              (participant-residence participant))
-                                       (not (job-terminal-p job))))
-                                (task-orchestrator-list-jobs runtime)))))
-    (if job
-        (make-instance 'pooled-execution-owner :configuration configuration
-                       :participant participant :channel (participant-residence participant)
-                       :job                                   job)
-        (channel-execution-owner application configuration participant
-                                 :channel (participant-residence participant)))))
-
-(defmethod channel-execution-owner ((application application) configuration participant &key channel)
-  "Resolve APPLICATION only when it serves CHANNEL."
-  (if (and channel (equal channel (application-world--served-channel application)))
-      (make-instance 'hosted-execution-owner :configuration configuration
-                     :participant participant :channel channel :application application)
-      (channel-execution-owner nil configuration participant :channel channel)))
-
-(defmethod execution-owner-call-with-exclusion ((owner execution-owner) function)
-  "Call FUNCTION when OWNER needs no host-lifetime exclusion."
-  (funcall function))
-
-(defmethod execution-owner-claim ((owner stored-execution-owner))
-  "Hold an unserved conversation's exclusive lease when one exists."
-  (when (world-agent--stored-channel-p (execution-owner-configuration owner)
-                                      (execution-owner-channel owner))
-    (setf (execution-owner-lease owner)
-          (world-agent--lease (execution-owner-configuration owner)
-                              (execution-owner-participant owner))))
-  nil)
-
-(defmethod execution-owner-claim ((owner hosted-execution-owner))
-  "Stop the host without releasing its lifetime lease."
-  (let ((application (execution-owner-application owner)))
-    (application-world-stop-agent application :reason ':moved)
-    (application-world-adopt-pending-context application :strict-p t)
-    (setf (execution-owner-state owner) (application-participant-state application)
-          (participant-state-identity (execution-owner-state owner))
-          (execution-owner-participant owner)))
-  nil)
-
-(defmethod execution-owner-claim ((owner pooled-execution-owner))
-  "Cancel the assignment and await its owned tools before taking the channel lease.
-Independent child tasks are not cancelled by the :MOVED reason."
-  (let ((job (execution-owner-job owner)))
-    (setf (execution-owner-state owner) (task-job-participant-state job))
-    (when (job-cancel job :reason ':moved)
-      (session-job-note-cancellation job ':moved))
-    (unless (nth-value 1 (session-job-await job *world-agent-stop-seconds*))
-      (error 'world-error
-             :message    "The participant's task was interrupted but has not ended; nothing moved. Try again."
-             :operation  ':move
-             :identifier (participant-identifier (execution-owner-participant owner))))
-    (setf (execution-owner-state owner)
-          (or (execution-owner-state owner) (task-job-participant-state job)))
-    (when (execution-owner-state owner)
-      (setf (participant-state-identity (execution-owner-state owner))
-            (execution-owner-participant owner))))
-  (call-next-method))
-
-(defmethod execution-owner-export ((owner execution-owner))
-  "Read the single live participant backing, or its durable stored context."
-  (let* ((state        (execution-owner-state owner))
-         (conversation (and state (participant-state-conversation state))))
-    (if conversation
-        (values (conversation-context-rows conversation)
-                (execution-owner-channel owner)
-                (copy-tree (participant-state-goal state)))
-        (world-agent-context (execution-owner-configuration owner)
-                             (execution-owner-participant owner)))))
-
-(defmethod execution-owner-prepare ((owner stored-execution-owner))
-  "Leave adoption preparation to the next host."
-  (values nil nil))
-
-(defmethod execution-owner-prepare ((owner hosted-execution-owner))
-  "Build the destination runtime before the residence changes."
-  (application-world-prepare-agent (execution-owner-application owner)
-                                   (execution-owner-participant owner)))
-
-(defmethod execution-owner-depart ((owner execution-owner) destination)
-  "Settle durable departure and release live backing after serialization."
-  (declare (ignore destination))
-  (let ((source        (execution-owner-channel owner))
-        (configuration (execution-owner-configuration owner)))
-    (when source
-      (handler-case
-          (progn
-            (world-session-remap configuration source nil)
-            (let ((conversation (conversation-load-by-id configuration source)))
-              (when (goal-record->goal (conversation-latest-goal-record conversation))
-                (conversation-append-record conversation (goal->record nil)))))
-        (autolith-error ()
-          nil)))
-    (when (execution-owner-state owner)
-      (setf (participant-state-conversation (execution-owner-state owner)) nil)))
-  0)
-
-(defmethod execution-owner-depart ((owner hosted-execution-owner) destination)
-  "Detach the participant and release the source queue even when settlement fails."
-  (let* ((application (execution-owner-application owner))
-         (state       (execution-owner-state owner))
-         (goal        (copy-tree (participant-state-goal state)))
-         (dropped     0))
-    (unwind-protect
-         (handler-case (application-world-surrender-goal application)
-           (autolith-error ()
-             nil))
-      (setf (participant-state-goal state) goal
-            (application-participant-state application)
-            (make-instance 'participant-state
-                           :conversation (application-conversation application)))
-      (when (and (slot-boundp application 'agent) (application-agent application))
-        (setf (agent-participant-state (application-agent application))
-              (application-participant-state application)))
-      (unwind-protect
-           (call-next-method)
-        (unwind-protect
-             (setf dropped (application-world-release-agent
-                            application (execution-owner-participant owner)
-                            :destination destination))
-          (application-world-resume-agent application))))
-    dropped))
-
-(defmethod execution-owner-adopt ((owner stored-execution-owner) state &key configuration provider)
-  "Keep committed context in the existing durable staging file."
-  (declare (ignore state configuration provider))
-  nil)
-
-(defmethod execution-owner-adopt ((owner hosted-execution-owner) state &key configuration provider)
-  "Install the same participant state in the prepared destination."
-  (application-world-adopt-pending-context
-   (execution-owner-application owner) :participant-state state
-   :configuration configuration :provider provider)
-  nil)
-
-(defmethod execution-owner-release ((owner execution-owner) committed-p)
-  "Release only the transition's temporary claim."
-  (declare (ignore committed-p))
-  (when (execution-owner-lease owner)
-    (conversation-lease-release (execution-owner-lease owner))
-    (setf (execution-owner-lease owner) nil))
-  nil)
-
-(defmethod execution-owner-release ((owner hosted-execution-owner) committed-p)
-  "Resume a refused hosted move without touching its lifetime lease."
-  (unless committed-p
-    (application-world-resume-agent (execution-owner-application owner)))
-  nil)

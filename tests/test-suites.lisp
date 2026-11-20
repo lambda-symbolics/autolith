@@ -72,7 +72,6 @@
   test-continuation-validity
   test-continuation-rendering
   test-continuation-replay
-  test-continuation-adoption
   test-continuation-references
   test-continuation-gate-references
   test-continuation-claim-references)
@@ -711,9 +710,7 @@
   test-world-persistence
   test-world-deletion-rules
   test-world-malformed-state
-  test-world-session-reconciliation
-  test-world-session-bulk-migration
-  test-world-session-mapping-transactions
+  test-world-canonical-channel-identity
   test-world-agent-keeps-model-choice
   test-world-application-sync
   test-world-channel-resource
@@ -737,8 +734,6 @@
   test-world-channel-paths
   test-world-tell-prefill
   test-world-ambiguous-channel
-  test-world-prune-empty-conversations
-  test-world-prune-empty-batches
   test-world-cold-reconciliation
   test-world-inbox-modeline
   test-world-child-lifecycle
@@ -746,15 +741,10 @@
   test-world-child-removal-interleavings
   test-world-child-removal-recovery
   test-world-removal-intent-states
-  test-world-placing-needs-server
   test-world-agent-hierarchy
   test-world-parent-mention
   test-world-person-notice
   test-world-inbox
-  test-world-one-resident-agent
-  test-world-agent-move
-  test-world-agentless-channel
-  test-world-staggered-retirement
   test-world-handles
   test-world-agent-names
   test-world-composer-mentions
@@ -781,7 +771,7 @@
  test-world-server-restart-cleanup-failures
  test-world-server-restart-diagnostics test-world-server-restart-checkpoint
  test-world-server-stop test-world-server-switch
- test-world-channel-command-admission test-move-picker-available-destinations
+ test-world-channel-command-admission
  test-world-server-resume-order test-world-server-open-latest-touched
  test-world-server-startup-inbox
  test-world-server-open-passes-damage test-world-server-generation-warning-once
@@ -792,13 +782,9 @@
  test-world-server-launch-options test-world-server-close-unattached
  test-world-server-close-ownership test-world-server-attachment-moves-nobody
  test-world-server-open-running-child
- test-world-server-running-child-move-and-park test-world-server-running-child-precommit
- test-world-server-running-child-opening-move test-world-server-running-child-close
+ test-world-server-running-child-close
  test-world-server-running-child-idle-grace
  test-world-server-person-unread test-world-server-open-before-checkpoint
- test-world-server-move test-world-execution-owner-claims
- test-world-execution-owner-staging test-world-server-move-running-child
- test-world-server-move-goal test-world-server-adoption-recovery
  test-world-client-joins-winner test-world-client-switch-navigates
  test-world-client-refusal-ends-start test-world-client-switch-failures
  test-world-host-health
@@ -1063,7 +1049,6 @@
   test-precompaction-bounds-oversized-output)
 
 (define-test-suite conversation
-  test-conversation-context-adoption
   test-conversation-image-input
   test-conversation-inherited-reference
   test-conversation-ephemeral-tool-projection

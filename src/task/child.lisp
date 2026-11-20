@@ -552,16 +552,8 @@ Live executions retain their pool ownership and remain inspectable after return.
   "Snapshot PARENT's sender identity, name and source channel before an assignment can wait."
   (let* ((source        (agent-conversation parent))
          (configuration (agent-configuration parent))
-         (identifier    (conversation-identifier source))
-         (world         (world-load configuration))
-         (identity      (participant-state-identity (agent-participant-state parent)))
-         (mapping       (find identifier (world-session-mappings configuration)
-                              :key #'world-session-mapping-conversation :test #'string=))
-         (sender        (or (and identity (world-participant-find world (participant-identifier identity)))
-                            (world-session--mapped-participant world mapping identifier)
-                            identity
-                            (and (not (world-channel-find world identifier))
-                                 (world-session-participant configuration source :create-inbox-p nil)))))
+         (sender        (or (world-register-conversation configuration source)
+                            (participant-state-identity (agent-participant-state parent)))))
     (list :sender      (and sender (participant-identifier sender))
           :sender-name (if sender
                            (participant-name sender)
@@ -637,7 +629,7 @@ Live executions retain their pool ownership and remain inspectable after return.
            (lambda (status details)
              (when (eq status ':user-message-persisted)
                (setf (participant-state-identity (agent-participant-state child))
-                     (world-session-participant configuration conversation :create-inbox-p nil)))
+                      (world-register-conversation configuration conversation)))
              (task-job-note-agent-status job status details))
            :steering-callback
            (lambda ()

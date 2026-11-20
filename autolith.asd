@@ -170,7 +170,6 @@
                                           (:file "world/store")
                                           (:file "world/repository-groups")
                                           (:file "world/catalogue")
-                                          (:file "world/contexts")
                                           (:file "world/sessions")
                                           (:file "world/messages")
                                           (:file "agent/prompt")

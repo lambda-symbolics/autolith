@@ -766,10 +766,6 @@ REASON, when given, is what each attached terminal is told before it lets go."
                          :unattached-only-p (not (null (getf arguments :unattached-only-p)))))
     (:quiesce
      (world-server-quiesce server (getf arguments :channels)))
-    (:move
-     (world-server-move server (getf arguments :participant) (getf arguments :channel)))
-    (:dismiss
-     (world-server-dismiss server (getf arguments :participant)))
     (:person-unread
      (world-server-person-unread-changed server)
      (list :ok :operation ':person-unread))
@@ -1038,47 +1034,6 @@ started must not end one another terminal attached to since."
                          ':hosted
                          ':closed)))))))
      (list :ok :states states))))
-
-
-;;;; -- Moves --
-
-(-> world-server-move (world-server t t) list)
-(defun world-server-move (server participant channel)
-  "Move PARTICIPANT into CHANNEL through the server's execution-owner resolver."
-  (unless (and (stringp participant) (stringp channel))
-    (error 'world-error
-           :message   "A move names the participant to move and the channel to move it into."
-           :operation ':move))
-  (let* ((configuration (world-server-configuration server))
-         (world         (world-load configuration))
-         (agent         (world-server--designated-participant world participant ':move))
-         (target        (channel-identifier (world-channel-designated world configuration channel)))
-         (result        (world-move-agent configuration agent target :environment server)))
-    (list :ok :operation ':move :participant (participant-identifier agent)
-          :source (getf result :source) :channel target :dropped (getf result :dropped))))
-
-(-> world-server-dismiss (world-server t) list)
-(defun world-server-dismiss (server participant)
-  "Park PARTICIPANT through the server's execution-owner resolver."
-  (unless (stringp participant)
-    (error 'world-error :message "A dismissal names the agent to park." :operation ':park))
-  (let* ((configuration (world-server-configuration server))
-         (world         (world-load configuration))
-         (agent         (world-server--designated-participant world participant ':park))
-         (result        (world-park-agent configuration agent :environment server)))
-    (list :ok :operation ':park :participant (participant-identifier agent)
-          :name (participant-name agent)
-          :channel (getf result :channel) :dropped (getf result :dropped))))
-
-(-> world-server--designated-participant (world string keyword) participant)
-(defun world-server--designated-participant (world designator operation)
-  "Return the participant DESIGNATOR names in WORLD, or refuse OPERATION."
-  (or (world-participant-designated world designator)
-      (error 'world-error
-             :message    (format nil "No participant is named ~A." designator)
-             :pathname   nil
-             :operation  operation
-             :identifier designator)))
 
 
 ;;;; -- Hosting --
@@ -1671,7 +1626,6 @@ forgotten again when no thread could start."
         (error 'world-error :operation ':open-cancelled :identifier
                (world-host-channel host) :message
                "The owned channel startup was cancelled."))
-      (application-world-adopt-pending-context application)
       (world-server--serve-host server host :initial-command
                                 (and (getf arguments :pick-channel-p) "(open)")
                                 :recovery-diagnosis
@@ -2293,38 +2247,3 @@ notice directly if it never paused, as when a checkpoint fails early."
           (sb-thread:condition-broadcast
            (application-input-controller-condition-variable controller))))))
   nil)
-
-(defclass world-host-execution-owner (hosted-execution-owner)
-  ((host :initarg :host :reader execution-owner-host
-         :documentation "The reserved host whose retirement excludes this transition."))
-  (:documentation "A hosted source protected through its complete residence transition."))
-
-(defmethod execution-owner-call-with-exclusion ((owner world-host-execution-owner) function)
-  "Refuse unavailable sources and exclude retirement until FUNCTION settles the claim."
-  (let ((host (execution-owner-host owner)))
-    (with-lock-held ((world-host-retirement-lock host))
-      (unless (world-host-live-p host)
-        (error 'world-error :operation ':move :identifier (world-host-channel host)
-               :message "The participant's channel is opening or closing; the move or park was refused."))
-      (funcall function))))
-
-(defmethod participant-execution-owner ((server world-server) configuration participant)
-  "Resolve an admitted assignment host without reacquiring its lifetime lease."
-  (let* ((channel (participant-residence participant))
-         (host    (and channel (world-server--find-host server channel))))
-    (or (and host (application-assignment-job (world-host-application host))
-             (channel-execution-owner server configuration participant :channel channel))
-        (loop for candidate in (world-server--hosts server)
-              for owner = (participant-execution-owner (world-host-application candidate)
-                                                       configuration participant)
-              when (typep owner 'pooled-execution-owner) return owner)
-        (channel-execution-owner server configuration participant :channel channel))))
-
-(defmethod channel-execution-owner ((server world-server) configuration participant &key channel)
-  "Resolve a reserved host with lifetime exclusion, or use durable stored adoption."
-  (let ((host (and channel (world-server--find-host server channel))))
-    (if host
-        (make-instance 'world-host-execution-owner
-                       :configuration configuration :participant participant :channel channel
-                       :application (world-host-application host) :host host)
-        (channel-execution-owner nil configuration participant :channel channel))))

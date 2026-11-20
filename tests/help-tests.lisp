@@ -124,7 +124,7 @@
       (test-assert (and (search "(new)" section) (not (search "(new)" command)))
                    "keywords choose sections while quoted symbols choose commands")
       (let ((positions (mapcar (lambda (usage) (search usage section))
-                               '("(open" "(new)" "(tell" "(move" "(dismiss" "(domestic)" "(rename"))))
+                               '("(open" "(new)" "(tell" "(rename"))))
         (test-assert (and (every #'integerp positions) (apply #'< positions))
                      "channels help includes canonical open and preserves the editorial command order"))
       (test-assert (equal (application-operation-help application " OpEn ")

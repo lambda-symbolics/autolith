@@ -44,8 +44,6 @@
                        "an explicit channel identifier and parent are kept")
           (world-participant-subscribe configuration (participant-identifier human) "b-side"
                                        :now 1003)
-          (world-participant-move configuration (participant-identifier agent)
-                                  (channel-identifier home) :now 1004)
           (world-participant-update configuration (participant-identifier agent)
                                     :settings '(:model "gpt-5" :reasoning-effort "medium")
                                     :now      1005)
@@ -54,21 +52,17 @@
                  (agent (world-participant-find world (participant-identifier agent)))
                  (human (world-participant-find world (participant-identifier human)))
                  (side  (world-channel-find world "b-side")))
-            (test-assert (and (string= (participant-residence agent) (channel-identifier home))
+            (test-assert (and (string= (participant-residence agent) "b-side")
                               (= (participant-updated-at agent) 1005)
                               (equal (participant-settings agent)
                                      '(:model "gpt-5" :reasoning-effort "medium")))
-                         "participant moves and updates reload from the log")
+                         "participant updates reload from the log")
             (test-assert (and (string= (channel-title side) "Side work")
                               (= (channel-updated-at side) 1006))
                          "channel updates reload from the log")
-            (test-assert (equal (mapcar #'participant-identifier
-                                        (world-channel-residents world (channel-identifier home)))
-                                (list (participant-identifier agent)
-                                      (participant-identifier human)))
-                         "residents are derived from residence, newest change first")
-            (test-assert (null (world-channel-residents world "b-side"))
-                         "a channel left by its only resident is empty")
+            (test-assert (equal (mapcar #'participant-identifier (world-channel-residents world "b-side"))
+                                (list (participant-identifier agent)))
+                         "channel residents are derived from participant residence")
             (test-assert (equal (mapcar #'participant-identifier
                                         (world-channel-subscribers world "b-side"))
                                 (list (participant-identifier human)))
@@ -90,14 +84,6 @@
                                 (world-participant-find (world-load configuration)
                                                         (participant-identifier human))))
                          "unsubscribing removes the channel")
-            (test-assert (handler-case
-                             (progn (world-participant-move configuration
-                                                            (participant-identifier agent)
-                                                            "missing")
-                                    nil)
-                           (world-error (condition)
-                             (eq (world-error-operation condition) ':move-participant)))
-                         "moving into an unknown channel is refused")
             (test-assert (handler-case
                              (progn (world-participant-create configuration
                                                               :kind      ':agent
@@ -287,13 +273,14 @@
                    "a dangling residence is reported with its participant")))
   nil)
 
-(-> world-tests--persisted-conversation (configuration string timestamp) conversation)
-(defun world-tests--persisted-conversation (configuration identifier created-at)
+(-> world-tests--persisted-conversation (configuration string timestamp &key (:register-p boolean)) conversation)
+(defun world-tests--persisted-conversation (configuration identifier created-at &key (register-p t))
   "Create conversation IDENTIFIER with one durable message."
   (let ((conversation (conversation-create configuration
                                           :identifier identifier
                                           :created-at created-at)))
     (conversation-append-user-message conversation (format nil "hello from ~A" identifier))
+    (when register-p (world-register-conversation configuration conversation))
     conversation))
 
 (-> world-tests--channel-identifiers (world) list)
@@ -301,18 +288,53 @@
   "Return the identifiers of WORLD's channels other than the person's inbox."
   (mapcar #'channel-identifier (remove-if #'channel-inbox-p (world-channels world))))
 
-(-> world-tests--mapped (configuration) list)
-(defun world-tests--mapped (configuration)
-  "Return the conversations CONFIGURATION's session mappings name, other than the person's inbox."
-  (let ((inbox (world-inbox-channel (world-load configuration))))
-    (remove (and inbox (channel-identifier inbox))
-            (mapcar #'world-session-mapping-conversation (world-session-mappings configuration))
-            :test #'equal)))
 
 (-> world-tests--inbox (configuration) string)
 (defun world-tests--inbox (configuration)
   "Return the identifier of the person's inbox in CONFIGURATION's world."
   (channel-identifier (world-inbox-channel (world-load configuration))))
+
+(-> test-world-canonical-channel-identity () null)
+(defun test-world-canonical-channel-identity ()
+  "Use the durable conversation ID, preserve legacy aliases and hide archived agents."
+  (with-test-configuration (configuration)
+    (let* ((conversation (world-tests--persisted-conversation configuration "bcanonical" 1000 :register-p nil))
+           (history      (conversation-log-pathname conversation))
+           (original     (uiop:read-file-string history))
+           (inbox        (world-ensure-inbox configuration))
+           (person       (channel-owner inbox))
+           (workspace    (channel-workspace inbox)))
+      (world-channel-create configuration :id "bcanonical" :owner person :workspace workspace :title "Legacy title")
+      (world-participant-create configuration :id "al-legacy" :kind ':agent :name "helper"
+                                             :parent person :residence "bcanonical")
+      (world--transact configuration
+                       (lambda (world)
+                         (declare (ignore world))
+                         (values (list (world--participant-record
+                                        (make-instance 'participant :identifier "al-archive" :kind ':agent
+                                                       :name "archive" :parent person
+                                                       :subscriptions '("bcanonical")
+                                                       :created-at 1000 :updated-at 1000))) nil)))
+      (world-ensure-channel-identities configuration)
+      (multiple-value-bind (channel agent)
+          (world-channel-register configuration "bcanonical" :workspace workspace :title "New title")
+        (let ((world (world-load configuration)))
+          (test-assert (and (equal (participant-identifier agent) (channel-identifier channel))
+                            (eq agent (world-participant-find world "al-legacy"))
+                            (equal (channel-title channel) "Legacy title")
+                            (equal (world-channel-residents world "bcanonical") (list agent)))
+                       "a legacy ID reads the one canonical agent, and retry keeps existing metadata")
+          (test-assert (and (world-participant-find world "al-archive")
+                            (null (world-participant-designated world "al-archive"))
+                            (null (world-message-mentions world "@archive @al-archive"))
+                            (null (world-channel-subscribers world "bcanonical")))
+                       "archived records are retained but excluded from live routing"))
+        (test-assert (handler-case (progn (world-participant-rename configuration "al-legacy" "newname") nil)
+                       (world-error () t))
+                     "a read alias cannot be a second mutation identifier"))
+      (test-assert (equal original (uiop:read-file-string history))
+                   "canonical registration does not rewrite conversation history")))
+  nil)
 
 (-> test-world-agent-keeps-model-choice () null)
 (defun test-world-agent-keeps-model-choice ()
@@ -322,7 +344,6 @@
            (application  (make-instance 'application
                                         :configuration configuration
                                         :conversation  conversation)))
-      (world-reconcile-sessions configuration :now 2000)
       (application--persist-model-selection
        application
        (configuration-copy configuration :model "gpt-6-luna" :reasoning-effort "low"))
@@ -334,188 +355,8 @@
                      "the conversation and its agent both take the chosen model and effort"))))
   nil)
 
-(-> test-world-session-reconciliation () null)
-(defun test-world-session-reconciliation ()
-  "Test conversations map onto channels and agents, re-sync when newer, and retire when deleted."
-  (with-test-configuration (configuration)
-    (let ((first  (world-tests--persisted-conversation configuration "b-first" 1000))
-          (second (world-tests--persisted-conversation configuration "b-second" 2000)))
-      (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3000)
-        (let ((human          (world-human-participant world))
-              (inbox          (world-inbox-channel world))
-              (first-channel  (world-channel-find world "b-first"))
-              (second-channel (world-channel-find world "b-second")))
-          (test-assert (= count 3) "every persisted conversation is migrated, with the inbox made for the person")
-          (test-assert (and inbox
-                            (string= (channel-title inbox) "inbox")
-                            (string= (participant-residence human) (channel-identifier inbox))
-                            (null (find ':agent (world-channel-residents world (channel-identifier inbox))
-                                        :key #'participant-kind))
-                            (conversation-inbox-pathname-p
-                             (conversation-pathname-for-id configuration (channel-identifier inbox))))
-                       "the person resides in an inbox channel of their own, which has no agent")
-          (test-assert (and human first-channel second-channel
-                            (string= (channel-owner first-channel) (participant-identifier human))
-                            (string= (channel-owner second-channel) (participant-identifier human))
-                            (= (channel-created-at first-channel) 1000)
-                            (string= (channel-workspace first-channel)
-                                     (workspace-directory-name
-                                      (config :working-directory configuration))))
-                       "each conversation becomes a channel of its identifier owned by the human")
-          (let ((agent (find ':agent (world-channel-residents world "b-second")
-                             :key #'participant-kind)))
-            (test-assert (and agent
-                              (equal (participant-parent agent) (participant-identifier human))
-                              (world-handle-p (participant-name agent))
-                              (equal (participant-name agent) (prezdivka:name-for "b-second"))
-                              (eq (participant-name-source agent) ':initial)
-                              (equal (getf (participant-settings agent) :model)
-                                     (conversation-model second)))
-                         "a migrated session's agent starts under its channel's readable handle with the human as parent")
-            (let ((load-world #'world-load)
-                  (reads      0))
-              (test-call-with-function-replacements
-               (list (list 'world-load
-                           (lambda (configuration)
-                             (incf reads)
-                             (funcall load-world configuration))))
-               (lambda ()
-                 (test-assert (= (nth-value 1 (world-reconcile-sessions configuration :now 3001)) 0)
-                              "an unchanged conversation is not migrated again")))
-              (test-assert (= reads 1)
-                           "unchanged reconciliation reads the world log once"))
-            (world-participant-update configuration (participant-identifier agent)
-                                      :settings '(:model "gpt-moved" :reasoning-effort "low"))
-            (conversation-append-user-message second "after the agent chose its model")
-            (world-reconcile-sessions configuration :now 3001)
-            (test-assert (equal (participant-settings
-                                 (world-participant-find (world-load configuration)
-                                                         (participant-identifier agent)))
-                                '(:model "gpt-moved" :reasoning-effort "low"))
-                         "a conversation's header does not overwrite the settings its agent has since")
-            (conversation-append-user-message first "a newer message")
-            (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3002)
-              (test-assert (= count 1) "a newer conversation is migrated again")
-              (test-assert (equal (channel-title (world-channel-find world "b-first"))
-                                  (conversation-title first))
-                           "the channel title follows the conversation")
-              (test-assert (= (length (remove ':human (world-participants world)
-                                              :key #'participant-kind))
-                              2)
-                           "re-migration keeps the same agent participants"))
-            (test-assert (equal (remove (channel-identifier inbox)
-                                        (mapcar #'world-session-mapping-conversation
-                                                (world-session-mappings configuration))
-                                        :test #'string=)
-                                '("b-first" "b-second"))
-                         "mappings are kept per conversation")
-            (platform-delete-directory-tree
-             *platform*
-             (conversation-storage-directory-pathname (conversation-pathname second))
-             :validate t)
-            (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3003)
-              (test-assert (= count 1) "a vanished conversation is retired")
-              (test-assert (and (null (world-channel-find world "b-second"))
-                                (null (world-participant-find world (participant-identifier agent)))
-                                (string= (participant-residence (world-human-participant world))
-                                         (channel-identifier inbox)))
-                           "the retired channel and agent are gone and the person stays in the inbox")
-              (test-assert (equal (remove (channel-identifier inbox)
-                                          (mapcar #'world-session-mapping-conversation
-                                                  (world-session-mappings configuration))
-                                          :test #'string=)
-                                  '("b-first"))
-                           "the retired mapping is removed")))))))
-  (with-test-configuration (configuration root)
-    (let* ((workspace     (world-tests--workspace root "registered-project"))
-           (configuration (configuration-copy configuration :working-directory workspace))
-           (key           (concatenate 'string "git:" workspace))
-           (conversation  (world-tests--persisted-conversation configuration "registered-repository" 1000)))
-      (test-call-with-function-replacements
-       (list (list 'world-repository-resolve-directory
-                   (lambda (directory)
-                     (when (equal directory workspace) (list :key key :directory workspace)))))
-       (lambda () (world-reconcile-sessions configuration :now 2000)))
-      (let ((observed (world-channel-find (world-load configuration) "registered-repository")))
-        (test-assert (and (equal key (channel-repository-key observed))
-                          (equal workspace (channel-repository-directory observed)))
-                     "Session discovery persists a positive repository observation when creating its channel.")
-        (conversation-append-user-message conversation "resynchronize after repository removal")
-        (test-call-with-function-replacements
-         (list (list 'world-repository-resolve-directory
-                     (lambda (directory) (declare (ignore directory)) nil)))
-         (lambda () (world-reconcile-sessions configuration :now 2001)))
-        (test-assert (and (equal key (channel-repository-key observed))
-                          (equal key (channel-repository-key
-                                      (world-channel-find (world-load configuration) "registered-repository"))))
-                     "Session resynchronization preserves saved attribution when the same workspace no longer resolves."))))
-  nil)
 
-(-> test-world-session-bulk-migration () null)
-(defun test-world-session-bulk-migration ()
-  "Test many conversations migrate in one second and a repeated migration names the same participants."
-  (with-test-configuration (configuration)
-    (let ((identifiers (loop for index below 70
-                             collect (format nil "bulk~2,'0D" index))))
-      (dolist (identifier identifiers)
-        (world-tests--persisted-conversation configuration identifier 1000))
-      (flet ((participants ()
-               (sort (mapcar #'participant-identifier
-                             (world-participants (world-load configuration)))
-                     #'string<)))
-        (let ((expected (sort (cons *world-human-identifier*
-                                    (mapcar #'world-session--agent-identifier identifiers))
-                              #'string<)))
-          (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 2000)
-            (declare (ignore world))
-            (test-assert (= count 71)
-                         "seventy conversations and the inbox migrate within one second"))
-          (test-assert (equal (participants) expected)
-                       "the person is user and each agent is named after its conversation")
-          (delete-file (configuration-world-sessions-path configuration))
-          (world-reconcile-sessions configuration :now 2001)
-          (test-assert (equal (participants) expected)
-                       "a migration that lost its mappings takes back the same participants")
-          (test-assert (= (length (world-tests--mapped configuration)) 70)
-                       "the repeated migration maps every conversation again")))))
-  nil)
 
-(-> test-world-session-mapping-transactions () null)
-(defun test-world-session-mapping-transactions ()
-  "Test remapping one session preserves another writer's concurrent remap."
-  (with-test-configuration (configuration)
-    (world-tests--persisted-conversation configuration "bfirst1" 1000)
-    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
-    (world-reconcile-sessions configuration)
-    (let ((store    (world-session--store configuration))
-          (transact #'sexp-store:store-transact)
-          (raced-p  nil))
-      (test-call-with-function-replacements
-       (list (list 'world-session--store
-                   (lambda (configuration)
-                     (declare (ignore configuration))
-                     store))
-             (list 'sexp-store:store-transact
-                   (lambda (actual update &rest options)
-                     ;; Another process publishes while the first writer
-                     ;; waits to acquire the mapping store's lock.
-                     (when (and (eq actual store) (not raced-p))
-                       (setf raced-p t)
-                       (world-session-remap configuration "bsecnd2" nil))
-                     (apply transact actual update options))))
-       (lambda ()
-         (test-assert (world-session-remap configuration "bfirst1" nil)
-                      "the requested session is remapped")))
-      (let ((mappings (world-session-mappings configuration)))
-        (test-assert (and raced-p
-                          (every (lambda (identifier)
-                                   (let ((mapping (find identifier mappings
-                                                        :key  #'world-session-mapping-conversation
-                                                        :test #'string=)))
-                                     (and mapping (null (world-session-mapping-participant mapping)))))
-                                 '("bfirst1" "bsecnd2")))
-                     "concurrent remaps of different sessions both persist"))))
-  nil)
 
 (-> test-world-application-sync () null)
 (defun test-world-application-sync ()
@@ -575,13 +416,13 @@
 (defun test-world-agent-name-header ()
   "Test assistant messages carry the name of the channel's agent, and autolith without one."
   (with-test-configuration (configuration)
-    (let* ((conversation (world-tests--persisted-conversation configuration "bnamed1" 1000))
+    (let* ((conversation (world-tests--persisted-conversation configuration "bnamed1" 1000 :register-p nil))
            (application  (make-instance 'application
                                         :configuration configuration
                                         :conversation  conversation)))
       (test-assert (string= (application-agent-name application) "autolith")
                    "a conversation that is no channel yet names its agent autolith")
-      (world-reconcile-sessions configuration :now 2000)
+      (world-register-conversation configuration conversation)
       (let ((agent (find ':agent (world-channel-residents (world-load configuration) "bnamed1")
                          :key #'participant-kind)))
         (world-participant-rename configuration (participant-identifier agent) "frob"))
@@ -667,7 +508,7 @@
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
-    (let ((world (values (world-reconcile-sessions configuration))))
+    (let ((world (world-load configuration)))
       (world-channel-update configuration "bsecnd2" :title "Second thoughts")
       (setf world (world-load configuration))
       (dolist (case '(("bfirst1" "bfirst1") ("b-first1" "bfirst1") ("FIRST" "bfirst1")
@@ -704,7 +545,6 @@
 (-> world-tests--agents (configuration) (values participant participant participant))
 (defun world-tests--agents (configuration)
   "Return the human and the agents of channels bfirst1 and bsecnd2 after reconciliation."
-  (world-reconcile-sessions configuration :now 3000)
   (let ((world (world-load configuration)))
     (flet ((agent (channel)
              "Return CHANNEL's agent resident."
@@ -1081,7 +921,7 @@
           (test-assert (tool-result-success-p (send "Again"))
                        "the next send resolves the same channel after local input retention")
           (conversation-append-user-message conversation "Continue")
-          (test-assert (and (world-session-participant configuration conversation)
+          (test-assert (and (world-register-conversation configuration conversation)
                             (equal (sort (mapcar #'world-delivery-text
                                                  (world-inbox-deliveries configuration "o6E1D2R"))
                                          #'string<)
@@ -1106,7 +946,7 @@
                                   :residence "bfirst1"
                                   :parent    (participant-identifier human)
                                   :now       3000)
-        (let* ((world (values (world-reconcile-sessions configuration :now 3001)))
+        (let* ((world (world-load configuration))
                (all   (mapcar #'participant-name (world-participants world))))
           (test-assert (and (= (length all) (length (remove-duplicates all :test #'string-equal)))
                             (string= (participant-name
@@ -1200,26 +1040,7 @@
                                                          :source             ':generated
                                                          :expected-residence "bfirst1"))
                               (participant-name inferred))
-                       "an agent is named for its work once"))
-        (let* ((workspace   (namestring (config :working-directory configuration)))
-               (destination (world-channel-create configuration
-                                                  :owner     (participant-identifier human)
-                                                  :workspace workspace))
-               (moving      (world-participant-create configuration
-                                                      :kind        ':agent
-                                                      :name        "moving-agent"
-                                                      :name-source ':initial
-                                                      :home        (list :workspace workspace)))
-               (residence   (participant-residence moving)))
-          (world-participant-move configuration (participant-identifier moving)
-                                  (channel-identifier destination))
-          (let ((unchanged (world-participant-rename configuration (participant-identifier moving)
-                                                     "new-task-name"
-                                                     :source             ':generated
-                                                     :expected-residence residence)))
-            (test-assert (and (equal (participant-name unchanged) "moving-agent")
-                              (eq (participant-name-source unchanged) ':initial))
-                         "a name inferred in one channel does not follow an agent that moved to another"))))))
+                       "an agent is named for its work once")))))
   nil)
 
 (-> test-world-composer-mentions () null)
@@ -1332,7 +1153,7 @@
 
 (-> test-world-portable-files () null)
 (defun test-world-portable-files ()
-  "Test the world, its mappings and its inboxes are written as plain text any Lisp reads."
+  "Test the world and its inboxes are written as plain text any Lisp reads."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
@@ -1342,7 +1163,6 @@
                                         :text     "hello"
                                         :notify-p nil))
     (dolist (pathname (list (configuration-world-path configuration)
-                            (configuration-world-sessions-path configuration)
                             (world-inbox-pathname configuration "bfirst1")))
       (let ((text (uiop:read-file-string pathname)))
         (test-assert (not (or (search "#A(" text) (search "#1=" text)))
@@ -1590,49 +1410,6 @@
                          "a copy from another channel shows as one line without its text, which the model still gets"))))))
   nil)
 
-(-> test-world-one-resident-agent () null)
-(defun test-world-one-resident-agent ()
-  "Test a channel holds one resident agent and the person stays in the inbox."
-  (with-test-configuration (configuration root)
-    (world-tests--persisted-conversation configuration "bfirst1" 1000)
-    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
-    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
-      (test-assert (handler-case
-                       (progn (world-participant-move configuration
-                                                      (participant-identifier first-agent)
-                                                      "bsecnd2")
-                              nil)
-                     (world-error (condition)
-                       (and (eq (world-error-operation condition) ':move-participant)
-                            (search (participant-name second-agent)
-                                    (autolith-error-message condition)))))
-                   "an agent is refused a channel whose resident agent is named in the refusal")
-      (test-assert (handler-case
-                       (progn (world-participant-move configuration
-                                                      (participant-identifier human) "bsecnd2")
-                              nil)
-                     (world-error ()
-                       (string= (participant-residence
-                                 (world-human-participant (world-load configuration)))
-                                (world-tests--inbox configuration))))
-                   "the person is not moved out of the inbox")
-      (world-channel-create configuration
-                            :id        "bempty3"
-                            :owner     (participant-identifier human)
-                            :workspace (world-tests--workspace root "empty")
-                            :now       3000)
-      (test-assert (string= (participant-residence
-                             (world-participant-move configuration
-                                                     (participant-identifier first-agent) "bempty3"))
-                            "bempty3")
-                   "an agent moves into a channel without one")
-      (test-assert (string= (participant-residence
-                             (world-participant-move configuration
-                                                     (participant-identifier first-agent) "bempty3"))
-                            "bempty3")
-                   "moving an agent where it already is changes nothing")))
-  nil)
-
 (-> test-world-inbox () null)
 (defun test-world-inbox ()
   "Test the inbox roots the channel tree, excludes agents, and preserves message origins."
@@ -1652,18 +1429,12 @@
                               inbox)
                      "the word inbox names the person's inbox")
         (test-assert (handler-case
-                         (progn (world-move-agent configuration first-agent inbox) nil)
-                       (world-error (condition)
-                         (and (eq (world-error-operation condition) ':move)
-                              (search "inbox" (autolith-error-message condition)))))
-                     "an agent is refused the inbox before anything stops")
-        (test-assert (handler-case
-                         (progn (world-participant-move configuration
-                                                        (participant-identifier first-agent) inbox)
+                         (progn (world-channel-register configuration inbox
+                                                        :workspace (namestring (config :working-directory configuration)))
                                 nil)
                        (world-error ()
                          t))
-                     "the store refuses an agent in the inbox as well")
+                     "an inbox cannot register a channel agent")
         (test-assert (and (conversation-inbox-pathname-p (conversation-pathname-for-id configuration inbox))
                           (not (conversation-inbox-pathname-p
                                 (conversation-pathname-for-id configuration "bfirst1"))))
@@ -1697,29 +1468,10 @@
                                             :parent "bfirst1")
         (test-assert (equal (channel-parent (world-channel-find (world-load configuration) "bsecond")) inbox)
                      "standalone channel creation defaults to home")
-        ;; Model a stored pre-home tree, including a nested inbox.
-        (world--transact
-         configuration
-         (lambda (current)
-           (values (mapcar (lambda (identifier)
-                             (world--channel-record
-                              (world--copy-channel (world-channel-find current identifier)
-                                                   :parent (when (equal identifier inbox) "bnested"))))
-                           (list "bfirst1" "bsecond" inbox))
-                   nil)))
-        (multiple-value-bind (repaired count) (world-reconcile-sessions configuration)
-          (test-assert (zerop count) "structural repair does not count as a source migration")
-          (test-assert (and (null (channel-parent (world-inbox-channel repaired)))
-                            (equal (channel-parent (world-channel-find repaired "bfirst1")) inbox)
-                            (equal (channel-parent (world-channel-find repaired "bsecond")) inbox)
-                            (equal (channel-parent (world-channel-find repaired "bnested")) "bfirst1")
-                            (equal (participant-parent
-                                    (world-participant-find repaired (participant-identifier agent)))
-                                   agent-parent))
-                       "unchanged sources repair stored roots while preserving nested and participant ancestry"))
-        (multiple-value-bind (unchanged count) (world-reconcile-sessions configuration)
-          (test-assert (and (zerop count) (null (world-session--home-records unchanged 5000)))
-                       "repeated home reconciliation needs no further repair")))))
+        (test-assert (equal (participant-parent (world-participant-find (world-load configuration)
+                                                                             (participant-identifier agent)))
+                            agent-parent)
+                     "creating sibling and nested channels preserves agent ancestry"))))
   nil)
 
 (-> world-tests--child-conversation
@@ -1738,6 +1490,7 @@
                                            :agent-name        name
                                            :role              role)))
     (conversation-append-user-message conversation (format nil "work for ~A" parent))
+    (world-register-conversation configuration conversation)
     conversation))
 
 (-> test-world-child-loadable () null)
@@ -1764,7 +1517,6 @@
   "Test the inbox names itself where a channel names its model, and measures no context."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
-    (world-reconcile-sessions configuration)
     (let* ((ui          (terminal-ui-create :terminal (make-instance 'recording-terminal :columns 80)))
            (application (make-instance 'application
                                        :configuration configuration
@@ -1779,28 +1531,6 @@
                      "the inbox modeline shows the inbox, no model and no context meter"))))
   nil)
 
-(-> test-world-prune-empty-conversations () null)
-(defun test-world-prune-empty-conversations ()
-  "Test the conversations nobody wrote in are deleted before they become channels, and the rest stay."
-  (with-test-configuration (configuration)
-    (world-tests--persisted-conversation configuration "bwritten1" 1000)
-    (flet ((empty (identifier)
-             "Persist conversation IDENTIFIER with a goal record and no message."
-             (conversation-append-record (conversation-create configuration :identifier identifier)
-                                         (goal->record nil))))
-      (empty "bempty1")
-      (empty "bparent1")
-      (world-tests--child-conversation configuration "bkid1" :root "bparent1" :parent "bparent1"
-                                                            :name "helper" :created-at 1500))
-    (test-assert (equal (world-prune-empty-conversations configuration) '("bempty1"))
-                 "only the empty conversation without children is deleted")
-    (world-reconcile-sessions configuration)
-    (let ((world (world-load configuration)))
-      (test-assert (and (null (world-channel-find world "bempty1"))
-                        (world-channel-find world "bwritten1")
-                        (world-channel-find world "bparent1"))
-                   "the deleted conversation never becomes a channel")))
-  nil)
 
 (-> test-world-cold-reconciliation () null)
 (defun test-world-cold-reconciliation ()
@@ -1851,43 +1581,6 @@
                        "cold reconciliation retains conversations without warming their sidecars")))))
   nil)
 
-(-> test-world-prune-empty-batches () null)
-(defun test-world-prune-empty-batches ()
-  "Defer unknown metadata and isolate optional cleanup failures within bounded batches."
-  (with-test-configuration (configuration)
-    (dolist (identifier '("empty-a" "empty-b" "empty-c"))
-      (conversation-append-record (conversation-create configuration :identifier identifier) (goal->record nil)))
-    (let ((delete (symbol-function 'conversation-delete)))
-      (test-call-with-function-replacements
-       (list (list 'conversation-delete
-                   (lambda (candidate identifier)
-                     (if (string= identifier "empty-a")
-                         (error "Injected deletion failure.")
-                         (funcall delete candidate identifier)))))
-       (lambda ()
-         (multiple-value-bind (deleted outcomes next)
-             (world-prune-empty-conversations configuration :limit 2)
-           (test-assert (equal deleted '("empty-b")) "a failed deletion does not skip the next channel")
-           (test-assert (equal (mapcar (lambda (outcome) (getf outcome :status)) outcomes) '(:failed :deleted))
-                        "the batch reports each channel independently")
-           (test-assert (equal next "empty-b") "the bounded batch supplies a continuation cursor")))))
-    (let* ((conversation (conversation-create configuration :identifier "unknown"))
-           (pathname     (conversation-pathname conversation)))
-      (conversation-append-record conversation (goal->record nil))
-      (delete-file (conversation-picker-metadata-pathname pathname))
-      (multiple-value-bind (empty known) (world-session--empty-conversation-p pathname)
-        (test-assert (and (null empty) (null known) (conversation-storage-pathnames pathname))
-                     "a cache miss is unknown and never grounds deletion")))
-    (test-call-with-function-replacements
-     (list (list 'channel-remove-recover (lambda (candidate) (declare (ignore candidate)) (error "Recovery unavailable.")))
-           (list 'world-reconcile-sessions
-                 (lambda (candidate)
-                   (test-assert (eq candidate configuration) "required reconciliation runs after recovery failure")
-                   nil)))
-     (lambda ()
-       (handler-bind ((world-session-warning #'muffle-warning))
-         (world-server--reconcile configuration)))))
-  nil)
 
 (-> test-world-ambiguous-channel () null)
 (defun test-world-ambiguous-channel ()
@@ -1895,7 +1588,6 @@
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bsame1" 1000)
     (world-tests--persisted-conversation configuration "bsame2" 2000)
-    (world-reconcile-sessions configuration)
     (let ((application (make-instance 'application
                                       :configuration configuration
                                       :conversation  (conversation-load-by-id configuration "bsame1")
@@ -1938,7 +1630,6 @@
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
-    (world-reconcile-sessions configuration :now 3000)
     (world-participant-rename configuration "al-bsecnd2" "researcher")
     (world-participant-rename configuration "al-bfirst1" "bsecnd2")
     (let* ((world (world-load configuration))
@@ -1968,12 +1659,10 @@
                           (not (search "b-first1" matched)))
                      "channel:list keeps the channels matching its query"))
       (let ((text (channel-tool--send-text configuration
-                                           (list :id "m1" :channels '("bsecnd2") :pending '("bfirst1")
-                                                 :parked '("idle")))))
+                                            (list :id "m1" :channels '("bsecnd2") :pending '("bfirst1")))))
         (test-assert (and (search "Delivered to b-secnd2" text)
-                          (search "Not delivered yet to b-first1" text)
-                          (search "@idle" text))
-                     "a send says where the message went, what waits, and who was parked"))))
+                          (search "Not delivered yet to b-first1" text))
+                     "a send says where the message went and what waits"))))
   nil)
 
 (-> test-world-channel-paths () null)
@@ -1985,7 +1674,6 @@
                                                            :name "helper" :created-at 1500)
       (world-tests--child-conversation configuration "bpeer11" :root "broot11" :parent "broot11"
                                                             :name "peer" :created-at 1600)
-      (world-reconcile-sessions configuration :now 2000)
       (world-participant-rename configuration "al-broot11" "lead")
       (labels ((resolve (address identifier)
                  "Assert ADDRESS resolves to the same stable IDENTIFIER."
@@ -2064,9 +1752,7 @@
           (reject "helper" kid peer)
           (test-assert (string= (participant-identifier (world-participant-designated world kid)) "al-bkid11")
                        "an exact channel path addresses its sole resident agent"))
-        (world-participant-park configuration "al-bpeer11")
-        (reject "@helper" "/captain/helper" "parked")
-        (resolve "/captain/helper" "bkid11")
+        (world-participant-rename configuration "al-bpeer11" "peer")
         (legacy-name "al-broot11" "ops/team%lead")
         (resolve "/ops%2Fteam%25lead/helper" "bkid11")
         (reject "/ops/team%lead/helper" "exact path")
@@ -2080,7 +1766,6 @@
             (resolve (world-channel-path world channel :paths paths) (channel-identifier channel)))))))
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "broot11" 1000)
-    (world-reconcile-sessions configuration :now 2000)
     (let* ((world (world-load configuration))
            (human (world-human-participant world))
            (inbox (world-inbox-channel world))
@@ -2139,7 +1824,6 @@
     (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
       (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent "broot11"
                                                              :name "helper" :role "scout" :created-at 1500)
-      (world-reconcile-sessions configuration :now 2000)
       (let ((text (world-tests--read configuration root "current")))
         (test-assert (and (search "Children, 1 of the 32" text)
                           (search (format nil "helper (scout) channel ~A, idle"
@@ -2169,7 +1853,6 @@
                                                                :name "aide" :created-at 1600)
       (world-tests--child-conversation configuration "bsib11" :root "broot11" :parent "broot11"
                                                              :name "sibling" :created-at 1700)
-      (world-reconcile-sessions configuration :now 2000)
       (let* ((orchestrator (task-tests--orchestrator))
              (parent       (agent-create :configuration configuration
                                          :provider      (make-instance 'model-provider)
@@ -2232,14 +1915,10 @@
                                      (null (world-channel-find world "bgrand11"))
                                      (null (world-channel-find world "bsib11"))
                                      (null (conversation-task-pathname-for-id configuration "bsib11"))
-                                     (null (world-participant-find world "al-bkid11"))
                                      (null (conversation-task-pathname-for-id configuration "bkid11"))
                                      (null (conversation-task-pathname-for-id configuration "bgrand11"))
-                                     (notany (lambda (mapping)
-                                               (member (world-session-mapping-conversation mapping)
-                                                       '("bkid11" "bgrand11") :test #'string=))
-                                             (world-session-mappings configuration)))
-                                  "a removed child leaves no channel, agent, history or mapping"))
+                                     (null (world-participant-find world "bkid11")))
+                                 "a removed child leaves no channel, agent or history"))
             (task-orchestrator-close orchestrator))))))
   nil)
 
@@ -2254,7 +1933,6 @@
                                                             :name "two" :created-at 1600)
     (world-tests--child-conversation configuration "bremovec" :root "bremove11" :parent "bremove11"
                                                             :name "three" :created-at 1700)
-    (world-reconcile-sessions configuration)
     (let ((lease (conversation-lease-acquire configuration "bremovec")))
       (unwind-protect
            (test-assert
@@ -2281,18 +1959,14 @@
                         (not (conversation-lease-busy-p configuration "bremovea")))
                    "failed cleanup keeps the world and storage and releases the acquired leases")
       (let ((transact        (symbol-function 'world--transact))
-            (sessions        (symbol-function 'world-session--transact))
             (subdirectories  (symbol-function 'uiop:subdirectories))
             (world-updates   0)
-            (mapping-updates 0)
             (discoveries     0)
             (log-passes      0))
         (test-call-with-function-replacements
          (list
           (list 'world--transact
                 (lambda (&rest arguments) (incf world-updates) (apply transact arguments)))
-          (list 'world-session--transact
-                (lambda (&rest arguments) (incf mapping-updates) (apply sessions arguments)))
           (list 'uiop:subdirectories
                 (lambda (directory)
                   (when (equal directory (merge-pathnames "tasks/" (config :data-root configuration)))
@@ -2305,71 +1979,41 @@
                         "a retry removes all selected children and their nested channels")))
         (test-assert (= discoveries 1) "task-root discovery is shared by the complete plan")
         (test-assert (= log-passes 1) "children of one root share one shell-log pass")
-        (test-assert (= world-updates 1) "the complete world deletion uses one transaction")
-        (test-assert (= mapping-updates 1) "the complete mapping deletion uses one transaction"))))
+        (test-assert (= world-updates 1) "the complete world deletion uses one transaction"))))
   nil)
 
 (-> test-world-child-removal-interleavings () null)
 (defun test-world-child-removal-interleavings ()
-  "Test fresh-world validation and context ownership across deletion planning races."
-  (dolist (race '(:nested :incoming :outgoing))
-    (with-test-configuration (configuration)
-      (world-tests--persisted-conversation configuration "brace11" 1000)
-      (world-tests--child-conversation configuration "braceaa" :root "brace11" :parent "brace11"
-                                                            :name "selected" :created-at 1500)
-      (world-tests--child-conversation configuration "bracebb" :root "brace11" :parent "brace11"
-                                                            :name "survivor" :created-at 1600)
-      (world-reconcile-sessions configuration)
-      (let* ((world             (world-load configuration))
-             (selected          (find ':agent (world-channel-residents world "braceaa") :key #'participant-kind))
-             (survivor          (find ':agent (world-channel-residents world "bracebb") :key #'participant-kind))
-             (agent-id          (participant-identifier (if (eq race ':incoming) survivor selected)))
-             (context           (world-context-pathname configuration agent-id))
-             (quiesce           (symbol-function 'channel--quiesce))
-             (delete-worktree   (symbol-function 'task-worktree-discard))
-             (destructive-calls 0))
-        (world-channel-create configuration :id "bracedst" :parent "brace11"
-                              :owner     (channel-owner (world-channel-find world "braceaa"))
-                              :workspace (channel-workspace (world-channel-find world "braceaa")))
-        (snapshot-write context '(:test-context))
-        (test-call-with-function-replacements
-         (list
-          (list 'channel--quiesce
-                (lambda (&rest arguments)
-                  (apply quiesce arguments)
-                  (ecase race
-                    (:nested
+  "Reject a stale deletion plan that misses a newly added descendant."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "brace11" 1000)
+    (world-tests--child-conversation configuration "braceaa" :root "brace11" :parent "brace11"
+                                                           :name "selected" :created-at 1500)
+    (let* ((channel           (world-channel-find (world-load configuration) "braceaa"))
+           (quiesce           (symbol-function 'channel--quiesce))
+           (delete-worktree   (symbol-function 'task-worktree-discard))
+           (destructive-calls 0))
+      (test-call-with-function-replacements
+       (list (list 'channel--quiesce
+                   (lambda (&rest arguments)
+                     (apply quiesce arguments)
                      (world-channel-create configuration :id "bracenew" :parent "braceaa"
-                                           :owner     (channel-owner (world-channel-find world "braceaa"))
-                                           :workspace (channel-workspace (world-channel-find world "braceaa"))))
-                    (:incoming
-                     (world-participant-move configuration (participant-identifier selected) "bracedst")
-                     (world-participant-move configuration agent-id "braceaa"))
-                    (:outgoing
-                     (world-participant-move configuration agent-id "bracedst")))))
-          (list 'task-worktree-discard
-                (lambda (&rest arguments)
-                  (incf destructive-calls)
-                  (apply delete-worktree arguments))))
-         (lambda ()
-           (if (eq race ':outgoing)
-               (test-assert (= 1 (channel-remove configuration '("braceaa")))
-                            "an outgoing resident does not prevent deleting its old channel")
-               (test-assert
-                (handler-case (progn (channel-remove configuration '("braceaa")) nil)
-                  (world-error () t))
-                "new descendants and incoming residents refuse the stale plan before cleanup"))))
-        (test-assert (probe-file context) "a surviving participant keeps its private context")
-        (test-assert (not (conversation-lease-busy-p configuration "braceaa"))
-                     "interleaved validation always releases the selected conversation lease")
-        (if (eq race ':outgoing)
-            (test-assert (and (world-participant-find (world-load configuration) agent-id)
-                              (not (world-channel-find (world-load configuration) "braceaa")))
-                         "actual transaction-deleted participants exclude the moved resident")
-            (test-assert (and (zerop destructive-calls)
-                              (world-channel-find (world-load configuration) "braceaa")
-                              (conversation-task-pathname-for-id configuration "braceaa"))
-                         "a rejected fresh-world plan performs no destructive storage work")))))
+                                           :owner     (channel-owner channel)
+                                           :workspace (channel-workspace channel))))
+             (list 'task-worktree-discard
+                   (lambda (&rest arguments)
+                     (incf destructive-calls)
+                     (apply delete-worktree arguments))))
+       (lambda ()
+         (test-assert (handler-case (progn (channel-remove configuration '("braceaa")) nil)
+                        (world-error () t))
+                      "new descendants refuse the stale plan before cleanup")))
+      (test-assert (not (conversation-lease-busy-p configuration "braceaa"))
+                   "interleaved validation releases the selected conversation lease")
+      (test-assert (and (zerop destructive-calls)
+                        (world-channel-find (world-load configuration) "braceaa")
+                        (conversation-task-pathname-for-id configuration "braceaa"))
+                   "a rejected fresh-world plan performs no destructive storage work")))
   nil)
 
 (-> test-world-child-removal-recovery () null)
@@ -2382,18 +2026,13 @@
                                                            :name "first" :created-at 1500)
     (world-tests--child-conversation configuration "bsecondaa" :root "bsecond11" :parent "bsecond11"
                                                             :name "second" :created-at 1600)
-    (world-reconcile-sessions configuration)
     (let* ((channels    '("bfirstaa" "bsecondaa"))
-           (world       (world-load configuration))
-           (agent       (first (world-channel-residents world "bfirstaa")))
-           (context     (world-context-pathname configuration (participant-identifier agent)))
            (persist     (symbol-function 'shell-log-persist-owner-delivery))
            (worktree    (symbol-function 'task-worktree-discard))
            (delete-root (symbol-function 'task-child--delete-root-storage))
            (passes      0)
            (deletes     0)
            (intent      nil))
-      (snapshot-write context '(:test-context))
       (test-call-with-function-replacements
        (list (list 'shell-log-persist-owner-delivery
                    (lambda (&rest arguments)
@@ -2426,11 +2065,11 @@
               (setf intent (channel-removal-pending-intent cause))
               t))
           "post-publication cleanup failure exposes its durable exact-identity intent")))
-      (test-assert (and intent (probe-file intent) (probe-file context)
+      (test-assert (and intent (probe-file intent)
                         (equal channels (getf (snapshot-read intent) :channels))
                         (every (lambda (id) (not (world-channel-find (world-load configuration) id))) channels)
                         (every (lambda (id) (not (conversation-lease-busy-p configuration id))) channels))
-                   "failed cleanup retains retry evidence and contexts while releasing every lease")
+                   "failed cleanup retains retry evidence while releasing every lease")
       (test-assert (= 1 (count-if (lambda (id)
                                    (null (conversation-task-pathname-for-id configuration id)))
                                  channels))
@@ -2440,17 +2079,14 @@
       (sexp-store:store-compact (world--store configuration))
       (let ((*world-followers* (make-hash-table :test #'equal))
             (*world-checked*   (make-hash-table :test #'equal)))
-        (world-reconcile-sessions configuration)
         (test-assert (every (lambda (id) (not (world-channel-find (world-load configuration) id))) channels)
                      "compaction and fresh discovery preserve storage-deletion tombstones")
         (test-assert (probe-file intent) "discovery does not hide or consume pending cleanup")
         (world-server--reconcile configuration))
-      (test-assert (and (not (probe-file intent)) (not (probe-file context))
+      (test-assert (and (not (probe-file intent))
                         (every (lambda (id) (not (conversation-task-pathname-for-id configuration id))) channels)
-                        (notany (lambda (mapping)
-                                  (member (world-session-mapping-conversation mapping) channels :test #'string=))
-                                (world-session-mappings configuration)))
-                   "server startup retries the on-disk intent and completes histories, contexts and mappings")))
+                        (every (lambda (id) (not (world-channel-find (world-load configuration) id))) channels))
+                   "server startup retries the on-disk intent and completes history cleanup")))
   nil)
 
 (-> test-world-child-role () null)
@@ -2486,45 +2122,22 @@
                      "a session in no role refuses to swap in a child's conversation in place"))))
   nil)
 
-(-> test-world-placing-needs-server () null)
-(defun test-world-placing-needs-server ()
-  "Test a session apart from the world server refuses to move or park agents."
-  (with-test-configuration (configuration)
-    (let ((application (make-instance 'application
-                                      :configuration configuration
-                                      :conversation  (world-tests--persisted-conversation
-                                                      configuration "bapart1" 1000))))
-      (dolist (call (list (lambda () (application--builtin-move-command application "frob" "bapart1"))
-                          (lambda () (application--builtin-dismiss-command application "frob"))))
-        (test-assert (handler-case (progn (funcall call) nil)
-                       (world-error (condition)
-                         (search "runs apart" (autolith-error-message condition))))
-                     "moving or parking an agent outside the world server is refused"))))
-  nil)
 
 (-> test-world-child-sync () null)
 (defun test-world-child-sync ()
-  "Test a child that starts after the server's start gets its channel from its lifecycle event alone."
+  "Register a child that starts after its parent is already in the catalogue."
   (with-test-configuration (configuration)
-    (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
-      (world-server--reconcile configuration)
-      (world-tests--child-conversation configuration "exec-new"
-                                       :root "broot11" :parent "broot11" :name "helper" :created-at 1500)
-      (test-assert (null (world-channel-find (world-load configuration) "exec-new"))
-                   "a child that appears later is not in the world by itself")
-      (application-world-sync-child (make-instance 'application
-                                                   :configuration configuration
-                                                   :conversation  root)
-                                    (list :id "job-1" :root "broot11" :execution "exec-new"
-                                          :status ':started))
-      (let ((channel (world-channel-find (world-load configuration) "exec-new")))
-        (test-assert (and channel (equal (channel-parent channel) "broot11"))
-                     "the child's lifecycle event brings its channel in, nested under its parent"))))
+    (world-tests--persisted-conversation configuration "broot11" 1000)
+    (world-tests--child-conversation configuration "exec-new"
+                                     :root "broot11" :parent "broot11" :name "helper" :created-at 1500)
+    (let ((channel (world-channel-find (world-load configuration) "exec-new")))
+      (test-assert (and channel (equal (channel-parent channel) "broot11"))
+                   "the registered child is nested under its parent")))
   nil)
 
 (-> test-world-agent-hierarchy () null)
 (defun test-world-agent-hierarchy ()
-  "Test child agents of child agents nest under their own parents and keep that ancestry when migrated first."
+  "Test child agents of child agents nest under their own parents and preserve that ancestry on registration retry."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "broot11" 1000)
     (world-tests--child-conversation configuration "exec-one"
@@ -2534,11 +2147,8 @@
                                                        :parent     "exec-one"
                                                        :name       "checker"
                                                        :created-at 1600)))
-      ;; The grandchild is reconciled alone first, before anything it descends from.
-      (world-reconcile-sessions configuration
-                                :identities (list (list (conversation-pathname grandchild) "broot11"))
-                                :now        2000)
-      (let* ((world   (values (world-reconcile-sessions configuration :now 3000)))
+      (world-register-conversation configuration grandchild)
+      (let* ((world   (world-load configuration))
              (root    (find ':agent (world-channel-residents world "broot11") :key #'participant-kind))
              (planner (find ':agent (world-channel-residents world "exec-one") :key #'participant-kind))
              (checker (find ':agent (world-channel-residents world "exec-two") :key #'participant-kind)))
@@ -2557,27 +2167,8 @@
         (test-assert (equal (world-participant-descendants world (participant-identifier root))
                             (list planner checker))
                      "the root agent's descendants are its child and its grandchild")
-        (test-assert (zerop (nth-value 1 (world-reconcile-sessions configuration :now 4000)))
-                     "the repaired ancestry is stable"))))
-  (with-test-configuration (configuration)
-    (world-tests--child-conversation configuration "exec-late"
-                                     :root "blate11" :parent "blate11" :name "helper"
-                                     :created-at 1500)
-    (let* ((world (values (world-reconcile-sessions configuration :now 2000)))
-           (inbox (channel-identifier (world-inbox-channel world))))
-      (test-assert (equal (channel-parent (world-channel-find world "exec-late")) inbox)
-                   "a task whose parent has not arrived initially descends from home")
-      (world-tests--persisted-conversation configuration "blate11" 1000)
-      (let* ((repaired (values (world-reconcile-sessions configuration :now 3000)))
-             (parent   (find ':agent (world-channel-residents repaired "blate11") :key #'participant-kind))
-             (child    (find ':agent (world-channel-residents repaired "exec-late") :key #'participant-kind)))
-        (test-assert (and (equal (channel-parent (world-channel-find repaired "blate11")) inbox)
-                          (equal (channel-parent (world-channel-find repaired "exec-late")) "blate11")
-                          parent child
-                          (equal (participant-parent child) (participant-identifier parent)))
-                     "a late parent adopts the task from home with its agent ancestry"))
-      (test-assert (zerop (nth-value 1 (world-reconcile-sessions configuration :now 4000)))
-                   "late adoption settles after one reconciliation")))
+        (test-assert (equal (participant-identifier checker) "exec-two")
+                     "the grandchild uses its conversation identity"))))
   nil)
 
 (-> test-world-parent-mention () null)
@@ -2591,7 +2182,7 @@ A parent that writes @parent to its own child reaches nobody but the child."
                                      :root "broot11" :parent "broot11" :name "planner" :created-at 1500)
     (world-tests--child-conversation configuration "exec-two"
                                      :root "broot11" :parent "exec-one" :name "checker" :created-at 1600)
-    (let* ((world   (values (world-reconcile-sessions configuration :now 3000)))
+    (let* ((world   (world-load configuration))
            (human   (world-human-participant world))
            (root    (find ':agent (world-channel-residents world "broot11") :key #'participant-kind))
            (planner (find ':agent (world-channel-residents world "exec-one") :key #'participant-kind)))
@@ -2628,18 +2219,6 @@ A parent that writes @parent to its own child reaches nobody but the child."
                        "nor does it reach the agent above that parent")
           (test-assert (equal (told root "broot11") (list (participant-residence human)))
                        "said anywhere else, a top agent's @parent still reaches the person"))
-        (world-park-agent configuration planner)
-        (test-assert (equal (reached "@parent done again") '("broot11"))
-                     "with the parent parked, @parent reaches the grandparent")
-        (test-assert (equal (addressed "@parent") "broot11")
-                     "with the parent parked, an explicit @parent address targets the grandparent")
-        (world-park-agent configuration root)
-        (test-assert (equal (reached "@Parent anyone?")
-                            (list (participant-residence (world-human-participant
-                                                          (world-load configuration)))))
-                     "with every ancestor agent parked, @parent reaches the person")
-        (test-assert (equal (addressed "@Parent") (participant-residence human))
-                     "an explicit @parent address falls back to the person's inbox")
         (test-assert (handler-case
                          (progn (world-participant-rename configuration (participant-identifier human) "parent")
                                 nil)
@@ -2717,45 +2296,6 @@ A parent that writes @parent to its own child reaches nobody but the child."
             (application-input-controller-stop controller))))))
   nil)
 
-(-> test-world-staggered-retirement () null)
-(defun test-world-staggered-retirement ()
-  "Test a root whose storage vanishes before its child's keeps its mapping and retires with the child."
-  (with-test-configuration (configuration)
-    (let ((root  (world-tests--persisted-conversation configuration "broot11" 1000))
-          (child (conversation-create configuration
-                                      :identifier   "exec-one"
-                                      :storage-root (merge-pathnames
-                                                     "tasks/broot11/exec-one/"
-                                                     (config :data-root configuration))
-                                      :created-at   1500)))
-      (conversation-append-user-message child "do the task")
-      (world-tests--persisted-conversation configuration "bthird3" 2500)
-      (world-reconcile-sessions configuration :now 3000)
-      (platform-delete-directory-tree *platform*
-                                      (conversation-storage-directory-pathname
-                                       (conversation-pathname root))
-                                      :validate t)
-      (let ((world (values (world-reconcile-sessions configuration :now 3001))))
-        (test-assert (and (world-channel-find world "broot11")
-                          (world-channel-find world "exec-one")
-                          (find ':agent (world-channel-residents world "broot11") :key #'participant-kind)
-                          (member "broot11" (world-tests--mapped configuration) :test #'string=))
-                     "a root whose child still lives keeps its channel, its agent and its mapping"))
-      (platform-delete-directory-tree *platform*
-                                      (merge-pathnames "tasks/broot11/"
-                                                       (config :data-root configuration))
-                                      :validate t)
-      (let ((world (values (world-reconcile-sessions configuration :now 3002))))
-        (test-assert (and (null (world-channel-find world "exec-one"))
-                          (null (world-channel-find world "broot11"))
-                          (equal (world-tests--channel-identifiers world) '("bthird3"))
-                          (equal (world-tests--mapped configuration) '("bthird3")))
-                     "once the child goes, the root retires with it and no mapping lingers"))
-      (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3003)
-        (test-assert (and (zerop count)
-                          (equal (world-tests--channel-identifiers world) '("bthird3")))
-                     "a later reconciliation has nothing left to retire"))))
-  nil)
 
 (-> test-world-child-participants () null)
 (defun test-world-child-participants ()
@@ -2764,17 +2304,18 @@ A parent that writes @parent to its own child reaches nobody but the child."
     (let* ((root  (world-tests--persisted-conversation configuration "broot11" 1000))
            (child (conversation-create configuration
                                        :identifier   "exec-one"
+                                       :parent-identifier "broot11"
                                        :storage-root (merge-pathnames
                                                       "tasks/broot11/exec-one/"
                                                       (config :data-root configuration))
                                        :created-at   1500)))
       (conversation-append-user-message child "do the task")
-      (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3000)
+      (world-register-conversation configuration child)
+      (let ((world (world-load configuration)))
         (let ((root-agent (find ':agent (world-channel-residents world "broot11")
                                 :key #'participant-kind))
               (channel    (world-channel-find world "exec-one"))
               (task-agent (first (world-channel-residents world "exec-one"))))
-          (test-assert (= count 3) "the root and its child are migrated, with the person's inbox")
           (test-assert (and channel
                             (equal (channel-parent channel) "broot11")
                             (string= (channel-owner channel)
@@ -2854,241 +2395,9 @@ A parent that writes @parent to its own child reaches nobody but the child."
                                          (participant-identifier task-agent))
                                 (string= (world-delivery-text delivery) "done here"))
                            "the message arrives as the child's own participant")))
-          (world-tests--persisted-conversation configuration "bthird3" 2500)
-          (platform-delete-directory-tree *platform*
-                                          (merge-pathnames "tasks/broot11/"
-                                                           (config :data-root configuration))
-                                          :validate t)
-          (platform-delete-directory-tree *platform*
-                                          (conversation-storage-directory-pathname
-                                           (conversation-pathname root))
-                                          :validate t)
-          (let ((world (values (world-reconcile-sessions configuration :now 3001))))
-            (test-assert (and (null (world-channel-find world "exec-one"))
-                              (null (world-channel-find world "broot11"))
-                              (null (world-participant-find
-                                     world (participant-identifier task-agent)))
-                              (null (world-participant-find
-                                     world (participant-identifier root-agent)))
-                              (string= (participant-residence (world-human-participant world))
-                                       (world-tests--inbox configuration)))
-                         "pruning a root with its child retires both channels and participants, parent last")
-            (test-assert (equal (world-tests--mapped configuration) '("bthird3"))
-                         "only the surviving conversation keeps a mapping"))
-          (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3002)
-            (test-assert (and (zerop count)
-                              (equal (world-tests--channel-identifiers world) '("bthird3")))
-                         "a second reconciliation finds nothing left to retire"))))))
+          ))))
   nil)
 
-(-> test-world-agent-move () null)
-(defun test-world-agent-move ()
-  "Test parking leaves a channel without an agent and the agent's children alone, a move brings an agent and carries the mapping along, and neither invents an agent later."
-  (with-test-configuration (configuration root)
-    (let ((first  (world-tests--persisted-conversation configuration "bfirst1" 1000))
-          (second (world-tests--persisted-conversation configuration "bsecnd2" 2000)))
-      (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
-        (flet ((agent-of (channel)
-                 "Return CHANNEL's resident agent."
-                 (find ':agent (world-channel-residents (world-load configuration) channel)
-                       :key #'participant-kind)))
-          (test-assert (null (world-session-remap configuration "bnone99" nil))
-                       "a channel without a session mapping has nothing to rewrite")
-          (world-channel-create configuration
-                                :id        "btask11"
-                                :owner     (participant-identifier human)
-                                :workspace (world-tests--workspace root "task")
-                                :parent    "bfirst1"
-                                :now       2500)
-          (let ((child (world-participant-create configuration
-                                                 :kind      ':agent
-                                                 :name      "task"
-                                                 :residence "btask11"
-                                                 :parent    (participant-identifier first-agent))))
-            (let ((result (world-park-agent configuration first-agent)))
-              (let* ((world  (world-load configuration))
-                     (parked (world-participant-find world (participant-identifier first-agent)))
-                     (kept   (world-participant-find world (participant-identifier child))))
-                (test-assert (and (string= (getf result :channel) "bfirst1")
-                                  parked
-                                  (null (participant-residence parked))
-                                  (null (agent-of "bfirst1")))
-                             "a parked agent keeps its identity, resides in no channel, and leaves its channel without one")
-                (test-assert (and (string= (participant-residence kept) "btask11")
-                                  (equal (participant-parent kept) (participant-identifier first-agent)))
-                             "parking an agent with a child leaves the child where it was, still its child")))
-            (test-assert (handler-case
-                             (progn (world-park-agent configuration human) nil)
-                           (world-error (condition)
-                             (eq (world-error-operation condition) ':park)))
-                         "the person is not parked")
-            (let ((result (world-move-agent configuration
-                                            (world-participant-find (world-load configuration)
-                                                                    (participant-identifier first-agent))
-                                            "bfirst1")))
-              (test-assert (and (null (getf result :source))
-                                (string= (participant-identifier (agent-of "bfirst1"))
-                                         (participant-identifier first-agent))
-                                (string= (participant-identifier
-                                          (world-session-participant configuration first))
-                                         (participant-identifier first-agent)))
-                           "a move brings a parked agent back into a channel"))
-            (world-participant-delete configuration (participant-identifier child)))
-          (let ((result (world-park-agent configuration second-agent)))
-            (test-assert (and (string= (getf result :channel) "bsecnd2")
-                              (zerop (getf result :dropped))
-                              (null (agent-of "bsecnd2"))
-                              (world-participant-find (world-load configuration)
-                                                      (participant-identifier second-agent))
-                              (null (world-session-participant configuration second)))
-                         "a parked agent's channel has no agent")
-            (let ((sent (world-message-send configuration
-                                            :sender   (participant-identifier human)
-                                            :channel  "bfirst1"
-                                            :text     (format nil "@~A are you there?"
-                                                              (participant-name second-agent))
-                                            :notify-p nil)))
-              (test-assert (and (equal (getf sent :parked) (list (participant-name second-agent)))
-                                (equal (getf sent :channels) '("bfirst1")))
-                           "a mention of a parked agent reaches no channel and the send says it is parked")))
-          (conversation-append-user-message second "still here")
-          (world-reconcile-sessions configuration :now 3500)
-          (test-assert (null (agent-of "bsecnd2"))
-                       "a newer conversation in a channel without an agent invents none")
-          (let ((result (world-move-agent configuration first-agent "bsecnd2")))
-            (test-assert (and (string= (getf result :source) "bfirst1")
-                              (string= (getf result :channel) "bsecnd2")
-                              (zerop (getf result :dropped)))
-                         "a move reports the channel left and the destination, dropping nothing without an application"))
-          (test-assert (and (null (agent-of "bfirst1"))
-                            (string= (participant-identifier (agent-of "bsecnd2"))
-                                     (participant-identifier first-agent))
-                            (null (world-session-participant configuration first))
-                            (string= (participant-identifier
-                                      (world-session-participant configuration second))
-                                     (participant-identifier first-agent)))
-                       "the agent lives in the destination, whose session names it, and the channel it left has none")
-          (conversation-append-user-message first "still here too")
-          (world-reconcile-sessions configuration :now 4000)
-          (test-assert (and (null (agent-of "bfirst1"))
-                            (= (count ':agent (world-channel-residents (world-load configuration)
-                                                                       "bsecnd2")
-                                      :key #'participant-kind)
-                               1))
-                       "reconciliation invents no agent for either channel after the move")
-          (world-move-agent configuration (agent-of "bsecnd2") "bfirst1")
-          (test-assert (and (null (agent-of "bsecnd2"))
-                            (string= (participant-identifier
-                                      (world-session-participant configuration first))
-                                     (participant-identifier first-agent)))
-                       "moving back restores the first channel's agent and leaves the other without one")
-          (platform-delete-directory-tree
-           *platform*
-           (conversation-storage-directory-pathname (conversation-pathname second))
-           :validate t)
-          (let ((world (values (world-reconcile-sessions configuration :now 5000))))
-            (test-assert (and (null (world-channel-find world "bsecnd2"))
-                              (world-participant-find world (participant-identifier first-agent))
-                              (world-participant-find world (participant-identifier second-agent)))
-                         "retiring a channel without an agent deletes the channel and nobody, the parked agent included"))))))
-  nil)
-
-(-> test-world-agentless-channel () null)
-(defun test-world-agentless-channel ()
-  "Test a channel whose agent was parked refuses typed prompts and holds deliveries, and a domestic agent takes it back."
-  (with-test-configuration (configuration)
-    (let ((first (world-tests--persisted-conversation configuration "bfirst1" 1000)))
-      (world-tests--persisted-conversation configuration "bsecnd2" 2000)
-      (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
-        (declare (ignore second-agent))
-        (let* ((terminal    (make-instance 'waiting-recording-terminal :columns 80))
-               (ui          (terminal-ui-create :terminal terminal))
-               (application (make-instance 'application
-                                           :configuration configuration
-                                           :conversation  first
-                                           :ui            ui))
-               (controller  nil))
-          (with-terminal-ui (active-ui ui)
-            (setf controller (application-input-controller-create application
-                                                                  :load-pending-p nil
-                                                                  :start-reader-p nil))
-            (unwind-protect
-                 (flet ((submit (text)
-                          "Submit TEXT as a primary prompt and return its delivery mode."
-                          (nth-value 1 (application-input-controller-submit-primary-prompt
-                                        controller text)))
-
-                        (wakes-p (owner)
-                          "Return whether a finished job OWNER started would start a turn here."
-                          (application-job-completions--notice-admissible-p
-                           application
-                           (list :owner-conversation "bfirst1"
-                                 :owner-participant  owner
-                                 :completion-policy  ':continue))))
-                   (test-assert (wakes-p nil)
-                                "a job the channel's agent started continues it")
-                   (test-assert (eq (submit "first words") ':queued)
-                                "a channel with its agent takes a typed prompt")
-                   (world-message-send configuration
-                                       :sender   (participant-identifier human)
-                                       :channel  "bfirst1"
-                                       :text     "before the dismissal"
-                                       :notify-p nil)
-                   (test-assert (= (application-world-deliver application) 1)
-                                "a message to the channel is queued for its agent")
-                   (let ((result (world-park-agent configuration first-agent
-                                                   :environment application)))
-                     (test-assert (and (= (getf result :dropped) 2)
-                                       (search "is parked" (recording-terminal-output terminal)))
-                                  "parking the agent drops the prompt and the message it had not started, and says so")
-                     (multiple-value-bind (rows source)
-                         (world-context-read configuration (participant-identifier first-agent))
-                       (test-assert (and (string= source "bfirst1")
-                                         (some (lambda (row) (search "hello from bfirst1" (getf row :wire-json)))
-                                               rows))
-                                    "the parked agent keeps the context it built, from the channel it left")))
-                   (test-assert (not (wakes-p nil))
-                                "a job outliving its agent's park starts no turn in the channel it left")
-                   (test-assert (and (eq (submit "more words") ':no-agent)
-                                     (search "this channel has no agent"
-                                             (recording-terminal-output terminal)))
-                                "a channel without an agent refuses a typed prompt and offers a move or a domestic agent")
-                   (world-message-send configuration
-                                       :sender   (participant-identifier human)
-                                       :channel  "bfirst1"
-                                       :text     "anyone here?"
-                                       :notify-p nil)
-                   (test-assert (and (zerop (application-world-deliver application))
-                                     (= (length (world-inbox-deliveries configuration "bfirst1")) 2))
-                                "messages to a channel without an agent wait in the inbox")
-                   (let ((agent (application-world-domestic-agent application)))
-                     (test-assert (and (eq (participant-kind agent) ':agent)
-                                       (string= (participant-residence agent) "bfirst1")
-                                       (equal (participant-parent agent)
-                                              (participant-identifier human))
-                                       (equal (getf (participant-settings agent) :model)
-                                              (config :model configuration))
-                                       (string= (participant-identifier
-                                                 (world-session-participant configuration first))
-                                                (participant-identifier agent)))
-                                  "a domestic agent lives in the channel under the person with the session's model, and the session names it")
-                     (test-assert (handler-case
-                                      (progn (application-world-domestic-agent application) nil)
-                                    (world-error (condition)
-                                      (eq (world-error-operation condition) ':domestic)))
-                                  "a second domestic agent is refused")
-                     (test-assert (eq (submit "again") ':queued)
-                                  "the channel takes typed prompts again")
-                     (test-assert (and (not (wakes-p nil))
-                                       (wakes-p (participant-identifier agent)))
-                                  "the new agent continues only from jobs it started itself")
-                     (test-assert (= (application-world-deliver application) 2)
-                                  "both waiting messages reach the new agent, the one queued for the dismissed agent included")
-                     (test-assert (notany (lambda (item) (search "hello from bfirst1" (json-encode item)))
-                                          (conversation-input-items-for-request first))
-                                  "the new agent's requests carry nothing of the agent before it")))
-              (application-input-controller-stop controller)))))))
-  nil)
 
 (-> test-world-channel-catalogue nil null)
 (defun test-world-channel-catalogue ()
@@ -3106,7 +2415,6 @@ A parent that writes @parent to its own child reaches nobody but the child."
             (list :session-id "blivecat" :cwd
                   (namestring (config :working-directory configuration)) :conversation-title
                   "fresh hosted channel"))))
-     (world-reconcile-sessions configuration)
      (test-call-with-function-replacements
       (list
        (list 'world-channel-statuses
@@ -3225,7 +2533,6 @@ A parent that writes @parent to its own child reaches nobody but the child."
           (identity (conversation-pathname grandchild))
           (cache    (make-hash-table :test #'equal)))
      (declare (ignore child))
-     (world-reconcile-sessions configuration)
      (test-assert
       (equal identity
              (gethash "bcstogrand"
@@ -3260,7 +2567,6 @@ A parent that writes @parent to its own child reaches nobody but the child."
   (with-test-configuration (configuration)
    (dolist (identifier '("bintentaa" "bintentbb"))
      (world-tests--persisted-conversation configuration identifier 1000))
-   (world-reconcile-sessions configuration)
    (let* ((channels   '("bintentaa" "bintentbb"))
           (identities (conversation-pathnames-for-ids configuration channels))
           (intent     (merge-pathnames "states.sexp" (channel--removal-root configuration)))

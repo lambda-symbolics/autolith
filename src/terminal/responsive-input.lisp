@@ -1321,9 +1321,7 @@ not steer the active primary message."
                 (list (failure " or "))
                 (application-lisp-code-spans "(open \"ID\")"))
         (append (list (failure "! this channel has no agent; try "))
-                (application-lisp-code-spans "(move \"ID\")")
-                (list (failure " or "))
-                (application-lisp-code-spans "(domestic)")))))
+                (application-lisp-code-spans "(open \"ID\")")))))
 
 (-> application-input-controller-submit-primary-prompt
     (application-input-controller (or string user-message-input)

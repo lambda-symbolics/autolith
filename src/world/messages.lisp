@@ -507,17 +507,16 @@ reaches; see `world-message-parent-recipient'."
     (or (and sender
              (world-handle-reserved-p designator)
              (world-message-parent-recipient world sender))
-        (world-participant-find world designator)
-        (and canonical (world-participant-find world canonical))
+        (let ((participant (or (world-participant-find world designator)
+                               (and canonical (world-participant-find world canonical)))))
+          (and participant (participant-residence participant) participant))
         (world--participant-name-target world designator))))
 
 (-> world-message-parent-recipient (world participant) (option participant))
 (defun world-message-parent-recipient (world sender)
   "Return the participant a message from SENDER to @parent reaches.
 
-That is SENDER's parent. A parked parent resides nowhere, so the message
-goes on to the nearest ancestor that resides somewhere, and to the person
-when no such agent is left."
+Follow the recorded ancestry to the first active participant, or the person."
   (let ((current (let ((parent (participant-parent sender)))
                    (and parent (world-participant-find world parent)))))
     (loop while current
@@ -612,7 +611,7 @@ The channel itself gets a post for its residents. Except for the sender, each
 subscriber and each mentioned participant residing elsewhere gets a copy in its
 residence channel, one per channel, subscriptions before mentions, except that a
 notice for the person replaces a subscription copy, so the person always sees the
-message in full; a parked agent resides nowhere and gets none. Without POST-P the
+message in full. Without POST-P the
 channel gets nothing: the message was said there already. SUBSCRIBERS-P, which
 follows POST-P unless given, says whether its subscribers still hear of it, as they
 do of every ordinary message said in the channel. SOURCE is the channel the message
@@ -732,17 +731,11 @@ to POST-P, controls subscriber copies. SOURCE names the channel it was said from
 in `world-message-plan'. The send is recorded before any inbox is written, so a copy
 an inbox refuses, or one a crash skips, is delivered later under the same identifier.
 The result is a plist of :id, :channels (channels whose delivery attempt completed),
-:pending (channels whose attempt raised WORLD-ERROR), :parked (the names of the
-mentioned agents that are parked and so got no copy) and :notified (the channels
-whose serving process was reached)."
+  :pending (channels whose attempt raised WORLD-ERROR) and :notified (the channels
+  whose serving process was reached)."
   (world-message-resume configuration :notify-p notify-p)
   (let* ((world       (world-load configuration))
-         (participant (or (world-participant-find world sender)
-                          (error 'world-error
-                                 :message    (format nil "Participant ~A does not exist." sender)
-                                 :pathname   nil
-                                 :operation  ':send
-                                 :identifier sender)))
+         (participant (world--require-active-participant world sender ':send))
          (target      (world-channel-designated world configuration channel))
          (text        (world-message--text
                        (if images
@@ -794,10 +787,6 @@ whose serving process was reached)."
              (list :id       identifier
                    :channels delivered
                    :pending  (mapcar #'first refused)
-                   :parked   (loop for mention in mentioned
-                                   for participant = (world-participant-find world mention)
-                                   when (and participant (null (participant-residence participant)))
-                                     collect (participant-name participant))
                    :notified (and notify-p (world-message-notify configuration delivered)))))
       (unless published-p
         (conversation--delete-image-attachments attachments)))))

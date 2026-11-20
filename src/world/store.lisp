@@ -4,7 +4,7 @@
 
 ;;; The world stores human and agent participants and their channels. Each
 ;;; participant may reside in one channel and subscribe to or own others;
-;;; parked agents have no residence. A channel's history is the conversation
+;;; archived legacy agents have no residence. A channel's history is the conversation
 ;;; log with the same identifier. Residence and subscriptions are stored on
 ;;; the participant; channel residents and subscribers are derived. Records
 ;;; contain identifiers and portable data, not runtime objects.
@@ -84,7 +84,7 @@ A world the follower returns again unchanged needs no second check.")
     :initform      nil
     :reader        participant-residence
     :type          (option non-empty-string)
-    :documentation "The channel this participant resides in, or NIL for a parked agent, which resides nowhere.")
+    :documentation "The channel this participant resides in, or NIL for an archived participant.")
    (subscriptions
     :initarg       :subscriptions
     :initform      nil
@@ -797,9 +797,11 @@ The inbox is the address root: its own path is /inbox; its children start at /."
 
 (-> world--participant-name-target (world string) (option participant))
 (defun world--participant-name-target (world name)
-  "Resolve NAME exactly ignoring case, reporting all ambiguous residents and parked agents."
-  (let ((matches (remove-if-not (lambda (participant) (string-equal name (participant-name participant)))
-                                (world-participants world))))
+  "Resolve an active participant NAME exactly, reporting ambiguous channel addresses."
+  (let ((matches (world--participants-where world
+                                           (lambda (participant)
+                                             (and (participant-residence participant)
+                                                  (string-equal name (participant-name participant)))))))
     (when (rest matches)
       (error 'world-error :pathname nil :operation ':resolve :identifier name
              :message (format nil "Agent name ~S is ambiguous. Candidates:~%~{  ~A~^~%~}" name
@@ -817,9 +819,8 @@ The inbox is the address root: its own path is /inbox; its children start at /."
                                                              (conversation-identifier-display
                                                               (participant-identifier participant))))
                                                     (t
-                                                     (format nil "~A (parked, ~A)" (participant-name participant)
-                                                             (conversation-identifier-display
-                                                              (participant-identifier participant))))))
+                                                      (conversation-identifier-display
+                                                       (participant-identifier participant)))))
                                     #'string<))))
     (first matches)))
 
@@ -876,7 +877,8 @@ nothing. No match signals an error unless ERROR-P is NIL."
 (defun world-participant-named-p (world name &key except)
   "Return true when a participant of WORLD other than EXCEPT is named NAME, ignoring case."
   (loop for participant being the hash-values of (world--participant-table world)
-        thereis (and (not (equal (participant-identifier participant) except))
+        thereis (and (participant-residence participant)
+                     (not (equal (participant-identifier participant) except))
                      (string-equal (participant-name participant) name))))
 
 (-> world-handle-suffixed (string (integer 1)) string)
@@ -914,16 +916,17 @@ need hundreds of suffixes."
 
 (-> world-participant-designated (world string) (option participant))
 (defun world-participant-designated (world designator)
-  "Return the participant named by ID, @name, exact channel path or unique ID fragment."
+  "Return an active participant by ID, @name, exact channel path or unique ID fragment."
   (let ((designator (if (uiop:string-prefix-p "@" designator) (subseq designator 1) designator)))
     (if (uiop:string-prefix-p "/" designator)
         (world--path-participant world designator)
-        (or (let ((canonical (handler-case (identifier-normalize designator)
-                               (identifier-error () nil))))
-              (or (world-participant-find world designator)
-                  (and canonical (world-participant-find world canonical))))
+        (or (let* ((canonical (handler-case (identifier-normalize designator)
+                                  (identifier-error () nil)))
+                   (participant (or (world-participant-find world designator)
+                                    (and canonical (world-participant-find world canonical)))))
+              (and participant (participant-residence participant) participant))
             (world--participant-name-target world designator)
-            (let ((matches (identifier-match designator (world-participants world)
+            (let ((matches (identifier-match designator (world--participants-where world #'participant-residence)
                                               :key #'participant-identifier)))
               (and (= (length matches) 1) (first matches)))))))
 
@@ -932,7 +935,8 @@ need hundreds of suffixes."
   "Return the one participant of WORLD named NAME, ignoring case, or NIL when none or several are."
   (let ((named nil))
     (loop for participant being the hash-values of (world--participant-table world)
-          when (string-equal (participant-name participant) name)
+          when (and (participant-residence participant)
+                    (string-equal (participant-name participant) name))
             do (push participant named))
     (and (= (length named) 1) (first named))))
 
@@ -946,7 +950,7 @@ residence. With SENDER, @parent names the residence of its parent recipient.
 A full channel identifier, including a retained legacy alias of CONFIGURATION,
 takes priority over a bare participant name or identifier. Otherwise resolve
 a channel ID fragment. With ERROR-P NIL, return NIL for an unknown fragment;
-ambiguous or parked targets still signal an error."
+ambiguous or unresolved explicit addresses still signal an error."
   (when (uiop:string-prefix-p "/" designator)
     (return-from world-channel-designated (world-channel-at-path world designator :error-p error-p)))
   (or (and (string-equal designator *world-inbox-designator*)
@@ -1009,13 +1013,6 @@ A channel whose parent is not among MEMBERS is a root."
               :pathname   nil
               :operation  ':resolve
               :identifier name))
-      ((null (participant-residence participant))
-       (error 'world-error
-              :message    (format nil "@~A is parked in no channel; mention it in a channel's message instead."
-                                  (participant-name participant))
-              :pathname   nil
-              :operation  ':resolve
-              :identifier name))
       (t
        (world--require-channel world (participant-residence participant) ':resolve)))))
 
@@ -1072,9 +1069,10 @@ Only the matches get sorted, not every channel."
   "Return the participants subscribed to CHANNEL-IDENTIFIER, most recently changed first."
   (world--participants-where world
                              (lambda (participant)
-                               (not (null (member channel-identifier
-                                                  (participant-subscriptions participant)
-                                                  :test #'string=))))))
+                               (and (participant-residence participant)
+                                    (not (null (member channel-identifier
+                                                       (participant-subscriptions participant)
+                                                       :test #'string=)))))))
 
 (-> world-channel-children (world string) list)
 (defun world-channel-children (world channel-identifier)
@@ -1155,18 +1153,6 @@ Compare storage timestamps without reading any conversation records."
 
 ;;;; -- Mutation --
 
-(-> world--require-residence (participant (option string) keyword) null)
-(defun world--require-residence (participant expected operation)
-  "Refuse OPERATION unless PARTICIPANT still resides in channel EXPECTED, NIL for parked."
-  (unless (equal (participant-residence participant) expected)
-    (error 'world-error
-           :message    (format nil "~A moved while this change was prepared; nothing changed. Try again."
-                               (participant-name participant))
-           :pathname   nil
-           :operation  operation
-           :identifier (participant-identifier participant)))
-  nil)
-
 (-> world--require-participant (world string keyword) participant)
 (defun world--require-participant (world identifier operation)
   "Return participant IDENTIFIER, or signal WORLD-ERROR for OPERATION."
@@ -1177,6 +1163,14 @@ Compare storage timestamps without reading any conversation records."
              :operation  operation
              :identifier identifier)))
 
+(-> world--require-active-participant (world string keyword) participant)
+(defun world--require-active-participant (world identifier operation)
+  "Require the exact canonical ID of an active participant for OPERATION."
+  (let ((participant (gethash identifier (world--participant-table world))))
+    (unless (and participant (participant-residence participant))
+      (error 'world-error :message (format nil "No active participant has ID ~A." identifier)
+             :pathname nil :operation operation :identifier identifier))
+    participant))
 (-> world--require-channel (world string keyword) channel)
 (defun world--require-channel (world identifier operation)
   "Return channel IDENTIFIER, or signal WORLD-ERROR for OPERATION."
@@ -1388,7 +1382,14 @@ IDENTIFIER is the already selected conversation ID. Existing channel and
 agent metadata wins over startup defaults. Registration never reads or changes
 the channel's history."
   (conversation-identifier-validate-path-component identifier)
-  (world-ensure-channel-identities configuration)
+  (let* ((world    (world-load configuration))
+         (channel  (world-channel-find world identifier))
+         (resident (gethash identifier (world--participant-table world))))
+    (when (and channel resident (eq (participant-kind resident) ':agent)
+               (equal identifier (participant-residence resident)))
+      (return-from world-channel-register (values channel resident)))
+    (when (and channel (find ':agent (world-channel-residents world identifier) :key #'participant-kind))
+      (world-ensure-channel-identities configuration)))
   (world-ensure-inbox configuration :now now)
   (values-list
    (world--transact
@@ -1434,6 +1435,33 @@ the channel's history."
                 (values (append (unless existing (list (world--channel-record channel)))
                                 (list (world--participant-record agent)))
                         (list channel agent))))))))))
+
+(-> world-register-conversation (configuration conversation) (option participant))
+(defun world-register-conversation (configuration conversation)
+  "Register a durable CONVERSATION using its in-memory metadata, without replaying history."
+  (when (and (conversation-persisted-p conversation) (not (conversation-inbox-p conversation)))
+    (let* ((identifier (conversation-identifier conversation))
+           (title      (conversation-title conversation))
+           (name       (conversation-agent-name conversation))
+           (parent     (conversation-parent-identifier conversation))
+           (world      (world-load configuration)))
+      (multiple-value-bind (channel participant)
+          (world-channel-register
+           configuration identifier
+           :workspace (or (conversation-origin-directory conversation)
+                          (config :working-directory configuration))
+           :title     (and (world--name-p title) title)
+           :name      (and (non-empty-string-p name) name)
+           :parent    (and parent (world-channel-find world parent) parent)
+           :now       (conversation-created-at conversation)
+           :settings  (loop for (key value) on (list :model            (conversation-model conversation)
+                                                     :model-provider   (conversation-model-provider conversation)
+                                                     :reasoning-effort (conversation-reasoning-effort conversation)) by #'cddr
+                            when (and value (world--portable-value-p value))
+                              append (list key value)))
+        (when (and (world--name-p title) (not (equal title (channel-title channel))))
+          (world-channel-update configuration identifier :title title))
+        participant))))
 
 (-> world-participant-create
     (configuration &key (:kind participant-kind) (:name string) (:residence (option string))
@@ -1514,7 +1542,7 @@ return it; a no-op returns the existing participant without appending."
   (world--transact
    configuration
    (lambda (world)
-     (let* ((participant (world--require-participant world identifier operation))
+     (let* ((participant (world--require-active-participant world identifier operation))
             (changes     (funcall change world participant)))
        (if changes
            (let ((updated (apply #'world--copy-participant participant
@@ -1615,70 +1643,6 @@ participant has is given a numbered suffix in the same transaction."
                         :updated-at           (max now (channel-updated-at channel)))))
          (values (list (world--channel-record updated)) updated))))))
 
-(-> world-participant-move
-    (configuration string string &key (:now timestamp) (:expected-residence (option string)))
-    participant)
-(defun world-participant-move (configuration identifier channel-identifier
-                               &key (now (get-universal-time))
-                                    (expected-residence nil expected-residence-p))
-  "Move participant IDENTIFIER into channel CHANNEL-IDENTIFIER and return it.
-
-Other residents of either channel stay where they are. A channel has at most
-one resident agent, so an agent is refused a channel where another already
-resides. Once the inbox exists the person resides there and is not moved.
-With EXPECTED-RESIDENCE the move happens only while the participant still
-resides there, NIL for parked."
-  (world--update-participant
-   configuration identifier :operation ':move-participant :now now
-   :change (lambda (world participant)
-             (when expected-residence-p
-               (world--require-residence participant expected-residence ':move-participant))
-             (world--require-channel world channel-identifier ':move-participant)
-             (when (eq (participant-kind participant) ':agent)
-               (let ((resident (find-if (lambda (candidate)
-                                          (and (eq (participant-kind candidate) ':agent)
-                                               (not (string= (participant-identifier candidate)
-                                                             identifier))))
-                                        (world-channel-residents world channel-identifier))))
-                 (when resident
-                   (error 'world-error
-                          :message    (format nil "Channel ~A already has resident agent ~A; a channel has one agent. Move that one away first."
-                                              (conversation-identifier-display channel-identifier)
-                                              (participant-name resident))
-                          :pathname   nil
-                          :operation  ':move-participant
-                          :identifier identifier))))
-             (unless (equal (participant-residence participant) channel-identifier)
-               (list :residence channel-identifier)))))
-
-(-> world-participant-park
-    (configuration string &key (:now timestamp) (:expected-residence (option string)))
-    participant)
-(defun world-participant-park (configuration identifier
-                               &key (now (get-universal-time))
-                                    (expected-residence nil expected-residence-p))
-  "Park agent IDENTIFIER, taking it out of every channel, and return it.
-
-A parked agent keeps its identity, its children and its subscriptions, and a
-move brings it into a channel again. Only agents park; the person always
-resides somewhere. With EXPECTED-RESIDENCE the park happens only while the
-agent still resides there."
-  (world--update-participant
-   configuration identifier :operation ':park :now now
-   :change (lambda (world participant)
-             (declare (ignore world))
-             (when expected-residence-p
-               (world--require-residence participant expected-residence ':park))
-             (unless (eq (participant-kind participant) ':agent)
-               (error 'world-error
-                      :message    (format nil "~A is not an agent; only agents are parked."
-                                          (participant-name participant))
-                      :pathname   nil
-                      :operation  ':park
-                      :identifier identifier))
-             (when (participant-residence participant)
-               (list :residence nil)))))
-
 (-> world-participant-subscribe (configuration string string &key (:now timestamp)) participant)
 (defun world-participant-subscribe (configuration identifier channel-identifier &key (now (get-universal-time)))
   "Subscribe participant IDENTIFIER to channel CHANNEL-IDENTIFIER and return it."
@@ -1775,7 +1739,7 @@ remove; this store holds only identities and relationships."
   (world--transact
    configuration
    (lambda (world)
-     (let ((participant (world--require-participant world identifier ':delete-participant)))
+     (let ((participant (world--require-active-participant world identifier ':delete-participant)))
        (when (and (not recursive-p) (world-participant-children world identifier))
          (error 'world-error
                 :message    (format nil "Participant ~A has children; delete them first or recursively."

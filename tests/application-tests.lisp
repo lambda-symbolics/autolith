@@ -6823,7 +6823,7 @@
 
          (agent (configuration conversation)
            "Return CONVERSATION's agent as the world holds it now."
-           (world-session-participant configuration conversation)))
+           (world-register-conversation configuration conversation)))
     (with-test-configuration (configuration)
       (let* ((conversation (conversation-create configuration))
              (provider     (scripted "not JSON"
@@ -6947,7 +6947,7 @@
         (*active-application*     nil))
     (test-call-with-function-replacements
      (list
-      (list 'world-session-latest-channel
+      (list 'world-channel-latest-top-level
             (lambda (configuration workspace)
               (declare (ignore configuration workspace))
               "latest-workspace-channel"))
@@ -7158,7 +7158,8 @@
                (set-activity other-newer 20)
                (set-activity current-older 30)
                (set-activity other-older 40)))
-           (world-reconcile-sessions configuration)
+           (dolist (conversation (list active current-older other-newer other-older))
+             (world-register-conversation configuration conversation))
            (terminal-ui-start (application-ui application))
            (recording-terminal-reset terminal)
            (setf (scripted-terminal-events terminal)
@@ -7180,7 +7181,7 @@
                      "conversation-images/cleanup-failure/"
                      (config :data-root configuration))))
              (conversation-append-user-message failed "temporary")
-             (world-reconcile-sessions configuration)
+             (world-register-conversation configuration failed)
              (platform-set-file-times
               *platform*
               (conversation-log-pathname failed)

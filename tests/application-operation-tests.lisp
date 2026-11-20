@@ -538,8 +538,7 @@
                             :primary)))
                (test-assert
                  (and (equal (primary-of "(ste nil)") "(ste")
-                      (null (primary-of "(ste"))
-                     (null (primary-of "(domestic)")))
+                       (null (primary-of "(ste")))
                 "finite option entries stay behind their canonical command rows")
                (test-assert
                   (equal (primary-of "(usage)") "(status)")

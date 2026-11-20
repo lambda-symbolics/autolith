@@ -773,8 +773,7 @@
            (progn
              (conversation-append-user-message (agent-conversation parent) "Parent assignment.")
              (setf (participant-state-identity (agent-participant-state parent))
-                   (world-session-participant configuration (agent-conversation parent)
-                                              :create-inbox-p nil))
+                   (world-register-conversation configuration (agent-conversation parent)))
              (setf (slot-value job 'completion-owner-conversation)
                    (conversation-identifier (agent-conversation parent)))
              (with-lock-held ((cl-jobpond::job--lock job))
@@ -851,10 +850,9 @@
                                (eq definition (task-job-definition job)))
                           "pooled task setup shares the factory's actual state, keeping assignment metadata on the job")
              (test-assert
-              (and (null (world-inbox-channel (world-load configuration)))
-                   (equal (mapcar #'pathname-name (conversation-list configuration))
-                          (list (conversation-identifier (agent-conversation parent)))))
-              "private child registration leaves the public conversation list unchanged")
+              (not (find (task-job-execution-identifier job) (conversation-list configuration)
+                         :key #'pathname-name :test #'equal))
+              "private child registration keeps the child out of the top-level conversation list")
              (let* ((identity       (participant-state-identity state))
                     (owner          (participant-identifier identity))
                     (*memory-owner* owner)
@@ -862,9 +860,8 @@
                (test-assert
                 (and (typep identity 'participant)
                      (equal owner (participant-identifier
-                                   (world-session-participant
-                                    configuration (participant-state-conversation state)
-                                    :create-inbox-p nil)))
+                                   (world-register-conversation
+                                    configuration (participant-state-conversation state))))
                      (equal owner (participant-identifier (first (last context-owners)))))
                 "the first spawned provider context has the child's durable participant identity")
                (test-assert
@@ -876,7 +873,6 @@
                         owner (and personal (memory-owner personal)) tool-owners
                         (mapcar (lambda (result) (list (tool-result-error-code result)
                                                       (tool-result-content result))) tool-results)))
-               (world-reconcile-sessions configuration)
                (let* ((world    (world-load configuration))
                       (reloaded (world-participant-find world owner))
                       (context  (make-instance
@@ -927,7 +923,7 @@
       (unwind-protect
            (progn
              (conversation-append-user-message source "Delegate the review.")
-             (let ((sender (world-session-participant configuration source :create-inbox-p nil)))
+             (let ((sender (world-register-conversation configuration source)))
                (world-participant-rename configuration (participant-identifier sender) "Dennis")
                (setf (participant-state-identity (agent-participant-state parent)) sender)
                (setf (slot-value job 'completion-owner-conversation) (conversation-identifier source))
@@ -973,7 +969,6 @@
                                             application assignment (getf (rest personal) :time))))
                                "identical genuine user input uses the person's own transcript presentation"))))
                    (check-records (conversation-records-newest conversation 100))
-                   (world-reconcile-sessions configuration)
                    (check-records (conversation-records-newest (conversation-load identity) 100))
                    (check-records
                     (map 'list #'conversation-replay-record-record
@@ -1006,7 +1001,7 @@
            (progn
              (conversation-append-user-message conversation "Delegate a message.")
              (setf (participant-state-identity (agent-participant-state parent))
-                   (world-session-participant configuration conversation)
+                   (world-register-conversation configuration conversation)
                    (slot-value job 'completion-owner-conversation)
                    (conversation-identifier conversation))
              (with-lock-held ((cl-jobpond::job--lock job))

@@ -418,7 +418,6 @@ Keep the override until the captured thread exits; replacement threads pass thro
             (entry   (world-client-entry configuration)))
        (world-tests--child-conversation configuration "bmaintkid" :root "bmaint11" :parent "bmaint11"
                                                                 :name "helper" :role "general" :created-at 1500)
-       (world-reconcile-sessions configuration)
        (flet ((visit ()
                 "Open the child and wait until its host is idle."
                 (localgroup-query-record entry ':open (list :channel "bmaintkid" :switch-p t))
@@ -478,7 +477,6 @@ Keep the override until the captured thread exits; replacement threads pass thro
      (world-tests--persisted-conversation configuration "bactivitypeer" 2000)
      (world-tests--child-conversation configuration "bactivitykid" :root "bactivityparent"
                                      :parent "bactivityparent" :name "helper" :role "general" :created-at 1500)
-     (world-reconcile-sessions configuration)
      (localgroup-query-record (world-client-entry configuration) ':open
                               (list :channel "bactivityparent" :switch-p t))
      (let* ((parent  (world-host-application (world-server--find-host server "bactivityparent")))
@@ -1656,7 +1654,6 @@ the version the client says it is, when it says one."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bolder1" 1000)
     (world-tests--persisted-conversation configuration "bnewer2" 2000)
-    (world-reconcile-sessions configuration :now 3000)
     (world-channel-update configuration "bolder1" :title "Older work" :now 3500)
     (world-channel-update configuration "bnewer2" :title "Newer work" :now 3600)
     (let* ((world     (world-load configuration))
@@ -1741,7 +1738,7 @@ the version the client says it is, when it says one."
        (multiple-value-bind (identifier started-p)
            (world-client-open configuration :inbox-p t :switch-p t)
          (test-assert (and started-p
-                           (equal identifier (channel-identifier (world-session-inbox configuration))))
+                           (equal identifier (channel-identifier (world-ensure-inbox configuration))))
                       "the first startup opens the durable inbox")
          (multiple-value-bind (warm reused-started-p)
              (world-client-open configuration :inbox-p t :switch-p t)
@@ -2335,7 +2332,6 @@ the version the client says it is, when it says one."
   (world-server-tests--call
    (lambda (server configuration root)
      (world-tests--persisted-conversation configuration "bhome11" 1000)
-     (world-reconcile-sessions configuration :now 2000)
      (let* ((entry  (world-client-entry configuration))
             (id     (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
                           :session-id))
@@ -2671,7 +2667,6 @@ the version the client says it is, when it says one."
                              (position ':report events)))
                      "Screen release and sidebar shutdown each happen once before the final report"))))))
        (world-tests--persisted-conversation configuration "bsecnd2" 1000)
-       (world-reconcile-sessions configuration)
        (world-participant-rename configuration "al-bsecnd2" "Ada")
        (run "bsecnd2")
        (test-assert
@@ -3055,765 +3050,17 @@ the version the client says it is, when it says one."
                         "shutdown unpublishes the world endpoint"))))))
   nil)
 
-(-> test-world-server-move-running-child nil null)
-(defun test-world-server-move-running-child ()
-  "Test moving or parking a child agent interrupts the task its parent's pool runs it in, and leaves its own children's tasks alone."
-  (world-server-tests--call
-   (lambda (server configuration root)
-     (let* ((entry (world-client-entry configuration))
-            (id-a
-             (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
-                   :session-id))
-            (app-a (world-host-application (world-server--find-host server id-a))))
-       (conversation-append-user-message (application-conversation app-a) "first words in a")
-       (let* ((world   (values (world-reconcile-sessions configuration)))
-              (human   (world-human-participant world))
-              (agent-a (find ':agent (world-channel-residents world id-a) :key #'participant-kind)))
-         (world-tests--persisted-conversation configuration "bdest11" 2000)
-         (world-channel-create configuration :id "bdest11" :owner (participant-identifier human)
-          :workspace (world-tests--workspace root "b"))
-         (labels ((running-child (name)
-                    "Return a child agent NAME and the task that runs it, in a channel of its own."
-                    (let* ((job
-                            (task-tests--register-job (application--task-orchestrator app-a)
-                             (application-agent app-a) (acp-extension-job-tests--definition) :name
-                             name))
-                           (task (task-job-execution-identifier job)))
-                      (setf (task-job-participant-state job)
-                            (make-instance 'participant-state :conversation
-                                           (conversation-create configuration :identifier task)
-                                           :goal
-                                           '(:objective "child ordinary goal" :status :active
-                                             :continuations 0 :created-at 1)))
-                      (conversation-append-user-message
-                       (participant-state-conversation (task-job-participant-state job))
-                       "child context follows its participant")
-                      (world-channel-create configuration :id task :owner
-                       (participant-identifier agent-a) :workspace
-                       (world-tests--workspace root "a") :parent id-a)
-                      (values
-                       (world-participant-create configuration :kind ':agent :name name :residence
-                        task :parent (participant-identifier agent-a))
-                       job
-                       (agent-create :class 'task-child-agent :configuration configuration
-                                     :provider
-                                     (make-instance 'task-test-provider :mode ':concurrent)
-                                     :participant-state (task-job-participant-state job)
-                                     :conversation
-                                     (participant-state-conversation
-                                      (task-job-participant-state job))
-                                     :tool-registry     (agent-tool-registry (application-agent app-a))
-                                     :worker nil :initargs
-                                     (list :definition (task-job-definition job) :identity
-                                           (task-job-identity job) :depth 1 :completion
-                                           (make-instance 'task-completion) :orchestrator
-                                           (application--task-orchestrator app-a) :job job)))))
 
-                  (refusal (operation arguments)
-                    "Return the message refusing OPERATION with ARGUMENTS, or NIL when it succeeds."
-                    (handler-case (progn (localgroup-query-record entry operation arguments) nil)
-                                  (localgroup-error (condition)
-                                   (autolith-error-message condition))))
 
-                  (residence (participant)
-                    "Return where PARTICIPANT resides now."
-                    (participant-residence
-                     (world-participant-find (world-load configuration)
-                      (participant-identifier participant))))
 
-                  (queued-grandchild (parent)
-                    "Queue a detached assignment with its actual child execution as parent."
-                    (let* ((job    (task-tests--register-job (application--task-orchestrator app-a) parent
-                                                             (acp-extension-job-tests--definition) :name "grandchild"))
-                           (origin (task-assignment-origin parent))
-                           (sender (find ':agent
-                                         (world-channel-residents (world-load configuration)
-                                                                  (conversation-identifier (agent-conversation parent)))
-                                         :key #'participant-kind)))
-                      (test-assert (and (equal (getf origin :sender) (participant-identifier sender))
-                                        (equal (getf origin :sender-name) (participant-name sender)))
-                                   "admission captures the actual spawning world agent")
-                      (setf (slot-value job 'assignment-origin) origin)
-                      (world-participant-rename configuration (participant-identifier sender)
-                                                (format nil "after-~A" (participant-name sender)))
-                      (setf (slot-value job 'completion-owner-conversation)
-                            (conversation-identifier (agent-conversation parent))
-                            (task-job-inherited-reference-p job) t
-                            (task-job-inherited-reference-items job)
-                            (conversation-inherited-reference-snapshot
-                             (agent-conversation parent) 8192))
-                      job))
 
-                  (start-grandchild (job parent-channel)
-                    "Run a queued descendant after departure and inspect its persisted ancestry."
-                    (test-assert
-                     (and (not (job-terminal-p job)) (null (job-cancellation-reason job))
-                          (null (task-job--cancelled-ancestor-reason job)))
-                     "a detached descendant is runnable after its participant parent departs")
-                    (with-lock-held ((cl-jobpond::job--lock job))
-                      (setf (job-state job) ':running))
-                    (let* ((origin     (task-job-assignment-origin job))
-                           (result     (task-run-child job))
-                           (conversation
-                             (participant-state-conversation (task-job-participant-state job)))
-                           (records    (conversation--read-records (conversation-pathname conversation)))
-                           (reference  (find ':inherited-reference records :key #'first))
-                           (assignment (find-if (lambda (record)
-                                                  (and (eq (first record) ':message)
-                                                       (getf (rest record) :operation-request))) records))
-                           (message    (getf (getf (rest assignment) :operation-request) :message)))
-                      (test-assert (and (equal (getf message :sender) (getf origin :sender))
-                                        (equal (getf message :sender-name) (getf origin :sender-name))
-                                        (equal (getf message :source) parent-channel)
-                                        (equal (getf message :target) (conversation-identifier conversation)))
-                                   "the admitted sender identity and name survive rename and departure")
-                      (test-assert
-                       (and (eq (getf result :status) ':success)
-                            (equal (conversation-parent-identifier conversation) parent-channel)
-                            (equal (getf (rest reference) :source-conversation-id) parent-channel))
-                       "the descendant executes with its assignment's original parent and inherited-history source")
-                      (task-tests--publish-terminal job ':completed result))))
-           (multiple-value-bind (child job child-agent)
-               (running-child "child")
-             (let ((grandchild (queued-grandchild child-agent)))
-               (test-assert
-                (and
-                 (null
-                  (refusal ':move
-                   (list :participant (participant-identifier child) :channel "bdest11")))
-                 (equal (residence child) "bdest11") (job-terminal-p job)
-                 (eq (job-cancellation-reason job) ':moved))
-                "moving a child whose task runs interrupts the task and moves the child")
-               (test-assert
-                (and (not (job-terminal-p grandchild)) (null (job-cancellation-reason grandchild))
-                     (null (task-job--cancelled-ancestor-reason grandchild)))
-                "the task of the child's own child goes on, and may still start")
-               (start-grandchild grandchild (task-job-execution-identifier job))
-               (let* ((opened
-                       (world-server-tests--open entry (world-tests--workspace root "b") :channel
-                        "bdest11"))
-                      (destination
-                       (world-host-application
-                        (world-server--find-host server (getf (rest opened) :session-id)))))
-                 (test-assert
-                  (and
-                   (equal (getf (application-goal destination) :objective) "child ordinary goal")
-                   (not (typep (application-agent destination) 'task-child-agent))
-                   (eq (agent-participant-state (application-agent destination))
-                       (application-participant-state destination))
-                   (search "child context follows its participant"
-                           (json-encode
-                            (coerce
-                             (conversation-input-items-for-request
-                              (agent-conversation (application-agent destination)))
-                             'vector))))
-                  "pooled context and ordinary goal are adopted without the task's assignment execution"))
-               (test-assert
-                (null (refusal ':dismiss (list :participant (participant-identifier child))))
-                "the adopted participant can leave a hosted destination")
-               (multiple-value-bind (child job child-agent)
-                   (running-child "hosted")
-                 (let ((grandchild (queued-grandchild child-agent)))
-                   (test-assert
-                    (null
-                     (refusal ':move
-                      (list :participant (participant-identifier child) :channel "bdest11")))
-                    "a pooled participant can move directly into a hosted destination")
-                   (start-grandchild grandchild (task-job-execution-identifier job))))))
-           (multiple-value-bind (child job child-agent)
-               (running-child "second")
-             (let ((grandchild (queued-grandchild child-agent)))
-               (test-assert
-                (and (null (refusal ':dismiss (list :participant (participant-identifier child))))
-                     (null (residence child)) (eq (job-cancellation-reason job) ':moved))
-                "dismissing a child whose task runs interrupts the task and parks the child")
-               (start-grandchild grandchild (task-job-execution-identifier job))))
-           (multiple-value-bind (child job)
-               (running-child "timeout-child")
-             (test-call-with-function-replacements
-              (list
-               (list 'session-job-await
-                     (lambda (job timeout) (declare (ignore job timeout)) (values nil nil))))
-              (lambda ()
-                (test-assert
-                 (and (refusal ':dismiss (list :participant (participant-identifier child)))
-                      (equal (residence child) (task-job-execution-identifier job))
-                      (eq (job-cancellation-reason job) ':moved))
-                 "a cancellation timeout refuses the residence change without undoing cancellation")))))))))
-  nil)
 
-(-> test-world-server-move-goal () null)
-(defun test-world-server-move-goal ()
-  "Test an agent's goal goes where the agent goes, a mission arrives paused, the channel left keeps none, and a channel without an agent runs no turn."
-  (world-server-tests--call
-   (lambda (server configuration root)
-     (let* ((entry (world-client-entry configuration))
-            (id-a  (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
-                         :session-id))
-            (id-b  (getf (rest (world-server-tests--open entry (world-tests--workspace root "b")))
-                         :session-id))
-            (app-a (world-host-application (world-server--find-host server id-a)))
-            (app-b (world-host-application (world-server--find-host server id-b))))
-       (conversation-append-user-message (application-conversation app-a) "first words in a")
-       (conversation-append-user-message (application-conversation app-b) "first words in b")
-       (let* ((world   (values (world-reconcile-sessions configuration)))
-              (agent-a (find ':agent (world-channel-residents world id-a) :key #'participant-kind))
-              (agent-b (find ':agent (world-channel-residents world id-b) :key #'participant-kind))
-              (state-a (application-participant-state app-a)))
-         (labels ((query (operation &rest arguments)
-                    "Send OPERATION with ARGUMENTS to the server and return the answer's plist."
-                    (rest (localgroup-query-record entry operation arguments)))
 
-                  (recorded-goal (application)
-                    "Return the goal APPLICATION's conversation records last."
-                    (goal-record->goal (conversation-latest-goal-record
-                                        (application-conversation application))))
 
-                  (objective (application)
-                    "Return the objective of APPLICATION's goal, or NIL."
-                    (getf (application-goal application) :objective)))
-           (setf (application-goal app-a) (list :objective     "ship the release"
-                                                :status        ':active
-                                                :continuations 0
-                                                :created-at    1))
-           (application--record-goal app-a)
-          (application--install-configuration app-a (application-configuration app-a))
-          (test-assert (and (eq state-a (application-participant-state app-a))
-                            (eq state-a (agent-participant-state (application-agent app-a)))
-                            (eq (participant-state-conversation state-a)
-                                (agent-conversation (application-agent app-a)))
-                            (equal (getf (participant-state-goal state-a) :objective)
-                                   "ship the release"))
-                       "runtime recreation shares the actual context and ordinary goal")
-          (query ':dismiss :participant (participant-identifier agent-b))
-          (query ':move :participant (participant-identifier agent-a) :channel id-b)
-          (test-assert (and (eq state-a (application-participant-state app-b))
-                            (eq state-a (agent-participant-state (application-agent app-b)))
-                            (not (eq state-a (application-participant-state app-a)))
-                            (eq (participant-state-conversation state-a)
-                                (application-conversation app-b))
-                            (equal (participant-residence (participant-state-identity state-a)) id-b))
-                       "a live handoff transfers one participant state and retargets its context")
-          (test-assert (and (equal (objective app-b) "ship the release")
-                            (eq (getf (application-goal app-b) :status) ':active)
-                            (equal (getf (recorded-goal app-b) :objective) "ship the release"))
-                       "a moved agent keeps pursuing its goal in the channel it moves into")
-          (test-assert (and (null (application-goal app-a))
-                            (null (recorded-goal app-a)))
-                       "the channel it left keeps no goal of its own")
-          (test-assert (handler-case
-                           (progn (application-world-before-turn app-a ':operation-request) nil)
-                         (world-error ()
-                           t))
-                       "a channel without an agent runs no agent turn")
-          (application-world-before-turn app-a ':idle-compaction)
-          (let ((domestic (application-world-domestic-agent app-a)))
-            (test-assert (null (application-goal app-a))
-                         "a new agent starts without a goal")
-            (application-mission-start app-a (mission-test--specification))
-            (query ':dismiss :participant (participant-identifier agent-a))
-           (test-assert (and (null (participant-state-conversation state-a))
-                             (equal (getf (participant-state-goal state-a) :objective)
-                                    "ship the release"))
-                        "parking serializes before releasing live context without clearing the participant goal")
-           (test-assert (and (null (application-goal app-b))
-                             (null (recorded-goal app-b)))
-                        "a parked agent takes its goal out of the channel it leaves")
-           (query ':move :participant (participant-identifier domestic) :channel id-b)
-           (test-assert (and (mission-goal-p (application-goal app-b))
-                             (eq (getf (application-goal app-b) :status) ':paused)
-                             (mission-context-find (application-conversation app-b)))
-                        "a running mission arrives paused with its mission state")
-           (test-assert (null (recorded-goal app-a))
-                        "the mission leaves no goal behind")
-           (query ':move :participant (participant-identifier agent-a) :channel id-a)
-           (test-assert (equal (objective app-a) "ship the release")
-                        "a parked agent brings its goal back with it")))))))
-  nil)
-
-(-> test-world-server-move () null)
-(defun test-world-server-move ()
-  "Test parking and a move through the server stop the agent where it was, keep its context for a channel opened later, and adopt it where it goes."
-  (world-server-tests--call
-   (lambda (server configuration root)
-     (let* ((entry (world-client-entry configuration))
-            (id-a  (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
-                         :session-id))
-            (id-b  (getf (rest (world-server-tests--open entry (world-tests--workspace root "b")))
-                         :session-id))
-            (app-a (world-host-application (world-server--find-host server id-a)))
-            (app-b (world-host-application (world-server--find-host server id-b))))
-       (conversation-append-user-message (application-conversation app-a) "first words in a")
-       (conversation-append-user-message (application-conversation app-b) "first words in b")
-       (let* ((world   (values (world-reconcile-sessions configuration)))
-              (human   (world-human-participant world))
-              (agent-a (find ':agent (world-channel-residents world id-a) :key #'participant-kind))
-              (agent-b (find ':agent (world-channel-residents world id-b) :key #'participant-kind)))
-         (labels ((move (participant channel)
-                    "Move PARTICIPANT into CHANNEL through the server and return the answer's plist."
-                    (rest (localgroup-query-record entry ':move
-                                                   (list :participant participant :channel channel))))
-
-                  (refused-p (participant channel)
-                    "Return whether moving PARTICIPANT into CHANNEL is refused."
-                    (handler-case (progn (move participant channel) nil)
-                      (localgroup-error () t)))
-
-                  (close-channel (identifier)
-                    "Close IDENTIFIER and wait for its ownership to retire."
-                    (let ((thread (world-host-thread (world-server--find-host server identifier))))
-                      (localgroup-query-record entry ':close (list :channel identifier))
-                      ;; Routing ends as soon as close is requested, before
-                      ;; APPLICATION-SERVE releases the conversation lease.
-                      (sb-thread:join-thread thread :default nil :timeout 20)
-                      (test-assert (not (thread-alive-p thread))
-                                   "the closed channel's serving thread retires"))))
-           (test-assert (and agent-a agent-b)
-                        "both hosted channels have agents once their conversations persist")
-           (test-assert (and (refused-p (participant-name agent-a) id-b)
-                             (refused-p (participant-identifier human) id-a))
-                        "a move into a channel with an agent is refused, and so is moving the person")
-           (let ((answer (rest (localgroup-query-record
-                                entry ':dismiss (list :participant (participant-name agent-b))))))
-             (test-assert (and (string= (getf answer :participant) (participant-identifier agent-b))
-                               (string= (getf answer :name) (participant-name agent-b))
-                               (string= (getf answer :channel) id-b)
-                               (not (application-world-agent-present-p app-b))
-                               (null (participant-residence
-                                      (world-participant-find (world-load configuration)
-                                                              (participant-identifier agent-b))))
-                               (string= (nth-value 1 (world-context-read
-                                                      configuration (participant-identifier agent-b)))
-                                        id-b))
-                          "a dismissal through the server parks the agent with its context kept and leaves its hosted channel without one"))
-           (test-call-with-function-replacements
-            (list (list 'application-world-prepare-agent
-                        (lambda (application participant)
-                          (declare (ignore application participant))
-                          (error 'world-error :message "synthetic provider failure" :operation ':move))))
-            (lambda ()
-              (test-assert (and (refused-p (participant-name agent-a) id-b)
-                                (equal (participant-residence
-                                        (world-participant-find (world-load configuration)
-                                                                (participant-identifier agent-a)))
-                                       id-a)
-                                (application-world-agent-present-p app-a)
-                                (not (application-world-agent-present-p app-b))
-                                (not (application-localgroup-paused-p app-a)))
-                           "a destination that cannot start the agent's runtime refuses the move and leaves the agent working where it was")))
-           (close-channel id-b)
-           (let* ((controller (application-input-controller app-a))
-                  (answer     nil)
-                  (thread     nil))
-             ;; The agent is in a turn: the move waits for its safe boundary.
-             (application-input-controller-begin-external-work controller)
-             (unwind-protect
-                  (progn
-                    (setf thread (make-thread (lambda ()
-                                                (setf answer (move (participant-name agent-a) id-b)))
-                                              :name "Autolith world server test move"))
-                    ;; The move asks the turn to stop; the turn here is this
-                    ;; thread, which takes the request at its safe boundary.
-                    (test-assert (handler-case (progn (sleep 5) nil)
-                                   (application-turn-cancelled ()
-                                     t))
-                                 "a move asks the agent's turn to stop")
-                    (sleep 0.3)
-                    (test-assert (and (null answer)
-                                      (equal (participant-residence
-                                              (world-participant-find (world-load configuration)
-                                                                      (participant-identifier agent-a)))
-                                             id-a))
-                                 "until the turn ends the move waits, and the world store has not moved the agent"))
-               (application-input-controller-finish-external-work controller))
-             (sb-thread:join-thread thread :default nil :timeout 30)
-             (test-assert (and answer
-                               (string= (getf answer :participant) (participant-identifier agent-a))
-                               (string= (getf answer :source) id-a)
-                               (string= (getf answer :channel) id-b)
-                               (zerop (getf answer :dropped)))
-                          "a move answers with the agent, the channel left and the destination"))
-           (let ((waiting (world-context-read configuration (participant-identifier agent-a))))
-             (test-assert (and (not (application-world-agent-present-p app-a))
-                               (some (lambda (row) (search "first words in a" (getf row :wire-json)))
-                                     waiting))
-                          "the channel left has no agent, and the context waits for the unserved destination")
-             (world-channel-create configuration
-                                   :id        "bthird3"
-                                   :owner     (participant-identifier human)
-                                   :workspace (world-tests--workspace root "c"))
-             (move (participant-identifier agent-a) "bthird3")
-             (move (participant-identifier agent-a) id-b)
-             (test-assert (equal (world-context-read configuration (participant-identifier agent-a))
-                                 waiting)
-                          "moves between channels nobody serves keep the waiting context with the agent"))
-           (let* ((opened  (localgroup-query-record entry ':open (list :channel  id-b
-                                                                       :rows     30
-                                                                       :columns  90
-                                                                       :styled-p nil)))
-                  (app-b   (world-host-application
-                            (world-server--find-host server (getf (rest opened) :session-id))))
-                  (adopted (find ':context-adoption
-                                 (application-tests--conversation-records
-                                  (application-conversation app-b))
-                                 :key #'first :from-end t)))
-             (test-assert (and (string= (getf (rest opened) :session-id) id-b)
-                               adopted
-                               (string= (getf (rest adopted) :participant) (participant-identifier agent-a))
-                               (not (probe-file (world-context-pathname
-                                                 configuration (participant-identifier agent-a)))))
-                          "a channel opened later adopts the context its agent carried, durably, and the waiting copy goes")
-             (let ((answer (move (participant-identifier agent-a) id-a)))
-               (test-assert (string= (getf answer :source) id-b)
-                            "the agent moves on from the channel opened for it"))
-             (let* ((record (first (last (application-tests--conversation-records
-                                          (application-conversation app-a)))))
-                    (text   (json-encode (coerce (conversation-input-items-for-request
-                                                  (application-conversation app-a))
-                                                 'vector))))
-               (test-assert (and (application-world-agent-present-p app-a)
-                                 (not (application-world-agent-present-p app-b))
-                                 (string= (participant-identifier
-                                           (world-session-participant
-                                            configuration (application-conversation app-a)))
-                                          (participant-identifier agent-a))
-                                 (eq (first record) ':message)
-                                 (getf (rest record) :automatic-p)
-                                 (search "were moved into channel" (getf (rest record) :content))
-                                 (zerop (deque-count (application-input-controller-work-items
-                                                      (application-input-controller app-a)))))
-                            "the destination adopts the agent, tells it so durably, and starts no turn")
-               (test-assert (and (search "first words in a" text)
-                                 (not (search "first words in a" text
-                                              :start2 (1+ (search "first words in a" text))))
-                                 (not (search "first words in b" text)))
-                            "back where it began, the agent's context holds its own history once and nothing of the other channel's earlier agent")))
-           (let ((app-b (world-host-application (world-server--find-host server id-b))))
-            (flet ((adoptions ()
-                     "Return how many context adoptions channel B's conversation holds."
-                     (count ':context-adoption (application-tests--conversation-records
-                                                (application-conversation app-b))
-                            :key #'first))
-
-                   (context-file-p ()
-                     "Return whether agent A's context file exists."
-                     (not (null (probe-file (world-context-pathname
-                                             configuration (participant-identifier agent-a)))))))
-              (let ((before (adoptions)))
-                (test-call-with-function-replacements
-                 (list (list 'application-world-install-agent
-                             (lambda (&rest arguments)
-                               (declare (ignore arguments))
-                               (error 'world-error :message   "synthetic adoption failure."
-                                                   :operation ':move))))
-                 (lambda ()
-                   (let ((answer (move (participant-identifier agent-a) id-b)))
-                     (test-assert (and (string= (getf answer :channel) id-b)
-                                       (equal (participant-residence
-                                               (world-participant-find (world-load configuration)
-                                                                       (participant-identifier agent-a)))
-                                              id-b)
-                                       (context-file-p)
-                                       (equal (nth-value 2 (world-context-read
-                                                            configuration (participant-identifier agent-a)))
-                                              id-b)
-                                       (= (adoptions) before))
-                                  "a destination that fails to adopt after the move committed keeps the move and the context waiting for it"))))
-                (application-world-before-turn app-b ':message)
-                (test-assert (and (= (adoptions) (1+ before))
-                                  (not (context-file-p)))
-                             "the agent adopts its waiting context before its next turn")
-                (world-context-write configuration (participant-identifier agent-a)
-                                     :rows        (conversation-context-rows
-                                                   (application-conversation app-b))
-                                     :source      id-a
-                                     :destination id-b
-                                     :transition  (conversation-adopted-transition
-                                                   (application-conversation app-b)))
-                (application-world-before-turn app-b ':message)
-                (test-assert (and (= (adoptions) (1+ before))
-                                  (not (context-file-p)))
-                             "a context file left behind after its adoption is removed without a second adoption"))
-              (test-call-with-function-replacements
-               (list (list 'world-participant-move
-                           (lambda (&rest arguments)
-                             (declare (ignore arguments))
-                             (error 'world-error :message   "synthetic store failure."
-                                                 :operation ':move))))
-               (lambda ()
-                 (test-assert (and (refused-p (participant-identifier agent-a) "bthird3")
-                                   (not (context-file-p))
-                                   (application-world-agent-present-p app-b)
-                                   (not (application-localgroup-paused-p app-b)))
-                              "a move failing at its commit leaves no context file behind and the agent working where it was")))
-              (test-assert (handler-case
-                               (progn
-                                 (world-participant-move configuration (participant-identifier agent-a)
-                                                         "bthird3" :expected-residence id-a)
-                                 nil)
-                             (world-error (condition)
-                               (search "moved while" (autolith-error-message condition))))
-                           "the store moves an agent only from where the move found it")
-             (let* ((id-d  (getf (rest (world-server-tests--open entry (world-tests--workspace root "d")))
-                                 :session-id))
-                    (app-d (world-host-application (world-server--find-host server id-d))))
-               (conversation-append-user-message (application-conversation app-d) "first words in d")
-               (localgroup-query-record
-                entry ':dismiss
-                (list :participant (participant-identifier
-                                    (find ':agent (world-channel-residents
-                                                   (values (world-reconcile-sessions configuration))
-                                                   id-d)
-                                          :key #'participant-kind))))
-               (close-channel id-d)
-               (move (participant-identifier agent-a) id-d)
-               (test-call-with-function-replacements
-                (list (list 'application-world-install-agent
-                            (lambda (&rest arguments)
-                              (declare (ignore arguments))
-                              (error 'world-error :message   "synthetic adoption failure."
-                                                  :operation ':move))))
-                (lambda ()
-                  (let ((opened (localgroup-query-record entry ':open (list :channel  id-d
-                                                                            :rows     30
-                                                                            :columns  90
-                                                                            :styled-p nil))))
-                    (test-assert (and (string= (getf (rest opened) :session-id) id-d)
-                                      (world-server--find-host server id-d)
-                                      (context-file-p))
-                                 "a channel whose waiting context cannot be adopted still opens, and the context keeps waiting"))))
-               (application-world-before-turn
-                (world-host-application (world-server--find-host server id-d)) ':message)
-               (test-assert (not (context-file-p))
-                            "the opened channel adopts the context before the agent's first turn")))))))))
-  nil)
-
-(-> world-server-tests--adoption-failure (keyword application) list)
-(defun world-server-tests--adoption-failure (stage application)
-  "Return a one-shot failure after adoption STAGE in APPLICATION."
-  (let* ((name     (ecase stage
-                     (:context
-                      'conversation-append-context-adoption)
-                     (:context-record
-                      'conversation-append-record)
-                     (:announcement
-                      'conversation-append-user-message)
-                     (:announcement-record
-                      'conversation-append-record)
-                     (:goal
-                      'application-world--install-goal)
-                     (:goal-record
-                      'conversation-append-record)
-                     (:remap
-                      'world-session-remap)
-                     (:runtime
-                      'application-refresh-context-meter)))
-         (original (symbol-function name))
-         (fired-p  nil))
-    (list name
-          (lambda (&rest arguments)
-            (let* ((conversation (application-conversation application))
-                   (target-p     (case stage
-                                   ((:context :announcement)
-                                    (eq (first arguments) conversation))
-                                   ((:context-record :announcement-record :goal-record)
-                                    (and (eq (first arguments) conversation)
-                                         (eq (first (second arguments))
-                                             (ecase stage
-                                              (:context-record
-                                               ':context-adoption)
-                                              (:announcement-record
-                                               ':message)
-                                              (:goal-record
-                                               ':goal)))))
-                                   (:remap
-                                    (and (conversation-adopted-transition conversation)
-                                         (equal (second arguments) (conversation-identifier conversation))))
-                                   (otherwise
-                                    (eq (first arguments) application))))
-                   (results      nil))
-              (unless (and target-p (eq stage ':goal) (not fired-p))
-                (setf results (multiple-value-list (apply original arguments))))
-              (when (and target-p (not fired-p))
-                (setf fired-p t)
-                (error 'world-error :message "Injected adoption interruption." :operation ':move))
-              (values-list results))))))
-
-(-> world-server-tests--check-adoption
-    (application configuration &key (:identifier string) (:transition string)) null)
-(defun world-server-tests--check-adoption (application configuration &key identifier transition)
-  "Check complete, unique adoption TRANSITION for participant IDENTIFIER in APPLICATION."
-  (let* ((conversation (application-conversation application))
-         (records      (application-tests--conversation-records conversation))
-         (agent        (world-participant-find (world-load configuration) identifier)))
-    (test-assert (and (not (probe-file (world-context-pathname configuration identifier)))
-                      (equal (getf (application-goal application) :objective) "recover the carried goal")
-                      (equal (getf (goal-record->goal (conversation-latest-goal-record conversation)) :objective)
-                             "recover the carried goal"))
-                 "complete adoption removes staged state only with the carried goal installed durably")
-    (test-assert (and (= 1 (count ':context-adoption records :key #'first))
-                      (= 1 (count-if (lambda (record)
-                                       (and (eq (first record) ':message)
-                                            (getf (rest record) :automatic-p)
-                                            (search "were moved into" (getf (rest record) :content))))
-                                     records))
-                      (= 1 (count-if (lambda (record)
-                                       (and (eq (first record) ':goal)
-                                            (equal (getf (rest record) :objective) "recover the carried goal")))
-                                     records)))
-                 "context, arrival announcement and carried goal are each durable once")
-    (test-assert (and (equal transition (conversation-adopted-transition conversation))
-                      (equal (config :reasoning-effort (application-configuration application))
-                             (getf (participant-settings agent) :reasoning-effort))
-                      (eq (application-provider application) (agent-provider (application-agent application)))
-                      (eq conversation (agent-conversation (application-agent application))))
-                 "the recovered runtime uses the resident's configuration, provider and conversation")
-    (let ((text (json-encode (coerce (conversation-input-items-for-request conversation) 'vector))))
-      (test-assert (and (search "carried source context" text)
-                        (search "were moved into" text)
-                        (not (search "obsolete destination context" text)))
-                   "the adopted provider context contains the source, not the previous resident")))
-  nil)
-
-(-> world-server-tests--recover-adoption-child (configuration string) null)
-(defun world-server-tests--recover-adoption-child (configuration channel)
-  "Recover CHANNEL in a fresh process booted from this check run's source-matched active core."
-  (let* ((core      (config :active-image-core configuration))
-         (form
-           `(let* ((configuration
-                     (make-configuration
-                      ,@(loop for key in '(:source-root :working-directory :config-root :data-root :state-root :cache-root
-                                           :codex-auth-path :grok-bootstrap-auth-path :active-image-core)
-                              append (list key (config key configuration)))
-                      :onboarding-p nil :fullscreen-p nil :telemetry-enabled-p nil))
-                   (application (application-create configuration :conversation-id ,channel :pristine-p t)))
-              (application-world-adopt-pending-context application :strict-p t)
-              (assert (equal (getf (application-goal application) :objective) "recover the carried goal"))
-              (assert (equal (config :reasoning-effort (application-configuration application)) "low"))
-              (assert (eq (application-provider application) (agent-provider (application-agent application))))
-              (write-line "ADOPTION-RECOVERED")))
-         (init-root (merge-pathnames "recovery-process-config/" (config :working-directory configuration)))
-         (init-path (merge-pathnames "autolith/init.lisp" init-root)))
-    (test-assert (and core (probe-file core)) "restart recovery uses a saved source-matched active image")
-    (ensure-directories-exist init-path)
-    (with-open-file (stream init-path :direction ':output :if-exists ':supersede)
-      (let ((*package* (find-package '#:cl-user)))
-        (write `(progn ,form (uiop:quit 0)) :stream stream :readably t)))
-    (multiple-value-bind (status output)
-        (test-run-program-with-environment
-         (active-image-process-command configuration '("models"))
-         (list (format nil "XDG_CONFIG_HOME=~A" (namestring init-root))
-               (format nil "XDG_DATA_HOME=~A" (namestring (config :data-root configuration)))
-               (format nil "XDG_STATE_HOME=~A" (namestring (config :state-root configuration)))
-               (format nil "HOME=~A" (namestring (config :working-directory configuration)))
-               "AUTOLITH_SITE_CONFIG_ROOT=" "AUTOLITH_TELEMETRY_ENABLED=false"))
-      (test-assert (and (zerop status) (search "ADOPTION-RECOVERED" output))
-                   (format nil "a fresh process recovers the goal and runtime: ~A" output))))
-  nil)
-
-(-> test-world-server-adoption-recovery () null)
-(defun test-world-server-adoption-recovery ()
-  "Test interruptions at each adoption stage, with live retry and reloaded server recovery."
-  (let* ((record '(:goal :kind :mission :objective "carry mission" :status :paused
-                   :seq 1 :time 1 :adoption-transition "old-transition"))
-         (goal   (goal-record->goal record)))
-    (test-assert (and (mission-goal-p goal)
-                      (not (getf goal :adoption-transition))
-                      (equal (getf (rest (append (goal->record goal)
-                                                '(:adoption-transition "new-transition")))
-                                   :adoption-transition)
-                             "new-transition"))
-                 "mission serialization does not carry an earlier adoption identity into the next move"))
-  (dolist (stage '(:context-record :context :announcement-record :announcement :goal :goal-record :remap :runtime))
-    (dolist (restart-p '(nil t))
-      (with-test-configuration (configuration root)
-        (let ((destination nil)
-              (identifier  nil)
-              (transition  nil))
-          (world-server-tests--call-with-server
-           configuration
-           (lambda (server)
-             (let* ((entry  (world-client-entry configuration))
-                    (source (getf (rest (world-server-tests--open entry (world-tests--workspace root "source")))
-                                  :session-id))
-                    (target (getf (rest (world-server-tests--open entry (world-tests--workspace root "target")))
-                                  :session-id))
-                    (app-a  (world-host-application (world-server--find-host server source)))
-                    (app-b  (world-host-application (world-server--find-host server target))))
-               (setf destination target)
-               (conversation-append-user-message (application-conversation app-a) "carried source context")
-               (conversation-append-user-message (application-conversation app-b) "obsolete destination context")
-               (let* ((world   (values (world-reconcile-sessions configuration)))
-                      (agent-a (find ':agent (world-channel-residents world source) :key #'participant-kind))
-                      (agent-b (find ':agent (world-channel-residents world target) :key #'participant-kind)))
-                 (setf identifier (participant-identifier agent-a))
-                 (let ((settings (copy-list (participant-settings agent-a))))
-                   (setf (getf settings :reasoning-effort) "low")
-                   (world-participant-update configuration identifier :settings settings))
-                 (setf (application-goal app-a)
-                       '(:objective "recover the carried goal" :status :active :continuations 0 :created-at 1))
-                 (application--record-goal app-a)
-                 (localgroup-query-record entry ':dismiss (list :participant (participant-identifier agent-b)))
-                 (test-call-with-function-replacements
-                  (list (world-server-tests--adoption-failure stage app-b))
-                  (lambda ()
-                    (localgroup-query-record entry ':move (list :participant identifier :channel target))))
-                 (setf transition (nth-value 3 (world-context-read configuration identifier)))
-                 (test-assert (and transition (probe-file (world-context-pathname configuration identifier)))
-                              "an interrupted installation retains the staged transition")
-                 (unless restart-p
-                   (application-world-adopt-pending-context app-b :strict-p t)
-                   (world-server-tests--check-adoption app-b configuration :identifier identifier :transition transition))))))
-          (when restart-p
-            (world-server-tests--recover-adoption-child
-             (configuration-copy configuration :working-directory (world-tests--workspace root "target"))
-             destination)
-            (world-server-tests--call-with-server
-             configuration
-             (lambda (server)
-               (let* ((entry  (world-client-entry configuration))
-                      (opened (world-server-tests--open entry (world-tests--workspace root "target")
-                                                        :session-id destination))
-                      (app    (world-host-application
-                               (world-server--find-host server (getf (rest opened) :session-id)))))
-                 (application-world-adopt-pending-context app :strict-p t)
-                 (world-server-tests--check-adoption app configuration :identifier identifier :transition transition)))))))))
-  nil)
-
-(-> test-move-picker-available-destinations () null)
-(defun test-move-picker-available-destinations ()
-  "Offer only channels that can accept an agent, excluding occupied channels and the inbox."
-  (world-server-tests--call
-   (lambda (server configuration root)
-     (let* ((entry   (world-client-entry configuration))
-            (id-a    (getf (rest (world-server-tests--open entry (world-tests--workspace root "a"))) :session-id))
-            (id-b    (getf (rest (world-server-tests--open entry (world-tests--workspace root "b"))) :session-id))
-            (app-a   (world-host-application (world-server--find-host server id-a)))
-            (app-b   (world-host-application (world-server--find-host server id-b)))
-            (offered nil))
-       (conversation-append-user-message (application-conversation app-a) "occupied")
-       (conversation-append-user-message (application-conversation app-b) "vacant later")
-       (let* ((world (values (world-reconcile-sessions configuration)))
-              (agent (find ':agent (world-channel-residents world id-b) :key #'participant-kind)))
-         (world-server-dismiss server (participant-name agent)))
-       (test-call-with-function-replacements
-        (list (list 'application--pick-identifier
-                    (lambda (application &key title items hint initial-value search-p usage empty-notice)
-                      (declare (ignore application title hint initial-value search-p usage empty-notice))
-                      (setf offered (mapcar (lambda (item) (getf item :value)) items))
-                      nil)))
-        (lambda ()
-          (application--pick-destination app-a)
-          (test-assert (equal offered (list id-b))
-                       "the picker excludes occupied A and the human inbox, and offers vacant B")
-          (application-world-domestic-agent app-b)
-          (application--pick-destination app-a)
-          (test-assert (null offered) "no destinations are offered when every channel has an agent"))))))
-  nil)
 
 (-> test-world-channel-command-admission () null)
 (defun test-world-channel-command-admission ()
-  "Execute channel navigation and placement through the reader while another channel works."
+  "Execute navigation and messaging through the reader while another channel works."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry        (world-client-entry configuration))
@@ -3828,9 +3075,6 @@ the version the client says it is, when it says one."
        (conversation-append-user-message (application-conversation app-b) "working in b")
        (multiple-value-bind (connection seen await)
            (test-localgroup--present (world-server-tests--session server id-a) :columns 100)
-         (let* ((world (values (world-reconcile-sessions configuration)))
-                (agent (find ':agent (world-channel-residents world id-b) :key #'participant-kind))
-                (name  (participant-name agent)))
            (application-input-controller-begin-external-work controller)
            (unwind-protect
                 (test-call-with-function-replacements
@@ -3843,11 +3087,6 @@ the version the client says it is, when it says one."
                                (declare (ignore application))
                                (push ':switch picks)
                                id-b))
-                       (list 'application--pick-agent
-                             (lambda (application &key title usage)
-                               (declare (ignore application title usage))
-                               (push ':agent picks)
-                               name))
                        (list 'application--pick-identifier
                              (lambda (application &key title items hint initial-value search-p usage empty-notice)
                                (declare (ignore application title hint initial-value search-p usage empty-notice))
@@ -3880,18 +3119,10 @@ the version the client says it is, when it says one."
                         (submit (format nil "(open ~S)" id-b))
                         (test-assert (task-tests--wait-until (lambda () (= (switches) (1+ before))) 10)
                                      "typed switch asks the terminal client to move while A works"))
-                      (submit (format nil "(dismiss ~S)" name))
-                      (test-assert (null (participant-residence
-                                          (world-participant-find (world-load configuration) (participant-identifier agent))))
-                                   "dismiss parks B's agent before A finishes")
                       (submit (format nil "(tell ~S ~S)" id-b "busy message"))
                       (test-assert (some (lambda (delivery) (string= (world-delivery-text delivery) "busy message"))
                                          (world-inbox-deliveries configuration id-b))
                                    "tell reaches B's durable inbox before A finishes")
-                      (submit (format nil "(move ~S ~S)" name id-b))
-                      (test-assert (equal id-b (participant-residence
-                                                (world-participant-find (world-load configuration) (participant-identifier agent))))
-                                   "move places B's agent before A finishes")
                      (submit "(open)")
                      (submit "(tell)")
                      (test-assert (funcall await ':input
@@ -3899,120 +3130,13 @@ the version the client says it is, when it says one."
                                              (let ((text (getf (rest event) :text)))
                                                (and (stringp text) (search id-b text)))))
                                   "tell's picker prefills the terminal client's composer during inference")
-                     (submit "(dismiss)")
-                     (submit "(move)")
-                     (test-assert (and (member ':switch picks) (member ':channel picks) (member ':agent picks))
-                                  "argument-free channel commands reach their pickers while A works")
-                     (test-assert (equal id-b (participant-residence
-                                               (world-participant-find (world-load configuration) (participant-identifier agent))))
-                                  "picker-driven move executes while A works"))))
+                     (test-assert (and (member ':switch picks) (member ':channel picks))
+                                  "argument-free channel commands reach their pickers while A works"))))
              (application-input-controller-finish-external-work controller)
-             (localgroup-client-close connection)))))))
+            (localgroup-client-close connection))))))
   nil)
 
-(-> test-world-execution-owner-claims () null)
-(defun test-world-execution-owner-claims ()
-  "Refuse foreign claims and stale residence without altering stored participant context."
-  (with-test-configuration (configuration)
-    (world-tests--persisted-conversation configuration "bfirst1" 1000)
-    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
-    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
-      (declare (ignore human))
-      (world-park-agent configuration second-agent)
-      (let ((lease (conversation-lease-acquire configuration "bfirst1")))
-        (unwind-protect
-             (test-assert
-              (handler-case
-                  (progn (world-move-agent configuration first-agent "bsecnd2") nil)
-                (world-error ()
-                  (equal (participant-residence
-                          (world-participant-find (world-load configuration)
-                                                  (participant-identifier first-agent)))
-                         "bfirst1")))
-              "a stored execution owner cannot claim another execution's channel lease")
-          (conversation-lease-release lease)))
-      (world-participant-park configuration (participant-identifier first-agent))
-      (test-assert
-       (handler-case
-           (progn (world-move-agent configuration first-agent "bsecnd2") nil)
-         (world-error ()
-           (not (probe-file (world-context-pathname configuration
-                                                    (participant-identifier first-agent))))))
-       "a stale residence is refused before staging any context")))
-  nil)
 
-(-> test-world-execution-owner-staging () null)
-(defun test-world-execution-owner-staging ()
-  "Restore precommit staging and hosted execution after a failed store commit."
-  (world-server-tests--call
-   (lambda (server configuration root)
-     (let* ((entry (world-client-entry configuration))
-            (id-a  (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
-                         :session-id))
-            (id-b  (getf (rest (world-server-tests--open entry (world-tests--workspace root "b")))
-                         :session-id))
-            (app-a (world-host-application (world-server--find-host server id-a)))
-            (app-b (world-host-application (world-server--find-host server id-b))))
-       (conversation-append-user-message (application-conversation app-a) "original participant context")
-       (conversation-append-user-message (application-conversation app-b) "destination context")
-       (let* ((world      (values (world-reconcile-sessions configuration)))
-              (agent-a    (find ':agent (world-channel-residents world id-a) :key #'participant-kind))
-              (agent-b    (find ':agent (world-channel-residents world id-b) :key #'participant-kind))
-              (identifier (participant-identifier agent-a))
-              (state      (application-participant-state app-a)))
-         (world-server-dismiss server (participant-identifier agent-b))
-         (world-context-write configuration identifier :source id-a :rows nil
-                              :goal '(:objective "previous staging" :status :paused)
-                              :destination nil :transition "previous-stage")
-         (let ((previous (multiple-value-list (world-context-read configuration identifier))))
-           (test-call-with-function-replacements
-            (list (list 'world-participant-move
-                        (lambda (&rest arguments)
-                          (declare (ignore arguments))
-                          (error 'world-error :message "Injected residence commit refusal."
-                                 :operation            ':move))))
-            (lambda ()
-              (test-assert
-               (handler-case
-                   (progn (world-server-move server identifier id-b) nil)
-                 (world-error ()
-                   t))
-               "the injected precommit refusal reaches the coordinator")))
-           (test-assert
-            (and (equal previous (multiple-value-list (world-context-read configuration identifier)))
-                 (eq state (application-participant-state app-a))
-                 (eq state (agent-participant-state (application-agent app-a)))
-                 (equal (participant-residence
-                         (world-participant-find (world-load configuration) identifier)) id-a)
-                 (not (application-localgroup-paused-p app-a))
-                 (handler-case
-                     (let ((lease (conversation-lease-acquire configuration id-a)))
-                       (conversation-lease-release lease)
-                       nil)
-                   (conversation-in-use ()
-                     t)))
-            "precommit abort restores staging, shared execution, residence and the hosted lease")
-           (test-call-with-function-replacements
-            (list (list 'application-world-surrender-goal
-                        (lambda (application)
-                          (declare (ignore application))
-                          (error "Injected committed departure failure."))))
-            (lambda ()
-              (test-assert
-               (handler-case
-                   (progn (world-server-move server identifier id-b) nil)
-                 (simple-error () t))
-               "a serious departure failure propagates after commitment")))
-           (test-assert
-            (and (equal (participant-residence
-                         (world-participant-find (world-load configuration) identifier)) id-b)
-                 (not (application-localgroup-paused-p app-a))
-                 (not (eq state (application-participant-state app-a)))
-                 (null (participant-state-conversation state))
-                 (conversation-lease-busy-p configuration id-a)
-                 (probe-file (world-context-pathname configuration identifier)))
-            "postcommit failure detaches and resumes the source without undoing residence or staged recovery"))))))
-  nil)
 
 (-> world-server-tests--call-running-child
     (function &key (:before-start (option function)) (:uncancellable-p boolean)) null)
@@ -4258,195 +3382,18 @@ terminal publication and join the serving owner before restoring the provider."
            (dolist (connection connections) (localgroup-client-close connection)))))))
   nil)
 
-(-> test-world-server-running-child-move-and-park () null)
-(defun test-world-server-running-child-move-and-park ()
-  "Move or park a real blocked pool owner while holding its queued ordinary work."
-  (dolist (move-p '(t nil))
-    (world-server-tests--call-running-child
-     (lambda (context)
-       (destructuring-bind (&key server configuration root parent job application statistics
-                                &allow-other-keys)
-           context
-         (let* ((state       (application-participant-state application))
-                (source      (task-job-execution-identifier job))
-                (world       (values (world-reconcile-sessions configuration)))
-                (participant (find ':agent (world-channel-residents world source) :key #'participant-kind))
-                (identifier  (participant-identifier participant))
-                (entry       (world-client-entry configuration))
-                (target      "move064")
-                (connection  (test-localgroup--present
-                              (application-localgroup-session application) :client-pid 424260))
-                (grandchild  (task-tests--register-job
-                              (application--task-orchestrator application) (application-agent application)
-                              (task-job-definition job) :name "independent-grandchild")))
-           (unwind-protect
-                (progn
-                  (world-tests--persisted-conversation configuration target 2000)
-                  (world-channel-create configuration :id target
-                                        :owner            (participant-identifier (world-human-participant world))
-                                        :workspace        (world-tests--workspace root "destination"))
-                  (when move-p
-                    (world-server-tests--open entry (world-tests--workspace root "destination") :channel target)
-                    (let ((resident (find ':agent
-                                          (world-channel-residents
-                                           (world-reconcile-sessions configuration) target)
-                                          :key #'participant-kind)))
-                      (when resident
-                        (localgroup-query-record entry ':dismiss
-                                                 (list :participant (participant-identifier resident))))))
-                  (test-assert
-                   (and (handler-case
-                            (progn (world-server-move server identifier
-                                                     (conversation-identifier (application-conversation parent)))
-                                   nil)
-                          (world-error () t))
-                        (null (job-cancellation-reason job)))
-                   "an occupied destination refuses before cancelling the real assignment")
-                  (setf (application-goal application)
-                        '(:objective "movable assignment goal" :status :paused
-                          :continuations 0 :created-at 1))
-                  (application--record-goal application)
-                  (conversation-append-user-message (application-conversation application)
-                                                    "unique child context marker")
-                  (localgroup-client-call connection ':submit :text "held source follow-up")
-                  (let ((answer
-                          (if move-p
-                              (localgroup-query-record entry ':move
-                                                       (list :participant identifier :channel target))
-                              (localgroup-query-record entry ':dismiss (list :participant identifier)))))
-                    (test-assert (and (job-terminal-p job)
-                                      (eq (job-cancellation-reason job) ':moved)
-                                      (plusp (getf (rest answer) :dropped))
-                                      (= (length (getf (funcall statistics) :requests)) 1))
-                                 "the real job settles with :moved before the held source input is dropped"))
-                  (test-assert
-                   (and (null (job-cancellation-reason grandchild))
-                        (not (job-terminal-p grandchild))
-                        (null (task-job--cancelled-ancestor-reason grandchild)))
-                   "an independent grandchild survives real pooled cancellation")
-                  (test-assert
-                   (and (not (eq state (application-participant-state application)))
-                        (null (application-goal application))
-                        (conversation-lease-busy-p configuration source)
-                        (getf (localgroup-client-call connection ':state) :state))
-                   "the source keeps its lease and usable endpoint without the departed state or goal")
-                  (if move-p
-                      (progn
-                        (world-server-tests--open entry (world-tests--workspace root "destination") :channel target)
-                        (let* ((destination (world-host-application (world-server--find-host server target)))
-                               (text        (json-encode
-                                             (coerce (conversation-input-items-for-request
-                                                      (application-conversation destination)) 'vector)))
-                               (marker      "unique child context marker"))
-                          (test-assert
-                           (and (eq state (application-participant-state destination))
-                                (equal (getf (application-goal destination) :objective)
-                                       "movable assignment goal")
-                                (= (loop for offset = (search marker text)
-                                           then (search marker text :start2 (+ offset (length marker)))
-                                         while offset count t)
-                                   1)
-                                (not (typep (application-agent destination) 'task-child-agent)))
-                           "one ordinary destination adopts the exact participant, goal and context once")))
-                      (test-assert
-                       (and (null (participant-residence
-                                   (world-participant-find (world-load configuration) identifier)))
-                            (null (participant-state-conversation state))
-                            (equal (getf (nth-value 4 (world-context-read configuration identifier)) :objective)
-                                   "movable assignment goal"))
-                       "parking serializes the goal and context before releasing the live participant")))
-             (localgroup-client-close connection)
-             (job-cancel grandchild :reason ':shutdown)))))))
-  nil)
 
-(-> test-world-server-running-child-precommit () null)
-(defun test-world-server-running-child-precommit ()
-  "Resume accepted source input when staging fails after real pooled cancellation."
-  (world-server-tests--call-running-child
-   (lambda (context)
-     (destructuring-bind (&key configuration job application release statistics &allow-other-keys)
-         context
-       (declare (ignore release))
-       (let* ((state         (application-participant-state application))
-              (source        (task-job-execution-identifier job))
-              (identifier    (participant-identifier (participant-state-identity state)))
-              (session       (application-localgroup-session application))
-              (connection    (test-localgroup--present session :client-pid 424261))
-              (write-context (fdefinition 'world-context-write)))
-         (unwind-protect
-              (progn
-                (localgroup-client-call connection ':submit :text "resume this accepted follow-up")
-                (test-call-with-function-replacements
-                 (list (list 'world-context-write
-                             (lambda (candidate participant &rest arguments)
-                               (if (equal participant identifier)
-                                   (error 'world-error :operation ':move :identifier identifier
-                                          :message "Injected staging failure.")
-                                   (apply write-context candidate participant arguments)))))
-                 (lambda ()
-                   (test-assert
-                    (handler-case
-                        (progn (localgroup-query-record (world-client-entry configuration) ':dismiss
-                                                        (list :participant identifier))
-                               nil)
-                      (localgroup-error () t))
-                    "a staging error refuses the residence commitment")))
-                (test-assert
-                 (and (task-tests--wait-until
-                       (lambda () (= (length (getf (funcall statistics) :requests)) 2)) 15)
-                      (job-terminal-p job) (eq (job-cancellation-reason job) ':moved)
-                      (eq state (application-participant-state application))
-                      (not (localgroup-session-paused-p session))
-                      (equal (participant-residence
-                              (world-participant-find (world-load configuration) identifier)) source))
-                 "the original host resumes queued work after precommit failure without moving"))
-           (localgroup-client-close connection))))))
-  nil)
 
-(-> test-world-server-running-child-opening-move () null)
-(defun test-world-server-running-child-opening-move ()
-  "Refuse a hosted residence claim between registration and controller readiness."
-  (let ((refused-p nil))
-    (world-server-tests--call-running-child
-     (lambda (context)
-       (test-assert refused-p
-                    "a registered host without a controller cannot admit a residence claim")
-       (funcall (getf context :release)))
-     :before-start
-     (lambda (host)
-       (let* ((application   (world-host-application host))
-              (configuration (application-configuration application))
-              (state         (application-participant-state application))
-              (identity      (participant-state-identity state))
-              (participant   (make-instance 'participant
-                                            :identifier "early64" :kind ':agent :name "opening-claim"
-                                            :name-source ':explicit :parent nil :settings nil
-                                            :residence (world-host-channel host) :created-at 1 :updated-at 1))
-              (owner         (make-instance 'world-host-execution-owner
-                                            :configuration configuration :participant participant
-                                            :channel (world-host-channel host) :application application :host host)))
-         (unwind-protect
-              (setf refused-p
-                    (and (null (application-input-controller application))
-                         (handler-case
-                             (progn
-                               (execution-owner-call-with-exclusion
-                                owner (lambda () (execution-owner-claim owner)))
-                               nil)
-                           (world-error () t))))
-           (setf (participant-state-identity state) identity))))))
-  nil)
 
 (-> test-world-server-running-child-close () null)
 (defun test-world-server-running-child-close ()
-  "Close a real assignment, refuse moves while closing, and retain timed-out ownership."
+  "Close a real assignment and retain timed-out ownership."
   (dolist (timeout-p '(nil t))
     (world-server-tests--call-running-child
      (lambda (context)
        (destructuring-bind (&key server configuration job host application release &allow-other-keys)
            context
          (let* ((identifier  (task-job-execution-identifier job))
-                (participant (participant-state-identity (application-participant-state application)))
                 (worker      (application-worker application))
                 (registry    (application-tool-registry application)))
            (world-server-close server identifier)
@@ -4463,17 +3410,6 @@ terminal publication and join the serving owner before restoring the provider."
                       (eq (world-server--find-host server identifier) host)
                       (conversation-lease-busy-p configuration identifier))
                  "a stop timeout retains the live job, borrowed resources, host and lease"))
-              ;; Keep the provider behind its barrier until the refusal is observed.
-              (test-assert
-               (and (handler-case
-                        (progn (localgroup-query-record (world-client-entry configuration) ':dismiss
-                                                        (list :participant (participant-identifier participant))) nil)
-                      (localgroup-error () t))
-                    (equal (participant-residence
-                            (world-participant-find (world-load configuration) (participant-identifier participant)))
-                           identifier)
-                    (conversation-lease-busy-p configuration identifier))
-               "dismissal while closing is refused without moving the participant or releasing the lease")
               (funcall release))
              (t
               (test-assert (nth-value 1 (job-await job :timeout-seconds 15))

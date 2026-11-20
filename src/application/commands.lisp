@@ -1630,12 +1630,12 @@ searches every task directory."
 
 (-> application--agent-items (application) list)
 (defun application--agent-items (application)
-  "Return picker items for every agent: its name, and the channel it resides in or that it is parked."
+  "Return picker items for active agents by name and channel."
   (let ((world (application-world application)))
     (loop for participant in (world-participants world)
-          when (eq (participant-kind participant) ':agent)
-            collect (let* ((residence (participant-residence participant))
-                           (channel   (and residence (world-channel-find world residence))))
+          for residence = (participant-residence participant)
+          when (and residence (eq (participant-kind participant) ':agent))
+            collect (let ((channel (world-channel-find world residence)))
                       (list :name        (participant-name participant)
                             :value       (cond
                                            ((handler-case
@@ -1650,11 +1650,9 @@ searches every task directory."
                                            (t
                                             (conversation-identifier-display (participant-identifier participant))))
                             :argument    nil
-                            :description (if residence
-                                             (format nil "in ~@[~A · ~]~A"
-                                                     (and channel (channel-title channel))
-                                                    (world-channel-path world channel))
-                                             "parked in no channel"))))))
+                            :description (format nil "in ~@[~A · ~]~A"
+                                                 (channel-title channel)
+                                                 (world-channel-path world channel)))))))
 
 (-> application--pick-agent (application &key (:title string) (:usage string)) (option string))
 (defun application--pick-agent (application &key (title "pick an agent") (usage ""))
@@ -1667,26 +1665,6 @@ searches every task directory."
                                 :usage        usage
                                 :empty-notice "no agents exist"))
 
-(-> application--pick-destination (application) (option string))
-(defun application--pick-destination (application)
-  "Pick an agent-free channel to move into, or return NIL when cancelled."
-  (let* ((world (application-world application))
-         (items (remove-if
-                 (lambda (item)
-                   (let* ((identifier (getf item :value))
-                          (channel    (world-channel-find world identifier)))
-                     (or (and channel (channel-inbox-p channel))
-                         (find ':agent (world-channel-residents world identifier)
-                               :key #'participant-kind))))
-                 (application--channel-items application))))
-    (application--pick-identifier application
-                                  :title         "into which channel?"
-                                  :items         items
-                                  :hint          "type to search, enter selects, esc cancels"
-                                  :initial-value (conversation-identifier (application-conversation application))
-                                  :search-p      t
-                                  :usage         "Usage: (move \"AGENT\" \"CHANNEL\")"
-                                  :empty-notice  "no channels without an agent exist")))
 
 (-> application--prefill-call (application string string) null)
 (defun application--prefill-call (application operator argument)
@@ -3018,8 +2996,8 @@ show."
                                          :pathname   nil
                                          :operation  ':rename-participant
                                          :identifier designator)))
-                            (or (world-session-participant configuration
-                                                           (application-conversation application))
+                            (or (world-register-conversation configuration
+                                                             (application-conversation application))
                                 (error 'world-error
                                        :message   "This channel has no agent participant yet; it gets one with its first durable message."
                                        :pathname  nil
@@ -3046,104 +3024,6 @@ show."
      (application-notice-line
       (format nil "channel ~A" (conversation-identifier-display identifier))))
     (values ':continue identifier)))
-
-(-> application--placing-server (application keyword) (values world-server &optional))
-(defun application--placing-server (application operation)
-  "Return the world server that places APPLICATION's agents, or refuse OPERATION in a session of its own.
-
-Agents move between channels of one world, which only its server holds; a
-pristine or recovery session runs apart from it."
-  (or (application-world-server application)
-      (error 'world-error
-             :message   "Agents move only between the world server's channels; this session runs apart from it."
-             :pathname  nil
-             :operation operation)))
-
-(define-application-command application--builtin-move-command
-    (:name              "/move"
-     :help-topic        :channels
-     :help-order        4
-     :argument          "[AGENT [CHANNEL]]"
-     :description       "move an agent into a channel, this one by default"
-     :tip               "stops the agent where it is; in its new channel it waits until someone writes there or mentions it. Without arguments it picks the agent, then the channel."
-     :busy-behavior     :execute
-     :terminal-behavior :exclusive-without-arguments
-     :callable          t)
-    (application &optional agent channel)
-  (unless agent
-    (setf agent   (application--pick-agent application
-                                           :title "move which agent?"
-                                           :usage "Usage: (move \"AGENT\" \"CHANNEL\")")
-          channel (and agent (application--pick-destination application)))
-    (unless (and agent channel)
-      (return-from application--builtin-move-command ':continue)))
-  (let* ((configuration (application-configuration application))
-         (server        (application--placing-server application ':move))
-         (target        (if channel
-                            (princ-to-string channel)
-                            (or (application-world--served-channel application)
-                                (error 'world-error
-                                       :message   "This conversation is not a channel yet; name the channel to move the agent into."
-                                       :pathname  nil
-                                       :operation ':move))))
-         (answer        (rest (world-server-move server (princ-to-string agent) target))))
-    (application-present
-     application
-     (application-notice-line
-      (format nil "agent ~A moved ~:[out of parking~;from ~:*~A~] to ~A~@[; ~D queued message~:P dropped~]"
-              (participant-name (world-participant-find (world-load configuration)
-                                                        (getf answer :participant)))
-              (let ((source (getf answer :source)))
-                (and source (conversation-identifier-display source)))
-              (conversation-identifier-display (getf answer :channel))
-              (let ((dropped (getf answer :dropped)))
-                (and (plusp dropped) dropped))))))
-  ':continue)
-
-(define-application-command application--builtin-domestic-command
-    (:name              "/domestic"
-     :help-topic        :channels
-     :help-order        6
-     :argument          nil
-     :description       "create a new agent for this channel"
-     :tip               "for a channel without an agent: a fresh agent with this session's model and its short channel ID as an initial name."
-     :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
-    (application)
-  (application-world-domestic-agent application)
-  ':continue)
-
-(define-application-command application--builtin-dismiss-command
-    (:name              "/dismiss"
-     :help-topic        :channels
-     :help-order        5
-     :argument          "[AGENT]"
-     :description       "park an agent, leaving its channel without one"
-     :tip               "stops the agent and parks it in no channel, keeping its context and leaving its children unaffected; (move \"WHO\") brings it back. Its channel then takes a moved agent or a domestic one."
-     :busy-behavior     :execute
-     :terminal-behavior :exclusive-without-arguments
-     :callable          t)
-    (application &optional agent)
-  (unless agent
-    (setf agent (application--pick-agent application
-                                         :title "park which agent?"
-                                         :usage "Usage: (dismiss \"AGENT\")"))
-    (unless agent
-      (return-from application--builtin-dismiss-command ':continue)))
-  (let ((answer (rest (world-server-dismiss (application--placing-server application ':park)
-                                            (princ-to-string agent)))))
-    (application-present
-     application
-     (application-notice-line
-      (format nil "agent ~A parked~:[, already out of every channel~; from ~:*~A~]~@[; ~D queued message~:P dropped~]; (move ~S) brings it back"
-              (getf answer :name)
-              (let ((channel (getf answer :channel)))
-                (and channel (conversation-identifier-display channel)))
-              (let ((dropped (getf answer :dropped)))
-                (and (plusp dropped) dropped))
-              (getf answer :name)))))
-  ':continue)
 
 (define-application-command application--builtin-tell-command
     (:name              "/tell"
