@@ -387,7 +387,6 @@ autolith acp
 #+END_SRC
 Authenticate the selected provider with =autolith auth= before starting the
 editor session. ACP uses UTF-8 JSON-RPC on stdin/stdout; diagnostics go to stderr.
-For AUI, use =autolith --permissions auto acp=.
 
 Each editor session is a channel of the world server, like a terminal's. The
 ACP process starts the server when none runs, and with =--pristine= starts it
