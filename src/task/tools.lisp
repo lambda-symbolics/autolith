@@ -403,8 +403,6 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
                ':worktree-error-storage)
               (:label
                ':label-storage)
-              (:structured-output
-               ':structured-output-storage)
               (:usage
                ':usage-storage)))
          (characters-field
@@ -417,8 +415,6 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
               ':worktree-error-characters)
              (:label
               ':label-characters)
-             (:structured-output
-              ':structured-output-characters)
              (:usage
               ':usage-characters)))
          (storage    (getf result storage-field))
@@ -481,14 +477,6 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
                   result :output
                   :preview-limit preview-limit
                   :artifact-available-p artifact-available-p)
-                 :structured-output-present-p
-                 (and (getf result :structured-output-present-p) t)
-                 :structured-output
-                 (and (getf result :structured-output-present-p)
-                      (task--retained-result-field
-                       result :structured-output
-                       :preview-limit preview-limit
-                       :artifact-available-p artifact-available-p))
                  :usage
                  (task--retained-result-field
                   result :usage
