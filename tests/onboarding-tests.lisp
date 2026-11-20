@@ -362,18 +362,15 @@
 (-> test-onboarding-choice-exercise () null)
 (defun test-onboarding-choice-exercise ()
   "Pick a lesson's setting value by typing its form, persisting it for later launches."
-  (dolist (case '((:activity-line-p nil maybe) (:prompt-padding 0 3) (:prompt-padding 2 -1)))
+  (dolist (case '((:prompt-padding 0 3) (:prompt-padding 2 -1)))
     (destructuring-bind (setting value invalid) case
       (onboarding-tests--call
        (lambda (application controller configuration terminal)
          (declare (ignore controller))
          (setf (application-configuration application)
                (configuration-copy configuration :boot-screen-p nil))
-         (let* ((page  (if (eq setting ':prompt-padding)
-                           (find "prompt-padding" (onboarding-pages configuration)
-                                 :key (lambda (page) (getf page :id)) :test #'string=)
-                           (list :id "pick" :version 1 :title "Pick" :body "Choose."
-                                 :exercise ':choose :setting setting :choices '(t nil))))
+         (let* ((page  (find "prompt-padding" (onboarding-pages configuration)
+                             :key (lambda (page) (getf page :id)) :test #'string=))
                 (pages (list page (onboarding-ui-test--page "finish"))))
            (test-assert page "the configured choice lesson is available")
            (dolist (event (list (list ':paste (format nil "(settings ~S ~S)" setting invalid))

@@ -52,11 +52,6 @@ exchange, with =>= before yours and =<= before Autolith's. When turn timestamps
 are enabled, the time appears on the line above. Set the style to =:labels= to
 restore the =❯ you= and =● autolith= headers.
 
-Below the modeline, an activity line names the current work, such as
-=pondering=. Hide it with =(settings :activity-line-p nil)= to free that row. The
-modeline still shows elapsed time. The activity line is hidden while a response
-streams.
-
 * Terminal diagrams
 
 Ask for a fenced =mermaid= block to view a diagram in the terminal. Autolith uses

@@ -584,13 +584,6 @@ Ordinary native defaults remain lazy and follow the current environment."
   :scope                      :durable
   :default                    t)
 
-(define-setting :activity-line-p (boolean-setting)
-  :label                         "Activity line"
-  :group                         :terminal
-  :documentation                 "Whether to show turn activity, such as pondering, below the modeline."
-  :scope                         :durable
-  :default                       t)
-
 (define-setting :prompt-padding (integer-setting)
   :label                        "Prompt padding"
   :group                        :terminal

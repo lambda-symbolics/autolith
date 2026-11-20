@@ -343,12 +343,7 @@ hide its side panel while such frames show, as during the boot screen."))
     :initform      nil
     :accessor      terminal-ui-status
     :type          (option string)
-    :documentation "The optional unfinished activity shown above the prompt.")
-   (status-label-p
-    :initform      t
-    :accessor      terminal-ui-status-label-p
-    :type          boolean
-    :documentation "Whether the current status shows its word on an activity row.")
+    :documentation "The optional timed activity reflected in the modeline.")
    (context-used
     :initform      nil
     :accessor      terminal-ui-context-used

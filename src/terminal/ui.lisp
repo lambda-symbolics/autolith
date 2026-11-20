@@ -1383,24 +1383,15 @@ its parenthesis open, and are dropped once the name closes it itself."
         (terminal-ui-context-window ui)
         (terminal-ui-transcript-position ui)))))
 
-(-> terminal-ui--status-label-visible-p (terminal-ui) boolean)
-(defun terminal-ui--status-label-visible-p (ui)
-  "Return true when UI's current status shows its word on an activity row."
-  (and (terminal-ui-status ui)
-       (terminal-ui-status-label-p ui)
-       t))
-
 (-> terminal-ui--activity-row-budget (terminal-ui) (integer 1))
 (defun terminal-ui--activity-row-budget (ui)
   "Return the viewport rows available to UI's command and child activity strips."
-  (let* ((status-p         (terminal-ui--status-label-visible-p ui))
-         (local-activity-p (not (null (terminal-ui-local-activity ui))))
+  (let* ((local-activity-p (not (null (terminal-ui-local-activity ui))))
          (status-row-p     (terminal-ui--status-row-visible-p ui))
          (reserved-rows
            (+ 3
               (if status-row-p 2 0)
-              (if local-activity-p 1 0)
-              (if status-p 1 0))))
+              (if local-activity-p 1 0))))
     (max 1
          (- (terminal-ui--maximum-live-rows (terminal-ui-terminal ui))
             reserved-rows))))
@@ -2053,14 +2044,6 @@ context meter or compaction bar are right-aligned, in that order."
          (terminal-span ':plain (terminal-ui-local-activity ui)))
    row-width))
 
-(-> terminal-ui--provider-activity-row (terminal-ui integer) list)
-(defun terminal-ui--provider-activity-row (ui row-width)
-  "Return UI's provider or tool activity row clipped to ROW-WIDTH."
-  (terminal--clip-spans
-   (list (terminal-span ':brand "∙ ")
-         (terminal-span ':dim (terminal-ui-status ui)))
-   row-width))
-
 (-> terminal-ui--word-wrap-spans (terminal list integer) list)
 (defun terminal-ui--word-wrap-spans (terminal spans row-width)
   "Return single-line SPANS as styled rows wrapped at word boundaries."
@@ -2181,10 +2164,6 @@ form keeps every speculative Markdown wrap live until the logical line commits."
             do (setf rows (append rows
                                   (when (and gap-p (not first-p)) (list nil))
                                   section))))
-    (when (terminal-ui--status-label-visible-p ui)
-      (setf rows
-            (append rows
-                    (list (terminal-ui--provider-activity-row ui row-width)))))
     (dolist (row (terminal-ui-preview-rows ui))
       (setf rows
             (append rows
@@ -3338,17 +3317,15 @@ seen can offer the notice again."
     (terminal-ui--paint-live ui))
   ui)
 
-(defgeneric terminal-ui-set-status (ui status &key details worked-seconds label-p)
+(defgeneric terminal-ui-set-status (ui status &key details worked-seconds)
   (:documentation
    "Begin or clear UI's timed STATUS activity and animated modeline."))
 
-(defmethod terminal-ui-set-status ((ui terminal-ui) status &key details worked-seconds (label-p t))
+(defmethod terminal-ui-set-status ((ui terminal-ui) status &key details worked-seconds)
   "Begin or clear UI's timed STATUS activity and animated modeline.
 
 WORKED-SECONDS carries the conversation's accumulated working time at the
-start of the activity; the live paint adds the running elapsed seconds.
-LABEL-P false keeps STATUS timing the modeline without its own activity row,
-for a phase the transcript already shows, such as a streaming response."
+start of the activity; the live paint adds the running elapsed seconds."
   (unless (terminal-styled-text-p details)
     (error 'terminal-error
            :message   "Terminal status details must contain styled spans."
@@ -3361,7 +3338,6 @@ for a phase the transcript already shows, such as a streaming response."
         (safe-status
          (let ((now (funcall (terminal-ui-clock-function ui))))
            (setf (terminal-ui-status ui) safe-status
-                 (terminal-ui-status-label-p ui) label-p
                  (terminal-ui-status-details ui) details
                  (terminal-ui-status-started-at ui) now
                  (terminal-ui-status-progress-at ui) now

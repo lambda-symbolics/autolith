@@ -1180,7 +1180,7 @@
                                          (incf clock-calls)
                                          clock))))
     (with-terminal-ui (active-ui ui)
-      (terminal-ui-set-status active-ui "working" :label-p nil)
+      (terminal-ui-set-status active-ui "working")
       (terminal-ui-set-context-usage active-ui :used 20 :window 100 :compaction-limit 80)
       (recording-terminal-reset terminal)
       (terminal-ui-set-compacting active-ui t)

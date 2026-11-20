@@ -52,7 +52,7 @@
              (completed nil)
              (effects   0))
         (when (eq exercise ':choose)
-          (setf (getf page :setting) ':activity-line-p
+          (setf (getf page :setting) ':turn-timestamps-p
                 (getf page :choices) '(t nil)))
         (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
           (line-editor-set-text (terminal-ui-editor ui) "saved draft" :cursor 4)

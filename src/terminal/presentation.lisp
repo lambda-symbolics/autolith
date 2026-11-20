@@ -1395,11 +1395,10 @@ otherwise is sent whole."
 
 (defmethod channel-presentation-state ((ui channel-presentation) (operation (eql :status)))
   "Describe the timed activity and its modeline details."
-  (let ((signature (list (terminal-ui-status ui) (terminal-ui-status-label-p ui)
+  (let ((signature (list (terminal-ui-status ui)
                          (terminal-ui-status-details ui) (terminal-ui-status-worked-seconds ui)
                          (terminal-ui-status-started-at ui))))
     (values (list :status         (terminal-ui-status ui)
-                  :label-p        (terminal-ui-status-label-p ui)
                   :details        (presentation-entry->wire (terminal-ui-status-details ui))
                   :worked-seconds (terminal-ui-status-worked-seconds ui)
                   :age            (channel-presentation--age ui (terminal-ui-status-started-at ui))
@@ -1753,13 +1752,12 @@ A DELTA extends the source this UI already holds for the block."
 
 (defmethod presentation-apply
     ((ui terminal-ui) (operation (eql :status))
-     &key status details worked-seconds (label-p t) (age 0) (progress-age 0) &allow-other-keys)
+     &key status details worked-seconds (age 0) (progress-age 0) &allow-other-keys)
   "Show the timed activity, begun AGE seconds ago."
   (with-terminal-ui-locked (ui)
     (terminal-ui-set-status ui (and (stringp status) status)
                             :details        (presentation-wire->entry details)
-                            :worked-seconds (and (integerp worked-seconds) worked-seconds)
-                            :label-p        (not (null label-p)))
+                            :worked-seconds (and (integerp worked-seconds) worked-seconds))
     (when (terminal-ui-status ui)
       (let ((now (funcall (terminal-ui-clock-function ui))))
         (setf (terminal-ui-status-started-at ui)  (- now (if (realp age) age 0))

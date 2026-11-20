@@ -385,21 +385,6 @@ To configure Autolith in Lisp, edit:
 @@code:Config root: {{{:config-root}}}
 State root:  {{{:state-root}}}@@
 
-* Activity line
-:PROPERTIES:
-:ID: activity-line
-:VERSION: 1
-:EXERCISE: choose
-:SETTING: activity-line-p
-:CHOICES: t nil
-:END:
-The turn timer and other information are in the modeline. A small decorative activity line appears below the modeline:
-
-@@dim:REPL ∙ 00:04  gpt-6.1-sol · high@@
-@@brand:∙@@ @@dim:pondering@@
-
-Some people hate this Claudism, so you can disable it in =(settings)=.
-
 * Prompt padding
 :PROPERTIES:
 :ID: prompt-padding
