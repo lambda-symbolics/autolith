@@ -306,22 +306,22 @@
                (lambda ()
                  (test-assert (search "ok" (application-evaluate-on-client application '("(+ 1 2)")))
                               "an answer with a field this version does not know is still an answer")))
-               ;; Receiving the reply can precede the worker releasing its slot.
-               (test-assert (task-tests--wait-until
-                             (lambda ()
-                               (with-lock-held (*client-evaluator-lock*)
-                                 (null *client-evaluator-active*)))
-                             5)
-                            "The terminal evaluation releases shared capacity before switching attachments.")
-               (localgroup-client-close terminal)
-               (test-assert (task-tests--wait-until
-                             (lambda ()
-                               (and (application-evaluating-attachment application)
-                                    (null (application-controlling-client application))))
-                             10)
-                            "the terminal relinquishes control after closing")
-               (test-assert (search "3" (application-evaluate-on-client application '("(+ 1 2)")))
-                            "once the terminal left, the client attached last evaluates"))
+              ;; Receiving the reply can precede the worker releasing its slot.
+              (test-assert (task-tests--wait-until
+                            (lambda ()
+                              (with-lock-held (*client-evaluator-lock*)
+                                (null *client-evaluator-active*)))
+                            5)
+                           "The terminal evaluation releases shared capacity before switching attachments.")
+              (localgroup-client-close terminal)
+              (test-assert (task-tests--wait-until
+                            (lambda ()
+                              (and (application-evaluating-attachment application)
+                                   (null (application-controlling-client application))))
+                            10)
+                           "the terminal relinquishes control after closing")
+              (test-assert (search "3" (application-evaluate-on-client application '("(+ 1 2)")))
+                           "once the terminal left, the client attached last evaluates"))
          (localgroup-client-close terminal)
          (localgroup-client-close other)))))
   nil)
