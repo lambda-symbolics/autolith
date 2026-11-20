@@ -1848,44 +1848,43 @@
                             do (condition-wait command-gate command-lock)))
                     ':continue))
                  :source ':test)
+                ;; Build the lazy syntax library before starting bounded input waits.
+                (application-lisp-code-spans "(test-cancel-command)")
                 (queued-recording-terminal-enqueue
                  terminal '(:insert "(test-cancel-command)"))
                 (queued-recording-terminal-enqueue terminal ':submit)
                 (setf producer
                       (make-thread
                        (lambda ()
-                         (let ((command-entered-observed-p
-                                 (task-tests--wait-until
-                                  (lambda ()
-                                    (with-lock-held (command-lock)
-                                      command-entered-p))
-                                  2)))
-                           (when command-entered-observed-p
-                             (queued-recording-terminal-enqueue
-                              terminal '(:insert "draft survives"))
-                             (queued-recording-terminal-enqueue terminal ':escape)
-                             (setf cancellation-finished-observed-p
-                                   (task-tests--wait-until
-                                    (lambda ()
-                                      (let ((controller
-                                              (application-input-controller
-                                               application)))
-                                        (and controller
-                                             (not
-                                              (application-input-controller-turn-active-p
-                                               controller))
-                                             (not
-                                              (application-input-controller--turn-cancellation-active-p
-                                               controller)))))
-                                    2)))
+                         (unwind-protect
+                              (when (task-tests--wait-until
+                                     (lambda ()
+                                       (with-lock-held (command-lock)
+                                         command-entered-p))
+                                     2)
+                                (queued-recording-terminal-enqueue
+                                 terminal '(:insert "draft survives"))
+                                (queued-recording-terminal-enqueue terminal ':escape)
+                                (setf cancellation-finished-observed-p
+                                      (task-tests--wait-until
+                                       (lambda ()
+                                         (let ((controller
+                                                 (application-input-controller application)))
+                                           (and controller
+                                                (not
+                                                 (application-input-controller-turn-active-p
+                                                  controller))
+                                                (not
+                                                 (application-input-controller--turn-cancellation-active-p
+                                                  controller)))))
+                                       2)
+                                      draft-preserved-observed-p
+                                      (string= (line-editor-text (terminal-ui-editor ui))
+                                               "draft survives")))
                            (unless cancellation-finished-observed-p
                              (with-lock-held (command-lock)
                                (setf command-released-p t)
                                (condition-notify command-gate)))
-                           (setf draft-preserved-observed-p
-                                 (string=
-                                  (line-editor-text (terminal-ui-editor ui))
-                                  "draft survives"))
                            (queued-recording-terminal-enqueue terminal ':interrupt)
                            (queued-recording-terminal-enqueue terminal ':interrupt)))
                        :name "Autolith active command stop-key test"))
