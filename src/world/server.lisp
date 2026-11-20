@@ -3,7 +3,7 @@
 ;;;; -- World Server --
 
 ;;; One process serves a world. Every open channel is an application of its
-;;; own, hosted on its own thread with its own localgroup endpoint, so
+;;; own, hosted on its own thread with its own world-terminal endpoint, so
 ;;; users can attach terminals, pause work or detach individual channels.
 ;;; The server answers at one more endpoint, "world", through which clients
 ;;; open channels, and it stays alive without clients until it is stopped.
@@ -255,6 +255,12 @@ the process could fork, and a new thread serves the application again."))
     :documentation "Whether this endpoint already used its one automatic transport repair."))
   (:documentation "The authenticated endpoint through which clients open channels."))
 
+(defmethod image-daemon:daemon-runtime-request-valid-p ((endpoint world-endpoint) request)
+  "Authenticate world control requests using the channel terminal protocol."
+  (image-daemon:daemon-request-valid-p
+   request (image-daemon:daemon-runtime-token endpoint)
+   :request-tag ':world-terminal-request))
+
 (defmethod management-repl-owner-configuration ((owner world-server))
   "The server configures the endpoint from its base configuration."
   (world-server-configuration owner))
@@ -305,9 +311,9 @@ images use their own endpoint namespace."
            (world-server--reconcile bootstrapped)
            (setf *world-message-unserved-function*
                  (lambda (identifier) (world-server-wake-channel server identifier)))
-           (localgroup-handoff-assert-startup-active)
+           (world-startup-assert-startup-active)
            (world-server--runtime-start server :token token :created-at created-at)
-           (localgroup-handoff-finish-startup nil)
+           (world-startup-finish-startup nil)
            (management-repl-start server)
            (slynk-start bootstrapped :background-p t)
            (setf completed-p t)
@@ -330,7 +336,7 @@ images use their own endpoint namespace."
 (-> world-server-lock-pathname (configuration) pathname)
 (defun world-server-lock-pathname (configuration)
   "Return the file whose process lease says a world server runs for CONFIGURATION's data root."
-  (merge-pathnames "server.lock" (localgroup-world-directory configuration)))
+  (merge-pathnames "server.lock" (world-endpoint-directory configuration)))
 
 (-> world-server--lease-acquire (configuration) t)
 (defun world-server--lease-acquire (configuration)
@@ -371,7 +377,7 @@ instead of starting a second server."
   (let ((runtime nil))
     (setf runtime
           (image-daemon:daemon-runtime-create
-           :directory        (localgroup-world-directory (world-server-configuration server))
+           :directory        (world-endpoint-directory (world-server-configuration server))
            :identifier       *world-server-identifier*
            :token            (or token (world-server-token server))
            :created-at       (or created-at (world-server-created-at server))
@@ -451,8 +457,8 @@ Known timer failures are escalated without invoking their callbacks again."
 The endpoint takes the token of the startup handoff this process was
 launched with, so the launching client finds it. Return the launcher status
 a hosted session asked the process to exit with, or NIL."
-  (let* ((startup-values (and *localgroup-startup-record*
-                              (rest *localgroup-startup-record*)))
+  (let* ((startup-values (and *world-startup-record*
+                              (rest *world-startup-record*)))
          (server         (world-server-create configuration
                                               :permission-mode permission-mode
                                               :token           (getf startup-values :token)
@@ -624,7 +630,7 @@ REASON, when given, is what each attached terminal is told before it lets go."
   "End HOST's attached terminals with REASON as a notice line, rendered for those terminals."
   (let* ((application (world-host-application host))
          (ui          (application-ui application)))
-    (localgroup-finish-attachments
+    (world-terminal-finish-attachments
      application
      :status  0
      :message (if ui
@@ -832,10 +838,10 @@ An unhosted target is served before admitting Lisp; prose keeps durable message 
   "Return channel snapshots with authoritative host availability."
   (loop for host in (world-server--hosts server)
         for health = (world-host-health host)
-        for session = (application-localgroup-session (world-host-application host))
+        for session = (application-channel-endpoint (world-host-application host))
         collect (if (and session (eq health ':ready))
-                    (append (localgroup-status-snapshot session) (list :host-health health))
-                    (list :localgroup-status :version *daemon-protocol-version*
+                    (append (world-terminal-status-snapshot session) (list :host-health health))
+                    (list :world-terminal-status :version *daemon-protocol-version*
                           :session-id        (world-host-channel host)
                           :state health :host-health health :terminal-attached-p nil))))
 
@@ -955,7 +961,7 @@ started must not end one another terminal attached to since."
                      (conversation-identifier-display channel))
              :operation ':close :identifier channel))
     (let ((session
-           (application-localgroup-session (world-host-application host))))
+           (application-channel-endpoint (world-host-application host))))
       (flet ((close-host ()
                "Close HOST and answer that it was."
                (world-server--close-host host)
@@ -970,7 +976,7 @@ started must not end one another terminal attached to since."
                       (with-lock-held ((image-daemon:daemon-runtime-lock
                                         session))
                         (unless (world-host-attached-p host)
-                          (setf (localgroup-session-closing-p session) t)))))
+                          (setf (channel-endpoint-closing-p session) t)))))
                  (if committed-p
                      (close-host)
                      (list :ok :operation ':close :session-id
@@ -1004,7 +1010,7 @@ started must not end one another terminal attached to since."
      (when (every (lambda (state) (eq (rest state) ':idle)) states)
        (dolist (host hosts)
          (let* ((application (world-host-application host))
-                (session     (application-localgroup-session application))
+                (session     (application-channel-endpoint application))
                 (controller  (application-input-controller application))
                 (state
                  (assoc (world-host-channel host) states :test #'string=)))
@@ -1018,7 +1024,7 @@ started must not end one another terminal attached to since."
                               ':running)
                              ((application-input-controller--request-idle-exit
                                controller)
-                              (setf (localgroup-session-closing-p session) t
+                              (setf (channel-endpoint-closing-p session) t
                                     (world-host-state host) ':closing)
                               ':closing)
                              (t
@@ -1066,7 +1072,7 @@ are legitimate lifecycle states, not evidence of owner failure."
   (let* ((application (world-host-application host))
          (thread      (world-host-thread host))
          (controller  (application-input-controller application))
-         (session     (application-localgroup-session application)))
+         (session     (application-channel-endpoint application)))
     (cond
       ((eq (world-host-state host) ':retired)
        ':retired)
@@ -1085,7 +1091,7 @@ are legitimate lifecycle states, not evidence of owner failure."
       ((and (world-host-ready-p host) controller
             (not (application-input-controller-exit-requested-p controller))
             (null (application-input-controller-failure controller))
-            session (localgroup-session-endpoint-live-p session))
+            session (channel-endpoint-endpoint-live-p session))
        ':ready)
       (t
        ':failed))))
@@ -1367,7 +1373,7 @@ running keeps the mode it started under."
 (defun world-host-jobs-live-p (host)
   "Return true while HOST owns a child or session job."
   (multiple-value-bind (children active-children session-jobs)
-      (localgroup--task-counts (world-host-application host))
+      (world-terminal--task-counts (world-host-application host))
     (declare (ignore active-children))
     (or (plusp children) (plusp (or session-jobs 0)))))
 
@@ -1676,7 +1682,7 @@ reaches endpoint, tool and job threads through this alist, which names
 itself so that threads those threads start inherit it too."
   (let* ((inherited (cons 'bordeaux-threads:*default-special-bindings* nil))
          (bindings  (list (cons '*active-application* (list 'quote application))
-                          (cons '*localgroup-startup-record* nil)
+                          (cons '*world-startup-record* nil)
                           inherited)))
     (setf (rest inherited) (list 'quote bindings))
     bindings))
@@ -1707,7 +1713,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
          (bordeaux-threads:*default-special-bindings*
           (world-server--thread-bindings application))
          (*active-application*        application)
-         (*localgroup-startup-record* nil)
+         (*world-startup-record* nil)
          (*default-pathname-defaults*
           (config :working-directory configuration)))
     (unwind-protect
@@ -1716,7 +1722,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
                          (lambda (condition)
                            (multiple-value-bind (status message details)
                                (main--launcher-exit-text condition)
-                             (localgroup-finish-attachments application :status
+                             (world-terminal-finish-attachments application :status
                                                             status :message
                                                             message :details
                                                             details)))))
@@ -1727,7 +1733,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
                                      recovery-diagnosis :adaptation-offer-p
                                      adaptation-offer-p :resume-p
                                      resume-p :notice notice :boot-screen-p
-                                     boot-screen-p :localgroup-identity
+                                     boot-screen-p :world-terminal-identity
                                      (and reconnect-id
                                           (append (world-host-identity host)
                                                   (list
@@ -1817,7 +1823,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
         (flet ((attempt (function)
                  (handler-case (funcall function)
                    (error (condition) (push condition failures)))))
-          (attempt (lambda () (localgroup-stop application)))
+          (attempt (lambda () (world-terminal-stop application)))
          (attempt (lambda () (tool-registry-close-runtime-state (application-tool-registry application))))
          (attempt (lambda () (application-disconnect-task-presentation application)))
          (attempt (lambda ()
@@ -1888,7 +1894,7 @@ Without BOOT-SCREEN-P the channel opens without the boot screen."
               (and (null thread) (world-host-failure host)))
           (world-server--release-host (application-world-server application) host)
           (when controller
-            (application-input-controller--request-exit controller ':localgroup-kill)))))
+            (application-input-controller--request-exit controller ':world-terminal-kill)))))
   nil)
 
 
@@ -2137,12 +2143,12 @@ the host to restart: their job pools own threads the fork must not see."
       (loop while (some #'world-server--host-busy-p hosts)
             do (sleep *world-server-checkpoint-poll-seconds*))
       (dolist (host hosts)
-        (let ((session (application-localgroup-session (world-host-application host))))
+        (let ((session (application-channel-endpoint (world-host-application host))))
           (when (and session (controller host) (null (world-host-exit-reason host)))
             (setf (world-host-identity host)
                   (list :token      (image-daemon:daemon-runtime-token session)
                         :created-at (image-daemon:daemon-runtime-created-at session)))
-            (localgroup--finish-checkpoint-attachments session reconnect-id)
+            (world-terminal--finish-checkpoint-attachments session reconnect-id)
             (application-input-controller--request-exit (controller host) ':checkpoint))))
       (dolist (host hosts)
         (let ((thread (world-host-thread host)))

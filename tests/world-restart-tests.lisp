@@ -45,7 +45,7 @@
   "Submit TEXT to ENTRY's channel as a structured client and return its events, oldest first, once UNTIL accepts them or a minute passed."
   (let* ((lock       (make-lock "Autolith restart test events"))
          (events     nil)
-         (connection (localgroup-client-connect
+         (connection (world-terminal-client-connect
                       entry :name           "restart test"
                             :approves-p     nil
                             :event-function (lambda (event)
@@ -57,10 +57,10 @@
                (reverse events))))
       (unwind-protect
            (progn
-             (localgroup-client-call connection ':submit :text text)
+             (world-terminal-client-call connection ':submit :text text)
              (task-tests--wait-until (lambda () (funcall until (events))) 60)
              (events))
-        (localgroup-client-close connection)))))
+        (world-terminal-client-close connection)))))
 
 (-> world-restart-tests--record-state (pathname list) list)
 (defun world-restart-tests--record-state (pathname keys)
@@ -187,7 +187,7 @@
     (if (task-tests--wait-until
          (lambda ()
            (setf world   (world-client-entry configuration)
-                 resumed (localgroup--find-record-or-nil configuration channel))
+                 resumed (world-terminal--find-record-or-nil configuration channel))
            (and world resumed
                 (/= (getf (rest (rest world)) :pid) old-pid)
                 (eql (getf (rest (rest resumed)) :pid) (getf (rest (rest world)) :pid))
@@ -202,8 +202,8 @@
 (defun world-restart-tests--logs (configuration)
   "Return the tails of CONFIGURATION's detached process logs, to explain a failed restart."
   (with-output-to-string (output)
-    (dolist (pathname (directory (merge-pathnames "localgroup/logs/*.log"
-                                                  (config :state-root configuration))))
+    (dolist (pathname (directory (merge-pathnames "logs/*.log"
+                                                (world-endpoint-directory configuration))))
       (let ((text (uiop:read-file-string pathname)))
         (format output "~&--- ~A~%~A~%" (file-namestring pathname)
                 (subseq text (max 0 (- (length text) 4000))))))))
@@ -282,7 +282,7 @@ skips the repository check."
                  (let ((world (world-client-entry configuration)))
                    (when world
                      ; mallet:suppress no-ignore-errors -- stopping an endpoint that may already be closed is advisory
-                     (ignore-errors (localgroup-query-record world ':stop))))))
+                     (ignore-errors (world-terminal-query-record world ':stop))))))
       (dolist (process processes)
         (multiple-value-bind (alive-p known-p)
             (attempt (lambda () (platform-process-object-alive-p *platform* process)))
@@ -306,13 +306,13 @@ skips the repository check."
 (-> world-restart-tests--call-with-owned-launch (configuration function) t)
 (defun world-restart-tests--call-with-owned-launch (configuration function)
   "Call FUNCTION with a launch lookup function, retaining its fresh launches until cleanup."
-  (let ((launch     *localgroup-fresh-launch-function*)
+  (let ((launch     *world-startup-launch-function*)
         (release    (symbol-function 'platform-release-process))
         (processes  nil)
         (finished-p nil))
     (unwind-protect
          (multiple-value-prog1
-             (let ((*localgroup-fresh-launch-function*
+             (let ((*world-startup-launch-function*
                      (lambda (&rest arguments)
                        (let ((process (apply launch arguments)))
                          (push process processes)
@@ -340,7 +340,7 @@ skips the repository check."
              (other                              (list ':other))
              (alive-p                            t)
              (events                             nil)
-             (*localgroup-fresh-launch-function* (lambda (&rest arguments)
+             (*world-startup-launch-function* (lambda (&rest arguments)
                                                   (declare (ignore arguments))
                                                   owned)))
         (test-call-with-function-replacements
@@ -370,7 +370,7 @@ skips the repository check."
               configuration
               (lambda (launch-process)
                 (declare (ignore launch-process))
-                (let ((process (funcall *localgroup-fresh-launch-function*)))
+                (let ((process (funcall *world-startup-launch-function*)))
                   (platform-release-process *platform* process)
                   (test-assert (null events) "handoff does not release the retained launch")
                   (platform-release-process *platform* other)
@@ -398,7 +398,7 @@ skips the repository check."
                (body-error     (make-condition 'platform-error :operation ':fixture-body
                                                 :message                  "Injected body failure."))
                (*error-output* (make-string-output-stream))
-               (*localgroup-fresh-launch-function*
+               (*world-startup-launch-function*
                  (lambda (&rest arguments)
                    (declare (ignore arguments))
                    (pop pending))))
@@ -439,8 +439,8 @@ skips the repository check."
                             configuration
                             (lambda (launch-process)
                               (declare (ignore launch-process))
-                              (funcall *localgroup-fresh-launch-function*)
-                              (funcall *localgroup-fresh-launch-function*)
+                              (funcall *world-startup-launch-function*)
+                              (funcall *world-startup-launch-function*)
                               (when body-fails-p
                                 (error body-error))))
                          (error (condition) condition))))
@@ -484,13 +484,30 @@ skips the repository check."
                  (format nil "The resumed core retains native teardown and can schedule timers: ~S" events)))
   nil)
 
+(-> world-restart-tests--call-with-roots (pathname function) t)
+(defun world-restart-tests--call-with-roots (root function)
+  "Call FUNCTION with isolated CLI roots and the test's saved active core."
+  (test-call-with-environment
+   (append
+    (loop for (variable directory) in '(("XDG_CONFIG_HOME" "config/")
+                                        ("XDG_DATA_HOME" "data/")
+                                        ("XDG_STATE_HOME" "state/")
+                                        ("XDG_CACHE_HOME" "cache/"))
+          collect (list variable (namestring (merge-pathnames directory root))))
+    (list (list "AUTOLITH_ACTIVE_CORE" (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE"))
+          (list "AUTOLITH_SOURCE_ROOT" (namestring (asdf:system-source-directory :autolith)))
+          (list "AUTOLITH_SBCL" (lisp-worker-sbcl-command))
+          (list "AUTOLITH_SITE_CONFIG_ROOT" nil)
+          (list "AUTOLITH_RECOVERED" nil)))
+   function))
+
 (-> test-world-server-restart-checkpoint () null)
 (defun test-world-server-restart-checkpoint ()
   "Test a world server that cannot fork restarts from its saved heap under its launcher, twice, and serves its channel again."
   (with-platform-capability (':detached-sessions "a launcher-supervised world server restart")
     (with-test-configuration (unused root)
       (declare (ignore unused))
-      (session-cli-tests--call-with-roots
+      (world-restart-tests--call-with-roots
        root
        (lambda ()
          (let ((configuration (configuration-create :defer-provider-validation-p t)))
@@ -498,7 +515,7 @@ skips the repository check."
             configuration
             (lambda (launch-process)
               (world-restart-tests--start configuration root)
-              (let* ((entry   (first (localgroup-endpoint-records configuration)))
+              (let* ((entry   (first (world-terminal-endpoint-records configuration)))
                      (channel (getf (rest (rest entry)) :session-id))
                      (token   (getf (rest (rest entry)) :token)))
                 (destructuring-bind (world resumed events &optional diagnostics)

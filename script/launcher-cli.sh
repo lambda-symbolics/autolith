@@ -58,7 +58,7 @@ autolith_launcher_parse()
   data_requested=false
   acp_requested=false
   run_job_requested=false
-  localgroup_handoff_requested=false
+  world_startup_requested=false
   remaining_arguments=()
   for argument in "$@"; do
     if [[ $take_value == true ]]; then
@@ -81,8 +81,8 @@ autolith_launcher_parse()
         from_source_requested=true
         remaining_arguments+=("$argument")
         ;;
-      --localgroup-handoff)
-        localgroup_handoff_requested=true
+      --world-startup)
+        world_startup_requested=true
         take_value=true
         remaining_arguments+=("$argument")
         ;;
@@ -254,7 +254,7 @@ autolith_uninstall()
   # selected-generation pointer, and provider caches. Credentials, settings,
   # the mutation journal, and the mutation history stay.
   for entry in crashes crash-pointers recovery-session-pointers \
-               restart-pointers localgroup conversation-leases \
+               restart-pointers world/endpoints conversation-leases \
                current-generation.sexp update-state.sexp provider-models.sexp; do
     candidate=$state_root/$entry
     if [[ -e $candidate || -L $candidate ]]; then

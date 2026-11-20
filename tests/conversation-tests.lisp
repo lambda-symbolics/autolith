@@ -1950,7 +1950,7 @@ process without releasing the lease, exercising kernel cleanup."
       (test-conversation--worker-eval
        configuration
        (format nil
-               "(progn (defparameter *test-lease-owner* (let* ((c ~A) (conversation (conversation-create c :identifier ~S)) (ui (application-terminal-ui-create :client-pane '(:rows 24 :columns 80))) (app (make-instance 'application :configuration c :conversation conversation :ui ui))) (setf (application-input-controller app) (make-instance 'application-input-controller :application app :main-thread (current-thread)) (application-conversation-lease app) (conversation-lease-acquire c ~S)) (conversation-append-user-message conversation ~S) (localgroup-start app :token ~S) app)) (current-process-id))"
+               "(progn (defparameter *test-lease-owner* (let* ((c ~A) (conversation (conversation-create c :identifier ~S)) (ui (application-terminal-ui-create :client-pane '(:rows 24 :columns 80))) (app (make-instance 'application :configuration c :conversation conversation :ui ui))) (setf (application-input-controller app) (make-instance 'application-input-controller :application app :main-thread (current-thread)) (application-conversation-lease app) (conversation-lease-acquire c ~S)) (conversation-append-user-message conversation ~S) (world-terminal-start app :token ~S) app)) (current-process-id))"
                (test-conversation--child-configuration-form configuration)
                identifier identifier "Owned contention diagnostic." "owned-diagnostic-token"))
     (unwind-protect
@@ -1958,7 +1958,7 @@ process without releasing the lease, exercising kernel cleanup."
                   (lambda (form) (test-conversation--owner-request worker form)))
       (unwind-protect
            (test-conversation--owner-request
-            worker "(progn (localgroup-stop *test-lease-owner*) (application-release-conversation-lease *test-lease-owner*) t)")
+            worker "(progn (world-terminal-stop *test-lease-owner*) (application-release-conversation-lease *test-lease-owner*) t)")
         (lisp-worker-stop worker))))
   nil)
 
@@ -1968,7 +1968,7 @@ process without releasing the lease, exercising kernel cleanup."
   (let ((ready   (merge-pathnames "owner-quiesced" (config :state-root configuration)))
         (release (merge-pathnames "owner-resume" (config :state-root configuration))))
     (funcall request
-             (format nil "(progn (defparameter *test-lease-owner-thread* (make-thread (lambda () (application-call-with-localgroup-quiesced *test-lease-owner* (lambda () (with-open-file (s ~S :direction :output :if-exists :supersede) (write :ready :stream s)) (sb-sys:with-deadline (:seconds 20) (loop until (probe-file ~S) do (sleep 0.01)))))))) t)"
+             (format nil "(progn (defparameter *test-lease-owner-thread* (make-thread (lambda () (application-call-with-world-terminal-quiesced *test-lease-owner* (lambda () (with-open-file (s ~S :direction :output :if-exists :supersede) (write :ready :stream s)) (sb-sys:with-deadline (:seconds 20) (loop until (probe-file ~S) do (sleep 0.01)))))))) t)"
                      ready release))
     (unwind-protect
          (progn
@@ -2030,7 +2030,7 @@ process without releasing the lease, exercising kernel cleanup."
                          (when (eq kind ':open-race) (error "owned capture race"))
                          (when (eq kind ':timeout) (sleep 0.6))
                          (funcall open-file platform path :follow-links-p follow-links-p)))
-                 (list 'daemon-call
+                 (list 'world-terminal-call
                        (lambda (port token operation &rest arguments)
                          (declare (ignore port token operation arguments))
                          (incf calls)
@@ -2044,14 +2044,14 @@ process without releasing the lease, exercising kernel cleanup."
                          (if (eq kind ':rejected)
                              '(:error :message "owned rejection")
                              (list :ok :status
-                                   (list :localgroup-status :session-id (if (eq kind ':response-session) "other" identifier)
+                                   (list :world-terminal-status :session-id (if (eq kind ':response-session) "other" identifier)
                                          :pid               (if (eq kind ':response-pid) (1+ pid) pid)))))))
                 (lambda ()
                   (test-assert
                    (eq (if (eq kind ':earlier)
                            (sb-sys:with-deadline (:seconds 0.1)
-                             (localgroup-owner-reachability pathname identifier pid))
-                           (localgroup-owner-reachability pathname identifier pid))
+                             (world-terminal-owner-reachability pathname identifier pid))
+                           (world-terminal-owner-reachability pathname identifier pid))
                        (if (eq kind ':valid) ':reachable ':unknown))
                    (format nil "owner query classifies ~A without guessing absence" kind))))
                (test-assert (and (if (eq kind ':trailing-eof) (zerop calls) (<= calls 1))
@@ -2066,7 +2066,7 @@ process without releasing the lease, exercising kernel cleanup."
         (write-string original stream)))
     (let ((guard (lease-acquire (make-pathname :name "registry" :type "lock" :defaults pathname))))
       (unwind-protect
-           (test-assert (eq ':reachable (localgroup-owner-reachability pathname identifier pid))
+           (test-assert (eq ':reachable (world-terminal-owner-reachability pathname identifier pid))
                         "the exact diagnostic read never waits on a held registry update lock")
         (lease-release guard))))
   nil)
@@ -2113,7 +2113,7 @@ process without releasing the lease, exercising kernel cleanup."
                           (declare (ignore arguments))
                           (incf calls)
                           (error "a potentially self-held inode must not be opened")))
-                  (list 'localgroup-owner-reachability
+                  (list 'world-terminal-owner-reachability
                         (lambda (&rest arguments)
                           (declare (ignore arguments))
                           (incf calls)
@@ -2223,8 +2223,7 @@ process without releasing the lease, exercising kernel cleanup."
   (with-test-fixture (:posix-adapter "POSIX conversation owner diagnostics")
     (with-test-configuration (configuration)
       (let* ((identifier "K8vQ2mp")
-             (record     (merge-pathnames (format nil "localgroup/~A.sexp" identifier)
-                                          (config :state-root configuration))))
+             (record     (world-channel-endpoint-pathname configuration identifier)))
         (test-conversation--call-with-diagnostic-holder
          configuration identifier
          (lambda (pid request)
@@ -2234,7 +2233,7 @@ process without releasing the lease, exercising kernel cleanup."
                       (test-assert (= pid (conversation-in-use-owner-pid condition))
                                    "the OS snapshot names the actual launched holder")
                       (test-assert (and (search (write-to-string pid) text)
-                                        (eq expected (localgroup-owner-reachability record identifier pid))
+                                        (eq expected (world-terminal-owner-reachability record identifier pid))
                                         (if (eq expected ':reachable)
                                             (not (search "kill " text))
                                             (search (format nil "kill ~D" pid) text)))
@@ -2259,7 +2258,7 @@ process without releasing the lease, exercising kernel cleanup."
                                "unsupported, failed and free-after-busy snapshots stay unknown")))))
            (let ((condition nil) (queries 0))
              (test-call-with-function-replacements
-              (list (list 'localgroup-owner-reachability
+              (list (list 'world-terminal-owner-reachability
                           (lambda (&rest arguments)
                             (declare (ignore arguments))
                             (incf queries)
@@ -2274,7 +2273,7 @@ process without releasing the lease, exercising kernel cleanup."
                                     (not (search "kill " text)))
                                "unknown reachability retains the OS PID without absence advice"))))
              (test-call-with-function-replacements
-              (list (list 'localgroup-owner-reachability
+              (list (list 'world-terminal-owner-reachability
                           (lambda (&rest arguments)
                             (declare (ignore arguments))
                             (error "owned reporter failure"))))
@@ -2288,7 +2287,7 @@ process without releasing the lease, exercising kernel cleanup."
           (unwind-protect
                (dolist (wrapper (list configuration (configuration-copy configuration)))
                  (test-call-with-function-replacements
-                  (list (list 'localgroup-owner-reachability
+                  (list (list 'world-terminal-owner-reachability
                               (lambda (&rest arguments)
                                 (declare (ignore arguments))
                                 (error "self-ownership must not query"))))

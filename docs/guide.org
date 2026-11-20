@@ -1919,12 +1919,12 @@ delivery and the durable record repeats nothing. A send is recorded under
 it is full, or one a crash skipped, is delivered later under the same
 identifier, once, and the sender hears which channels still wait.
 
-Conversation leases, Localgroup endpoint records, and recovery state live under
+Conversation leases, channel endpoint records, and recovery state live under
 =${XDG_STATE_HOME:-~/.local/state}/autolith/= rather than =XDG_RUNTIME_DIR=.
-They must survive logout so detached sessions, handoffs, and crash recovery can
-continue across login sessions. Autolith uses authenticated loopback TCP rather
-than filesystem sockets for its inference and Localgroup protocols, and cleans
-stale Localgroup records itself.
+They must survive logout so supervised world servers, startup tickets, and
+crash recovery can continue across login sessions. Autolith uses authenticated
+loopback TCP for inference and channel clients, and removes stale endpoint
+records during discovery.
 The management REPL socket also defaults to the state directory, at
 =management/repl.sock=.
 
@@ -2129,8 +2129,7 @@ when the tool runtime is retired.
 
 The management REPL is an always-enabled endpoint for trusted programs to evaluate
 Common Lisp in the running =AUTOLITH= image. It uses image-daemon's evaluation
-protocol, with =eval-connect= and =eval-call= as a complete Lisp client. It does
-not use the localgroup protocol, Swank, or Slynk.
+protocol, with =eval-connect= and =eval-call= as a complete Lisp client.
 
 Every connection authenticates with a fresh random nonce and HMAC-SHA-256. The
 client never sends the reusable token. Put a nonempty token in a regular file

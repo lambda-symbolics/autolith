@@ -93,21 +93,21 @@
   "Translate neutral transport failures at the ACP boundary without resending commands."
   (declare (ignore command arguments))
   (handler-case (call-next-method)
-                (localgroup-request-interrupted (condition)
+                (world-terminal-request-interrupted (condition)
                  (error 'acp-request-interrupted :message (autolith-error-message condition) :data
                         (agentcomms:json-object "outcome" "interrupted" "executionOutcome"
                                                 "unknown" "requestId"
-                                                (localgroup-request-interrupted-identifier
+                                                (world-terminal-request-interrupted-identifier
                                                  condition)
                                                 "command"
                                                 (string-downcase
                                                  (symbol-name
-                                                  (localgroup-request-interrupted-command
+                                                  (world-terminal-request-interrupted-command
                                                    condition)))
                                                 "reconnectId"
-                                                (localgroup-request-interrupted-reconnect-id
+                                                (world-terminal-request-interrupted-reconnect-id
                                                  condition))))
-                (localgroup-error (condition)
+                (world-terminal-error (condition)
                  (error 'agentcomms:acp-state-error :message (autolith-error-message condition)))
                 (channel-subscription-unavailable (condition)
                  (error 'agentcomms:acp-state-error :message (autolith-error-message condition)))))
@@ -121,8 +121,8 @@
       (unless (channel-subscription-closed-p session)
         (setf connection (channel-subscription-connection session))))
     (when connection
-      (handler-case (localgroup-client-call connection ':cancel)
-        (localgroup-error ()
+      (handler-case (world-terminal-client-call connection ':cancel)
+        (world-terminal-error ()
           nil))))
   nil)
 

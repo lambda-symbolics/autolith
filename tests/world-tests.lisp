@@ -456,14 +456,14 @@
                                  expected)
                           (format nil "a ~(~A~) residing in ~A is ~A" kind residence expected))))
   (with-test-configuration (configuration)
-    (let ((directory (localgroup-registry-directory configuration)))
+    (let ((directory (world-channel-endpoint-directory configuration)))
       (ensure-directories-exist directory)
       (loop for (session-id pid) in (list (list "bserved" (current-process-id))
                                           (list "bgone11" (world-restart-tests--ended-process-id)))
             do (image-daemon:daemon-registry-publish
-                (localgroup-registry-pathname configuration session-id)
-                (list :localgroup-endpoint :version 1 :session-id session-id :pid pid
-                      :address "127.0.0.1" :port 4000 :token "token" :created-at 1)))
+                (world-channel-endpoint-pathname configuration session-id)
+                (image-daemon:daemon-registry-record :identifier session-id :token "token" :port 4000 :created-at 1
+                                     :pid pid)))
       (test-assert (equal (world-channel-served-identifiers configuration) '("bserved"))
                    "a channel counts as served while the process of its endpoint lives")))
   nil)

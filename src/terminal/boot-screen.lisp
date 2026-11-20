@@ -232,7 +232,7 @@ the tip."
 (defun terminal-ui--await-interactive (terminal wait-function timeout)
   "Poll TERMINAL for up to TIMEOUT seconds until it reports interactive.
 
-A detached localgroup terminal becomes interactive after the attaching client
+A detached world-terminal terminal becomes interactive after the attaching client
 reports the terminal size, shortly after the daemon starts listening. Allow time
 for that handshake before concluding the terminal is non-interactive."
   (or (terminal-interactive-p terminal)

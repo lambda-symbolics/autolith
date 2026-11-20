@@ -195,7 +195,7 @@
         (dolist (event (if seed (cons (second seed) state) state))
           (let ((size (application-client-history--frame-size event)))
             (unless (and size (<= size available))
-              (error 'localgroup-error :operation ':client
+              (error 'world-terminal-error :operation ':client
                                       :message    "The channel's current presentation exceeds the attachment budget."))
             (decf available size)))
         (multiple-value-bind (events fields)
@@ -220,7 +220,7 @@ An operation overridden since attachment is declined without executing the pager
             (unless (and presentation current
                          (equal conversation (conversation-identifier current))
                          (typep before-sequence '(integer 1)))
-              (error 'localgroup-error :operation ':transcript-history
+              (error 'world-terminal-error :operation ':transcript-history
                                        :message   "The transcript history cursor does not name this channel's conversation."))
             (with-terminal-ui-locked (presentation)
               (with-recursive-lock-held ((conversation-append-lock current))
@@ -232,6 +232,6 @@ An operation overridden since attachment is declined without executing the pager
                                    (- image-daemon:*daemon-packet-character-limit* 1024)
                                    (- (floor image-daemon:*attachment-queue-character-limit* 2) 1024))))
                     (when (and (getf fields :more-p) (= (getf fields :before-sequence) before))
-                      (error 'localgroup-error :operation ':transcript-history
+                      (error 'world-terminal-error :operation ':transcript-history
                                                :message   "The attachment budget is too small for the next transcript record."))
                     (list* :history-page-p t :builtin-p t :events events fields))))))))))

@@ -173,14 +173,14 @@
 (defun test-fullscreen-client-startup ()
   "Show themed boot progress before opening a channel, then install its restored frame."
   (let* ((terminal (make-instance 'recording-terminal :columns 100 :rows 30 :styled-p t))
-         (panel    (make-instance 'localgroup-tests-panel :rows '("sidebar")))
-         (screen   (localgroup-screen-create :terminal terminal :panel panel)))
+         (panel    (make-instance 'world-terminal-tests-panel :rows '("sidebar")))
+         (screen   (world-terminal-screen-create :terminal terminal :panel panel)))
     (unwind-protect
          (main--call-with-channel-loading
           screen "Opening channel"
           (lambda ()
-            (let ((frame (clinedi:frame-painter-frame (localgroup-screen-painter screen))))
-              (test-assert (and frame (eq (localgroup-screen-painted-layout screen) ':session))
+            (let ((frame (clinedi:frame-painter-frame (world-terminal-screen-painter screen))))
+              (test-assert (and frame (eq (world-terminal-screen-painted-layout screen) ':session))
                            "the first painted frame is full-screen boot, before channel opening")
               (test-assert (some (lambda (row) (search (nth-value 1 (terminal-ui--boot-art))
                                                       (clinedi:ansi-strip row))) frame)
@@ -189,31 +189,31 @@
                            "initial boot uses the terminal theme"))
             (channel-loading-report 4 "Restoring transcript")
             (test-assert (some (lambda (row) (search "Restoring transcript" (clinedi:ansi-strip row)))
-                               (clinedi:frame-painter-frame (localgroup-screen-painter screen)))
+                               (clinedi:frame-painter-frame (world-terminal-screen-painter screen)))
                          "real loading milestones update the boot panel")
             (terminal-set-dimensions terminal 72 :rows 18)
-            (localgroup-screen-resized screen)
-            (test-assert (= 72 (clinedi:frame-snapshot-width (localgroup-screen--loading-frame screen)))
+            (world-terminal-screen-resized screen)
+            (test-assert (= 72 (clinedi:frame-snapshot-width (world-terminal-screen--loading-frame screen)))
                          "the boot panel follows terminal resizes")
-            (localgroup-screen-show-frame
+            (world-terminal-screen-show-frame
              screen (clinedi:make-frame-snapshot
                      '("restored") :height 18 :width (- 72 (screen-panel-width panel 72) 1))
              :cursor-row 1)
-            (test-assert (and (null (localgroup-screen-loading screen))
-                              (null (localgroup-screen-boot-ui screen))
-                              (eq (localgroup-screen-painted-layout screen) ':beside)
+            (test-assert (and (null (world-terminal-screen-loading screen))
+                              (null (world-terminal-screen-boot-ui screen))
+                              (eq (world-terminal-screen-painted-layout screen) ':beside)
                               (search "restored" (aref (clinedi:frame-painter-frame
-                                                        (localgroup-screen-painter screen)) 0)))
+                                                        (world-terminal-screen-painter screen)) 0)))
                          "one complete channel frame replaces boot with restored content and sidebar"))
           :start-p t :boot-p t)
-      (localgroup-screen-close screen)))
+      (world-terminal-screen-close screen)))
   (dolist (styled-p '(nil t))
     (test-call-with-function-replacements
      (list (list 'terminal-environment-styling-p (constantly styled-p)))
      (lambda ()
        (test-assert (eql styled-p
                          (terminal-styled-p
-                          (localgroup-screen-terminal (localgroup-client-screen-create))))
+                          (world-terminal-screen-terminal (world-terminal-client-screen-create))))
                     "client-owned rendering follows terminal color policy"))))
   nil)
 

@@ -35,25 +35,25 @@
                      10)
                     found)))
          (setf connection
-               (localgroup-client-connect (localgroup--find-record configuration channel)
+               (world-terminal-client-connect (world-terminal--find-record configuration channel)
                                           :name           "test"
                                           :event-function (lambda (event)
                                                             (with-lock-held (lock)
                                                               (push event events)))))
          (unwind-protect
-              (let ((greeting (localgroup-client-connection-attached connection)))
+              (let ((greeting (world-terminal-client-connection-attached connection)))
                 (test-assert (and (non-empty-string-p (getf (rest greeting) :client-id))
                                   (equal (getf (rest greeting) :session-id) channel)
-                                  (eq (first (getf (rest greeting) :state)) ':localgroup-status))
+                                  (eq (first (getf (rest greeting) :state)) ':world-terminal-status))
                              "the greeting names the client, its channel and the channel's state")
-                (test-assert (eq (first (getf (localgroup-client-call connection ':state) :state))
-                                 ':localgroup-status)
+                (test-assert (eq (first (getf (world-terminal-client-call connection ':state) :state))
+                                 ':world-terminal-status)
                              "a state command answers with the channel's state")
                 (flet ((submission ()
                          "Identify one prompt from this attached client."
                          (list :id (make-identifier) :client (getf (rest greeting) :client-id) :source ':prompt)))
                   (let ((submission (submission)))
-                    (localgroup-client-call connection ':submit :text "(list 34 47)" :submission submission)
+                    (world-terminal-client-call connection ':submit :text "(list 34 47)" :submission submission)
                     (test-assert
                      (and (await ':present (lambda (event) (search "(34 47)" (prin1-to-string event))))
                           (await ':work-finished
@@ -67,7 +67,7 @@
                          (items        (conversation-input-items conversation)))
                     (dolist (text '("/exit" "//escaped"))
                       (let ((submission (submission)))
-                        (localgroup-client-call connection ':submit :text text :submission submission)
+                        (world-terminal-client-call connection ':submit :text text :submission submission)
                         (test-assert
                          (await ':work-finished
                                 (lambda (event)
@@ -76,14 +76,14 @@
                          "leading-slash submissions finish with a correlated failure")))
                     (test-assert
                      (and (equal items (conversation-input-items conversation))
-                          (getf (localgroup-client-call connection ':state) :state))
+                          (getf (world-terminal-client-call connection ':state) :state))
                      "leading-slash text neither becomes model input nor closes the hosted channel")))
-                (localgroup-client-call connection ':mode :value ':ask)
+                (world-terminal-client-call connection ':mode :value ':ask)
                 (test-assert (and (eq (application-permission-mode application) ':ask)
                                   (await ':state))
                              "a mode command sets the channel's permission mode and publishes its state")
-                (test-assert (handler-case (progn (localgroup-client-call connection ':mode :value ':root) nil)
-                               (localgroup-error (condition)
+                (test-assert (handler-case (progn (world-terminal-client-call connection ':mode :value ':root) nil)
+                               (world-terminal-error (condition)
                                  (search "permission mode" (autolith-error-message condition))))
                              "an unknown mode is refused with the modes there are")
                 (conversation-append-user-message (application-conversation application) "words for the client")
@@ -110,12 +110,12 @@
                                                      (getf (rest approval) :options))
                                              '("once" "deny")))
                                  "an approval reaches the client with its choices")
-                    (test-assert (null (getf (localgroup-client-call connection ':answer
+                    (test-assert (null (getf (world-terminal-client-call connection ':answer
                                                                      :approval (getf (rest approval) :id)
                                                                      :value    "always")
                                              :accepted-p))
                                  "a choice the approval does not offer is not taken")
-                    (test-assert (getf (localgroup-client-call connection ':answer
+                    (test-assert (getf (world-terminal-client-call connection ':answer
                                                                :approval (getf (rest approval) :id)
                                                                :value    "once")
                                        :accepted-p)
@@ -126,7 +126,7 @@
                                              (lambda (event)
                                                (equal (getf (rest event) :value) "once"))))
                                  "the approval returns the client's choice and everyone hears it settled"))))
-           (localgroup-client-close connection))
+           (world-terminal-client-close connection))
          (test-assert (task-tests--wait-until
                        (lambda () (not (application-clients-attached-p application)))
                        10)
@@ -144,7 +144,7 @@
                           :session-id))
             (host    (world-server--find-host server channel)))
        (funcall function (world-host-application host)
-                (localgroup--find-record configuration channel)))))
+                (world-terminal--find-record configuration channel)))))
   nil)
 
 (-> test-client-protocol-version-tolerance () null)
@@ -154,7 +154,7 @@
    (lambda (application record)
      (declare (ignore application))
      (multiple-value-bind (socket stream)
-         (daemon-connect (localgroup--record-port (rest record)))
+         (daemon-connect (world-terminal--record-port (rest record)))
        (unwind-protect
             (flet ((send (payload)
                      "Write PAYLOAD as one whole frame, readable or not."
@@ -163,23 +163,23 @@
 
                    (reply (identifier)
                      "Read packets until the reply to command IDENTIFIER and return it."
-                     (loop for packet = (test-localgroup--read-packet stream)
+                     (loop for packet = (test-world-terminal--read-packet stream)
                            when (and (eq (first packet) ':reply)
                                      (eql (getf (rest packet) :id) identifier))
                              return packet)))
               (daemon-write-packet
-               stream (list :localgroup-request
+               stream (list :world-terminal-request
                             :version   *daemon-protocol-version*
-                            :token     (localgroup--record-token (rest record))
+                            :token     (world-terminal--record-token (rest record))
                             :operation ':client
                             :arguments (list :name "future" :approves-p nil :speaks "v9")))
-              (test-assert (eq (first (test-localgroup--read-packet stream)) ':attached)
+              (test-assert (eq (first (test-world-terminal--read-packet stream)) ':attached)
                            "an attach request with a field this version does not know is accepted")
               (send "(:state :id 1 no-such-package:thing)")
               (send "(\"not a message\")")
               (send "(:state :id)")
               (send "(:state :id 7 :future-field (1 2 3))")
-              (test-assert (eq (first (getf (rest (reply 7)) :state)) ':localgroup-status)
+              (test-assert (eq (first (getf (rest (reply 7)) :state)) ':world-terminal-status)
                            "after packets it cannot read, the server answers a command with an unknown field")
               (send "(:from-the-future :id 8 :value 1)")
               (test-assert (stringp (getf (rest (reply 8)) :error))
@@ -194,13 +194,13 @@
                                     (image-daemon:daemon-packet-string '("stray"))
                                     (image-daemon:daemon-packet-string
                                      '(:from-the-future :value 1 :sequence 2))))
-      (let ((connection (make-instance 'localgroup-client-connection
+      (let ((connection (make-instance 'world-terminal-client-connection
                                        :entry    nil
                                        :socket   (make-instance 'sb-bsd-sockets:inet-socket
                                                                 :type ':stream :protocol ':tcp)
                                        :stream   input
                                        :attached '(:attached))))
-        (localgroup-client--read connection (lambda (event) (push event events)))))
+        (world-terminal-client--read connection (lambda (event) (push event events)))))
     (test-assert (equal (reverse events)
                         '((:text :delta "a" :sequence 1)
                           (:from-the-future :value 1 :sequence 2)
@@ -214,7 +214,7 @@
   (client-protocol-tests--call
    (lambda (application entry)
      (let ((start    #'image-daemon:attachment-start)
-           (injected (make-condition 'localgroup-error :operation ':client
+           (injected (make-condition 'world-terminal-error :operation ':client
                                       :message                    "Injected writer-start refusal.")))
        (test-call-with-function-replacements
         (list (list 'image-daemon:attachment-start
@@ -225,10 +225,10 @@
         (lambda ()
           (test-assert
            (handler-case
-               (let ((connection (localgroup-client-connect entry)))
-                 (localgroup-client-close connection)
+               (let ((connection (world-terminal-client-connect entry)))
+                 (world-terminal-client-close connection)
                  nil)
-             (localgroup-error (condition)
+             (world-terminal-error (condition)
                (equal (autolith-error-message condition)
                       (autolith-error-message injected))))
            "a registered client's startup refusal reaches the peer before shutdown")
@@ -293,7 +293,7 @@
                    (settled    (sb-thread:make-semaphore))
                    (waiting    (sb-thread:make-semaphore))
                    (closed     (sb-thread:make-semaphore))
-                   (connection (localgroup-client-connect
+                   (connection (world-terminal-client-connect
                                 entry :name "failing"
                                 :event-function
                                 (lambda (event)
@@ -303,7 +303,7 @@
                                     (:closed
                                      (sb-thread:signal-semaphore closed))))))
                    (client     (first (application-clients application)))
-                   (healthy    (localgroup-client-connect entry :name "healthy" :approves-p nil))
+                   (healthy    (world-terminal-client-connect entry :name "healthy" :approves-p nil))
                    (wait       #'condition-wait)
                    (hub        (application-client-hub application))
                    (choice     :unanswered)
@@ -350,11 +350,11 @@
                                    "the failed approver is unregistered before approval returns")
                       (test-assert (open-stream-p output) "the attachment does not close the borrowed stream")
                       (channel-client-close client)
-                      (test-assert (getf (localgroup-client-call healthy ':state) :state)
+                      (test-assert (getf (world-terminal-client-call healthy ':state) :state)
                                    "a healthy observer still serves requests during teardown")))
                 (sb-thread:signal-semaphore release)
-                (localgroup-client-close connection)
-                (localgroup-client-close healthy)
+                (world-terminal-client-close connection)
+                (world-terminal-client-close healthy)
                 (when asker
                   (join-thread asker))))))))))
   nil)
@@ -369,14 +369,14 @@
             (notice     nil)
             (failure    nil)
             (caller     nil)
-            (connection (localgroup-client-connect
+            (connection (world-terminal-client-connect
                          entry :approves-p nil
                          :event-function
                          (lambda (event)
                            (when (eq (first event) ':omitted)
                              (setf notice event)
                              (sb-thread:signal-semaphore omitted)))))
-            (command    #'localgroup--client-command)
+            (command    #'world-terminal--client-command)
             (frame      #'image-daemon:daemon-packet-string))
        (unwind-protect
             (test-call-with-function-replacements
@@ -385,7 +385,7 @@
                     (lambda (packet)
                       (let ((image-daemon:*daemon-packet-character-limit* 8192))
                         (funcall frame packet))))
-              (list 'localgroup--client-command
+              (list 'world-terminal--client-command
                     (lambda (session operation arguments &key attachment)
                       (if (eq operation ':oversized)
                           (list :data (make-string 32768 :initial-element #\x))
@@ -395,24 +395,24 @@
                      (make-thread
                       (lambda ()
                         (unwind-protect
-                             (handler-case (localgroup-client-call connection ':oversized)
-                               (localgroup-error (condition)
+                             (handler-case (world-terminal-client-call connection ':oversized)
+                               (world-terminal-error (condition)
                                  (setf failure condition)))
                           (sb-thread:signal-semaphore completed)))
                       :name "oversized reply caller"))
                (test-assert (sb-thread:wait-on-semaphore completed :timeout 10)
                             "an oversized reply settles its correlated request")
                (test-assert (and failure (< (length (autolith-error-message failure)) 1000))
-                            "the caller receives a bounded localgroup error")
+                            "the caller receives a bounded world-terminal error")
                (test-assert
                 (handler-case
                     (progn
-                      (localgroup-client-call connection ':oversized :data (make-string 32768))
+                      (world-terminal-client-call connection ':oversized :data (make-string 32768))
                       nil)
                   (image-daemon:daemon-error ()
                     t))
                 "an oversized request fails before writing to the transport")
-               (test-assert (getf (localgroup-client-call connection ':state) :state)
+               (test-assert (getf (world-terminal-client-call connection ':state) :state)
                             "the next request succeeds on the same connection")
                (application-clients-publish
                 application (list :text :delta (make-string 32768 :initial-element #\x)))
@@ -420,9 +420,9 @@
                             "an oversized unsolicited event reports omission")
                (test-assert (eq (getf (rest notice) :kind) ':text)
                             "the omission names the event kind")
-               (test-assert (zerop (hash-table-count (localgroup-client-connection-replies connection)))
+               (test-assert (zerop (hash-table-count (world-terminal-client-connection-replies connection)))
                             "settled calls leave no retained replies")))
-         (localgroup-client-close connection)
+         (world-terminal-client-close connection)
          (when caller
            (join-thread caller))))))
   nil)
@@ -436,10 +436,10 @@
      (let* ((received   (sb-thread:make-semaphore))
             (release    (sb-thread:make-semaphore))
             (completed  (sb-thread:make-semaphore))
-            (connection (localgroup-client-connect entry :approves-p nil))
+            (connection (world-terminal-client-connect entry :approves-p nil))
             (broken     (make-string-output-stream))
-            (command    #'localgroup--client-command)
-            (stream     #'localgroup-client-connection-stream)
+            (command    #'world-terminal--client-command)
+            (stream     #'world-terminal-client-connection-stream)
             (writer     (current-thread))
             (failure    nil)
             (caller     nil))
@@ -447,7 +447,7 @@
        (unwind-protect
             (test-call-with-function-replacements
              (list
-              (list 'localgroup--client-command
+              (list 'world-terminal--client-command
                     (lambda (session operation arguments &key attachment)
                       (if (and (eq operation ':operation)
                                (equal (getf arguments :method) "blocked"))
@@ -456,7 +456,7 @@
                             (sb-thread:wait-on-semaphore release :timeout 10)
                             nil)
                           (funcall command session operation arguments :attachment attachment))))
-              (list 'localgroup-client-connection-stream
+              (list 'world-terminal-client-connection-stream
                     (lambda (candidate)
                       (if (and (eq candidate connection) (eq (current-thread) writer))
                           broken
@@ -467,27 +467,27 @@
                       (lambda ()
                         (unwind-protect
                              (handler-case
-                                 (localgroup-client-call connection ':operation :method "blocked")
-                               (localgroup-error (condition)
+                                 (world-terminal-client-call connection ':operation :method "blocked")
+                               (world-terminal-error (condition)
                                  (setf failure condition)))
                           (sb-thread:signal-semaphore completed)))
                       :name "pending client call"))
                (test-assert (sb-thread:wait-on-semaphore received :timeout 10)
                             "one call remains pending while another reaches a failed write")
-               (test-assert (handler-case (progn (localgroup-client-call connection ':state) nil)
-                              (localgroup-request-interrupted (condition)
-                                (and (eq (localgroup-request-interrupted-command condition) ':state)
-                                     (plusp (localgroup-request-interrupted-identifier condition)))))
+               (test-assert (handler-case (progn (world-terminal-client-call connection ':state) nil)
+                              (world-terminal-request-interrupted (condition)
+                                (and (eq (world-terminal-request-interrupted-command condition) ':state)
+                                     (plusp (world-terminal-request-interrupted-identifier condition)))))
                             "a failed write reports the interrupted request with an unknown execution outcome")
                (test-assert (sb-thread:wait-on-semaphore completed :timeout 10)
                             "transport failure wakes every pending call")
-               (test-assert (and (typep failure 'localgroup-request-interrupted)
-                                 (eq (localgroup-request-interrupted-command failure) ':operation)
-                                 (localgroup-client-connection-closed-p connection)
-                                 (zerop (hash-table-count (localgroup-client-connection-replies connection))))
+               (test-assert (and (typep failure 'world-terminal-request-interrupted)
+                                 (eq (world-terminal-request-interrupted-command failure) ':operation)
+                                 (world-terminal-client-connection-closed-p connection)
+                                 (zerop (hash-table-count (world-terminal-client-connection-replies connection))))
                             "failed calls report interruption and release reply entries on the closed connection")))
          (sb-thread:signal-semaphore release)
-         (localgroup-client-close connection)
+         (world-terminal-client-close connection)
          (when caller
            (join-thread caller))))))
   nil)
@@ -502,7 +502,7 @@
                                :session-id))
             (application (world-host-application (world-server--find-host server channel)))
             (hub         (application-client-hub application))
-            (entry       (localgroup--find-record configuration channel))
+            (entry       (world-terminal--find-record configuration channel))
             (events      nil)
             (connection  nil))
         (application-clients-publish application '(:present :text "retained"))
@@ -518,18 +518,18 @@
           (unwind-protect
                (progn
                  (setf connection
-                       (localgroup-client-connect entry :after-sequence (1- cursor)
+                       (world-terminal-client-connect entry :after-sequence (1- cursor)
                                                   :event-function       (lambda (event) (push event events))))
-                 (localgroup-client-call connection ':state)
-                 (test-assert (equal entry (localgroup-client-connection-entry connection))
+                 (world-terminal-client-call connection ':state)
+                 (test-assert (equal entry (world-terminal-client-connection-entry connection))
                               "the authenticated endpoint survives registry changes")
-                 (let* ((greeting (rest (localgroup-client-connection-attached connection)))
+                 (let* ((greeting (rest (world-terminal-client-connection-attached connection)))
                         (boundary (getf greeting :sequence)))
                    (test-assert (and (integerp boundary) (< (second cursors) boundary)
                                      (integerp (getf greeting :record-sequence)))
                                 "the greeting covers the retained events and the following marker")
                    (application-clients-publish application '(:present :text "live"))
-                   (localgroup-client-call connection ':state)
+                   (world-terminal-client-call connection ':state)
                    (let* ((present   (remove-if-not (lambda (event) (eq (first event) ':present))
                                                     (reverse events)))
                           (sequences (mapcar (lambda (event) (getf (rest event) :sequence)) present)))
@@ -540,19 +540,19 @@
                                        (equal (subseq sequences 0 2) cursors)
                                        (integerp boundary) (< boundary (third sequences)))
                                   "retained and live cursors straddle the greeting watermark")))
-                (localgroup-client-close connection)
+                (world-terminal-client-close connection)
                 (setf connection nil)
                 (let ((*channel-client-journal-limit* 2))
                   (dotimes (index 3)
                     (application-clients-publish application (list :present :text (princ-to-string index))))
                   (test-assert (handler-case
-                                   (progn (setf connection (localgroup-client-connect entry :after-sequence cursor)) nil)
-                                 (localgroup-error (condition)
+                                   (progn (setf connection (world-terminal-client-connect entry :after-sequence cursor)) nil)
+                                 (world-terminal-error (condition)
                                    (search "cursor" (autolith-error-message condition))))
                                "an expired cursor fails explicitly instead of skipping missing events")
                   (test-assert (handler-case
-                                   (progn (setf connection (localgroup-client-connect entry :after-sequence 1000000)) nil)
-                                 (localgroup-error (condition)
+                                   (progn (setf connection (world-terminal-client-connect entry :after-sequence 1000000)) nil)
+                                 (world-terminal-error (condition)
                                    (search "cursor" (autolith-error-message condition))))
                                "a cursor ahead of the channel is refused")
                   (test-assert (= 2 (with-lock-held ((client-hub-lock hub))
@@ -565,15 +565,15 @@
                          (application-clients-add application (make-instance 'channel-client)
                                                   :after-sequence cursor)
                          nil)
-                     (localgroup-error () t))
+                     (world-terminal-error () t))
                    "malformed event cursors are refused before subscription"))
                 (with-lock-held ((client-hub-lock hub)) (setf (client-hub-admitting-p hub) nil))
                 (test-assert (handler-case
-                                 (progn (setf connection (localgroup-client-connect entry)) nil)
-                               (localgroup-error (condition) (localgroup-error-retry-p condition)))
+                                 (progn (setf connection (world-terminal-client-connect entry)) nil)
+                               (world-terminal-error (condition) (world-terminal-error-retry-p condition)))
                              "planned restart admission refusal is retryable"))
            (with-lock-held ((client-hub-lock hub)) (setf (client-hub-admitting-p hub) t))
-           (when connection (localgroup-client-close connection)))))))
+           (when connection (world-terminal-client-close connection)))))))
   nil)
 
 (-> test-client-approval-terminal-arbitration () null)
@@ -630,7 +630,7 @@
                                :session-id))
             (host        (world-server--find-host server channel))
             (application (world-host-application host))
-            (original    (make-condition 'localgroup-error :message "Original client failure" :operation ':client)))
+            (original    (make-condition 'world-terminal-error :message "Original client failure" :operation ':client)))
        (test-assert (eq (world-host-thread host)
                         (application-clients-call-as-work application #'current-thread))
                     "only the channel thread executes client work")
@@ -667,7 +667,7 @@
                (waiter    nil)
                (failure   nil)
                (ran-p     nil))
-           (application-localgroup-pause application)
+           (application-world-terminal-pause application)
            (unwind-protect
                 (progn
                   (setf waiter
@@ -682,7 +682,7 @@
                                          (sb-thread:signal-semaphore entered)
                                          (sb-thread:wait-on-semaphore release)
                                          (setf ran-p t)))
-                                    (localgroup-error (condition)
+                                    (world-terminal-error (condition)
                                       (setf failure condition)))
                                (sb-thread:signal-semaphore completed))))
                          :name "client work shutdown waiter"))
@@ -697,7 +697,7 @@
                    "the paused channel retains the inline job until dispatch")
                   (ecase phase
                     (:running
-                     (application-localgroup-resume application)
+                     (application-world-terminal-resume application)
                      (test-assert (sb-thread:wait-on-semaphore entered :timeout 3)
                                   "the channel enters the operation before its pool closes")
                      (job-pool-close (job-pool work))

@@ -664,7 +664,7 @@
            (runtime                              (task-completion--runtime parent))
            (controller                           (application-input-controller-create application :start-reader-p nil :load-pending-p nil)))
       (declare (ignore registry))
-      (setf (application-localgroup-session application) (make-instance 'localgroup-session :application application))
+      (setf (application-channel-endpoint application) (make-instance 'channel-endpoint :application application))
       (unwind-protect
            (progn
              (application-mission-start application (mission-test--specification))
@@ -681,7 +681,7 @@
                 (application-input-controller-failure controller) nil
                 (application-input-controller-follow-up-edit-index controller) nil
                 (application-input-controller-queued-work-paused-p controller) nil)
-        (application-localgroup-resume application)
+        (application-world-terminal-resume application)
         (application-input-controller-stop controller)
         (setf (application-input-controller application) nil)
         (task-orchestrator-close runtime)
@@ -773,7 +773,7 @@
          (labels ((close-boundary (closed-p)
                     (case boundary
                       (session-pause
-                       (if closed-p (application-localgroup-pause application) (application-localgroup-resume application)))
+                       (if closed-p (application-world-terminal-pause application) (application-world-terminal-resume application)))
                       (owner
                        (setf (getf ticket :conversation) (if closed-p "foreign-conversation" owner)))
                       (otherwise

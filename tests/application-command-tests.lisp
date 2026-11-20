@@ -1289,7 +1289,7 @@
                   (application-authentication-test-provider-input-file-descriptor provider))
                  (string= paste-input "secret") (string= line-input "line-secret"))
                 "hosted auth accepts pasted, edited, and completed hidden lines")
-               (let* ((transcript (test-localgroup--presented-text application))
+               (let* ((transcript (test-world-terminal--presented-text application))
                       (positions  (mapcar (lambda (text) (search text transcript))
                                           '("authenticating provider grok"
                                             "Open the provider login page now."

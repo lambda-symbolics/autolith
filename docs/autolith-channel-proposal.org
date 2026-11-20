@@ -269,7 +269,7 @@ Client
 - The server's image runs with a 2 GB heap, since it hosts every channel.
   (Decided 2026-11-06.)
 - Extend the existing client-server architecture from 1:1 to N:1.
-- Reuse the existing localgroup server lifecycle machinery for shared-world commands.
+- Reuse image-daemon's supervision and ticket primitives for world-server startup.
 - The first client starts the server if needed; later clients connect to the same world.
 - Each client has an independent interface to shared channels; several clients may
   inspect and interact with the same channel.

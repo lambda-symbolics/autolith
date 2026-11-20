@@ -2,8 +2,8 @@
 
 ;;;; -- Initial Terminal Ownership --
 
-(-> test-localgroup-startup-reader () null)
-(defun test-localgroup-startup-reader ()
+(-> test-world-startup-reader () null)
+(defun test-world-startup-reader ()
   "Keep boot input on the startup thread until the responsive reader is started."
   (with-test-configuration (configuration)
     (let* ((terminal    (make-instance 'queued-recording-terminal :columns 80 :rows 24))
@@ -19,7 +19,7 @@
            (progn
              (configuration-ensure-directories configuration)
              (terminal-ui-start ui)
-             (setf session (localgroup-start application))
+             (setf session (world-terminal-start application))
              (test-assert (not (application-input-controller-reader-live-p controller))
                           "publishing the endpoint does not start the boot thread's reader")
              (test-assert (not (application-input-controller-reader-paused-p controller))
@@ -55,7 +55,7 @@
               "modal work joins the started reader promptly")
              (test-assert (application-input-controller-reader-live-p controller)
                           "modal work resumes the ready reader"))
-        (when session (localgroup-stop application))
+        (when session (world-terminal-stop application))
         (application-input-controller-stop controller)
         (terminal-ui-stop ui))))
   nil)

@@ -357,7 +357,7 @@ restore_terminal
 # it for the conversation without a terminal to show. ACP owns standard I/O,
 # and headless jobs publish their own terminal result before returning a status.
 if [[ "$data_requested" == true || "$acp_requested" == true ||
-      "$run_job_requested" == true || "$localgroup_handoff_requested" == true ]]; then
+      "$run_job_requested" == true || "$world_startup_requested" == true ]]; then
   exit "$status"
 fi
 

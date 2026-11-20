@@ -397,8 +397,8 @@ only a direct terminal includes the command in this prepared notice."
             (case reason
               (:turn-cancellation
                (application-input-controller--forced-exit-text))
-              (:localgroup-kill
-               "A localgroup kill request is stopping Autolith.")
+              (:world-terminal-kill
+               "A world-terminal kill request is stopping Autolith.")
               (otherwise
                "Ctrl-C pressed during shutdown; forcing Autolith to exit."))
             open-command)))
@@ -1489,7 +1489,7 @@ attachment lock; no persistence or presentation runs in that lock order."
            (application-input-controller-follow-up-edit-work controller))
        nil)
       (t
-       (setf (application-input-controller-exit-reason controller) ':localgroup-kill
+       (setf (application-input-controller-exit-reason controller) ':world-terminal-kill
              (application-input-controller-stopping-p controller) t)
        (sb-thread:condition-broadcast (application-input-controller-condition-variable controller))
        t))))
@@ -2086,7 +2086,7 @@ may execute immediately; other Lisp waits for the idle boundary."
     boolean)
 (defun application-input-controller--prompt (controller input &key (prefer-steering-p t))
   "Submit terminal INPUT through the shared input controller."
-  (application-localgroup-resume (application-input-controller-application controller))
+  (application-world-terminal-resume (application-input-controller-application controller))
   (nth-value 0 (application-input-controller-submit-primary-prompt
                 controller input :prefer-steering-p prefer-steering-p)))
 
@@ -2154,7 +2154,7 @@ may execute immediately; other Lisp waits for the idle boundary."
         ((input-async-lisp-p text)
          (if (application-input-controller--submission-storage-ready-p controller input)
              (progn
-               (application-localgroup-resume application)
+               (application-world-terminal-resume application)
                (application-run-async-lisp-input application text))
              ':failed))
         (message
@@ -2162,7 +2162,7 @@ may execute immediately; other Lisp waits for the idle boundary."
         ((not (application-input-controller--submission-storage-ready-p controller input))
          ':failed)
         ((input-lisp-p text)
-         (application-localgroup-resume application)
+         (application-world-terminal-resume application)
          (if (application-input-controller-busy-p controller)
              (ecase (application-input-controller--lisp-active-turn-action controller text)
                (:cancel
@@ -2200,7 +2200,7 @@ may execute immediately; other Lisp waits for the idle boundary."
        (application--reject-slash-input application))
       ((input-async-lisp-p text)
        (when (application-input-controller--submission-storage-ready-p controller input)
-         (application-localgroup-resume application)
+         (application-world-terminal-resume application)
          (application-run-async-lisp-input application text)))
       (message
        (application-input-controller--prompt controller message :prefer-steering-p nil))
@@ -3028,7 +3028,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
     (when (and (not (application-input-controller-active-p controller))
                (not (application-input-controller-stopping-p controller))
                (not (application-input-controller-queued-work-paused-p controller))
-               (not (application-localgroup-paused-p application))
+               (not (application-world-terminal-paused-p application))
                (not (application-world-held-p application))
                (not (eql (application-input-controller-follow-up-edit-index controller)
                          0))
@@ -3067,7 +3067,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
     (and (not (application-input-controller-active-p controller))
          (not (application-input-controller-stopping-p controller))
          (not (application-input-controller-queued-work-paused-p controller))
-         (not (application-localgroup-paused-p
+         (not (application-world-terminal-paused-p
                (application-input-controller-application controller)))
          (not (application-world-held-p
                (application-input-controller-application controller)))
@@ -3083,7 +3083,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
   (with-lock-held ((application-input-controller-lock controller))
     (and (not (application-input-controller-stopping-p controller))
          (not (application-input-controller-queued-work-paused-p controller))
-         (not (application-localgroup-paused-p
+         (not (application-world-terminal-paused-p
                (application-input-controller-application controller)))
          (not (eql (application-input-controller-follow-up-edit-index controller) 0))
          (or (not (deque-empty-p
@@ -3184,7 +3184,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                   (application-input-controller-stopping-p controller))
           (return))
         (cond
-          ((and (not (application-localgroup-paused-p application))
+          ((and (not (application-world-terminal-paused-p application))
                 (not
                  (deque-empty-p
                   (application-input-controller-initial-work-items controller))))
@@ -3193,7 +3193,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                   (application-input-controller-initial-work-items controller))
                  (application-input-controller-active-p controller) t)
            (return))
-          ((and (not (application-localgroup-paused-p application))
+          ((and (not (application-world-terminal-paused-p application))
                 (not
                  (application-input-controller-queued-work-paused-p controller))
                 (not

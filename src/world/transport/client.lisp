@@ -1,44 +1,44 @@
 (in-package #:autolith)
 
-;;;; -- Localgroup Discovery Client --
+;;;; -- World-Terminal Discovery Client --
 
-(defparameter *localgroup-client-cancelled-p* nil
+(defparameter *world-terminal-client-cancelled-p* nil
   "The scoped interactive switch cancellation predicate, or NIL for bounded clients.")
 
-(define-condition localgroup-client-cancelled (localgroup-error)
+(define-condition world-terminal-client-cancelled (world-terminal-error)
   ()
   (:documentation "The person cancelled an interactive channel switch."))
 
-(-> localgroup-client-check-cancellation () null)
-(defun localgroup-client-check-cancellation ()
+(-> world-terminal-client-check-cancellation () null)
+(defun world-terminal-client-check-cancellation ()
   "Stop a cancelled interactive switch before another endpoint operation."
-  (when (and *localgroup-client-cancelled-p* (funcall *localgroup-client-cancelled-p*))
-    (error 'localgroup-client-cancelled :operation ':switch :message "Channel switch cancelled."))
+  (when (and *world-terminal-client-cancelled-p* (funcall *world-terminal-client-cancelled-p*))
+    (error 'world-terminal-client-cancelled :operation ':switch :message "Channel switch cancelled."))
   nil)
 
-(-> localgroup--record-session-id (list) string)
-(defun localgroup--record-session-id (record)
+(-> world-terminal--record-session-id (list) string)
+(defun world-terminal--record-session-id (record)
   "Return RECORD's session identifier."
   (getf (rest record) :session-id))
 
-(-> localgroup--record-port (list) integer)
-(defun localgroup--record-port (record)
+(-> world-terminal--record-port (list) integer)
+(defun world-terminal--record-port (record)
   "Return RECORD's loopback port."
   (getf (rest record) :port))
 
-(-> localgroup--record-token (list) string)
-(defun localgroup--record-token (record)
+(-> world-terminal--record-token (list) string)
+(defun world-terminal--record-token (record)
   "Return RECORD's private capability token."
   (getf (rest record) :token))
 
-(-> localgroup--remove-stale-record (pathname list) null)
-(defun localgroup--remove-stale-record (pathname expected-record)
+(-> world-terminal--remove-stale-record (pathname list) null)
+(defun world-terminal--remove-stale-record (pathname expected-record)
   "Delete PATHNAME only when it still contains EXPECTED-RECORD."
   (image-daemon:daemon-registry-delete-matching pathname expected-record)
   nil)
 
-(-> localgroup--record-stale-p (list condition) boolean)
-(defun localgroup--record-stale-p (record condition)
+(-> world-terminal--record-stale-p (list condition) boolean)
+(defun world-terminal--record-stale-p (record condition)
   "Return true when CONDITION, a failed request to RECORD's endpoint, shows RECORD is stale.
 
 The record is stale when its process is dead or nothing listens on its port.
@@ -51,52 +51,52 @@ A slow answer means the process is alive, so its record stays."
              (not (typep (image-daemon:daemon-error-cause condition)
                          'sb-sys:deadline-timeout))))))
 
-(-> localgroup--query-with-progress (list keyword list) list)
-(defun localgroup--query-with-progress (record operation arguments)
+(-> world-terminal--query-with-progress (list keyword list) list)
+(defun world-terminal--query-with-progress (record operation arguments)
   "Request OPERATION with optional loading notifications before its final response."
   (multiple-value-bind (socket stream)
-      (daemon-connect (localgroup--record-port record))
+      (daemon-connect (world-terminal--record-port record))
     (declare (ignore socket))
     (unwind-protect
          (sb-sys:with-deadline (:seconds image-daemon:*daemon-connect-timeout-seconds*)
            (daemon-write-packet
-            stream (list :localgroup-request :version image-daemon:*daemon-protocol-version*
-                         :token              (localgroup--record-token record)
+            stream (list :world-terminal-request :version image-daemon:*daemon-protocol-version*
+                         :token              (world-terminal--record-token record)
                          :operation operation :arguments arguments))
            (loop for packet = (image-daemon:daemon-read-response stream operation)
                  until (not (eq (first packet) ':progress))
                  do (let ((step        (getf (rest packet) :step))
                           (description (getf (rest packet) :description)))
                       (unless (and (typep step '(integer 1 6)) (stringp description))
-                        (error 'localgroup-error :message  "Invalid loading notification."
+                        (error 'world-terminal-error :message  "Invalid loading notification."
                                                 :operation operation))
                       (channel-loading-report step description))
                  finally (return packet)))
       ; mallet:suppress no-ignore-errors -- closing the finished connection must not mask its response
       (ignore-errors (close stream)))))
 
-(-> localgroup-query-record
+(-> world-terminal-query-record
     (cons keyword &optional list)
     list)
-(defun localgroup-query-record (entry operation &optional arguments)
+(defun world-terminal-query-record (entry operation &optional arguments)
   "Perform OPERATION against endpoint ENTRY, removing its record when the failure shows it is stale."
   (let* ((pathname   (first entry))
          (record     (rest entry))
-         (session-id (localgroup--record-session-id record))
+         (session-id (world-terminal--record-session-id record))
          (response
            (handler-case
                 (if (getf arguments :progress-p)
-                    (localgroup--query-with-progress record operation arguments)
-                    (daemon-call
-                     (localgroup--record-port record)
-                     (localgroup--record-token record)
+                    (world-terminal--query-with-progress record operation arguments)
+                    (world-terminal-call
+                     (world-terminal--record-port record)
+                     (world-terminal--record-token record)
                      operation
                      :arguments arguments))
              (error (condition)
-               (when (localgroup--record-stale-p record condition)
-                 (localgroup--remove-stale-record pathname record))
-               (error 'localgroup-error
-                       :message   (format nil "Localgroup session ~A is unavailable."
+               (when (world-terminal--record-stale-p record condition)
+                 (world-terminal--remove-stale-record pathname record))
+               (error 'world-terminal-error
+                       :message   (format nil "World-Terminal session ~A is unavailable."
                                           (session-identifier-display
                                            session-id))
                       :operation  operation
@@ -104,17 +104,17 @@ A slow answer means the process is alive, so its record stays."
                       :cause      condition)))))
     (unless (and (proper-list-p response)
                  (eq (first response) ':ok))
-      (error 'localgroup-error
+      (error 'world-terminal-error
              :message    (or (getf (rest response) :message)
-                             "The localgroup endpoint rejected the request.")
+                             "The world-terminal endpoint rejected the request.")
              :operation  operation
              :session-id session-id
              :retry-p    (and (proper-list-p response)
                               (not (null (getf (rest response) :retry-p))))))
     response))
 
-(-> localgroup-owner-reachability (pathname string (integer 1)) keyword)
-(defun localgroup-owner-reachability (pathname identifier owner-pid)
+(-> world-terminal-owner-reachability (pathname string (integer 1)) keyword)
+(defun world-terminal-owner-reachability (pathname identifier owner-pid)
   "Query one matching owner record without pruning, under a single two-second budget.
 
 Only definite record absence yields :NO-REACHABLE-ENDPOINT. Errors and identity
@@ -123,15 +123,15 @@ mismatches yield :UNKNOWN; neither read nor transport creates or modifies record
       (sb-sys:with-deadline (:seconds 2)
         (let ((before (platform-path-status *platform* pathname)))
           (unless before
-            (return-from localgroup-owner-reachability ':no-reachable-endpoint))
+            (return-from world-terminal-owner-reachability ':no-reachable-endpoint))
           (with-open-stream (stream (platform-open-regular-file *platform* pathname))
             (unless (platform-file-status-same-object-p
                      before (platform-stream-status *platform* stream))
-              (return-from localgroup-owner-reachability ':unknown))
+              (return-from world-terminal-owner-reachability ':unknown))
             (let* ((buffer (make-array 65537 :element-type '(unsigned-byte 8)))
                    (count  (read-sequence buffer stream)))
               (when (> count 65536)
-                (return-from localgroup-owner-reachability ':unknown))
+                (return-from world-terminal-owner-reachability ':unknown))
               (let* ((*read-eval* nil)
                      (text        (utf8-octets-to-string (subseq buffer 0 count)))
                      (eof         (gensym "EOF")))
@@ -139,16 +139,16 @@ mismatches yield :UNKNOWN; neither read nor transport creates or modifies record
                     (read-from-string text nil eof)
                   (unless (and (image-daemon:daemon-registry-record-p record)
                                (eq (read-from-string text nil eof :start end) eof)
-                               (string= (localgroup--record-session-id record) identifier)
+                               (string= (world-terminal--record-session-id record) identifier)
                                (eql (getf (rest record) :pid) owner-pid))
-                    (return-from localgroup-owner-reachability ':unknown))
-                  (let* ((response (daemon-call (localgroup--record-port record)
-                                                (localgroup--record-token record) ':status))
+                    (return-from world-terminal-owner-reachability ':unknown))
+                  (let* ((response (world-terminal-call (world-terminal--record-port record)
+                                                (world-terminal--record-token record) ':status))
                          (status   (and (proper-list-p response)
                                         (eq (first response) ':ok)
                                         (getf (rest response) :status))))
                     (if (and (proper-list-p status)
-                             (eq (first status) ':localgroup-status)
+                             (eq (first status) ':world-terminal-status)
                              (equal (getf (rest status) :session-id) identifier)
                              (eql (getf (rest status) :pid) owner-pid))
                         ':reachable
@@ -156,19 +156,19 @@ mismatches yield :UNKNOWN; neither read nor transport creates or modifies record
     ((or sb-sys:deadline-timeout error) ()
       ':unknown)))
 
-(-> localgroup--find-record (configuration string) cons)
-(defun localgroup--find-record (configuration session-id)
+(-> world-terminal--find-record (configuration string) cons)
+(defun world-terminal--find-record (configuration session-id)
   "Return CONFIGURATION's endpoint for a channel ID, fragment or resident's name.
 
 Resolve world designators first, including @NAME, bare names and legacy
 aliases. Retain endpoint-only identifier discovery for rescue sessions.
 Ambiguous or parked targets select nothing."
-  (let* ((records (localgroup-endpoint-records configuration))
+  (let* ((records (world-terminal-endpoint-records configuration))
          (channel (handler-case
                       (world-channel-designated (world-load configuration) configuration
                                                session-id :error-p nil)
                     (world-error (condition)
-                      (error 'localgroup-error
+                      (error 'world-terminal-error
                              :message    (autolith-error-message condition)
                              :operation  ':discover
                              :session-id session-id
@@ -177,24 +177,24 @@ Ambiguous or parked targets select nothing."
                       (remove-if-not
                        (lambda (entry)
                          (string= (channel-identifier channel)
-                                  (localgroup--record-session-id (rest entry))))
+                                  (world-terminal--record-session-id (rest entry))))
                        records)
                       (identifier-match session-id records
                                         :key (lambda (entry)
-                                               (localgroup--record-session-id (rest entry)))))))
+                                               (world-terminal--record-session-id (rest entry)))))))
     (cond ((null matches)
-           (error 'localgroup-error
+           (error 'world-terminal-error
                   :message    (format nil "No hosted channel matches ~S." session-id)
                   :operation  ':discover
                   :session-id session-id))
           ((rest matches)
-           (error 'localgroup-error
+           (error 'world-terminal-error
                   :message
-                  (format nil "Localgroup session ID ~S is ambiguous. Matching sessions: ~{~A~^, ~}."
+                  (format nil "World-Terminal session ID ~S is ambiguous. Matching sessions: ~{~A~^, ~}."
                           session-id
                           (sort (mapcar (lambda (entry)
                                           (session-identifier-display
-                                           (localgroup--record-session-id (rest entry))))
+                                           (world-terminal--record-session-id (rest entry))))
                                         matches)
                                 #'string<))
                   :operation  ':discover
@@ -202,24 +202,24 @@ Ambiguous or parked targets select nothing."
           (t
            (first matches)))))
 
-(-> localgroup-statuses (configuration) list)
-(defun localgroup-statuses (configuration)
-  "Return live localgroup status snapshots, pruning unreachable records."
-  (loop for entry in (localgroup-endpoint-records configuration)
+(-> world-terminal-statuses (configuration) list)
+(defun world-terminal-statuses (configuration)
+  "Return live world-terminal status snapshots, pruning unreachable records."
+  (loop for entry in (world-terminal-endpoint-records configuration)
         for status =
           (handler-case
-              (getf (rest (localgroup-query-record entry ':status)) :status)
-            (localgroup-error () nil))
+              (getf (rest (world-terminal-query-record entry ':status)) :status)
+            (world-terminal-error () nil))
         when status
           collect status))
 
-(-> localgroup--status-state-text (list) string)
-(defun localgroup--status-state-text (status)
+(-> world-terminal--status-state-text (list) string)
+(defun world-terminal--status-state-text (status)
   "Return STATUS's concise state label."
   (string-downcase (symbol-name (getf (rest status) :state))))
 
-(-> localgroup--status-state-style (list) terminal-style)
-(defun localgroup--status-state-style (status)
+(-> world-terminal--status-state-style (list) terminal-style)
+(defun world-terminal--status-state-style (status)
   "Return the semantic terminal style for STATUS's current state."
   (case (getf (rest status) :state)
     (:idle
@@ -233,16 +233,16 @@ Ambiguous or parked targets select nothing."
     (otherwise
      ':dim)))
 
-(-> localgroup--status-activity-text (list) string)
-(defun localgroup--status-activity-text (status)
+(-> world-terminal--status-activity-text (list) string)
+(defun world-terminal--status-activity-text (status)
   "Return STATUS's compact queue and child activity summary."
   (format nil "q:~D s:~D jobs:~D"
           (getf (rest status) :queued-input-count)
           (getf (rest status) :steering-input-count)
           (getf (rest status) :task-live-count)))
 
-(-> localgroup--status-timestamp-text (timestamp) string)
-(defun localgroup--status-timestamp-text (timestamp)
+(-> world-terminal--status-timestamp-text (timestamp) string)
+(defun world-terminal--status-timestamp-text (timestamp)
   "Return TIMESTAMP as a compact UTC session-start label."
   (multiple-value-bind (second minute hour date month year)
       (decode-universal-time timestamp 0)
@@ -250,8 +250,8 @@ Ambiguous or parked targets select nothing."
     (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0DZ"
             year month date hour minute)))
 
-(-> localgroup--status-started-text (list) string)
-(defun localgroup--status-started-text (status)
+(-> world-terminal--status-started-text (list) string)
+(defun world-terminal--status-started-text (status)
   "Return STATUS's encoded or recorded session start time for display."
   (let* ((values     (rest status))
          (identifier (getf values :session-id))
@@ -259,14 +259,14 @@ Ambiguous or parked targets select nothing."
            (and (stringp identifier)
                 (session-identifier-timestamp identifier))))
     (if timestamp
-        (localgroup--status-timestamp-text timestamp)
+        (world-terminal--status-timestamp-text timestamp)
         (let ((created-at (getf values :created-at)))
           (if (typep created-at 'timestamp)
-              (localgroup--status-timestamp-text created-at)
+              (world-terminal--status-timestamp-text created-at)
               "unknown")))))
 
-(-> localgroup--status-field-label (keyword) string)
-(defun localgroup--status-field-label (field)
+(-> world-terminal--status-field-label (keyword) string)
+(defun world-terminal--status-field-label (field)
   "Return FIELD's compact human-readable table heading."
   (ecase field
     (:session
@@ -284,8 +284,8 @@ Ambiguous or parked targets select nothing."
     (:workspace
      "WORKSPACE")))
 
-(-> localgroup--status-field-text (list keyword) string)
-(defun localgroup--status-field-text (status field)
+(-> world-terminal--status-field-text (list keyword) string)
+(defun world-terminal--status-field-text (status field)
   "Return STATUS's display text for FIELD."
   (let ((values (rest status)))
     (ecase field
@@ -297,19 +297,19 @@ Ambiguous or parked targets select nothing."
              (format nil "~D" pid)
              "-")))
       (:state
-       (localgroup--status-state-text status))
+       (world-terminal--status-state-text status))
       (:started
-       (localgroup--status-started-text status))
+       (world-terminal--status-started-text status))
       (:conversation
        (or (getf values :conversation-title)
            (getf values :conversation-display-id)))
       (:activity
-       (localgroup--status-activity-text status))
+       (world-terminal--status-activity-text status))
       (:workspace
        (getf values :cwd)))))
 
-(-> localgroup--status-field-style (list keyword) terminal-style)
-(defun localgroup--status-field-style (status field)
+(-> world-terminal--status-field-style (list keyword) terminal-style)
+(defun world-terminal--status-field-style (status field)
   "Return the semantic style for STATUS's FIELD."
   (case field
     (:session
@@ -317,7 +317,7 @@ Ambiguous or parked targets select nothing."
     (:pid
      ':code)
     (:state
-     (localgroup--status-state-style status))
+     (world-terminal--status-state-style status))
     (:started
      ':timestamp-time)
     (:conversation
@@ -327,8 +327,8 @@ Ambiguous or parked targets select nothing."
     (:workspace
      ':plain)))
 
-(-> localgroup--status-table-fields (integer) (option list))
-(defun localgroup--status-table-fields (columns)
+(-> world-terminal--status-table-fields (integer) (option list))
+(defun world-terminal--status-table-fields (columns)
   "Return the table fields that fit within COLUMNS, or NIL for compact cards."
   (cond ((>= columns 100)
          '(:session :pid :state :started :conversation :activity :workspace))
@@ -341,8 +341,8 @@ Ambiguous or parked targets select nothing."
         (t
          nil)))
 
-(-> localgroup--status-field-minimum-width (keyword) integer)
-(defun localgroup--status-field-minimum-width (field)
+(-> world-terminal--status-field-minimum-width (keyword) integer)
+(defun world-terminal--status-field-minimum-width (field)
   "Return the minimum useful cell width for FIELD."
   (ecase field
     (:session
@@ -360,23 +360,23 @@ Ambiguous or parked targets select nothing."
     (:workspace
      14)))
 
-(-> localgroup--status-output-styled-p (stream) boolean)
-(defun localgroup--status-output-styled-p (stream)
+(-> world-terminal--status-output-styled-p (stream) boolean)
+(defun world-terminal--status-output-styled-p (stream)
   "Return true when STREAM is an interactive color-capable status destination."
   (not
    (null
     (and (interactive-stream-p stream)
          (terminal-environment-styling-p)))))
 
-(-> localgroup--status-output-columns (stream) integer)
-(defun localgroup--status-output-columns (stream)
+(-> world-terminal--status-output-columns (stream) integer)
+(defun world-terminal--status-output-columns (stream)
   "Return a useful status-output width for STREAM."
   (if (interactive-stream-p stream)
       (nth-value 1 (terminal-current-size))
       *terminal-default-columns*))
 
-(-> localgroup--write-styled-line (stream terminal-styled-text boolean) null)
-(defun localgroup--write-styled-line (stream spans styled-p)
+(-> world-terminal--write-styled-line (stream terminal-styled-text boolean) null)
+(defun world-terminal--write-styled-line (stream spans styled-p)
   "Write SPANS and one newline, emitting trusted styles only when STYLED-P."
   (dolist (span spans)
     (let ((sequence
@@ -390,8 +390,8 @@ Ambiguous or parked targets select nothing."
   (terpri stream)
   nil)
 
-(-> localgroup--status-table-separator (list) terminal-styled-text)
-(defun localgroup--status-table-separator (widths)
+(-> world-terminal--status-table-separator (list) terminal-styled-text)
+(defun world-terminal--status-table-separator (widths)
   "Return an internal row separator aligned with cell WIDTHS."
   (list
    (terminal-span
@@ -406,10 +406,10 @@ Ambiguous or parked targets select nothing."
                (when (rest remaining)
                  (write-char #\Box_Drawings_Light_Vertical_And_Horizontal stream)))))))
 
-(-> localgroup--status-table-row
+(-> world-terminal--status-table-row
     (list list list &key (:header-p boolean))
     terminal-styled-text)
-(defun localgroup--status-table-row (status fields widths &key header-p)
+(defun world-terminal--status-table-row (status fields widths &key header-p)
   "Return one STATUS row with separators between FIELDS across WIDTHS.
 
 HEADER-P renders field labels rather than status values."
@@ -418,74 +418,74 @@ HEADER-P renders field labels rather than status values."
         for remaining on fields
         collect
         (terminal-span
-         (if header-p ':strong (localgroup--status-field-style status field))
+         (if header-p ':strong (world-terminal--status-field-style status field))
          (layout-fit-text
           (if header-p
-              (localgroup--status-field-label field)
-              (localgroup--status-field-text status field))
+              (world-terminal--status-field-label field)
+              (world-terminal--status-field-text status field))
           width))
         when (rest remaining)
           collect (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))))
 
-(-> localgroup--status-card-row (list integer) terminal-styled-text)
-(defun localgroup--status-card-row (status columns)
+(-> world-terminal--status-card-row (list integer) terminal-styled-text)
+(defun world-terminal--status-card-row (status columns)
   "Return compact rows for STATUS within COLUMNS cells."
-  (let* ((identifier   (localgroup--status-field-text status ':session))
-         (state        (localgroup--status-field-text status ':state))
+  (let* ((identifier   (world-terminal--status-field-text status ':session))
+         (state        (world-terminal--status-field-text status ':state))
          (session-width
           (min (text-cell-width identifier)
                (max 1 (- columns (text-cell-width state) 2))))
          (state-width  (max 0 (- columns session-width 2)))
          (detail
           (format nil "~A  ~A"
-                  (localgroup--status-field-text status ':started)
-                  (localgroup--status-field-text status ':activity)))
-         (conversation (localgroup--status-field-text status ':conversation)))
+                  (world-terminal--status-field-text status ':started)
+                  (world-terminal--status-field-text status ':activity)))
+         (conversation (world-terminal--status-field-text status ':conversation)))
     (list (terminal-span ':code (layout-fit-text identifier session-width))
           (terminal-span ':plain "  ")
-          (terminal-span (localgroup--status-state-style status)
+          (terminal-span (world-terminal--status-state-style status)
                          (layout-fit-text state state-width))
           (terminal-span ':plain (string #\Newline))
           (terminal-span ':timestamp-time (layout-fit-text detail columns))
           (terminal-span ':plain (string #\Newline))
-          (terminal-span (localgroup--status-field-style status ':conversation)
+          (terminal-span (world-terminal--status-field-style status ':conversation)
                          (layout-fit-text conversation columns))
           (terminal-span ':plain (string #\Newline))
           (terminal-span ':plain
                          (layout-fit-text
-                          (localgroup--status-field-text status ':workspace)
+                          (world-terminal--status-field-text status ':workspace)
                           columns)))))
 
-(-> localgroup-print-statuses
+(-> world-terminal-print-statuses
     (list &key (:stream stream) (:styled-p boolean) (:columns integer))
     null)
-(defun localgroup-print-statuses
+(defun world-terminal-print-statuses
     (statuses &key
                 (stream *standard-output*)
-                (styled-p (localgroup--status-output-styled-p stream))
-                (columns (localgroup--status-output-columns stream)))
-  "Print a width-aware human-readable localgroup session summary for STATUSES."
+                (styled-p (world-terminal--status-output-styled-p stream))
+                (columns (world-terminal--status-output-columns stream)))
+  "Print a width-aware human-readable world-terminal session summary for STATUSES."
   (if (null statuses)
-      (localgroup--write-styled-line
+      (world-terminal--write-styled-line
        stream
        (list (terminal-span ':dim "· ") (terminal-span ':plain "no channels are hosted"))
        styled-p)
       (let* ((columns (max 4 columns))
-             (fields  (localgroup--status-table-fields columns))
+             (fields  (world-terminal--status-table-fields columns))
              (title   "Hosted channels"))
-        (localgroup--write-styled-line
+        (world-terminal--write-styled-line
          stream
          (list (terminal-span ':brand (layout-fit-text title columns)))
          styled-p)
         (if fields
             (let* ((rows
                      (cons
-                      (mapcar #'localgroup--status-field-label fields)
+                      (mapcar #'world-terminal--status-field-label fields)
                       (mapcar
                        (lambda (status)
                          (mapcar
                           (lambda (field)
-                            (localgroup--status-field-text status field))
+                            (world-terminal--status-field-text status field))
                           fields))
                        statuses)))
                    (widths
@@ -493,38 +493,38 @@ HEADER-P renders field labels rather than status values."
                       rows columns
                       :gap-width 1
                       :minimum-widths
-                      (mapcar #'localgroup--status-field-minimum-width fields)
+                      (mapcar #'world-terminal--status-field-minimum-width fields)
                       :fill-p    t)))
-              (localgroup--write-styled-line
-               stream (localgroup--status-table-row nil fields widths :header-p t)
+              (world-terminal--write-styled-line
+               stream (world-terminal--status-table-row nil fields widths :header-p t)
                styled-p)
-              (localgroup--write-styled-line
-               stream (localgroup--status-table-separator widths) styled-p)
+              (world-terminal--write-styled-line
+               stream (world-terminal--status-table-separator widths) styled-p)
               (loop for status in statuses
                     for remaining on statuses
-                    do (localgroup--write-styled-line
-                        stream (localgroup--status-table-row status fields widths)
+                    do (world-terminal--write-styled-line
+                        stream (world-terminal--status-table-row status fields widths)
                         styled-p)
                        (when (rest remaining)
-                         (localgroup--write-styled-line
-                          stream (localgroup--status-table-separator widths) styled-p))))
+                         (world-terminal--write-styled-line
+                          stream (world-terminal--status-table-separator widths) styled-p))))
             (loop for status in statuses
                   for remaining on statuses
-                  do (localgroup--write-styled-line
-                      stream (localgroup--status-card-row status columns) styled-p)
+                  do (world-terminal--write-styled-line
+                      stream (world-terminal--status-card-row status columns) styled-p)
                      (when (rest remaining)
-                       (localgroup--write-styled-line
-                        stream (localgroup--status-table-separator (list columns))
+                       (world-terminal--write-styled-line
+                        stream (world-terminal--status-table-separator (list columns))
                         styled-p))))))
   nil)
 
-(-> localgroup--print-response (list stream &key (:styled-p boolean)) null)
-(defun localgroup--print-response
-    (response stream &key (styled-p (localgroup--status-output-styled-p stream)))
-  "Print one concise successful localgroup RESPONSE as a notice line."
+(-> world-terminal--print-response (list stream &key (:styled-p boolean)) null)
+(defun world-terminal--print-response
+    (response stream &key (styled-p (world-terminal--status-output-styled-p stream)))
+  "Print one concise successful world-terminal RESPONSE as a notice line."
   (let ((operation (getf (rest response) :operation))
         (channel   (session-identifier-display (getf (rest response) :session-id))))
-    (localgroup--write-styled-line
+    (world-terminal--write-styled-line
      stream
      (if (eq operation ':stop)
          (list (terminal-span ':dim "· ")
@@ -542,8 +542,8 @@ HEADER-P renders field labels rather than status values."
      styled-p))
   nil)
 
-(-> localgroup--client-cleanup-failure (string condition) list)
-(defun localgroup--client-cleanup-failure (stage condition)
+(-> world-terminal--client-cleanup-failure (string condition) list)
+(defun world-terminal--client-cleanup-failure (stage condition)
   "Describe one cleanup failure with bounded class-only metadata."
   (list :stage (bounded-string stage :limit 64)
         :condition-type
@@ -552,11 +552,11 @@ HEADER-P renders field labels rather than status values."
               (if (symbolp name) (bounded-string (symbol-name name) :limit 128) "CONDITION"))
           (error () "CONDITION"))))
 
-(-> localgroup--wait-for-checkpoint-entry
+(-> world-terminal--wait-for-checkpoint-entry
     (cons string &key (:configuration (option configuration)) (:cancelled-p (option function))
           (:allow-later-p boolean))
     cons)
-(defun localgroup--wait-for-checkpoint-entry (entry reconnect-id &key configuration cancelled-p allow-later-p)
+(defun world-terminal--wait-for-checkpoint-entry (entry reconnect-id &key configuration cancelled-p allow-later-p)
   "Wait boundedly for ENTRY's authenticated endpoint for RECONNECT-ID.
 
 While CONFIGURATION's world server restarts from its saved heap, the wait
@@ -566,14 +566,14 @@ channel, authentication token and creation time after a verified endpoint
 loses a subscription race to another checkpoint."
   (let* ((pathname   (first entry))
          (old-record (rest entry))
-         (session-id (localgroup--record-session-id old-record))
-         (token      (localgroup--record-token old-record))
-         (timeout    (* *localgroup-handoff-start-timeout-seconds*
+         (session-id (world-terminal--record-session-id old-record))
+         (token      (world-terminal--record-token old-record))
+         (timeout    (* *world-startup-start-timeout-seconds*
                         internal-time-units-per-second))
          (deadline   (+ (get-internal-real-time) timeout)))
     (loop
       (when (and cancelled-p (funcall cancelled-p))
-        (error 'localgroup-error :message "Checkpoint reconnection was cancelled."
+        (error 'world-terminal-error :message "Checkpoint reconnection was cancelled."
                                 :operation ':attach :session-id session-id))
       (let ((record (image-daemon:daemon-registry-read pathname)))
         (when (and record
@@ -581,26 +581,26 @@ loses a subscription race to another checkpoint."
                        (and allow-later-p
                             (let ((identifier (getf (rest record) :checkpoint-reconnect-id)))
                               (and (stringp identifier) (plusp (length identifier))))))
-                   (string= (localgroup--record-session-id record) session-id)
-                   (string= (localgroup--record-token record) token)
+                   (string= (world-terminal--record-session-id record) session-id)
+                   (string= (world-terminal--record-token record) token)
                    (= (getf (rest record) :created-at) (getf (rest old-record) :created-at))
                    (handler-case
                        (let ((image-daemon:*daemon-connect-timeout-seconds*
                                (min image-daemon:*daemon-connect-timeout-seconds*
                                     (max 0.001 (/ (- deadline (get-internal-real-time))
                                                   (* 2 internal-time-units-per-second))))))
-                         (eq (first (daemon-call (localgroup--record-port record) token ':status)) ':ok))
+                         (eq (first (world-terminal-call (world-terminal--record-port record) token ':status)) ':ok))
                      (error () nil)))
           (return (cons pathname record))))
       (when (>= (get-internal-real-time) deadline)
         (unless (and configuration (world-server-restarting-p configuration))
-          (error 'localgroup-error :message "The checkpoint endpoint did not become ready."
+          (error 'world-terminal-error :message "The checkpoint endpoint did not become ready."
                                   :operation ':attach :session-id session-id))
         (setf deadline (+ (get-internal-real-time) timeout)))
       (sleep 0.05))))
 
-(-> localgroup-client-screen-create (&key (:panel t)) localgroup-screen)
-(defun localgroup-client-screen-create (&key panel)
+(-> world-terminal-client-screen-create (&key (:panel t)) world-terminal-screen)
+(defun world-terminal-client-screen-create (&key panel)
   "Return a screen on a new terminal for this process's standard input and output, with PANEL beside the session."
   (multiple-value-bind (rows columns)
       (terminal-current-size)
@@ -609,21 +609,21 @@ loses a subscription race to another checkpoint."
                      :columns               columns
                      :input-file-descriptor (terminal-standard-input-file-descriptor))))
       (setf (terminal-styled-p terminal) (terminal-environment-styling-p))
-      (localgroup-screen-create :terminal terminal :panel panel))))
+      (world-terminal-screen-create :terminal terminal :panel panel))))
 
-(-> localgroup-client-screen-release (localgroup-screen) null)
-(defun localgroup-client-screen-release (screen)
+(-> world-terminal-client-screen-release (world-terminal-screen) null)
+(defun world-terminal-client-screen-release (screen)
   "Give back the terminal SCREEN painted on: leave its screen, then restore its input mode."
   (unwind-protect
-       (localgroup-screen-close screen)
+       (world-terminal-screen-close screen)
     ; mallet:suppress no-ignore-errors -- best-effort terminal release during unwinding
-    (ignore-errors (terminal-stop (localgroup-screen-terminal screen))))
+    (ignore-errors (terminal-stop (world-terminal-screen-terminal screen))))
   nil)
 
-(-> localgroup-relay-exit
+(-> world-terminal-relay-exit
     (configuration (option list) keyword &key (:session-id (option string)))
     null)
-(defun localgroup-relay-exit (configuration exit mode &key session-id)
+(defun world-terminal-relay-exit (configuration exit mode &key session-id)
   "Report EXIT and how to reopen SESSION-ID after releasing the client's terminal.
 
 For a controlling terminal, publish EXIT's crash capsule to the launcher and
@@ -650,63 +650,63 @@ A detach or connection loss has no EXIT but still names the channel to reopen."
   nil)
 
 
-;;;; -- Localgroup Command Entry --
+;;;; -- World-Terminal Command Entry --
 
-(-> localgroup--client-configuration () configuration)
-(defun localgroup--client-configuration ()
-  "Create a localgroup client configuration and ensure its directories exist."
+(-> world-terminal--client-configuration () configuration)
+(defun world-terminal--client-configuration ()
+  "Create a world-terminal client configuration and ensure its directories exist."
   (let ((configuration (configuration-create :defer-provider-validation-p t)))
     (configuration-ensure-directories configuration)
-    (localgroup-reconcile-endpoint-records configuration)
+    (world-terminal-reconcile-endpoint-records configuration)
     configuration))
 
-(-> localgroup--run-status (&key (:sexp-p boolean)) null)
-(defun localgroup--run-status (&key sexp-p)
-  "Print localgroup session statuses, as readable forms when SEXP-P."
-  (let* ((configuration (localgroup--client-configuration))
-         (statuses      (localgroup-statuses configuration)))
+(-> world-terminal--run-status (&key (:sexp-p boolean)) null)
+(defun world-terminal--run-status (&key sexp-p)
+  "Print world-terminal session statuses, as readable forms when SEXP-P."
+  (let* ((configuration (world-terminal--client-configuration))
+         (statuses      (world-terminal-statuses configuration)))
     (if sexp-p
         (dolist (status statuses)
           (write status :stream *standard-output* :readably t)
           (terpri))
         (progn
           (world-client-print-server configuration *standard-output*)
-          (localgroup-print-statuses statuses))))
+          (world-terminal-print-statuses statuses))))
   nil)
 
-(-> localgroup--reachable-records (configuration) list)
-(defun localgroup--reachable-records (configuration)
+(-> world-terminal--reachable-records (configuration) list)
+(defun world-terminal--reachable-records (configuration)
   "Return endpoint records whose status endpoint is reachable."
-  (loop for entry in (localgroup-endpoint-records configuration)
+  (loop for entry in (world-terminal-endpoint-records configuration)
         when (handler-case
-                (localgroup-query-record entry ':status)
-              (localgroup-error () nil))
+                (world-terminal-query-record entry ':status)
+              (world-terminal-error () nil))
         collect entry))
 
-(-> localgroup--session-record (configuration &optional (option string)) cons)
-(defun localgroup--session-record (configuration &optional session-id)
+(-> world-terminal--session-record (configuration &optional (option string)) cons)
+(defun world-terminal--session-record (configuration &optional session-id)
   "Return the explicitly selected or sole reachable session record."
   (if session-id
-      (localgroup--find-record configuration session-id)
-      (let ((records (localgroup--reachable-records configuration)))
+      (world-terminal--find-record configuration session-id)
+      (let ((records (world-terminal--reachable-records configuration)))
         (cond ((null records)
-               (error 'localgroup-error
+               (error 'world-terminal-error
                       :message   "No channel is hosted."
                       :operation ':discover))
               ((rest records)
-               (error 'localgroup-error
+               (error 'world-terminal-error
                       :message   (format nil "Several channels are hosted; name one: ~{~A~^, ~}."
                                          (sort (mapcar (lambda (entry)
                                                          (session-identifier-display
-                                                          (localgroup--record-session-id (rest entry))))
+                                                          (world-terminal--record-session-id (rest entry))))
                                                        records)
                                                #'string<))
                       :operation ':discover))
               (t
                (first records))))))
 
-(-> localgroup--status-command () clingon:command)
-(defun localgroup--status-command ()
+(-> world-terminal--status-command () clingon:command)
+(defun world-terminal--status-command ()
   "Return the status command definition."
   (make-command
    :name        "status"
@@ -718,14 +718,14 @@ A detach or connection loss has no EXIT but still names the channel to reopen."
    :handler
    (lambda (command)
      (when (command-arguments command)
-       (error 'localgroup-error
+       (error 'world-terminal-error
                :message  "status accepts no arguments."
               :operation ':arguments))
-     (localgroup--run-status
+     (world-terminal--run-status
       :sexp-p (not (null (getopt command ':sexp)))))))
 
-(-> localgroup--operation-command (string string keyword) clingon:command)
-(defun localgroup--operation-command (name description operation)
+(-> world-terminal--operation-command (string string keyword) clingon:command)
+(defun world-terminal--operation-command (name description operation)
   "Return a channel OPERATION command definition."
   (make-command
    :name        name
@@ -735,10 +735,10 @@ A detach or connection loss has no EXIT but still names the channel to reopen."
    (lambda (command)
      (let ((arguments (command-arguments command)))
        (unless (member (length arguments) '(0 1))
-         (error 'localgroup-error
+         (error 'world-terminal-error
                 :message   (format nil "~A accepts at most one channel or agent designator." name)
                 :operation ':arguments))
-       (let* ((configuration (localgroup--client-configuration))
-              (entry         (localgroup--session-record configuration (first arguments))))
-         (localgroup--print-response (localgroup-query-record entry operation)
+       (let* ((configuration (world-terminal--client-configuration))
+              (entry         (world-terminal--session-record configuration (first arguments))))
+         (world-terminal--print-response (world-terminal-query-record entry operation)
                                     *standard-output*))))))

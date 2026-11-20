@@ -456,7 +456,7 @@
   test-terminal-fullscreen-drag-copies
   test-terminal-fullscreen-drag-autoscroll
   test-terminal-fullscreen-submit-click
-  test-localgroup-click-events
+  test-world-terminal-click-events
   test-terminal-fullscreen-message-jumps
   test-terminal-fullscreen-exit-epilogue
   test-terminal-fullscreen-forced-exit-resume)
@@ -789,8 +789,8 @@
  test-world-client-switch-wait test-world-client-open-wait
  test-world-host-health
  test-world-host-cleanup-retry
- test-localgroup-client-accepted-setup-failure
- test-localgroup-client-checkpoint-recovery
+ test-world-terminal-client-accepted-setup-failure
+ test-world-terminal-client-checkpoint-recovery
  test-main-world-client-cleanup-cause
  test-application-conversation-maintenance
  test-conversation-maintenance-admission-probe)
@@ -1680,41 +1680,40 @@
   test-terminal-application-read-resize
   test-terminal-non-tty-fallback)
 
-(define-test-suite localgroup
-  test-localgroup-stop-retry
-  test-localgroup-endpoint-failure-isolation
-  test-localgroup-message-dispatch
-  test-localgroup-conversation-identity
-  test-localgroup-picker-waits-for-relayed-input
-  test-localgroup-remote-detach-never-pauses-reader
-  test-localgroup-checkpoint-source-precheck-order
-  test-localgroup-checkpoint-reconnect-transition
-  test-localgroup-checkpoint-reconnect-boundaries
-  test-localgroup-detached-terminal-lifecycle
-  test-localgroup-session-exit-relay
-  test-localgroup-open-instruction-relay
-  test-localgroup-relay-exit
-  test-localgroup-screen-paints-frames
-  test-localgroup-screen-loading
-  test-localgroup-screen-panel
-  test-localgroup-screen-geometry
-  test-localgroup-cli-targets
-  test-localgroup-session-prefixes
-  test-localgroup-query-keeps-slow-endpoint
-  test-localgroup-protocol
-  test-localgroup-orphan-reconciliation
-  test-localgroup-client-pids
-  test-localgroup-startup-reader
-  test-localgroup-attachments)
+(define-test-suite world-terminal
+  test-world-terminal-stop-retry
+  test-world-terminal-endpoint-failure-isolation
+  test-world-terminal-message-dispatch
+  test-world-terminal-conversation-identity
+  test-world-terminal-picker-waits-for-relayed-input
+  test-world-terminal-remote-detach-never-pauses-reader
+  test-world-terminal-checkpoint-source-precheck-order
+  test-world-terminal-checkpoint-reconnect-transition
+  test-world-terminal-checkpoint-reconnect-boundaries
+  test-world-terminal-detached-terminal-lifecycle
+  test-channel-endpoint-exit-relay
+  test-world-terminal-open-instruction-relay
+  test-world-terminal-relay-exit
+  test-world-terminal-screen-paints-frames
+  test-world-terminal-screen-loading
+  test-world-terminal-screen-panel
+  test-world-terminal-screen-geometry
+  test-world-terminal-cli-targets
+  test-channel-endpoint-prefixes
+  test-world-terminal-query-keeps-slow-endpoint
+  test-world-terminal-protocol
+  test-world-terminal-orphan-reconciliation
+  test-world-terminal-client-pids
+  test-world-startup-reader
+  test-world-terminal-attachments)
 
-(define-test-suite localgroup-handoff
-  test-localgroup-handoff-site-arguments
-  test-localgroup-lingering-session
-  test-localgroup-fresh-session-spawn
-  test-localgroup-world-spawn)
+(define-test-suite world-startup
+  test-world-startup-site-arguments
+  test-world-terminal-lingering-session
+  test-world-startup-spawn)
 
-(define-test-suite localgroup-handoff-boundary
-  test-localgroup-handoff-cancellation)
+(define-test-suite world-startup-boundary
+  test-world-startup-cancellation)
 
 (define-test-suite session-cli
   test-cli-resume-prefixes
@@ -2058,7 +2057,7 @@
   test-acp-session-disconnected-registration-reload
   test-acp-session-reconnect-failure
   test-acp-session-close-during-reconnect
-  test-localgroup-checkpoint-interrupted-request
+  test-world-terminal-checkpoint-interrupted-request
   test-acp-session-close-during-greeting
   test-acp-session-close-preserves-replacement
   test-acp-session-consecutive-checkpoint-race

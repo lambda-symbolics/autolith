@@ -25,7 +25,7 @@ conversation leases it released for the save.")
 (-> world-server-restart-pathname (configuration) pathname)
 (defun world-server-restart-pathname (configuration)
   "Return the marker saying CONFIGURATION's world server restarts from its saved heap."
-  (merge-pathnames "restart.sexp" (localgroup-world-directory configuration)))
+  (merge-pathnames "restart.sexp" (world-endpoint-directory configuration)))
 
 (-> world-server-restarting-p (configuration) boolean)
 (defun world-server-restarting-p (configuration)

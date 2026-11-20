@@ -242,8 +242,8 @@
    (lambda (application entry)
      (declare (ignore application))
      (let* ((client      (make-instance 'client-subscription-test-client :identifier "admission"))
-            (previous    (localgroup-client-connect entry :approves-p nil))
-            (replacement (localgroup-client-connect entry :approves-p nil))
+            (previous    (world-terminal-client-connect entry :approves-p nil))
+            (replacement (world-terminal-client-connect entry :approves-p nil))
             (entered     (sb-thread:make-semaphore))
             (release     (sb-thread:make-semaphore))
             (started     (sb-thread:make-semaphore))
@@ -296,7 +296,7 @@
                       "the state request reaches the server after attachment drain")
                      (test-assert
                       (and (eq (first outcome) ':ok)
-                           (eq (first (getf (second outcome) :state)) ':localgroup-status))
+                           (eq (first (getf (second outcome) :state)) ':world-terminal-status))
                       "the admitted request preserves its real transport reply"))
                   (sb-thread:signal-semaphore release)
                   (channel-subscription-close client)
@@ -304,8 +304,8 @@
          (sb-thread:signal-semaphore release)
          (channel-subscription-close client)
          (when reconnect (join-thread reconnect))
-         (localgroup-client-close previous)
-         (localgroup-client-close replacement)))))
+         (world-terminal-client-close previous)
+         (world-terminal-client-close replacement)))))
   nil)
 
 (-> test-client-subscription-replay-refusal-wakes-waiter () null)
@@ -319,7 +319,7 @@
            (submitted (sb-thread:make-semaphore))
            (attempts  0))
        (setf (channel-subscription-connection client)
-             (localgroup-client-connect entry :approves-p nil)
+             (world-terminal-client-connect entry :approves-p nil)
              (client-subscription-test-call-function client)
              (lambda (command arguments)
                (declare (ignore command arguments))
@@ -331,15 +331,15 @@
          (unwind-protect
              (test-call-with-function-replacements
               (list
-               (list 'localgroup--wait-for-checkpoint-entry
+               (list 'world-terminal--wait-for-checkpoint-entry
                      (lambda (&rest arguments) (declare (ignore arguments)) entry))
-               (list 'localgroup-client-connect
+               (list 'world-terminal-client-connect
                      (lambda (&rest arguments)
                        (progn
                         (test-assert (null (getf (rest arguments) :approves-p :missing))
                          "reconnect preserves a non-approving client's capability")
                         (incf attempts))
-                       (error 'localgroup-client-rejected :message "Replay cursor expired."
+                       (error 'world-terminal-client-rejected :message "Replay cursor expired."
                               :operation                           ':attach))))
               (lambda ()
                 (test-assert (sb-thread:wait-on-semaphore submitted :timeout 3)

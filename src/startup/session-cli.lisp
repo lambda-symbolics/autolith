@@ -39,7 +39,7 @@ an agent's residence. Retain saved and endpoint-only IDs for rescue sessions."
       (world-error (condition)
         (error 'configuration-error :message (autolith-error-message condition))))
    (let* ((pathnames (conversation-list configuration))
-          (statuses  (mapcar #'rest (localgroup-statuses configuration)))
+          (statuses  (mapcar #'rest (world-terminal-statuses configuration)))
           (identifiers
             (remove-duplicates
              (append (mapcar #'channel-identifier (world-channels world))

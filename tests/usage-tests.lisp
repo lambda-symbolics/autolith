@@ -98,7 +98,7 @@
         (test-call-with-function-replacements
          (list
           (list 'current-process-id (lambda () 99))
-          (list 'localgroup-endpoint-records
+          (list 'world-terminal-endpoint-records
                 (lambda (configuration)
                   (declare (ignore configuration))
                   (append (when (plusp channel-count)
@@ -108,10 +108,10 @@
                           (list (cons #P"/stale" '(:registry :session-id "stale" :pid 20))))))
           (list 'image-daemon:daemon-registry-discover
                 (lambda (directory)
-                  (test-assert (equal directory (localgroup-world-directory configuration))
+                  (test-assert (equal directory (world-endpoint-directory configuration))
                                "the world endpoint directory is observed separately")
                   (list (cons #P"/world" '(:registry :session-id "world" :pid 10)))))
-          (list 'localgroup-owner-reachability
+          (list 'world-terminal-owner-reachability
                 (lambda (path identifier pid)
                   (declare (ignore path pid))
                   (if (string= identifier "stale") ':unreachable ':reachable)))

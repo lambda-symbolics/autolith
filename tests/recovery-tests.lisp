@@ -240,16 +240,16 @@ exit 64
               "recovery does not mutate the caller's forwarded arguments"))
            (let ((arguments
                    (list "--permissions" "full"
-                         "--localgroup-handoff" "/state/consumed.sexp"
+                         "--world-startup" "/state/consumed.sexp"
                          "open" legacy)))
              (test-assert
               (equal (recovery-normalize-forwarded-arguments context arguments)
                      (list "--permissions" "full" "open" current))
-              "recovery removes consumed localgroup handoff arguments")
+              "recovery removes consumed world-terminal handoff arguments")
              (test-assert
               (equal arguments
                      (list "--permissions" "full"
-                           "--localgroup-handoff" "/state/consumed.sexp"
+                           "--world-startup" "/state/consumed.sexp"
                            "open" legacy))
               "handoff removal does not mutate the caller's arguments"))
            (recovery-tests--write-form

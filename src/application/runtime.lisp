@@ -242,9 +242,9 @@ Clicking the rendered call's header inserts it into the composer.")
     :type     t
     :documentation
     "The startup failure that kept recovered input outside the vault, when present.")
-   (localgroup-session
+   (channel-endpoint
     :initform      nil
-    :accessor      application-localgroup-session
+    :accessor      application-channel-endpoint
     :type          t
     :documentation "The process-local discovery and control endpoint, when running.")
    (management-repl-endpoint
@@ -531,7 +531,7 @@ its startup record. CONFIGURATION, when given, lets a terminal's composer
 complete @ participant names from its world."
   (let ((placeholder (if inbox-p *application-inbox-placeholder* *application-placeholder*))
         (padding     (if configuration (config :prompt-padding configuration) 1))
-        (pane        (or client-pane (rest *localgroup-startup-record*))))
+        (pane        (or client-pane (rest *world-startup-record*))))
     (if pane
         (channel-presentation-create :rows           (getf pane :rows)
                                      :columns        (getf pane :columns)
@@ -2189,7 +2189,7 @@ The window obeys both of the editor's budgets, so it is also what a client is se
          (lambda ()
            (when (eq conversation (application-conversation application))
              (application--load-conversation-input-history (application-ui application) conversation))))
-      (localgroup-error (condition)
+      (world-terminal-error (condition)
         (unless (application-input-controller-stopping-p (application-input-controller application))
           (error condition)))))
   nil)
@@ -2291,7 +2291,7 @@ roleless inbox handoff. That handoff retires the former child role with its runt
                (context-runtime-reset)
                (when ui
                  (application--load-conversation-input-history ui conversation))
-               (application-localgroup-sync-conversation application)
+               (application-world-terminal-sync-conversation application)
                (application-publish-recovery-session application)
                (setf committed-p t))
            (serious-condition (condition)
@@ -2329,7 +2329,7 @@ roleless inbox handoff. That handoff retires the former child role with its runt
                 (application-goal application)
                 previous-goal)
           (handler-case
-              (application-localgroup-sync-conversation application)
+              (application-world-terminal-sync-conversation application)
             (serious-condition (condition)
               (push condition rollback-failures))))
         (when registry

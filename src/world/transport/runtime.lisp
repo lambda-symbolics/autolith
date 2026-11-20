@@ -1,131 +1,135 @@
 (in-package #:autolith)
 
-(defclass localgroup-session (image-daemon:daemon-runtime)
-          ((application :initarg :application :reader localgroup-session-application :type
+(defclass channel-endpoint (image-daemon:daemon-runtime)
+          ((application :initarg :application :reader channel-endpoint-application :type
             application :documentation "The primary application exposed by this endpoint.")
-           (paused-p :initform nil :accessor localgroup-session-paused-p :type boolean
+           (paused-p :initform nil :accessor channel-endpoint-paused-p :type boolean
             :documentation "Whether queued primary work must wait for explicit input.")
-           (closing-p :initform nil :accessor localgroup-session-closing-p :type boolean
+           (closing-p :initform nil :accessor channel-endpoint-closing-p :type boolean
             :documentation
             "Whether a close was committed while no terminal controlled the session, so no terminal may attach now.")
            (checkpoint-reconnect-id :initarg :checkpoint-reconnect-id :initform nil :accessor
-            localgroup-session-checkpoint-reconnect-id :type (option string) :documentation
+            channel-endpoint-checkpoint-reconnect-id :type (option string) :documentation
             "The checkpoint transition that created this endpoint.")
-           (owner-thread :initform (current-thread) :reader localgroup-session-owner-thread
+           (owner-thread :initform (current-thread) :reader channel-endpoint-owner-thread
             :documentation "The serving thread that published this endpoint."))
           (:documentation "One authenticated local control endpoint for a primary application."))
 
-(-> localgroup-world-directory (configuration) pathname)
-(defun localgroup-world-directory (configuration)
+(-> world-endpoint-directory (configuration) pathname)
+(defun world-endpoint-directory (configuration)
   "Return the ephemeral endpoint directory for this image selection.
 
 Durable catalogues and channel writer leases are shared across selections."
-  (let ((root (merge-pathnames "world/endpoints/"
-                               (config :state-root configuration))))
+  (world--endpoint-directory (config :state-root configuration)))
+
+(-> world--endpoint-directory (pathname) pathname)
+(defun world--endpoint-directory (state-root)
+  "Return this image selection's ephemeral endpoint directory below STATE-ROOT."
+  (let ((root (merge-pathnames "world/endpoints/" state-root)))
     (if *world-image-selection*
         (progn
           (conversation-identifier-validate-path-component *world-image-selection*)
           (merge-pathnames (format nil "~A/" *world-image-selection*) root))
         root)))
 
-(-> localgroup-registry-directory (configuration) pathname)
-(defun localgroup-registry-directory (configuration)
+(-> world-channel-endpoint-directory (configuration) pathname)
+(defun world-channel-endpoint-directory (configuration)
   "Return this image selection's ephemeral channel endpoint directory."
-  (merge-pathnames "channels/" (localgroup-world-directory configuration)))
+  (merge-pathnames "channels/" (world-endpoint-directory configuration)))
 
-(-> localgroup-registry-pathname (configuration string) pathname)
-(defun localgroup-registry-pathname (configuration session-id)
+(-> world-channel-endpoint-pathname (configuration string) pathname)
+(defun world-channel-endpoint-pathname (configuration session-id)
   "Return the discovery pathname for SESSION-ID under CONFIGURATION."
   (image-daemon:daemon-registry-pathname
-   (localgroup-registry-directory configuration) session-id))
+   (world-channel-endpoint-directory configuration) session-id))
 
-(-> localgroup--registry-record (localgroup-session) list)
-(defun localgroup--registry-record (session)
+(-> world-terminal--registry-record (channel-endpoint) list)
+(defun world-terminal--registry-record (session)
   "Return SESSION's authenticated discovery record."
   (append (image-daemon:daemon-runtime-record session)
-          (when (localgroup-session-checkpoint-reconnect-id session)
+          (when (channel-endpoint-checkpoint-reconnect-id session)
             (list :checkpoint-reconnect-id
-                  (localgroup-session-checkpoint-reconnect-id session)))))
+                  (channel-endpoint-checkpoint-reconnect-id session)))))
 
-(-> localgroup--publish-registry (localgroup-session) null)
-(defun localgroup--publish-registry (session)
+(-> world-terminal--publish-registry (channel-endpoint) null)
+(defun world-terminal--publish-registry (session)
   "Publish SESSION's authenticated discovery record."
   (image-daemon:daemon-registry-publish
    (image-daemon:daemon-runtime-registry-pathname session)
-   (localgroup--registry-record session))
+   (world-terminal--registry-record session))
   nil)
 
-(-> localgroup--delete-owned-registry (localgroup-session) null)
-(defun localgroup--delete-owned-registry (session)
+(-> world-terminal--delete-owned-registry (channel-endpoint) null)
+(defun world-terminal--delete-owned-registry (session)
   "Delete SESSION's registry record only while it still names this endpoint."
   (image-daemon:daemon-registry-delete-matching
    (image-daemon:daemon-runtime-registry-pathname session)
-   (localgroup--registry-record session))
+   (world-terminal--registry-record session))
   nil)
 
-(-> application-localgroup-sync-conversation (application) null)
-(defun application-localgroup-sync-conversation (application)
+(-> application-world-terminal-sync-conversation (application) null)
+(defun application-world-terminal-sync-conversation (application)
   "Rekey APPLICATION's endpoint to its active conversation without reconnecting clients.
 
 Publication failure restores the old endpoint identity so the surrounding
 conversation transaction can roll back before releasing either lease."
-  (let ((session    (application-localgroup-session application))
+  (let ((session    (application-channel-endpoint application))
         (identifier (conversation-identifier (application-conversation application))))
     (when session
       (with-lock-held ((image-daemon:daemon-runtime-lock session))
         (unless (string= identifier (image-daemon:daemon-runtime-identifier session))
           (let ((old-identifier (image-daemon:daemon-runtime-identifier session))
                 (old-pathname   (image-daemon:daemon-runtime-registry-pathname session))
-                (old-record     (localgroup--registry-record session))
+                (old-record     (world-terminal--registry-record session))
                 (completed-p    nil))
             (unwind-protect
                 (progn
                  (setf (image-daemon:daemon-runtime-identifier session) identifier
                        (image-daemon:daemon-runtime-registry-pathname session)
-                       (localgroup-registry-pathname
+                       (world-channel-endpoint-pathname
                         (application-configuration application) identifier))
-                 (localgroup--publish-registry session)
+                 (world-terminal--publish-registry session)
                  (image-daemon:daemon-registry-delete-matching
                   old-pathname old-record :errorp t)
                  (setf completed-p t))
               (unless completed-p
-                (localgroup--delete-owned-registry session)
+                (world-terminal--delete-owned-registry session)
                 (setf (image-daemon:daemon-runtime-identifier session) old-identifier
                       (image-daemon:daemon-runtime-registry-pathname session)
                       old-pathname))))))))
   (application-mission-schedules-notify application)
   nil)
 
-(-> localgroup-endpoint-records (configuration) list)
-(defun localgroup-endpoint-records (configuration)
+(-> world-terminal-endpoint-records (configuration) list)
+(defun world-terminal-endpoint-records (configuration)
   "Return CONFIGURATION's discovery records ordered by newest publication."
   (image-daemon:daemon-registry-discover
-   (localgroup-registry-directory configuration)))
+   (world-channel-endpoint-directory configuration)))
 
-(-> localgroup-reconcile-endpoint-records (configuration) (integer 0))
-(defun localgroup-reconcile-endpoint-records (configuration)
+(-> world-terminal-reconcile-endpoint-records (configuration) (integer 0))
+(defun world-terminal-reconcile-endpoint-records (configuration)
   "Remove definitely dead endpoint records beneath CONFIGURATION and return their count."
   (image-daemon:daemon-registry-reconcile
-   (localgroup-registry-directory configuration)))
+   (world-channel-endpoint-directory configuration)))
 
-(-> application-localgroup-paused-p (application) boolean)
-(defun application-localgroup-paused-p (application)
+(-> application-world-terminal-paused-p (application) boolean)
+(defun application-world-terminal-paused-p (application)
   "Return true when APPLICATION is deliberately holding queued work."
-  (let ((session (application-localgroup-session application)))
+  (let ((session (application-channel-endpoint application)))
     (and session
          (not
           (null
            (with-lock-held ((image-daemon:daemon-runtime-lock session))
-             (localgroup-session-paused-p session)))))))
+             (channel-endpoint-paused-p session)))))))
 
-(-> application-localgroup-resume (application) boolean)
-(defun application-localgroup-resume (application)
+(-> application-world-terminal-resume (application) boolean)
+(defun application-world-terminal-resume (application)
   "Resume APPLICATION's queued work and report whether it had been paused."
-  (let ((session (application-localgroup-session application)) (resumed-p nil))
+  (let ((session (application-channel-endpoint application)) (resumed-p nil))
     (when session
       (with-lock-held ((image-daemon:daemon-runtime-lock session))
-        (setf resumed-p (localgroup-session-paused-p session)
-              (localgroup-session-paused-p session) nil))
+        (setf resumed-p (channel-endpoint-paused-p session)
+              (channel-endpoint-paused-p session) nil))
       (when resumed-p
         (let ((controller (application-input-controller application)))
           (when controller
@@ -134,14 +138,14 @@ conversation transaction can roll back before releasing either lease."
                (application-input-controller-condition-variable controller)))))))
     (not (null resumed-p))))
 
-(-> application-localgroup-pause (application &key (:reason keyword)) boolean)
-(defun application-localgroup-pause (application &key (reason ':cancelled))
+(-> application-world-terminal-pause (application &key (:reason keyword)) boolean)
+(defun application-world-terminal-pause (application &key (reason ':cancelled))
   "Hold queued work before requesting active-turn cancellation with REASON."
-    (let ((session    (application-localgroup-session application))
+    (let ((session    (application-channel-endpoint application))
           (controller (application-input-controller application)))
-      (unless (and session controller) (return-from application-localgroup-pause nil))
+      (unless (and session controller) (return-from application-world-terminal-pause nil))
       (with-lock-held ((image-daemon:daemon-runtime-lock session))
-        (setf (localgroup-session-paused-p session) t))
+        (setf (channel-endpoint-paused-p session) t))
       (unless (application-assignment-cancel application :reason reason)
         (application-input-controller--request-active-turn-cancellation controller))
       (with-lock-held ((application-input-controller-lock controller))
@@ -149,8 +153,8 @@ conversation transaction can roll back before releasing either lease."
          (application-input-controller-condition-variable controller)))
       t))
 
-(-> localgroup--task-counts (application) (values (integer 0) (integer 0) (integer 0)))
-(defun localgroup--task-counts (application)
+(-> world-terminal--task-counts (application) (values (integer 0) (integer 0) (integer 0)))
+(defun world-terminal--task-counts (application)
   "Return live children, active children, and all live jobs for APPLICATION."
   (let ((orchestrator (application-task-presentation-orchestrator application)))
     (if orchestrator
@@ -168,10 +172,10 @@ conversation transaction can roll back before releasing either lease."
                        (terminal-ui-terminal (application-ui application)))))
     (and terminal (terminal-interactive-p terminal) t)))
 
-(-> localgroup-status-snapshot (localgroup-session) list)
-(defun localgroup-status-snapshot (session)
+(-> world-terminal-status-snapshot (channel-endpoint) list)
+(defun world-terminal-status-snapshot (session)
   "Return a portable, internally consistent status snapshot for SESSION."
-  (let* ((application       (localgroup-session-application session))
+  (let* ((application       (channel-endpoint-application session))
          (configuration     (application-configuration application))
          (conversation      (application-conversation application))
          (terminal          (terminal-ui-terminal (application-ui application)))
@@ -180,7 +184,7 @@ conversation transaction can roll back before releasing either lease."
                                  (application-presenting-client-pids application)
                                  (and (terminal-interactive-p terminal) (current-process-id)))))
          (controller        (application-input-controller application))
-         (paused-p          (application-localgroup-paused-p application))
+         (paused-p          (application-world-terminal-paused-p application))
          (active-p          nil)
          (queued-count      0)
          (steering-count    0)
@@ -207,7 +211,7 @@ conversation transaction can roll back before releasing either lease."
               reader-paused-p (application-input-controller-reader-paused-p controller)
               failed-p (not (null (application-input-controller-failure controller))))))
     (multiple-value-setq (task-live-count task-active-count job-live-count)
-      (localgroup--task-counts application))
+      (world-terminal--task-counts application))
     (let* ((waiting-for-input-p
              (and controller (not active-p) (zerop queued-count) (zerop steering-count)
                   (not recalled-p) (not stopping-p) (not cancelling-p)
@@ -231,7 +235,7 @@ conversation transaction can roll back before releasing either lease."
                    ':idle)
                   (t
                    ':starting))))
-      (list :localgroup-status :version *daemon-protocol-version* :session-id
+      (list :world-terminal-status :version *daemon-protocol-version* :session-id
             (conversation-identifier conversation) :pid (current-process-id)
             :terminal-client-pid (first client-pids) :observer-client-pids (second client-pids)
             :autolith-version *autolith-version* :state state :idle-p (not (null idle-p))
@@ -270,49 +274,49 @@ conversation transaction can roll back before releasing either lease."
             :observer-count     (length (second client-pids))
             :created-at         (image-daemon:daemon-runtime-created-at session)))))
 
-;;;; -- Localgroup Terminal Ownership --
+;;;; -- World-Terminal Terminal Ownership --
 
 
-(-> localgroup-session-endpoint-live-p (localgroup-session) boolean)
-(defun localgroup-session-endpoint-live-p (session)
+(-> channel-endpoint-endpoint-live-p (channel-endpoint) boolean)
+(defun channel-endpoint-endpoint-live-p (session)
   "Return whether SESSION owns a healthy listener and has not committed to close.
 
 Startup and checkpoint pause are separate lifecycle states; use this predicate
 for an endpoint already published as ready."
   (and (image-daemon:daemon-runtime-live-p session)
        (with-lock-held ((image-daemon:daemon-runtime-lock session))
-         (and (not (localgroup-session-closing-p session))
-              (localgroup-session-serving-p session)))))
+         (and (not (channel-endpoint-closing-p session))
+              (channel-endpoint-serving-p session)))))
 
-(-> localgroup-session-serving-p (localgroup-session) boolean)
-(defun localgroup-session-serving-p (session)
+(-> channel-endpoint-serving-p (channel-endpoint) boolean)
+(defun channel-endpoint-serving-p (session)
   "Return whether SESSION's owner and input controller can serve it.
 
 Call with the runtime lock held; do not acquire the controller or world server
 lock. Controller callbacks take the runtime lock while holding their own lock.
 Sample its monotonic stopping flag alongside its failure state instead."
-  (let* ((application (localgroup-session-application session))
+  (let* ((application (channel-endpoint-application session))
          (controller  (application-input-controller application))
-         (owner       (localgroup-session-owner-thread session)))
+         (owner       (channel-endpoint-owner-thread session)))
     (and owner (thread-alive-p owner)
          (null (image-daemon:daemon-runtime-failure session))
          controller (null (application-input-controller-failure controller))
          (not (application-input-controller-stopping-p controller)) t)))
 
-(-> localgroup-session-admits-attachment-p (localgroup-session) boolean)
-(defun localgroup-session-admits-attachment-p (session)
+(-> channel-endpoint-admits-attachment-p (channel-endpoint) boolean)
+(defun channel-endpoint-admits-attachment-p (session)
   "Return true while SESSION admits a new terminal: it is neither stopping nor committed to close.
 
 Call it with SESSION's runtime lock held, the lock a committed close takes
 before it checks for a controlling terminal, so no terminal is admitted
 between that check and the close."
   (and (not (image-daemon:daemon-runtime-stopping-p session))
-       (not (localgroup-session-closing-p session))
-       (localgroup-session-serving-p session)))
+       (not (channel-endpoint-closing-p session))
+       (channel-endpoint-serving-p session)))
 
 
-(-> localgroup--terminal-event-p (t) boolean)
-(defun localgroup--terminal-event-p (event)
+(-> world-terminal--terminal-event-p (t) boolean)
+(defun world-terminal--terminal-event-p (event)
   "Accept a client's keys, bounded pointer events and the side panel's channel commands."
   (not (null (or (image-daemon:daemon-terminal-event-p event)
                  (channel-command-text event)
@@ -321,23 +325,23 @@ between that check and the close."
                                 (cons (integer 1 10000)
                                  (cons (integer 1 10000) null))))))))
 
-(-> localgroup--detach-terminal (localgroup-session) list)
-(defun localgroup--detach-terminal (session)
+(-> world-terminal--detach-terminal (channel-endpoint) list)
+(defun world-terminal--detach-terminal (session)
   "Tell the controlling terminal client to leave SESSION's channel running."
-  (let ((application (localgroup-session-application session))
+  (let ((application (channel-endpoint-application session))
         (identifier  (image-daemon:daemon-runtime-identifier session)))
     (unless (application-client-tell application ':detach)
-      (error 'localgroup-error
+      (error 'world-terminal-error
              :message    "No terminal shows this channel."
              :operation  ':detach
              :session-id identifier))
     (list :ok :operation :detach :scheduled-p nil :session-id identifier)))
 
-(-> localgroup-finish-attachments
+(-> world-terminal-finish-attachments
     ((option application)
      &key (:status (integer 0 255)) (:message (option string)) (:details list))
     boolean)
-(defun localgroup-finish-attachments (application &key status message details)
+(defun world-terminal-finish-attachments (application &key status message details)
   "Tell the terminals that show APPLICATION's channel that the session exits with STATUS and MESSAGE.
 
 A detached session's own launcher only logs its exit status, so the terminal
@@ -352,51 +356,56 @@ clients present it; one that already left costs nothing."
     t))
 
 
-;;;; -- Localgroup Request Handling --
+;;;; -- World-Terminal Request Handling --
 
-(-> localgroup--request-field (list keyword) t)
-(defun localgroup--request-field (request key)
+(-> world-terminal--request-field (list keyword) t)
+(defun world-terminal--request-field (request key)
   "Return KEY from REQUEST's property list."
   (getf (rest request) key))
 
-(-> localgroup--valid-request-p (t localgroup-session) boolean)
-(defun localgroup--valid-request-p (request session)
+(-> world-terminal--valid-request-p (t channel-endpoint) boolean)
+(defun world-terminal--valid-request-p (request session)
   "Validate REQUEST against SESSION's image-daemon capability."
   (and (image-daemon:daemon-request-valid-p
-        request (image-daemon:daemon-runtime-token session))
+        request (image-daemon:daemon-runtime-token session)
+        :request-tag ':world-terminal-request)
        t))
 
-(-> localgroup--dispatch-request (localgroup-session list) list)
-(defun localgroup--dispatch-request (session request)
+(defmethod image-daemon:daemon-runtime-request-valid-p ((session channel-endpoint) request)
+  "Accept this channel's authenticated terminal protocol at the transport boundary."
+  (world-terminal--valid-request-p request session))
+
+(-> world-terminal--dispatch-request (channel-endpoint list) list)
+(defun world-terminal--dispatch-request (session request)
   "Return SESSION's response to one authenticated REQUEST."
-  (unless (localgroup--valid-request-p request session)
-    (return-from localgroup--dispatch-request
-      (list :error :message "The localgroup request was rejected.")))
-  (let ((operation (localgroup--request-field request :operation)))
+  (unless (world-terminal--valid-request-p request session)
+    (return-from world-terminal--dispatch-request
+      (list :error :message "The world-terminal request was rejected.")))
+  (let ((operation (world-terminal--request-field request :operation)))
     (case operation
       (:status
-       (list :ok :status (localgroup-status-snapshot session)))
+       (list :ok :status (world-terminal-status-snapshot session)))
       (:pause
-       (if (application-localgroup-pause (localgroup-session-application session))
+       (if (application-world-terminal-pause (channel-endpoint-application session))
            (list :ok :operation :pause :session-id
                  (image-daemon:daemon-runtime-identifier session))
            (list :error :message
-                 "The localgroup session cannot pause while detaching.")))
+                 "The world-terminal session cannot pause while detaching.")))
       (:detach
-       (localgroup--detach-terminal session))
+       (world-terminal--detach-terminal session))
       (:kill
        (list :ok :operation :kill :session-id
              (image-daemon:daemon-runtime-identifier session)))
       (otherwise
        (list :error :message
-             (format nil "Unknown localgroup operation ~S." operation))))))
+             (format nil "Unknown world-terminal operation ~S." operation))))))
 
-(-> localgroup-start
+(-> world-terminal-start
     (application
      &key (:token (option string)) (:created-at (option integer))
           (:checkpoint-reconnect-id (option string)))
-    localgroup-session)
-(defun localgroup-start
+    channel-endpoint)
+(defun world-terminal-start
     (application &key token created-at checkpoint-reconnect-id)
   "Publish APPLICATION's hosted channel endpoint independently of terminal lifetime."
   (let ((configuration (application-configuration application))
@@ -406,47 +415,47 @@ clients present it; one that already left costs nothing."
          (progn
            (setf session
                  (image-daemon:daemon-runtime-create
-                  :directory        (localgroup-registry-directory configuration)
+                  :directory        (world-channel-endpoint-directory configuration)
                   :identifier       (conversation-identifier (application-conversation application))
                   :token            token
                   :created-at       created-at
-                  :class            'localgroup-session
+                  :class            'channel-endpoint
                   :initargs         (list :application application
                                           :checkpoint-reconnect-id checkpoint-reconnect-id)
-                  :request-function #'localgroup--handle-request
+                  :request-function #'world-terminal--handle-request
                   :error-function   (lambda (condition)
-                                      (localgroup--endpoint-failed session condition)))
-                 (application-localgroup-session application) session)
+                                      (world-terminal--endpoint-failed session condition)))
+                 (application-channel-endpoint application) session)
            (let ((hub (application-client-hub application)))
              (with-lock-held ((client-hub-lock hub))
                (setf (client-hub-admitting-p hub) t)))
-           (image-daemon:daemon-runtime-start session)
-           (localgroup--publish-registry session)
            (application-mission-schedules-host application session)
+           (image-daemon:daemon-runtime-start session)
+           (world-terminal--publish-registry session)
            (setf completed-p t)
            session)
       (unless completed-p
-        (setf (application-localgroup-session application) nil)
+        (setf (application-channel-endpoint application) nil)
         (when session (image-daemon:daemon-runtime-stop session))))))
 
-(-> localgroup--endpoint-failed (localgroup-session serious-condition) null)
-(defun localgroup--endpoint-failed (session condition)
+(-> world-terminal--endpoint-failed (channel-endpoint serious-condition) null)
+(defun world-terminal--endpoint-failed (session condition)
   "End SESSION through its application's fatal path, preserving accepted input.
 
 A failed scheduling callback is not retried. Other channels in the world
 continue independently while this application's normal teardown releases its lease."
-  (let* ((application (localgroup-session-application session))
+  (let* ((application (channel-endpoint-application session))
          (controller  (application-input-controller application)))
-    (when (and (eq session (application-localgroup-session application))
+    (when (and (eq session (application-channel-endpoint application))
                (not (image-daemon:daemon-runtime-stopping-p session)))
       (if controller
           (application-input-controller--record-failure
            controller condition (application-safe-backtrace))
-          (format *error-output* "~&Localgroup endpoint failed: ~A~%" condition))))
+          (format *error-output* "~&World-Terminal endpoint failed: ~A~%" condition))))
   nil)
 
-(-> localgroup--message-dispatch (application list) t)
-(defun localgroup--message-dispatch (application envelope)
+(-> world-terminal--message-dispatch (application list) t)
+(defun world-terminal--message-dispatch (application envelope)
   "Answer one daemon message for APPLICATION: a channel's new inbox, or a mission event for its conversation.
 
 Any other message is rejected, as a request this process has no use for."
@@ -457,64 +466,64 @@ Any other message is rejected, as a request this process has no use for."
      (unless (and (equal (getf envelope :receiver)
                          (conversation-identifier (application-conversation application)))
                   (stringp (getf envelope :payload)))
-       (localgroup--reject-message ':event-scope))
+       (world-terminal--reject-message ':event-scope))
      (application-mission-schedule-event application (getf envelope :payload) (getf envelope :id)))
     (otherwise
-     (localgroup--reject-message ':unsupported))))
+     (world-terminal--reject-message ':unsupported))))
 
-(-> localgroup--reject-message (keyword) nil)
-(defun localgroup--reject-message (reason)
+(-> world-terminal--reject-message (keyword) nil)
+(defun world-terminal--reject-message (reason)
   "Reject a daemon message for REASON without echoing its payload."
   (error 'image-daemon:daemon-message-error
          :reason    reason
          :operation ':message
          :message   (format nil "Daemon message rejected: ~(~A~)." reason)))
 
-(-> localgroup--handle-request
-    (localgroup-session list &key (:socket t) (:stream t))
+(-> world-terminal--handle-request
+    (channel-endpoint list &key (:socket t) (:stream t))
     null)
-(defun localgroup--handle-request (session request &key socket stream)
+(defun world-terminal--handle-request (session request &key socket stream)
   "Dispatch authenticated requests according to Autolith's command and client policy."
-  (case (localgroup--request-field request :operation)
+  (case (world-terminal--request-field request :operation)
     (:client
-     (localgroup--serve-client session request :socket socket :stream stream))
+     (world-terminal--serve-client session request :socket socket :stream stream))
     (:message
      (image-daemon:daemon-message-handle-request
       session request :stream stream
       :dispatcher
       (lambda (envelope &key cancelled-p)
         (declare (ignore cancelled-p))
-        (localgroup--message-dispatch (localgroup-session-application session) envelope))
+        (world-terminal--message-dispatch (channel-endpoint-application session) envelope))
       :character-limit 32768 :request-timeout 2))
     (otherwise
-     (let* ((response (localgroup--dispatch-request session request))
+     (let* ((response (world-terminal--dispatch-request session request))
             (kill-request-p
-              (and (eq (localgroup--request-field request :operation) ':kill)
+              (and (eq (world-terminal--request-field request :operation) ':kill)
                    (eq (first response) ':ok))))
        (daemon-write-packet stream response)
        (when kill-request-p
          (let ((controller
                  (application-input-controller
-                  (localgroup-session-application session))))
+                  (channel-endpoint-application session))))
            (when controller
              (application-input-controller--request-exit
-              controller ':localgroup-kill)))))))
+              controller ':world-terminal-kill)))))))
   nil)
 
-(define-condition localgroup-stop-error (error)
-  ((session :initarg :session :reader localgroup-stop-error-session
+(define-condition world-terminal-stop-error (error)
+  ((session :initarg :session :reader world-terminal-stop-error-session
             :documentation "The endpoint whose cleanup remains owned.")
-   (failures :initarg :failures :reader localgroup-stop-error-failures
+   (failures :initarg :failures :reader world-terminal-stop-error-failures
              :documentation "Ordered cleanup stage and condition pairs."))
   (:documentation "Endpoint cleanup failed and can be retried.")
   (:report (lambda (condition stream)
-             (format stream "Localgroup cleanup failed in ~{~A~^, ~}; retry stop to finish cleanup."
-                     (mapcar #'first (localgroup-stop-error-failures condition))))))
+             (format stream "World-Terminal cleanup failed in ~{~A~^, ~}; retry stop to finish cleanup."
+                     (mapcar #'first (world-terminal-stop-error-failures condition))))))
 
-(-> localgroup-stop (application) null)
-(defun localgroup-stop (application)
+(-> world-terminal-stop (application) null)
+(defun world-terminal-stop (application)
   "Attempt every endpoint cleanup stage, retaining ownership until all succeed."
-  (let ((session  (application-localgroup-session application))
+  (let ((session  (application-channel-endpoint application))
         (failures nil))
     (when session
       (with-lock-held ((image-daemon:daemon-runtime-lock session))
@@ -523,9 +532,9 @@ Any other message is rejected, as a request this process has no use for."
                (handler-case (funcall function)
                  (error (condition) (push (list stage condition) failures)))))
         (attempt ':runtime (lambda () (image-daemon:daemon-runtime-stop session)))
-        (attempt ':registry (lambda () (localgroup--delete-owned-registry session))))
+        (attempt ':registry (lambda () (world-terminal--delete-owned-registry session))))
       (when failures
-        (error 'localgroup-stop-error :session session :failures (nreverse failures)))
-      (when (eq session (application-localgroup-session application))
-        (setf (application-localgroup-session application) nil))))
+        (error 'world-terminal-stop-error :session session :failures (nreverse failures)))
+      (when (eq session (application-channel-endpoint application))
+        (setf (application-channel-endpoint application) nil))))
   nil)

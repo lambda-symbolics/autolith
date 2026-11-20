@@ -919,7 +919,7 @@
                           (test-assert (config :model-selection-override-p copied)
                                        "configuration copies retain the launch override"))
                         (let* ((handoff   (merge-pathnames "handoff.sexp" root))
-                               (arguments (localgroup-handoff--arguments observed handoff))
+                               (arguments (world-startup--arguments observed handoff))
                                (parsed    (parse-command-line (main--top-level-command)
                                                               (member "--permissions" arguments :test #'equal))))
                           (test-assert

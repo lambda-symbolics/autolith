@@ -327,7 +327,7 @@ it, so the word reaches a client that reads before the endpoint closes."
 The greeting contains the event watermark and durable replay boundary. A
 cursor outside the retained tail is refused rather than skipping events."
   (unless (or (null after-sequence) (typep after-sequence '(integer 0 *)))
-    (error 'localgroup-error :operation ':client
+    (error 'world-terminal-error :operation ':client
            :message                     "A channel event cursor must be a nonnegative integer."))
   (let* ((hub          (application-client-hub application))
          (conversation (and (slot-boundp application 'conversation) (application-conversation application)))
@@ -336,14 +336,14 @@ cursor outside the retained tail is refused rather than skipping events."
     (flet ((subscribe (replay)
              (with-lock-held ((client-hub-lock hub))
                (unless (client-hub-admitting-p hub)
-                 (error 'localgroup-error :operation ':client :retry-p t
+                 (error 'world-terminal-error :operation ':client :retry-p t
                         :message "The channel is restarting; retry attachment after it resumes."))
                (let* ((sequence (client-hub-event-sequence hub))
                       (events   (deque->list (client-hub-event-journal hub)))
                       (oldest   (if events (getf (rest (first events)) :sequence) (1+ sequence))))
                  (when (and after-sequence
                             (not (<= (1- oldest) after-sequence sequence)))
-                   (error 'localgroup-error :operation ':client
+                   (error 'world-terminal-error :operation ':client
                           :message                     "The channel event cursor has expired or is ahead of the channel."))
                  (when attached
                    (when (channel-client--queue-event
@@ -352,16 +352,16 @@ cursor outside the retained tail is refused rather than skipping events."
                                           (list :sequence              sequence
                                                 :record-sequence       (application-clients--record-sequence application)
                                                 :presentation-replay-p (not (null replay))))))
-                     (error 'localgroup-error :operation ':client :message "The client greeting queue is full.")))
+                     (error 'world-terminal-error :operation ':client :message "The client greeting queue is full.")))
                  (dolist (event events)
                    (when (and after-sequence (> (getf (rest event) :sequence) after-sequence)
                               (channel-client--receives-p client event))
                      (when (channel-client--queue-event client event)
-                       (error 'localgroup-error :operation ':client
+                       (error 'world-terminal-error :operation ':client
                               :message                     "The retained event tail exceeds the client queue."))))
                  (dolist (event replay)
                    (when (channel-client--queue-event client (client-portable event))
-                     (error 'localgroup-error :operation ':client
+                     (error 'world-terminal-error :operation ':client
                             :message                     "The channel's presentation exceeds the client queue.")))
                  (with-lock-held ((image-daemon:attachment-lock (channel-client-attachment client)))
                    (unless (channel-client-closed-p client)
@@ -447,7 +447,7 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
                             (error condition))))
                       :inline-only-p t)))
            (unless (and controller (application-input-controller-enqueue-work controller (list :client-work work)))
-             (error 'localgroup-error :message "The channel does not accept work now." :operation ':client))
+             (error 'world-terminal-error :message "The channel does not accept work now." :operation ':client))
            (let ((snapshot
                    (loop
                      (multiple-value-bind (snapshot terminal-p)
@@ -455,7 +455,7 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
                        (when terminal-p
                          (return snapshot)))
                      (when (application-input-controller-stopping-p controller)
-                       (error 'localgroup-error
+                       (error 'world-terminal-error
                               :message   "The channel stopped before it ran the work."
                               :operation ':client)))))
              (when (client-work-failure work)
@@ -470,12 +470,12 @@ waiting caller owns the pool; cancellation never interrupts the channel thread."
                          :operation ':client
                          :reason    reason)))
                (otherwise
-                (error 'localgroup-error
+                (error 'world-terminal-error
                        :message   (or (getf snapshot :condition-report) "The client operation did not finish.")
                        :operation ':client)))))
       (job-pool-close pool))))
 
-(define-condition client-work-cancelled (localgroup-error)
+(define-condition client-work-cancelled (world-terminal-error)
   ((reason
     :initarg       :reason
     :reader        client-work-cancelled-reason

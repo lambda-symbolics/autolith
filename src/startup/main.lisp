@@ -364,7 +364,7 @@ controller, only the update check and the endpoint are quiesced."
     (flet ((quiesced ()
              "Join the update check and quiesce the endpoint around FUNCTION."
              (application--quiesce-update-check application)
-             (application-call-with-localgroup-quiesced application function)))
+             (application-call-with-world-terminal-quiesced application function)))
       (if controller
           (application-input-controller-call-with-reader-paused controller #'quiesced)
           (quiesced)))))
@@ -377,14 +377,14 @@ controller, only the update check and the endpoint are quiesced."
                       (:quiescer (option function))
                       (:ready-function (option function))
                       (:resume-p boolean)
-                      (:localgroup-identity list)
+                      (:world-terminal-identity list)
                       (:notice (or null string list))
                       (:boot-screen-p boolean))
     (option keyword))
 (defun application-serve
     (application &key initial-command initial-input recovery-diagnosis
                       adaptation-offer-p quiescer ready-function
-                      resume-p localgroup-identity notice (boot-screen-p t))
+                      resume-p world-terminal-identity notice (boot-screen-p t))
   "Serve APPLICATION's world-owned channel on this thread until it exits.
 
 The world server owns process services and final resource cleanup. QUIESCER,
@@ -395,7 +395,7 @@ endpoint is published.
 A session that exits for a checkpoint keeps its resources: its endpoint
 stops, so its thread can end for the fork, and the same application is
 served again with RESUME-P, which skips the startup presentation and
-recovery, LOCALGROUP-IDENTITY, the :TOKEN, :CREATED-AT and
+recovery, WORLD-TERMINAL-IDENTITY, the :TOKEN, :CREATED-AT and
 :CHECKPOINT-RECONNECT-ID its clients wait for, and NOTICE, presented once
 the session shows again. Without BOOT-SCREEN-P the session opens without
 the boot screen, as for a terminal that switched to it. Return the
@@ -417,7 +417,7 @@ controller's exit reason."
                "Stop only the session's own threads, keeping APPLICATION ready to serve again."
                (application-conversation-maintenance-stop application)
                ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-               (ignore-errors (localgroup-stop application))
+               (ignore-errors (world-terminal-stop application))
                ; mallet:suppress no-ignore-errors -- a failed join must not keep the pause from completing
                (ignore-errors (application--quiesce-update-check application))
                nil)
@@ -428,7 +428,7 @@ controller's exit reason."
                  (return-from close-runtime-resources (pause-resources)))
                (application-assignment-finish application :stop-p t)
                ; mallet:suppress no-ignore-errors -- the owner retries mandatory cleanup
-               (ignore-errors (localgroup-stop application))
+               (ignore-errors (world-terminal-stop application))
                nil)
 
              (finish-shutdown ()
@@ -496,7 +496,7 @@ controller's exit reason."
                        application)
                       (application-present-generation-health-warning
                        application))
-                    (apply #'localgroup-start application localgroup-identity)
+                    (apply #'world-terminal-start application world-terminal-identity)
                     (when ready-function
                       (funcall ready-function application))
                     (if resume-p
@@ -799,20 +799,14 @@ dependencies."
               base))
          (permission-mode          (or (config :permission-mode configuration) ':ask))
          (handoff-record
-           (localgroup-handoff-selection
+           (world-startup-selection
             configuration
-            (getopt* command ':localgroup-handoff)))
-         (fresh-handoff-p
-           (and handoff-record
-                (getf (rest handoff-record) :fresh-conversation-p)))
+            (getopt* command ':world-startup)))
          (effective-open-requested-p
            (and (null handoff-record) open-requested-p))
          (effective-open-id
-           (cond
-             (handoff-record
-              (getf (rest handoff-record) :conversation-id))
-             (open-id
-              (main-resolve-conversation configuration open-id))))
+           (when (and (null handoff-record) open-id)
+             (main-resolve-conversation configuration open-id)))
          (recovery-state
            (if handoff-record
                (list nil nil)
@@ -820,16 +814,14 @@ dependencies."
                 (application-recovery-state configuration))))
          (recovery-conversation-id (first recovery-state))
          (recovery-diagnosis
-           (if handoff-record
-               (getf (rest handoff-record) :recovery-diagnosis)
-               (and (null effective-open-id)
-                    (application-recovery-diagnosis-prompt configuration))))
+           (and (null handoff-record) (null effective-open-id)
+                (application-recovery-diagnosis-prompt configuration)))
          (conversation-id          (or effective-open-id recovery-conversation-id))
          (latest-p                 (and effective-open-requested-p (null conversation-id)))
          (inbox-p                  (not (or effective-open-requested-p conversation-id handoff-record)))
          (image-state-loaded-p
            (and authenticate-p
-                (or pristine-p fresh-handoff-p
+                (or pristine-p handoff-record
                     (not (typep *active-application* 'application))))))
     (when image-state-loaded-p
       (image-state-load configuration :pristine-p pristine-p))
@@ -840,14 +832,10 @@ dependencies."
                          authentication-selection
                          authentication-method))
     (when handoff-record
-      (localgroup-handoff-begin-startup handoff-record)
+      (world-startup-begin-startup handoff-record)
       (application--clear-recovery-environment))
     (when handoff-record
-      (unless (getf (rest handoff-record) :world-p)
-        (error 'configuration-error
-               :message "A detached startup ticket must select a world server.")))
-    (when handoff-record
-      (let* ((*localgroup-startup-record* handoff-record)
+      (let* ((*world-startup-record* handoff-record)
              (status                      (world-server-run configuration
                                                             :permission-mode
                                                             (or explicit-permission-mode permission-mode))))
@@ -935,7 +923,7 @@ ends the start with the reason; no session runs in this terminal instead."
     (error (condition)
       (when (main--world-refusal-p condition)
         (error condition))
-      (error 'localgroup-error
+      (error 'world-terminal-error
              :message   (format nil "The world server is not available: ~A"
                                 (bounded-string (princ-to-string condition) :limit 400))
              :operation ':open))))
@@ -943,10 +931,10 @@ ends the start with the reason; no session runs in this terminal instead."
 (-> main--world-refusal-p (condition) boolean)
 (defun main--world-refusal-p (condition)
   "Return true when CONDITION is the world server's answer refusing an open, not a failure to reach it."
-  (and (typep condition 'localgroup-error)
+  (and (typep condition 'world-terminal-error)
        (eq (image-daemon:daemon-error-operation condition) ':open)
        (null (image-daemon:daemon-error-cause condition))
-       (not (localgroup-error-retry-p condition))))
+       (not (world-terminal-error-retry-p condition))))
 
 (-> main--launch-options (clingon:command &key (:permission-mode (option keyword))) list)
 (defun main--launch-options (command &key permission-mode)
@@ -972,13 +960,13 @@ request it conflicts with from one that says nothing."
   (format nil "could not switch to ~A: ~A"
           (conversation-identifier-display identifier) condition))
 
-(-> main--call-with-channel-wait (localgroup-screen function) t)
+(-> main--call-with-channel-wait (world-terminal-screen function) t)
 (defun main--call-with-channel-wait (screen function)
   "Wait for one interactive switch on its owner while a scoped pump serves the terminal.
 
 Escape and Ctrl-C unwind the request through normal transport cleanup. The
 pump is joined before returning; queued interrupts check their retired scope."
-  (let* ((terminal    (localgroup-screen-terminal screen))
+  (let* ((terminal    (world-terminal-screen-terminal screen))
          (owner       (current-thread))
          (lock        (make-lock "Autolith channel switch wait"))
          (active-p    t)
@@ -1005,28 +993,28 @@ pump is joined before returning; queued interrupts check their retired scope."
                               (when (member (terminal-read-event terminal)
                                             '(:escape :interrupt :abort :detach :eof))
                                 (with-lock-held (lock) (setf cancelled-p t))
-                                (wake-owner (make-condition 'localgroup-client-cancelled
+                                (wake-owner (make-condition 'world-terminal-client-cancelled
                                                             :operation ':switch
                                                             :message "Channel switch cancelled."))
                                 (return)))
                             (when (with-lock-held (lock) (shiftf resized-p nil))
                               (multiple-value-bind (rows columns) (terminal-current-size)
                                 (terminal-set-dimensions terminal columns :rows rows))
-                              (localgroup-screen-resized screen))
-                            (localgroup-screen-tick screen)
+                              (world-terminal-screen-resized screen))
+                            (world-terminal-screen-tick screen)
                             (sleep 0.025))
                  (error (condition)
                    (wake-owner condition)))))
       (handler-case
           (unwind-protect
-               (let ((*localgroup-client-cancelled-p* #'cancelled-p)
+               (let ((*world-terminal-client-cancelled-p* #'cancelled-p)
                      (image-daemon:*daemon-connect-timeout-seconds* nil))
                  (setf watch (platform-watch-terminal-resize
                               *platform* (lambda ()
                                            (with-lock-held (lock) (setf resized-p t))))
                        pump (make-thread #'serve-terminal :name "Autolith channel switch terminal"))
                  (multiple-value-prog1 (funcall function)
-                   (localgroup-client-check-cancellation)))
+                   (world-terminal-client-check-cancellation)))
             (with-lock-held (lock) (setf active-p nil))
             (when pump (join-thread pump))
             (when watch
@@ -1034,25 +1022,25 @@ pump is joined before returning; queued interrupts check their retired scope."
               (ignore-errors (platform-unwatch-terminal-resize *platform* watch))))
         (error (condition)
           (if (cancelled-p)
-              (error 'localgroup-client-cancelled :operation ':switch :message "Channel switch cancelled.")
+              (error 'world-terminal-client-cancelled :operation ':switch :message "Channel switch cancelled.")
               (error condition)))))))
 
 (-> main--call-with-channel-loading
-    (localgroup-screen string function
+    (world-terminal-screen string function
      &key (:start-p boolean) (:boot-p boolean) (:agent-name (option string)) (:cancellable-p boolean)) t)
 (defun main--call-with-channel-loading
     (screen title function &key start-p boot-p agent-name cancellable-p)
   "Call FUNCTION with loading milestones, optionally serving a cancellable switch wait."
   (flet ((description (text)
            (if cancellable-p (format nil "~A (Esc: return)" text) text)))
-    (localgroup-screen-show-loading screen title :start-p start-p :boot-p boot-p
+    (world-terminal-screen-show-loading screen title :start-p start-p :boot-p boot-p
                                                 :agent-name agent-name
                                                 :description (description "Connecting to world"))
     (handler-bind
         ((channel-loading-progress
            (lambda (progress)
-             (localgroup-client-check-cancellation)
-             (localgroup-screen-show-loading
+             (world-terminal-client-check-cancellation)
+             (world-terminal-screen-show-loading
               screen title :step        (channel-loading-progress-step progress)
                            :description (description (channel-loading-progress-description progress))
                            :agent-name  agent-name))))
@@ -1062,7 +1050,7 @@ pump is joined before returning; queued interrupts check their retired scope."
 
 (-> main--attach-world-channel
     (configuration string keyword
-     &key (:screen localgroup-screen) (:notice (option string)) (:client-version (option string))
+     &key (:screen world-terminal-screen) (:notice (option string)) (:client-version (option string))
           (:attached-function (option function)) (:wait-p boolean))
     list)
 (defun main--attach-world-channel
@@ -1078,7 +1066,7 @@ still shows the boot panel keeps it until the user starts the session."
                                          :read-only-p (eq mode ':read-only))
                     :notice            notice
                     :client-version    client-version
-                    :boot-p            (not (null (localgroup-screen-boot-ui screen)))
+                    :boot-p            (not (null (world-terminal-screen-boot-ui screen)))
                     :wait-function     (when wait-p
                                          (lambda (function)
                                            (main--call-with-channel-wait screen function)))
@@ -1098,16 +1086,16 @@ still shows the boot panel keeps it until the user starts the session."
         finally (return (values total local))))
 
 (-> main--welcome-frame
-    (localgroup-screen string &key (:total (option integer)) (:local (option integer))
+    (world-terminal-screen string &key (:total (option integer)) (:local (option integer))
      (:immutable-p boolean) (:recovered-p boolean) (:tip list)
      (:recovery-conversation-id (option string)) (:notice (option string)))
     clinedi:frame-snapshot)
 (defun main--welcome-frame
     (screen directory &key total local immutable-p recovered-p tip recovery-conversation-id notice)
   "Render safe client startup information centered in the current pane."
-  (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
+  (multiple-value-bind (height width) (world-terminal-screen-pane-size screen)
     (let* ((content-width (max 1 (min 88 width)))
-           (terminal      (localgroup-screen-terminal screen))
+           (terminal      (world-terminal-screen-terminal screen))
            (title
              (list (terminal-span ':brand (format nil "AUTOLITH v~A" *autolith-version*))))
            (details
@@ -1172,14 +1160,14 @@ still shows the boot panel keeps it until the user starts the session."
              :height height :width width :complete-p t)))))))
 
 (-> main--welcome-world-client
-    (localgroup-screen configuration string
+    (world-terminal-screen configuration string
      &key (:immutable-p boolean) (:recovery-diagnosis (option string))
      (:recovery-conversation-id (option string)) (:notice (option string)))
     (option list))
 (defun main--welcome-world-client
     (screen configuration directory &key immutable-p recovery-diagnosis recovery-conversation-id notice)
   "Read client welcome input, releasing its resize watch before channel loading."
-  (let ((terminal     (localgroup-screen-terminal screen))
+  (let ((terminal     (world-terminal-screen-terminal screen))
         (tip          (application--startup-tip-spans))
         (resize-watch nil)
         (next-refresh 0)
@@ -1189,8 +1177,8 @@ still shows the boot panel keeps it until the user starts the session."
          (progn
            (terminal-start terminal)
            ;; Measure the banner in the transcript pane, not the fullscreen boot panel.
-           (with-lock-held ((localgroup-screen-lock screen))
-             (localgroup-screen--take-whole-screen screen nil))
+           (with-lock-held ((world-terminal-screen-lock screen))
+             (world-terminal-screen--take-whole-screen screen nil))
            (setf resize-watch
                  (platform-watch-terminal-resize *platform*
                   (lambda () (setf *terminal-resize-pending-p* t))))
@@ -1198,23 +1186,23 @@ still shows the boot panel keeps it until the user starts the session."
              (when (shiftf *terminal-resize-pending-p* nil)
                (multiple-value-bind (rows columns) (terminal-current-size)
                  (terminal-set-dimensions terminal columns :rows rows))
-               (localgroup-screen-resized screen))
+               (world-terminal-screen-resized screen))
              (when (>= (get-internal-real-time) next-refresh)
                (setf next-refresh (+ (get-internal-real-time) internal-time-units-per-second))
                (handler-case
                    (multiple-value-setq (total local)
                      (main--welcome-agent-counts (world-load configuration) directory))
                  (world-error () (setf total nil local nil))))
-             (localgroup-screen-show-frame
+             (world-terminal-screen-show-frame
               screen (main--welcome-frame
                       screen directory :total total :local local :immutable-p immutable-p
                        :recovered-p (not (null recovery-diagnosis))
                       :tip tip :recovery-conversation-id recovery-conversation-id :notice notice)
               :cursor-visible-p nil)
-             (localgroup-screen-tick screen)
+             (world-terminal-screen-tick screen)
              (cond
                ((terminal-input-ready-p terminal)
-                (let ((event (localgroup-screen-filter-event screen (terminal-read-event terminal))))
+                (let ((event (world-terminal-screen-filter-event screen (terminal-read-event terminal))))
                   (cond
                     ((member event '(:interrupt :end-of-input :stream-end))
                      (return nil))
@@ -1244,7 +1232,7 @@ Interactive switches wait for discovery and attachment until completion or cance
 A failed switch restores its source, or reports a disconnected terminal if that source disappeared.
 Return success and bounded secondary cleanup metadata without replacing a primary condition or exit."
   (let* ((panel            (world-sidebar-create configuration))
-         (screen           (localgroup-client-screen-create :panel panel))
+         (screen           (world-terminal-client-screen-create :panel panel))
          (launch-directory (namestring (uiop:getcwd)))
          (last-channel     nil)
          (final-exit       nil)
@@ -1279,7 +1267,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                                  :recovery-diagnosis recovery-diagnosis
                                                 :launch             launch)))
                  :start-p (not (null (terminal--terminal-mode-or-nil
-                                     (localgroup-screen-terminal screen))))
+                                     (world-terminal-screen-terminal screen))))
                  :boot-p  (config :boot-screen-p configuration))))
            (when welcome-p
              (world-sidebar-start panel))
@@ -1315,7 +1303,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                      (ignore-errors
                                       (let ((world (world-client-entry configuration)))
                                         (when world
-                                          (localgroup-query-record world ':close
+                                          (world-terminal-query-record world ':close
                                                                    (list :channel           session-id
                                                                          :unattached-only-p t))))))
                                    (cond
@@ -1325,7 +1313,7 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                     (restoring-p
                                      (setf (world-sidebar-current panel) nil
                                            last-channel nil)
-                                     (localgroup-screen-show-loading screen "Disconnected")
+                                     (world-terminal-screen-show-loading screen "Disconnected")
                                      (list ':disconnected :status 1 :message
                                            (format nil
                                                    "Disconnected: the source channel is no longer available. ~A"
@@ -1383,12 +1371,12 @@ Return success and bounded secondary cleanup metadata without replacing a primar
       (flet ((cleanup (stage function)
                (handler-case (funcall function)
                              (error (condition)
-                                    (push (localgroup--client-cleanup-failure stage condition)
+                                    (push (world-terminal--client-cleanup-failure stage condition)
                                           cleanup-failures)))))
-        (cleanup "client-screen" (lambda () (localgroup-client-screen-release screen)))
+        (cleanup "client-screen" (lambda () (world-terminal-client-screen-release screen)))
         (cleanup "sidebar" (lambda () (world-sidebar-stop panel))))
       (setf cleanup-failures (nreverse cleanup-failures)))
-    (localgroup-relay-exit configuration final-exit attachment-mode :session-id last-channel)
+    (world-terminal-relay-exit configuration final-exit attachment-mode :session-id last-channel)
     (values t (when cleanup-failures (list :cleanup-failures cleanup-failures)))))
 
 (-> main--session-options () list)
@@ -1434,12 +1422,12 @@ Return success and bounded secondary cleanup metadata without replacing a primar
                                ("full" . :full-access))
                 :description "initial command authorization mode")
    (make-option ':string
-                :long-name   "localgroup-handoff"
-                :key         ':localgroup-handoff
+                :long-name   "world-startup"
+                :key         ':world-startup
                 :parameter   "FILE"
                 :persistent  t
                 :hidden      t
-                :description "claim an internal localgroup handoff record")))
+                :description "claim an internal world-terminal handoff record")))
 
 (-> main--single-selection (clingon:command string) (option string))
 (defun main--single-selection (command description)
@@ -1490,16 +1478,16 @@ Return success and bounded secondary cleanup metadata without replacing a primar
        (unless (uiop:directory-exists-p directory)
          (error 'configuration-error :message
                 (format nil "The directory ~A does not exist." directory)))
-       (let* ((configuration (localgroup--client-configuration))
+       (let* ((configuration (world-terminal--client-configuration))
               (identifier    (world-client-open
                               configuration
                               :directory         directory
                               :permission-mode   (or (config :permission-mode configuration) ':ask)
                               :new-p             t
                               :attach-expected-p nil)))
-         (localgroup--write-styled-line
+         (world-terminal--write-styled-line
           *standard-output* (channel-open-instruction identifier)
-          (localgroup--status-output-styled-p *standard-output*)))))))
+          (world-terminal--status-output-styled-p *standard-output*)))))))
 
 (-> main--fork-command () clingon:command)
 (defun main--fork-command ()
@@ -1811,11 +1799,11 @@ autolith uninstall removes the installation and keeps user data."
                        (main--data-command)
                        (main--usage-command)
                        (main--run-job-command)
-                       (localgroup--status-command)
+                       (world-terminal--status-command)
                        (world-client--tell-command)
-                       (localgroup--operation-command
+                       (world-terminal--operation-command
                         "detach" "detach a hosted channel from its terminal" ':detach)
-                       (localgroup--operation-command
+                       (world-terminal--operation-command
                         "pause" "pause a hosted channel" ':pause)
                        (world-client--start-command)
                        (world-client--stop-command))
@@ -1862,7 +1850,7 @@ autolith uninstall removes the installation and keeps user data."
 
 (-> main--conversation-owner-record (conversation-in-use) (option pathname))
 (defun main--conversation-owner-record (condition)
-  "Locate only the exact sibling localgroup record from a structurally valid lease path."
+  "Locate this image selection's channel record from a structurally valid lease path."
   (let* ((lease      (conversation-in-use-lease-pathname condition))
          (identifier (conversation-in-use-identifier condition))
          (directory  (pathname-directory lease)))
@@ -1870,8 +1858,12 @@ autolith uninstall removes the installation and keeps user data."
                (equal (first (last directory)) "conversation-leases")
                (equal (pathname-name lease) identifier)
                (equal (pathname-type lease) "lock"))
-      (make-pathname :directory (append (butlast directory) '("localgroup"))
-                     :name identifier :type "sexp" :defaults lease))))
+      (image-daemon:daemon-registry-pathname
+       (merge-pathnames
+        "channels/"
+        (world--endpoint-directory
+         (make-pathname :directory (butlast directory) :name nil :type nil :defaults lease)))
+       identifier))))
 
 (-> main--startup-error-text (condition) string)
 (defun main--startup-error-text (condition)
@@ -1889,17 +1881,17 @@ autolith uninstall removes the installation and keeps user data."
                 (t
                  (let* ((record       (main--conversation-owner-record condition))
                         (reachability (if record
-                                          (localgroup-owner-reachability
+                                          (world-terminal-owner-reachability
                                            record (conversation-in-use-identifier condition) pid)
                                           ':unknown)))
                    (format nil "~A Observed lock owner PID ~D. ~A" original pid
                            (case reachability
                              (:reachable
-                              "A matching localgroup endpoint is reachable; inspect it with autolith status or attach with autolith open ID.")
+                              "A matching channel endpoint is reachable in this image selection; inspect it with autolith status or attach with autolith open ID.")
                              (:no-reachable-endpoint
-                              (format nil "No matching published localgroup endpoint was found. Inspect and recheck PID ~D; if you choose to stop it, run kill ~D, then retry. The owner may have changed since this snapshot." pid pid))
+                              (format nil "No matching channel endpoint was found in this image selection. Inspect and recheck PID ~D; if you choose to stop it, run kill ~D, then retry. The owner may have changed since this snapshot." pid pid))
                              (otherwise
-                              "Localgroup reachability is unknown. Inspect and recheck the observed PID before retrying; the owner may have changed since this snapshot.")))))))
+                              "Channel endpoint reachability is unknown. Inspect and recheck the observed PID before retrying; the owner may have changed since this snapshot.")))))))
             original)
       ((or sb-sys:deadline-timeout error) ()
         original))))

@@ -172,7 +172,7 @@ again."
         (handler-case
             (let ((entry (world-client-entry configuration)))
               (when entry
-                (localgroup-query-record entry ':person-unread)))
+                (world-terminal-query-record entry ':person-unread)))
           (autolith-error ()
             ;; A checkpointing or stopping server counts again on the next attach.
             nil))))

@@ -143,7 +143,7 @@
       (channel-subscription--drain-events subscription)))
   nil)
 
-(-> channel-subscription--connect (channel-subscription) localgroup-client-connection)
+(-> channel-subscription--connect (channel-subscription) world-terminal-client-connection)
 (defun channel-subscription--connect (subscription)
   "Find SUBSCRIPTION's channel with a bounded handshake, or a cancellable switch wait.
 
@@ -156,16 +156,16 @@ and tried once. No channel command has been sent by then."
                                      image-daemon:*daemon-connect-timeout-seconds*))))))
     (flet ((discover ()
              "Find the channel's endpoint in what is left of the deadline."
-             (localgroup-client-check-cancellation)
+             (world-terminal-client-check-cancellation)
              (handler-case
                  (sb-sys:with-deadline
                     (:seconds (and deadline
                                    (max 0 (/ (- deadline (get-internal-real-time))
                                              internal-time-units-per-second))))
-                   (localgroup--find-record (channel-subscription-configuration subscription)
+                   (world-terminal--find-record (channel-subscription-configuration subscription)
                                             identifier))
                (sb-sys:deadline-timeout (condition)
-                 (error 'localgroup-error
+                 (error 'world-terminal-error
                         :operation  ':discover
                         :session-id identifier
                         :cause      condition
@@ -173,21 +173,21 @@ and tried once. No channel command has been sent by then."
 
            (connect (entry)
              "Subscribe to the channel at ENTRY."
-             (localgroup-client-check-cancellation)
-             (localgroup-client-connect
+             (world-terminal-client-check-cancellation)
+             (world-terminal-client-connect
               entry
               :name           (channel-subscription-name subscription)
               :approves-p     (channel-subscription-approves-p subscription)
               :evaluates-p    (channel-subscription-evaluates-p subscription)
               :arguments      (channel-subscription-arguments subscription)
-              :cancelled-p    *localgroup-client-cancelled-p*
+              :cancelled-p    *world-terminal-client-cancelled-p*
               :initialize-function
               (lambda (connection) (channel-subscription-initialize-connection subscription connection))
               :event-function (lambda (event) (channel-subscription-receive-event subscription event)))))
       (let ((entry (discover)))
         (handler-case (connect entry)
           (error (condition)
-            (localgroup-client-check-cancellation)
+            (world-terminal-client-check-cancellation)
             (let ((replacement (discover)))
               (when (or (equal replacement entry)
                         (and deadline (>= (get-internal-real-time) deadline)))
@@ -205,10 +205,10 @@ and tried once. No channel command has been sent by then."
           (setf (channel-subscription-connection subscription) connection
                 installed-p t)))
       (unless installed-p
-        (localgroup-client-close connection)
+        (world-terminal-client-close connection)
         (error 'channel-subscription-unavailable :message "The subscription closed during attachment.")))
     (channel-subscription-finish-attachment
-     subscription (localgroup-client-connection-attached connection) :replay-p replay-p))
+     subscription (world-terminal-client-connection-attached connection) :replay-p replay-p))
   nil)
 
 (-> channel-subscription-event (channel-subscription list) null)
@@ -257,13 +257,13 @@ and tried once. No channel command has been sent by then."
 
 (defmethod channel-subscription-call ((subscription channel-subscription) command &rest arguments)
   "Wait for a usable connection, then preserve the transport's outcome."
-  (apply #'localgroup-client-call (channel-subscription--await-connection subscription)
+  (apply #'world-terminal-client-call (channel-subscription--await-connection subscription)
          command arguments))
 
 (-> channel-subscription-send (channel-subscription keyword &rest t) null)
 (defun channel-subscription-send (subscription command &rest arguments)
   "Send COMMAND without waiting for the channel's reply, as for input the channel may answer with a question."
-  (apply #'localgroup-client-send (channel-subscription--await-connection subscription)
+  (apply #'world-terminal-client-send (channel-subscription--await-connection subscription)
          command arguments)
   nil)
 
@@ -320,17 +320,17 @@ and tried once. No channel command has been sent by then."
             reconnect (channel-subscription-reconnect-thread subscription))
       (sb-thread:condition-broadcast (channel-subscription-condition-variable subscription)))
     (channel-subscription-forget subscription)
-    (when connection (localgroup-client-close connection))
+    (when connection (world-terminal-client-close connection))
     (when (and reconnect (not (eq reconnect (current-thread))))
       (join-thread reconnect))
     (when (and connection (channel-subscription-started-p subscription))
       (let ((world (world-client-entry (channel-subscription-configuration subscription))))
         (when world
           (handler-case
-              (localgroup-query-record world ':close
+              (world-terminal-query-record world ':close
                                        (list :channel           (channel-subscription-identifier subscription)
                                              :unattached-only-p t))
-            (localgroup-error () nil))))))
+            (world-terminal-error () nil))))))
   nil)
 
 (-> channel-subscription--mark-closed (channel-subscription &optional (option string)) null)
@@ -344,7 +344,7 @@ and tried once. No channel command has been sent by then."
   (channel-subscription-forget session :wire-p t)
   nil)
 
-(-> channel-subscription--await-connection (channel-subscription) localgroup-client-connection)
+(-> channel-subscription--await-connection (channel-subscription) world-terminal-client-connection)
 (defun channel-subscription--await-connection (subscription)
   "Wait through reconnect and attachment delivery before admitting a new request."
   (with-lock-held ((channel-subscription-lock subscription))
@@ -399,9 +399,9 @@ and tried once. No channel command has been sent by then."
   nil)
 
 (-> channel-subscription--connect-replacement
-    (channel-subscription localgroup-client-connection &key (:identifier string)
+    (channel-subscription world-terminal-client-connection &key (:identifier string)
      (:sequence (integer 0)))
-    localgroup-client-connection)
+    world-terminal-client-connection)
 (defun channel-subscription--connect-replacement (subscription previous &key identifier sequence)
   "Subscribe by cursor, retrying a checkpoint that races endpoint discovery.
 
@@ -409,33 +409,33 @@ Only the subscription handshake is retried. No channel command has been sent.
 Explicit rejection, including an expired replay cursor, is terminal."
   (let ((allow-later-p nil)
         (deadline      (+ (get-internal-real-time)
-                          (* *localgroup-handoff-start-timeout-seconds* internal-time-units-per-second))))
+                          (* *world-startup-start-timeout-seconds* internal-time-units-per-second))))
     (flet ((cancelled-p ()
              (or (channel-subscription-closed-p subscription)
                  (channel-subscription-stopping-p subscription))))
       (loop
-        (let ((entry (localgroup--wait-for-checkpoint-entry
-                      (localgroup-client-connection-entry previous) identifier
+        (let ((entry (world-terminal--wait-for-checkpoint-entry
+                      (world-terminal-client-connection-entry previous) identifier
                       :configuration (channel-subscription-configuration subscription)
                       :cancelled-p #'cancelled-p :allow-later-p allow-later-p)))
           (handler-case
-              (return (localgroup-client-connect
+              (return (world-terminal-client-connect
                        entry :name      (channel-subscription-name subscription)
                        :approves-p      (channel-subscription-approves-p subscription)
                        :evaluates-p     (channel-subscription-evaluates-p subscription)
                        :arguments       (channel-subscription-arguments subscription)
                        :after-sequence sequence :cancelled-p #'cancelled-p
                         :event-function (lambda (event) (channel-subscription-receive-event subscription event))))
-            (localgroup-error (condition)
+            (world-terminal-error (condition)
               (when (or (cancelled-p) (>= (get-internal-real-time) deadline)
-                        (and (typep condition 'localgroup-client-rejected)
-                             (not (localgroup-error-retry-p condition))))
+                        (and (typep condition 'world-terminal-client-rejected)
+                             (not (world-terminal-error-retry-p condition))))
                 (error condition))
               (setf allow-later-p t)
               (sleep 0.05))))))))
 
 (-> channel-subscription--reconnect
-    (channel-subscription localgroup-client-connection &key (:identifier string)
+    (channel-subscription world-terminal-client-connection &key (:identifier string)
      (:sequence (integer 0)))
     null)
 (defun channel-subscription--reconnect (subscription previous &key identifier sequence)
@@ -462,12 +462,12 @@ Explicit rejection, including an expired replay cursor, is terminal."
                (channel-subscription--mark-closed subscription (princ-to-string condition)))))
       (when (or (not installed-p) (channel-subscription-closed-p subscription))
         (when connection
-          (localgroup-client-close connection)))
+          (world-terminal-client-close connection)))
       (with-lock-held ((channel-subscription-lock subscription))
         (when (eq (current-thread) (channel-subscription-reconnect-thread subscription))
           (setf (channel-subscription-reconnect-thread subscription) nil))
         (sb-thread:condition-broadcast (channel-subscription-condition-variable subscription)))
       ;; A second checkpoint can close its connection during the buffered drain.
-      (when (and installed-p (localgroup-client-connection-closed-p connection))
+      (when (and installed-p (world-terminal-client-connection-closed-p connection))
         (channel-subscription--connection-closed subscription))))
   nil)

@@ -2,7 +2,7 @@
 
 ;;;; -- Structured Client Protocol --
 
-;;; A structured client opens a channel's localgroup endpoint with the :client
+;;; A structured client opens a channel's world-terminal endpoint with the :client
 ;;; operation, naming itself with :name and saying with :approves-p whether
 ;;; it answers approvals and with :evaluates-p whether it evaluates Common
 ;;; Lisp forms, and keeps the connection. The server answers with
@@ -54,20 +54,20 @@
 ;;; and a packet that cannot be decoded at all is skipped. None of these ends
 ;;; the connection.
 
-(defparameter *localgroup-client-permission-modes* '(:ask :auto :sandboxed :full-access)
+(defparameter *world-terminal-client-permission-modes* '(:ask :auto :sandboxed :full-access)
   "The permission modes a structured client may select for its channel.")
 
 
 ;;;; -- Serving --
 
-(-> localgroup--serve-client (localgroup-session list &key (:socket t) (:stream stream)) null)
-(defun localgroup--serve-client (session request &key socket stream)
+(-> world-terminal--serve-client (channel-endpoint list &key (:socket t) (:stream stream)) null)
+(defun world-terminal--serve-client (session request &key socket stream)
   "Serve REQUEST's structured client on STREAM until it disconnects."
-  (unless (localgroup--valid-request-p request session)
-    (daemon-write-packet stream (list :error :message "The localgroup request was rejected."))
-    (return-from localgroup--serve-client nil))
-  (let* ((application (localgroup-session-application session))
-         (arguments   (localgroup--request-field request :arguments))
+  (unless (world-terminal--valid-request-p request session)
+    (daemon-write-packet stream (list :error :message "The world-terminal request was rejected."))
+    (return-from world-terminal--serve-client nil))
+  (let* ((application (channel-endpoint-application session))
+         (arguments   (world-terminal--request-field request :arguments))
          (name        (getf arguments :name))
          (client      (channel-client-create
                        :name                 (if (non-empty-string-p name) name "client")
@@ -85,7 +85,7 @@
     (unwind-protect
          (progn
            (when (channel-client-controls-p client)
-             (localgroup--client-geometry application arguments))
+             (world-terminal--client-geometry application arguments))
            (handler-case
                (application-clients-add
                 application client
@@ -94,11 +94,11 @@
                                       :client-id      (channel-client-identifier client)
                                       :session-id     (image-daemon:daemon-runtime-identifier session)
                                       :server-version *autolith-version*
-                                      :state          (localgroup-status-snapshot session)))
-             (localgroup-error (condition)
+                                      :state          (world-terminal-status-snapshot session)))
+             (world-terminal-error (condition)
               (daemon-write-packet stream (list :error  :message (autolith-error-message condition)
-                                               :retry-p (localgroup-error-retry-p condition)))
-              (return-from localgroup--serve-client nil)))
+                                               :retry-p (world-terminal-error-retry-p condition)))
+              (return-from world-terminal--serve-client nil)))
            (application-clients-note-controller application client)
            (when (channel-client-controls-p client)
              ;; A terminal shows the channel from now on.
@@ -110,23 +110,23 @@
                                  (error ()
                                    nil))
                  while (and command (not (channel-client-closed-p client)))
-                 do (when (localgroup-message-p command)
+                 do (when (world-terminal-message-p command)
                       (application-clients-note-controller application client)
-                      (localgroup--run-client-command session command
+                      (world-terminal--run-client-command session command
                                                       :client client
                                                       :inputs inputs))))
       (client-input-queue-close inputs)
       (channel-client-close client)))
   nil)
 
-(-> localgroup--queued-input-p (list) boolean)
-(defun localgroup--queued-input-p (command)
+(-> world-terminal--queued-input-p (list) boolean)
+(defun world-terminal--queued-input-p (command)
   "Return true when client COMMAND is input that waits its turn: every action but cancelling."
   (and (eq (first command) ':input)
        (not (member (getf (rest command) :action) '(:interrupt :escape)))))
 
-(-> localgroup--client-geometry (application list) null)
-(defun localgroup--client-geometry (application arguments)
+(-> world-terminal--client-geometry (application list) null)
+(defun world-terminal--client-geometry (application arguments)
   "Lay APPLICATION's presentation out for a client whose pane has ARGUMENTS' :ROWS and :COLUMNS."
   (let ((presentation (application-presentation application)))
     (when presentation
@@ -238,12 +238,12 @@
       (join-thread idle)))
   nil)
 
-(defparameter *localgroup-watching-client-commands* '(:state :input-history :transcript-history)
+(defparameter *world-terminal-watching-client-commands* '(:state :input-history :transcript-history)
   "The commands a client that only watches a channel may send: those that change nothing.")
 
-(-> localgroup--run-client-command
-    (localgroup-session list &key (:client channel-client) (:inputs client-input-queue)) null)
-(defun localgroup--run-client-command (session command &key client inputs)
+(-> world-terminal--run-client-command
+    (channel-endpoint list &key (:client channel-client) (:inputs client-input-queue)) null)
+(defun world-terminal--run-client-command (session command &key client inputs)
   "Run COMMAND for CLIENT and queue its reply: at once, beside the reader, or on a thread of its own.
 
 An operation may wait for an approval answered on this connection, so it gets
@@ -252,13 +252,13 @@ runs beside the reader through INPUTS, in the order it arrived. Each command
 is this call's own, however many the reader takes meanwhile."
   (flet ((reply ()
            (channel-client-enqueue
-            client (localgroup--client-reply session command
+            client (world-terminal--client-reply session command
                                              :attachment (channel-client-attachment client)
                                              :watching-p (channel-client-watches-p client)))))
     (cond
       ((eq (first command) ':operation)
        (make-thread #'reply :name "Autolith client operation"))
-      ((localgroup--queued-input-p command)
+      ((world-terminal--queued-input-p command)
        (unless (eq (client-input-queue-push
                     inputs #'reply :characters (length (image-daemon:daemon-packet-string command)))
                    ':accepted)
@@ -269,11 +269,11 @@ is this call's own, however many the reader takes meanwhile."
        (reply))))
   nil)
 
-(-> localgroup--client-reply
-    (localgroup-session list
+(-> world-terminal--client-reply
+    (channel-endpoint list
      &key (:attachment (option image-daemon:attachment)) (:watching-p boolean))
     list)
-(defun localgroup--client-reply (session packet &key attachment watching-p)
+(defun world-terminal--client-reply (session packet &key attachment watching-p)
   "Run the client command PACKET in SESSION's channel and return its reply.
 
 ATTACHMENT is the one the command came over, which an evaluation's answer is
@@ -283,27 +283,27 @@ whatever would change the channel."
     (handler-case
         (progn
           (when (and watching-p
-                     (not (member (first packet) *localgroup-watching-client-commands*)))
-            (error 'localgroup-error
+                     (not (member (first packet) *world-terminal-watching-client-commands*)))
+            (error 'world-terminal-error
                    :message    "A client that only watches a channel sends it nothing."
                    :operation  ':client
                    :session-id (image-daemon:daemon-runtime-identifier session)))
           (client-portable
            (list* :reply :id identifier :ok t
-                  (localgroup--client-command session (first packet) (rest packet)
+                  (world-terminal--client-command session (first packet) (rest packet)
                                               :attachment attachment))))
       (error (condition)
         (list :reply        :id identifier
                      :error (bounded-string (princ-to-string condition) :limit 1000))))))
 
-(-> localgroup--client-command
-    (localgroup-session t list &key (:attachment (option image-daemon:attachment))) list)
-(defun localgroup--client-command (session command arguments &key attachment)
+(-> world-terminal--client-command
+    (channel-endpoint t list &key (:attachment (option image-daemon:attachment))) list)
+(defun world-terminal--client-command (session command arguments &key attachment)
   "Run client COMMAND with ARGUMENTS in SESSION's channel and return the reply's extra fields."
-  (let* ((application (localgroup-session-application session))
+  (let* ((application (channel-endpoint-application session))
          (controller  (application-input-controller application)))
     (flet ((refuse (message)
-             (error 'localgroup-error
+             (error 'world-terminal-error
                     :message    message
                     :operation  ':client
                     :session-id (image-daemon:daemon-runtime-identifier session))))
@@ -357,7 +357,7 @@ whatever would change the channel."
                (application-operation-backend operation) input)))
            nil))
         (:state
-         (list :state (localgroup-status-snapshot session)))
+         (list :state (world-terminal-status-snapshot session)))
         (:input
          (let ((action (getf arguments :action))
                (text   (getf arguments :text))
@@ -368,7 +368,7 @@ whatever would change the channel."
            (let ((slash-p (and text (member action '(:submit :queue :command))
                                (input-leading-slash-p text))))
              (unless slash-p
-               (application-localgroup-resume application))
+               (application-world-terminal-resume application))
              (list :handled-p
                    (not (null (input-port-apply
                                controller action
@@ -378,7 +378,7 @@ whatever would change the channel."
                                     :image-pathnames (mapcar #'image-input-validate-pathname images))
                                    text))))))))
         (:geometry
-         (localgroup--client-geometry application arguments)
+         (world-terminal--client-geometry application arguments)
          nil)
         (:detach
          nil)
@@ -387,7 +387,7 @@ whatever would change the channel."
                (presentation (application-presentation application)))
            (list :accepted-p
                  (and presentation
-                      (localgroup--terminal-event-p event)
+                      (world-terminal--terminal-event-p event)
                       (presentation-terminal-offer-event
                        (terminal-ui-terminal presentation) event)))))
         (:input-history
@@ -422,104 +422,104 @@ whatever would change the channel."
 (-> application-clients-publish-state (application) null)
 (defun application-clients-publish-state (application)
   "Send APPLICATION's channel state to its structured clients, as after a mode or setting change."
-  (let ((session (application-localgroup-session application)))
+  (let ((session (application-channel-endpoint application)))
     (when session
       (application-clients-publish application
-                                   (list :state :state (localgroup-status-snapshot session)))))
+                                   (list :state :state (world-terminal-status-snapshot session)))))
   nil)
 
 
 ;;;; -- Connecting --
 
-(defclass localgroup-client-connection ()
+(defclass world-terminal-client-connection ()
   ((socket
     :initarg       :socket
-    :reader        localgroup-client-connection-socket
+    :reader        world-terminal-client-connection-socket
     :documentation "The socket of the connection.")
    (stream
     :initarg       :stream
-    :reader        localgroup-client-connection-stream
+    :reader        world-terminal-client-connection-stream
     :type          stream
     :documentation "The stream commands are written to and events read from.")
    (lock
     :initform      (make-lock "Autolith client connection")
-    :reader        localgroup-client-connection-lock
+    :reader        world-terminal-client-connection-lock
     :documentation "The lock guarding closure, command identifiers and pending replies.")
    (write-lock
     :initform      (make-lock "Autolith client writes")
-    :reader        localgroup-client-connection-write-lock
+    :reader        world-terminal-client-connection-write-lock
     :documentation "The lock serializing socket writes without blocking reply delivery or closure.")
    (write-failed-p
     :initform      nil
-    :accessor      localgroup-client-connection-write-failed-p
+    :accessor      world-terminal-client-connection-write-failed-p
     :type          boolean
     :documentation "Writer-lock guarded retirement flag set before releasing an interrupted frame.")
    (evaluator
     :initform      (make-instance 'client-evaluator)
-    :reader        localgroup-client-connection-evaluator
+    :reader        world-terminal-client-connection-evaluator
     :documentation "Attachment-owned evaluation state, severed on disconnect.")
    (condition-variable
     :initform      (make-condition-variable :name "Autolith client connection")
-    :reader        localgroup-client-connection-condition-variable
+    :reader        world-terminal-client-connection-condition-variable
     :documentation "Signaled when a reply arrives or the connection ends.")
    (next-identifier
     :initform      0
-    :accessor      localgroup-client-connection-next-identifier
+    :accessor      world-terminal-client-connection-next-identifier
     :type          (integer 0)
     :documentation "The identifier the next command takes.")
    (replies
     :initform      (make-hash-table)
-    :reader        localgroup-client-connection-replies
+    :reader        world-terminal-client-connection-replies
     :documentation "Replies that arrived for commands still waited on, by identifier.")
    (closed-p
     :initform      nil
-    :accessor      localgroup-client-connection-closed-p
+    :accessor      world-terminal-client-connection-closed-p
     :type          boolean
     :documentation "Whether the connection ended.")
    (entry
     :initarg       :entry
-    :reader        localgroup-client-connection-entry
+    :reader        world-terminal-client-connection-entry
     :documentation "The original authenticated endpoint entry used for this connection.")
    (checkpoint-reconnect-id
     :initform      nil
-    :accessor      localgroup-client-connection-checkpoint-reconnect-id
+    :accessor      world-terminal-client-connection-checkpoint-reconnect-id
     :type          (option string)
     :documentation "The planned restart announced before this connection closes.")
    (attached
     :initarg       :attached
-    :reader        localgroup-client-connection-attached
+    :reader        world-terminal-client-connection-attached
     :type          list
     :documentation "The server's (:attached ...) greeting.")
    (reader-thread
     :initform      nil
-    :accessor      localgroup-client-connection-reader-thread
+    :accessor      world-terminal-client-connection-reader-thread
     :documentation "The thread reading events and replies."))
   (:documentation "A structured client's connection to one channel."))
 
-(-> localgroup-client--read-greeting (stream (option function)) list)
-(defun localgroup-client--read-greeting (stream cancelled-p)
+(-> world-terminal-client--read-greeting (stream (option function)) list)
+(defun world-terminal-client--read-greeting (stream cancelled-p)
   "Read the required greeting boundedly, checking cancellation before it arrives."
   (sb-sys:with-deadline (:seconds image-daemon:*daemon-connect-timeout-seconds*)
     (when cancelled-p
       (loop until (listen stream)
             do (when (funcall cancelled-p)
-                 (error 'localgroup-error :message  "Client attachment was cancelled."
+                 (error 'world-terminal-error :message  "Client attachment was cancelled."
                                          :operation ':client))
                (sleep 0.01))
       (when (funcall cancelled-p)
-        (error 'localgroup-error :message  "Client attachment was cancelled."
+        (error 'world-terminal-error :message  "Client attachment was cancelled."
                                 :operation ':client)))
     (daemon-read-response stream ':client)))
 
-(-> localgroup-client-connect
+(-> world-terminal-client-connect
     (cons &key (:name string) (:event-function function) (:approves-p boolean)
           (:evaluates-p boolean) (:after-sequence (option integer))
           (:cancelled-p (option function)) (:arguments list)
           (:initialize-function (option function)))
-    localgroup-client-connection)
-(defun localgroup-client-connect (entry &key (name "client") event-function (approves-p t)
+    world-terminal-client-connection)
+(defun world-terminal-client-connect (entry &key (name "client") event-function (approves-p t)
                                            evaluates-p after-sequence cancelled-p arguments initialize-function)
-  "Connect to the channel of localgroup endpoint ENTRY as a structured client NAME.
+  "Connect to the channel of world-terminal endpoint ENTRY as a structured client NAME.
 
 EVENT-FUNCTION is called on the reader thread with each event, and with
 (:closed) once the connection ends. Replies go to the command that waits
@@ -535,13 +535,13 @@ thread after its greeting and before the reader starts, within the handshake dea
         (stream     nil)
         (connection nil))
     (multiple-value-setq (socket stream)
-      (daemon-connect (localgroup--record-port record)))
+      (daemon-connect (world-terminal--record-port record)))
     (handler-case
         (sb-sys:with-deadline (:seconds image-daemon:*daemon-connect-timeout-seconds*)
           (daemon-write-packet stream
-                               (list :localgroup-request
+                               (list :world-terminal-request
                                      :version   *daemon-protocol-version*
-                                     :token     (localgroup--record-token record)
+                                     :token     (world-terminal--record-token record)
                                      :operation ':client
                                      :arguments (list* :name                 name
                                                        :approves-p           approves-p
@@ -549,113 +549,113 @@ thread after its greeting and before the reader starts, within the handshake dea
                                                        :cancels-evaluation-p evaluates-p
                                                        :after-sequence       after-sequence
                                                        arguments)))
-          (let ((greeting (localgroup-client--read-greeting stream cancelled-p)))
+          (let ((greeting (world-terminal-client--read-greeting stream cancelled-p)))
             (unless (eq (first greeting) ':attached)
-              (error 'localgroup-client-rejected
+              (error 'world-terminal-client-rejected
                      :message    (or (getf (rest greeting) :message)
                                      "The channel did not accept the client.")
                      :operation  ':client
                      :retry-p    (getf (rest greeting) :retry-p)
-                     :session-id (localgroup--record-session-id record)))
+                     :session-id (world-terminal--record-session-id record)))
             (progn
-              (setf connection (make-instance 'localgroup-client-connection
+              (setf connection (make-instance 'world-terminal-client-connection
                                               :entry    entry
                                               :socket   socket
                                               :stream   stream
                                               :attached greeting))
               (when initialize-function
                 (funcall initialize-function connection))
-              (setf (localgroup-client-connection-reader-thread connection)
+              (setf (world-terminal-client-connection-reader-thread connection)
                     (make-thread (lambda ()
-                                   (localgroup-client--read connection event-function
+                                   (world-terminal-client--read connection event-function
                                                             :evaluates-p evaluates-p))
                                  :name (format nil "Autolith ~A client reader" name)))
               connection)))
       ((or error sb-sys:deadline-timeout) (condition)
         (when connection
-          (localgroup-client--disconnect connection))
+          (world-terminal-client--disconnect connection))
         ; mallet:suppress no-ignore-errors -- closing a failed connection must not mask its cause
         (ignore-errors (sb-bsd-sockets:socket-close socket))
         (error condition)))))
 
-(-> localgroup-client--write-frame (localgroup-client-connection string) null)
-(defun localgroup-client--write-frame (connection frame)
+(-> world-terminal-client--write-frame (world-terminal-client-connection string) null)
+(defun world-terminal-client--write-frame (connection frame)
   "Serialize FRAME and retire an interrupted stream before another writer can enter."
-  (with-lock-held ((localgroup-client-connection-write-lock connection))
-    (when (or (localgroup-client-connection-write-failed-p connection)
-              (with-lock-held ((localgroup-client-connection-lock connection))
-                (localgroup-client-connection-closed-p connection)))
-      (error 'localgroup-error :message "The client transport is closed." :operation ':client))
+  (with-lock-held ((world-terminal-client-connection-write-lock connection))
+    (when (or (world-terminal-client-connection-write-failed-p connection)
+              (with-lock-held ((world-terminal-client-connection-lock connection))
+                (world-terminal-client-connection-closed-p connection)))
+      (error 'world-terminal-error :message "The client transport is closed." :operation ':client))
     (let ((finished-p nil))
       (unwind-protect
            (progn
-             (write-string frame (localgroup-client-connection-stream connection))
-             (finish-output (localgroup-client-connection-stream connection))
+             (write-string frame (world-terminal-client-connection-stream connection))
+             (finish-output (world-terminal-client-connection-stream connection))
              (setf finished-p t))
         (unless finished-p
-          (setf (localgroup-client-connection-write-failed-p connection) t)))))
+          (setf (world-terminal-client-connection-write-failed-p connection) t)))))
   nil)
 
-(-> localgroup-client--take-identifier (localgroup-client-connection &key (:await-p boolean)) integer)
-(defun localgroup-client--take-identifier (connection &key await-p)
+(-> world-terminal-client--take-identifier (world-terminal-client-connection &key (:await-p boolean)) integer)
+(defun world-terminal-client--take-identifier (connection &key await-p)
   "Return the identifier CONNECTION's next command takes, registering a reply to wait for when AWAIT-P."
-  (with-lock-held ((localgroup-client-connection-lock connection))
-    (when (or (localgroup-client-connection-closed-p connection)
-              (localgroup-client-connection-checkpoint-reconnect-id connection))
-      (error 'localgroup-error
+  (with-lock-held ((world-terminal-client-connection-lock connection))
+    (when (or (world-terminal-client-connection-closed-p connection)
+              (world-terminal-client-connection-checkpoint-reconnect-id connection))
+      (error 'world-terminal-error
              :message   "The client connection is not accepting requests."
              :operation ':client))
-    (let ((identifier (incf (localgroup-client-connection-next-identifier connection))))
+    (let ((identifier (incf (world-terminal-client-connection-next-identifier connection))))
       (when await-p
-        (setf (gethash identifier (localgroup-client-connection-replies connection)) nil))
+        (setf (gethash identifier (world-terminal-client-connection-replies connection)) nil))
       identifier)))
 
-(-> localgroup-client--write
-    (localgroup-client-connection keyword &key (:identifier integer) (:arguments list)) null)
-(defun localgroup-client--write (connection command &key identifier arguments)
+(-> world-terminal-client--write
+    (world-terminal-client-connection keyword &key (:identifier integer) (:arguments list)) null)
+(defun world-terminal-client--write (connection command &key identifier arguments)
   "Write COMMAND with IDENTIFIER and ARGUMENTS, disconnecting when the transport fails."
   (let ((frame (image-daemon:daemon-packet-string (list* command :id identifier arguments))))
-    (handler-case (localgroup-client--write-frame connection frame)
+    (handler-case (world-terminal-client--write-frame connection frame)
       (error (condition)
-        (localgroup-client--disconnect connection)
-        (error 'localgroup-request-interrupted
+        (world-terminal-client--disconnect connection)
+        (error 'world-terminal-request-interrupted
                :message      (format nil "The request was interrupted during transport: ~A. Its execution outcome is unknown."
                                      condition)
                :operation ':client :identifier identifier :command command
-               :reconnect-id (localgroup-client-connection-checkpoint-reconnect-id connection)))))
+               :reconnect-id (world-terminal-client-connection-checkpoint-reconnect-id connection)))))
   nil)
 
-(-> localgroup-client-call (localgroup-client-connection keyword &rest t) list)
-(defun localgroup-client-call (connection command &rest arguments)
+(-> world-terminal-client-call (world-terminal-client-connection keyword &rest t) list)
+(defun world-terminal-client-call (connection command &rest arguments)
   "Send COMMAND with ARGUMENTS and return its reply's fields, or signal its error.
 
 Each call owns one pending reply entry, removed on every exit."
-  (let ((identifier (localgroup-client--take-identifier connection :await-p t)))
+  (let ((identifier (world-terminal-client--take-identifier connection :await-p t)))
     (unwind-protect
          (progn
-           (localgroup-client--write connection command :identifier identifier
+           (world-terminal-client--write connection command :identifier identifier
                                                         :arguments  arguments)
-           (with-lock-held ((localgroup-client-connection-lock connection))
+           (with-lock-held ((world-terminal-client-connection-lock connection))
              (loop
-               (let ((reply (gethash identifier (localgroup-client-connection-replies connection))))
+               (let ((reply (gethash identifier (world-terminal-client-connection-replies connection))))
                  (cond
                    (reply
                     (when (getf (rest reply) :error)
-                      (error 'localgroup-error :message (getf (rest reply) :error) :operation ':client))
+                      (error 'world-terminal-error :message (getf (rest reply) :error) :operation ':client))
                     (return (rest reply)))
-                   ((localgroup-client-connection-closed-p connection)
-                    (error 'localgroup-request-interrupted
+                   ((world-terminal-client-connection-closed-p connection)
+                    (error 'world-terminal-request-interrupted
                            :message      "The client connection closed before the reply arrived. The request's execution outcome is unknown."
                            :operation ':client :identifier identifier :command command
-                           :reconnect-id (localgroup-client-connection-checkpoint-reconnect-id connection)))
+                           :reconnect-id (world-terminal-client-connection-checkpoint-reconnect-id connection)))
                    (t
-                    (condition-wait (localgroup-client-connection-condition-variable connection)
-                                    (localgroup-client-connection-lock connection))))))))
-      (with-lock-held ((localgroup-client-connection-lock connection))
-        (remhash identifier (localgroup-client-connection-replies connection))))))
+                    (condition-wait (world-terminal-client-connection-condition-variable connection)
+                                    (world-terminal-client-connection-lock connection))))))))
+      (with-lock-held ((world-terminal-client-connection-lock connection))
+        (remhash identifier (world-terminal-client-connection-replies connection))))))
 
-(-> localgroup-client-send (localgroup-client-connection keyword &rest t) null)
-(defun localgroup-client-send (connection command &rest arguments)
+(-> world-terminal-client-send (world-terminal-client-connection keyword &rest t) null)
+(defun world-terminal-client-send (connection command &rest arguments)
   "Send COMMAND with ARGUMENTS and return at once.
 
 Its reply is dropped when it comes, unless the channel refused the command:
@@ -663,56 +663,56 @@ then the connection's event function receives (:REFUSED :MESSAGE TEXT).
 
 Use this for a command whose outcome arrives as events, and which the
 channel may answer by asking this client something first."
-  (localgroup-client--write connection command
-                            :identifier (localgroup-client--take-identifier connection)
+  (world-terminal-client--write connection command
+                            :identifier (world-terminal-client--take-identifier connection)
                             :arguments  arguments))
 
-(-> localgroup-client-close (localgroup-client-connection) null)
-(defun localgroup-client-close (connection)
+(-> world-terminal-client-close (world-terminal-client-connection) null)
+(defun world-terminal-client-close (connection)
   "Shut down CONNECTION and wait for its reader to close the socket."
-  (localgroup-client--disconnect connection)
-  (let ((thread (localgroup-client-connection-reader-thread connection)))
+  (world-terminal-client--disconnect connection)
+  (let ((thread (world-terminal-client-connection-reader-thread connection)))
     (when (and thread (not (eq thread (current-thread))))
       (join-thread thread)))
   nil)
 
-(defparameter *localgroup-client-evaluation-write-seconds* 1
+(defparameter *world-terminal-client-evaluation-write-seconds* 1
   "Maximum time an evaluation answer may spend waiting for a write lock and transport.")
 
-(-> localgroup-client--evaluation-answer (localgroup-client-connection list) null)
-(defun localgroup-client--evaluation-answer (connection packet)
+(-> world-terminal-client--evaluation-answer (world-terminal-client-connection list) null)
+(defun world-terminal-client--evaluation-answer (connection packet)
   "Write PACKET with bounded transport time and no retained acknowledgement entry."
   (handler-case
-      (sb-sys:with-deadline (:seconds *localgroup-client-evaluation-write-seconds*)
+      (sb-sys:with-deadline (:seconds *world-terminal-client-evaluation-write-seconds*)
         (let* ((identifier
-                 (with-lock-held ((localgroup-client-connection-lock connection))
-                   (when (localgroup-client-connection-closed-p connection)
-                     (return-from localgroup-client--evaluation-answer nil))
-                   (incf (localgroup-client-connection-next-identifier connection))))
+                 (with-lock-held ((world-terminal-client-connection-lock connection))
+                   (when (world-terminal-client-connection-closed-p connection)
+                     (return-from world-terminal-client--evaluation-answer nil))
+                   (incf (world-terminal-client-connection-next-identifier connection))))
                (frame (image-daemon:daemon-packet-string
                        (list* (first packet) :id identifier (rest packet)))))
-          (localgroup-client--write-frame connection frame)))
+          (world-terminal-client--write-frame connection frame)))
     (sb-sys:deadline-timeout ()
-      (localgroup-client--disconnect connection))
+      (world-terminal-client--disconnect connection))
     (error ()
-      (localgroup-client--disconnect connection)))
+      (world-terminal-client--disconnect connection)))
   nil)
 
-(-> localgroup-client--evaluate (localgroup-client-connection t) null)
-(defun localgroup-client--evaluate (connection request)
+(-> world-terminal-client--evaluate (world-terminal-client-connection t) null)
+(defun world-terminal-client--evaluate (connection request)
   "Admit REQUEST through the image's shared bounded evaluator."
-  (let ((evaluator (localgroup-client-connection-evaluator connection)))
+  (let ((evaluator (world-terminal-client-connection-evaluator connection)))
     (with-lock-held (*client-evaluator-lock*)
       (unless (client-evaluator-closed-p evaluator)
         (setf (client-evaluator-delivery evaluator)
-              (lambda (packet) (localgroup-client--evaluation-answer connection packet)))))
+              (lambda (packet) (world-terminal-client--evaluation-answer connection packet)))))
     (client-evaluator-start evaluator request))
   nil)
 
-(-> localgroup-client--read
-    (localgroup-client-connection (option function) &key (:evaluates-p boolean))
+(-> world-terminal-client--read
+    (world-terminal-client-connection (option function) &key (:evaluates-p boolean))
     null)
-(defun localgroup-client--read (connection event-function &key evaluates-p)
+(defun world-terminal-client--read (connection event-function &key evaluates-p)
   "Read events and pending replies, then close the socket and report (:closed).
 
 With EVALUATES-P, evaluation requests are run and answered here. A server of
@@ -720,22 +720,22 @@ another version may send what this client cannot read: an undecodable packet
 is skipped and a malformed one dropped."
   (unwind-protect
        (loop for packet = (handler-case (daemon-read-decodable-packet
-                                         (localgroup-client-connection-stream connection))
+                                         (world-terminal-client-connection-stream connection))
                             (error ()
                               nil))
              while packet
              do (cond
-                  ((not (localgroup-message-p packet))
+                  ((not (world-terminal-message-p packet))
                    nil)
                   ((eq (first packet) ':reply)
                    (let ((awaited-p
-                           (with-lock-held ((localgroup-client-connection-lock connection))
+                           (with-lock-held ((world-terminal-client-connection-lock connection))
                              (let ((identifier (getf (rest packet) :id))
-                                   (replies    (localgroup-client-connection-replies connection)))
+                                   (replies    (world-terminal-client-connection-replies connection)))
                                (when (nth-value 1 (gethash identifier replies))
                                  (setf (gethash identifier replies) packet)
                                  (sb-thread:condition-broadcast
-                                  (localgroup-client-connection-condition-variable connection))
+                                  (world-terminal-client-connection-condition-variable connection))
                                  t)))))
                      ;; Nobody waits for the reply to a command that was only
                      ;; sent; its refusal still has to reach the client.
@@ -744,36 +744,36 @@ is skipped and a malformed one dropped."
                        (funcall event-function
                                 (list :refused :message (getf (rest packet) :error))))))
                   ((and evaluates-p (eq (first packet) ':evaluation))
-                   (localgroup-client--evaluate connection packet))
+                   (world-terminal-client--evaluate connection packet))
                   ((and evaluates-p (eq (first packet) ':cancel-evaluation))
-                   (client-evaluator-cancel (localgroup-client-connection-evaluator connection)
+                   (client-evaluator-cancel (world-terminal-client-connection-evaluator connection)
                                             (getf (rest packet) :id)))
                   (t
                    (when (eq (first packet) ':checkpoint-reconnect)
-                     (with-lock-held ((localgroup-client-connection-lock connection))
-                       (setf (localgroup-client-connection-checkpoint-reconnect-id connection)
+                     (with-lock-held ((world-terminal-client-connection-lock connection))
+                       (setf (world-terminal-client-connection-checkpoint-reconnect-id connection)
                              (getf (rest packet) :id))))
                    (when event-function
                      (funcall event-function packet)))))
-    (localgroup-client--disconnect connection)
+    (world-terminal-client--disconnect connection)
     ; mallet:suppress no-ignore-errors -- the server may have closed the connection already
-    (ignore-errors (sb-bsd-sockets:socket-close (localgroup-client-connection-socket connection)))
+    (ignore-errors (sb-bsd-sockets:socket-close (world-terminal-client-connection-socket connection)))
     (when event-function
       (funcall event-function (list :closed))))
   nil)
 
-(-> localgroup-client--disconnect (localgroup-client-connection) null)
-(defun localgroup-client--disconnect (connection)
+(-> world-terminal-client--disconnect (world-terminal-client-connection) null)
+(defun world-terminal-client--disconnect (connection)
   "Mark CONNECTION closed, wake callers and shut down I/O once.
 
 The reader owns final socket closure. Hold the state lock through shutdown
 so it cannot race that closure; never close a stream under this lock."
-  (client-evaluator-close (localgroup-client-connection-evaluator connection))
-  (with-lock-held ((localgroup-client-connection-lock connection))
-    (unless (localgroup-client-connection-closed-p connection)
-      (setf (localgroup-client-connection-closed-p connection) t)
+  (client-evaluator-close (world-terminal-client-connection-evaluator connection))
+  (with-lock-held ((world-terminal-client-connection-lock connection))
+    (unless (world-terminal-client-connection-closed-p connection)
+      (setf (world-terminal-client-connection-closed-p connection) t)
       ; mallet:suppress no-ignore-errors -- the peer may have closed already
-      (ignore-errors (sb-bsd-sockets:socket-shutdown (localgroup-client-connection-socket connection)
+      (ignore-errors (sb-bsd-sockets:socket-shutdown (world-terminal-client-connection-socket connection)
                                                     :direction ':io)))
-    (sb-thread:condition-broadcast (localgroup-client-connection-condition-variable connection)))
+    (sb-thread:condition-broadcast (world-terminal-client-connection-condition-variable connection)))
   nil)

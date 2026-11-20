@@ -21,7 +21,7 @@
               (test-call-with-function-replacements
                (append
                 (when (eq kind ':endpoint-failure)
-                  (list (list 'localgroup-session-endpoint-live-p (constantly nil))))
+                  (list (list 'channel-endpoint-endpoint-live-p (constantly nil))))
                 (when (eq kind ':controller-failure)
                   (list (list 'application-input-controller-failure
                               (constantly (make-condition 'simple-error))))))

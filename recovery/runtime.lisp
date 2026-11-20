@@ -765,7 +765,7 @@ The validator applies recovery's stricter checks to each manifest."
     (loop while remaining
           for argument = (pop remaining)
           do (if (and (stringp argument)
-                      (string= argument "--localgroup-handoff"))
+                      (string= argument "--world-startup"))
                  ;; This one-shot startup record was claimed before the active
                  ;; process failed and cannot be reused by recovery.
                  (when remaining

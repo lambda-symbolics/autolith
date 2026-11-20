@@ -191,14 +191,14 @@ channel identities separately from process IDs and retain missing measurements."
     (handler-case
         (let ((channels (make-hash-table :test #'equal))
               (unknown  0))
-          (dolist (group (list (cons ':channels (localgroup-endpoint-records configuration))
+          (dolist (group (list (cons ':channels (world-terminal-endpoint-records configuration))
                               (cons ':world (image-daemon:daemon-registry-discover
-                                             (localgroup-world-directory configuration)))))
+                                             (world-endpoint-directory configuration)))))
             (dolist (entry (rest group))
               (let* ((record     (rest entry))
-                     (identifier (localgroup--record-session-id record))
+                     (identifier (world-terminal--record-session-id record))
                      (pid        (getf (rest record) :pid)))
-                (if (eq (localgroup-owner-reachability (first entry) identifier pid)
+                (if (eq (world-terminal-owner-reachability (first entry) identifier pid)
                         ':reachable)
                     (progn
                       (pushnew pid roots)

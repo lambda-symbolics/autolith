@@ -679,7 +679,7 @@ Returns the identifiers that were reached. A channel nobody serves keeps its
 inbox until a process installs its conversation. When one of them is the
 person's inbox, every channel the world server serves shows the new unread
 count."
-  (let ((records (handler-case (localgroup-endpoint-records configuration)
+  (let ((records (handler-case (world-terminal-endpoint-records configuration)
                    (error ()
                      nil)))
         (reached nil))

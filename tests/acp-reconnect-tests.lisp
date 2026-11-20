@@ -44,7 +44,7 @@
                       (lambda ()
                         (let ((connection (channel-subscription-connection session)))
                           (and connection (not (eq previous connection))
-                               (not (localgroup-client-connection-closed-p connection))
+                               (not (world-terminal-client-connection-closed-p connection))
                                (not (channel-subscription-closed-p session)))))
                       10)))
               (test-assert reconnected-p
@@ -84,7 +84,7 @@
               (session    (acp-service--session service identifier)))
          (conversation-append-user-message
           (application-conversation (acp-session-test--application session)) "saved")
-         (localgroup-client-close (channel-subscription-connection session))
+         (world-terminal-client-close (channel-subscription-connection session))
          (test-assert
           (task-tests--wait-until
            (lambda ()
@@ -109,14 +109,14 @@
          (conversation-append-user-message
           (application-conversation (acp-session-test--application session)) "saved")
          (test-call-with-function-replacements
-          (list (list 'localgroup--wait-for-checkpoint-entry
+          (list (list 'world-terminal--wait-for-checkpoint-entry
                       (lambda (&rest arguments)
                         (declare (ignore arguments))
-                        (error 'localgroup-error :message  "Injected reconnect refusal."
+                        (error 'world-terminal-error :message  "Injected reconnect refusal."
                                                 :operation ':attach))))
           (lambda ()
             (channel-subscription-event session (list :checkpoint-reconnect :id (make-identifier)))
-            (localgroup-client-close (channel-subscription-connection session))
+            (world-terminal-client-close (channel-subscription-connection session))
             (test-assert
              (task-tests--wait-until (lambda () (channel-subscription-closed-p session)) 2)
              "a refused reconnect closes the session")
@@ -143,7 +143,7 @@
        (let* ((identifier (agentcomms:client-new-session client (namestring root)))
               (session    (acp-service--session service identifier)))
          (channel-subscription-event session (list :checkpoint-reconnect :id (make-identifier)))
-         (localgroup-client-close (channel-subscription-connection session))
+         (world-terminal-client-close (channel-subscription-connection session))
          (test-assert (task-tests--wait-until
                        (lambda () (channel-subscription-reconnect-thread session)) 2)
                       "endpoint discovery starts after planned closure")
@@ -160,8 +160,8 @@
           "close removes the reconnecting registration")))))
   nil)
 
-(-> test-localgroup-checkpoint-interrupted-request () null)
-(defun test-localgroup-checkpoint-interrupted-request ()
+(-> test-world-terminal-checkpoint-interrupted-request () null)
+(defun test-world-terminal-checkpoint-interrupted-request ()
   "Report a lost reply as interrupted without retransmitting its command."
   (with-test-configuration (configuration root)
     (acp-session-test--call-with-client
@@ -171,7 +171,7 @@
               (session      (acp-service--session service identifier))
               (application  (acp-session-test--application session))
               (connection   (channel-subscription-connection session))
-              (original     (symbol-function 'localgroup--client-reply))
+              (original     (symbol-function 'world-terminal--client-reply))
               (lock         (make-lock "Interrupted request test"))
               (condition    (make-condition-variable :name "Interrupted request test"))
               (entered-p    nil)
@@ -181,7 +181,7 @@
               (caller       nil)
               (reconnect-id (make-identifier)))
          (test-call-with-function-replacements
-          (list (list 'localgroup--client-reply
+          (list (list 'world-terminal--client-reply
                       (lambda (endpoint packet &rest arguments)
                         (when (eq (first packet) ':state)
                           (with-lock-held (lock)
@@ -197,27 +197,27 @@
                          (make-thread
                           (lambda ()
                             (setf result
-                                  (handler-case (localgroup-client-call connection ':state)
-                                    (localgroup-request-interrupted (failure) failure))))
+                                  (handler-case (world-terminal-client-call connection ':state)
+                                    (world-terminal-request-interrupted (failure) failure))))
                           :name "Interrupted structured request"))
                    (test-assert (task-tests--wait-until (lambda () entered-p) 2)
                                 "the request reaches the server before checkpoint closure")
-                   (localgroup--finish-checkpoint-clients application reconnect-id)
+                   (world-terminal--finish-checkpoint-clients application reconnect-id)
                    (test-assert (task-tests--wait-until (lambda () result) 2)
                                 "transport closure wakes the pending caller")
-                   (test-assert (typep result 'localgroup-request-interrupted)
+                   (test-assert (typep result 'world-terminal-request-interrupted)
                                 "the pending request has an explicit interrupted outcome")
-                   (when (typep result 'localgroup-request-interrupted)
-                     (test-assert (and (= 1 (localgroup-request-interrupted-identifier result))
-                                       (eq ':state (localgroup-request-interrupted-command result))
+                   (when (typep result 'world-terminal-request-interrupted)
+                     (test-assert (and (= 1 (world-terminal-request-interrupted-identifier result))
+                                       (eq ':state (world-terminal-request-interrupted-command result))
                                        (equal reconnect-id
-                                              (localgroup-request-interrupted-reconnect-id result)))
+                                              (world-terminal-request-interrupted-reconnect-id result)))
                                   "the interruption identifies the request and restart"))
                    (test-assert (= 1 calls) "the transmitted command is never retried"))
               (with-lock-held (lock)
                 (setf released-p t)
                 (condition-notify condition))
-              (localgroup-client-close connection)
+              (world-terminal-client-close connection)
               (when caller (join-thread caller))
               (channel-subscription-close session))))))))
   nil)
@@ -240,11 +240,11 @@
               (session     (acp-service--session service identifier))
               (application (acp-session-test--application session))
               (previous    (channel-subscription-connection session))
-              (original    (symbol-function 'localgroup-client-connect))
+              (original    (symbol-function 'world-terminal-client-connect))
               (server      *acp-session-test-server*)
               (raced-p     nil))
          (test-call-with-function-replacements
-          (list (list 'localgroup-client-connect
+          (list (list 'world-terminal-client-connect
                       (lambda (entry &rest arguments)
                         (when (and (getf arguments :after-sequence) (not raced-p))
                           (setf raced-p t)
@@ -291,14 +291,14 @@
                         (lambda (&rest arguments)
                           (when (eq phase ':protocol-registration)
                             (let ((session (acp-service--session service (second arguments))))
-                              (localgroup-client-close (channel-subscription-connection session))
+                              (world-terminal-client-close (channel-subscription-connection session))
                               (test-assert (task-tests--wait-until
                                             (lambda () (channel-subscription-closed-p session)) 2)
                                            "EOF arrives before protocol registration")))
                           (multiple-value-prog1 (apply original arguments)
                             (when (eq phase ':attachment)
                               (let ((session (first arguments)))
-                                (localgroup-client-close (channel-subscription-connection session))
+                                (world-terminal-client-close (channel-subscription-connection session))
                                 (test-assert (task-tests--wait-until
                                               (lambda () (channel-subscription-closed-p session)) 2)
                                              "EOF arrives before application registration")))))))
@@ -323,12 +323,12 @@
      (lambda (service client)
        (declare (ignore service))
        (let ((identifier (agentcomms:client-new-session client (namestring root)))
-             (original   (symbol-function 'localgroup-client-call)))
+             (original   (symbol-function 'world-terminal-client-call)))
          (test-call-with-function-replacements
-          (list (list 'localgroup-client-call
+          (list (list 'world-terminal-client-call
                       (lambda (connection command &rest arguments)
                         (when (eq command ':submit)
-                          (error 'localgroup-request-interrupted
+                          (error 'world-terminal-request-interrupted
                                  :message "Injected lost reply." :operation ':client
                                  :identifier 7 :command command :reconnect-id "checkpoint-test"))
                         (apply original connection command arguments))))
@@ -356,7 +356,7 @@
   "Seal every client before draining and propagate an unreaped transport failure."
   (client-protocol-tests--call
    (lambda (application entry)
-     (let* ((connections (loop repeat 2 collect (localgroup-client-connect entry :approves-p nil)))
+     (let* ((connections (loop repeat 2 collect (world-terminal-client-connect entry :approves-p nil)))
             (clients     (application-clients application))
             (injected    (make-condition 'image-daemon:daemon-error
                                          :message "Injected unreaped writer." :operation ':stop-thread))
@@ -378,13 +378,13 @@
                (test-assert
                 (eq injected
                     (handler-case
-                        (localgroup--finish-checkpoint-clients application "test")
+                        (world-terminal--finish-checkpoint-clients application "test")
                       (image-daemon:daemon-error (condition)
                         condition)))
                 "checkpoint preserves the transport's structured reaping failure")
                (test-assert sealed-p "every captured client refuses output before any drain begins")))
          (dolist (connection connections)
-           (localgroup-client-close connection))))))
+           (world-terminal-client-close connection))))))
   nil)
 
 (-> test-acp-session-close-during-greeting () null)

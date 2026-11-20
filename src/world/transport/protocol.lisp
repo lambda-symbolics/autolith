@@ -1,39 +1,39 @@
 (in-package #:autolith)
 
-;;;; -- Localgroup Protocol Bridge --
+;;;; -- World-Terminal Protocol Bridge --
 
-(defvar *localgroup-startup-record* nil
+(defvar *world-startup-record* nil
   "The validated detached-process handoff record active during startup.")
 
-(define-condition localgroup-error (image-daemon:daemon-error autolith-error)
+(define-condition world-terminal-error (image-daemon:daemon-error autolith-error)
   ((retry-p
     :initarg       :retry-p
     :initform      nil
-    :reader        localgroup-error-retry-p
+    :reader        world-terminal-error-retry-p
     :type          boolean
     :documentation "Whether the endpoint asked for the request again shortly, as during a checkpoint."))
   (:documentation
-   "A localgroup failure joined to Autolith's condition hierarchy."))
+   "A world-terminal failure joined to Autolith's condition hierarchy."))
 
-(define-condition localgroup-client-rejected (localgroup-error)
+(define-condition world-terminal-client-rejected (world-terminal-error)
   ()
   (:documentation "An authenticated endpoint explicitly refused a structured subscription."))
 
-(define-condition localgroup-request-interrupted (localgroup-error)
+(define-condition world-terminal-request-interrupted (world-terminal-error)
   ((identifier
     :initarg       :identifier
-    :reader        localgroup-request-interrupted-identifier
+    :reader        world-terminal-request-interrupted-identifier
     :type          (integer 1)
     :documentation "The transmitted request whose reply was lost.")
    (command
     :initarg       :command
-    :reader        localgroup-request-interrupted-command
+    :reader        world-terminal-request-interrupted-command
     :type          keyword
     :documentation "The command that may have executed before disconnection.")
    (reconnect-id
     :initarg       :reconnect-id
     :initform      nil
-    :reader        localgroup-request-interrupted-reconnect-id
+    :reader        world-terminal-request-interrupted-reconnect-id
     :type          (option string)
     :documentation "The planned checkpoint transition, or NIL for unexpected closure."))
   (:documentation "A transmitted request lost its reply; its execution outcome is unknown."))
@@ -41,8 +41,8 @@
 
 ;;;; -- Messages --
 
-(-> localgroup-message-p (t) boolean)
-(defun localgroup-message-p (packet)
+(-> world-terminal-message-p (t) boolean)
+(defun world-terminal-message-p (packet)
   "Return true when PACKET is a structured message: a keyword for its kind, then a property list of fields.
 
 Each side reads only the fields it knows, so a peer of another version may add some."
@@ -75,4 +75,32 @@ Each side reads only the fields it knows, so a peer of another version may add s
 
 ;;;; -- image-daemon Host Wiring --
 
-(setf image-daemon:*daemon-error-class* 'localgroup-error)
+(setf image-daemon:*daemon-error-class* 'world-terminal-error)
+
+
+(-> world-terminal-call (t t keyword &key (:arguments t)) list)
+(defun world-terminal-call (port token operation &key arguments)
+  "Send one authenticated channel OPERATION with ARGUMENTS and return its response."
+  (multiple-value-bind (socket stream) (daemon-connect port)
+    (declare (ignore socket))
+    (unwind-protect
+         (progn
+           (daemon-write-packet
+            stream
+            (list :world-terminal-request
+                  :version *daemon-protocol-version*
+                  :token token :operation operation :arguments arguments))
+           (daemon-read-response stream operation))
+      ; mallet:suppress no-ignore-errors -- closing the connection must not mask its response
+      (ignore-errors (close stream)))))
+
+
+(-> world-terminal-runtime-notify (image-daemon:daemon-runtime) boolean)
+(defun world-terminal-runtime-notify (runtime)
+  "Wake RUNTIME's existing listener after a host deadline changes."
+  (and (image-daemon:daemon-runtime-live-p runtime)
+       (or (eq (image-daemon:daemon-runtime-server-thread runtime) (current-thread))
+           (equal (world-terminal-call
+                   (image-daemon:daemon-runtime-port runtime)
+                   (image-daemon:daemon-runtime-token runtime) ':runtime-notify)
+                  '(:runtime-notified)))))

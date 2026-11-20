@@ -1013,7 +1013,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
       (multiple-value-bind (output error-output status)
           (release-script-tests--run
            (list (namestring launcher) "--from-source"
-                 "--localgroup-handoff" "fixture-ticket" "fixture-session-crash")
+                 "--world-startup" "fixture-ticket" "fixture-session-crash")
            :environment environment :ignore-error-status t)
         (declare (ignore error-output))
         (test-assert (and (= status 70) (not (search "RECOVERY" output)))

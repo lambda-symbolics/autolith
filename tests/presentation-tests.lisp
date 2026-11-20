@@ -646,7 +646,7 @@
   "Exercise a hosted catalog through real transport, a channel view and composer input."
   (let* ((server   (application-ui application))
          (provider (terminal-ui-completion-function server))
-         (screen   (localgroup-screen-create
+         (screen   (world-terminal-screen-create
                       :terminal (make-instance 'recording-terminal :rows 30 :columns 90 :interactive-p t)))
          (view     (channel-view-create (application-configuration application) "completion-test" screen)))
     (with-terminal-ui (ui (channel-view-ui view))
@@ -712,7 +712,7 @@
                              (terminal-ui-terminal (application-ui application)))))
                   "a hosted channel has a presentation that nobody shows yet")
      (multiple-value-bind (connection seen await)
-         (test-localgroup--present record :rows 30 :columns 90)
+         (test-world-terminal--present record :rows 30 :columns 90)
        (unwind-protect
             (progn
               (test-assert (and (funcall await ':reset) (funcall await ':turn) (funcall await ':modal))
@@ -723,10 +723,10 @@
                                 (= 90 (terminal-columns
                                        (terminal-ui-terminal (application-ui application)))))
                            "the channel is laid out for its client and somebody can answer it")
-              (localgroup-client-call connection ':submit :text "(list 34 47)")
+              (world-terminal-client-call connection ':submit :text "(list 34 47)")
               (test-assert (funcall await ':append
                                     (lambda (event)
-                                      (search "(34 47)" (test-localgroup--event-text event))))
+                                      (search "(34 47)" (test-world-terminal--event-text event))))
                            "a native prompt result is presented")
               (test-assert (task-tests--wait-until
                             (lambda ()
@@ -734,12 +734,12 @@
                                     (application-input-controller application))))
                             10)
                            "the channel returns to idle after presenting its result")
-              (test-assert (null (getf (localgroup-client-call connection ':input :action ':interrupt)
+              (test-assert (null (getf (world-terminal-client-call connection ':input :action ':interrupt)
                                        :handled-p))
                            "an interrupt with nothing running is the client's to handle")
-              (localgroup-client-send connection ':input :action ':action-of-tomorrow)
-              (test-assert (eq (first (getf (localgroup-client-call connection ':state) :state))
-                               ':localgroup-status)
+              (world-terminal-client-send connection ':input :action ':action-of-tomorrow)
+              (test-assert (eq (first (getf (world-terminal-client-call connection ':state) :state))
+                               ':world-terminal-status)
                            "an input action this version does not know leaves the connection working")
               (let* ((choice nil)
                      (asker  (make-thread
@@ -758,11 +758,11 @@
                                                             (getf (rest event) :items))
                                                     '("one" "two")))))
                              "a picker the channel opens shows on the client")
-                (localgroup-client-call connection ':event :event ':down)
+                (world-terminal-client-call connection ':event :event ':down)
                 (test-assert (funcall await ':selector
                                       (lambda (event) (eql (getf (rest event) :selection) 1)))
                              "the client's keys move the channel's picker")
-                (localgroup-client-call connection ':event :event ':enter)
+                (world-terminal-client-call connection ':event :event ':enter)
                 (join-thread asker)
                 (test-assert (and (equal choice "two")
                                   (funcall await ':selector
@@ -771,10 +771,10 @@
                                                   (member event
                                                           (member (funcall await ':selector)
                                                                   (funcall seen))))))
-                                  (null (getf (localgroup-client-call connection ':event :event ':enter)
+                                  (null (getf (world-terminal-client-call connection ':event :event ':enter)
                                               :accepted-p)))
                              "the picker returns the choice, closes, and takes no further keys")))
-         (localgroup-client-close connection)))
+         (world-terminal-client-close connection)))
      (test-assert (task-tests--wait-until
                    (lambda ()
                      (not (terminal-interactive-p

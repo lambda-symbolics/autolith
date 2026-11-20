@@ -1736,7 +1736,7 @@ searches every task directory."
        (not (application-input-controller-stopping-p controller))
        (not (application-input-controller-failure controller))
        (not (application-input-controller-queued-work-paused-p controller))
-       (not (application-localgroup-paused-p application))
+       (not (application-world-terminal-paused-p application))
        (not (application-world-held-p application))
        (not (application-job-completions-awaited-p application))
        (application-clients-attached-p application)))
@@ -1953,7 +1953,7 @@ searches every task directory."
     (application-authentication-input-stream)
     boolean)
 (defun application-authentication-input-stream--fill (stream)
-  "Read one hidden localgroup line into STREAM and report success."
+  "Read one hidden world-terminal line into STREAM and report success."
   (let ((terminal   (application-authentication-input-stream-terminal stream))
         (characters (make-array 64
                                 :element-type 'character
@@ -2011,7 +2011,7 @@ searches every task directory."
 
 (defmethod trivial-gray-streams:stream-listen
     ((stream application-authentication-input-stream))
-  "Return true when STREAM has buffered or queued localgroup input."
+  "Return true when STREAM has buffered or queued world-terminal input."
   (or (< (application-authentication-input-stream-position stream)
          (length (application-authentication-input-stream-pending stream)))
       (terminal-input-ready-p
@@ -2866,8 +2866,8 @@ last started is not in its world either, so the saved conversations come last."
                                                   :error-p nil)))
     (or (and channel (channel-identifier channel))
         (handler-case
-            (localgroup--record-session-id (rest (localgroup--find-record configuration designator)))
-          (localgroup-error () nil))
+            (world-terminal--record-session-id (rest (world-terminal--find-record configuration designator)))
+          (world-terminal-error () nil))
         (handler-case (main-resolve-conversation configuration designator)
           (configuration-error (condition)
             (error 'world-error :message (autolith-error-message condition)
@@ -3646,12 +3646,12 @@ show."
      :terminal-behavior :shared
      :callable          t)
     (application)
-  (let ((session (application-localgroup-session application)))
+  (let ((session (application-channel-endpoint application)))
     (unless session
-      (error 'localgroup-error
-             :message   "The localgroup session is not ready to detach."
+      (error 'world-terminal-error
+             :message   "The world-terminal session is not ready to detach."
              :operation ':detach))
-    (let ((result (localgroup--detach-terminal session)))
+    (let ((result (world-terminal--detach-terminal session)))
       (when (getf (rest result) :scheduled-p)
         (application-present
          application

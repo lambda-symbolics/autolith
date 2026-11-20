@@ -103,7 +103,7 @@
 (defun application-mission-schedules-host (application runtime)
   "Attach wakeups to the existing daemon listener's event-driven timer."
   (let ((service (application-mission-schedules application)))
-    (setf (mission-schedule-notify service) (lambda () (image-daemon:daemon-runtime-notify runtime)))
+    (setf (mission-schedule-notify service) (lambda () (world-terminal-runtime-notify runtime)))
     (image-daemon:daemon-runtime-set-timer
      runtime
      :next-deadline-function (lambda (host) (declare (ignore host))

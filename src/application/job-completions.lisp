@@ -81,9 +81,9 @@ Persistence and follow-up editing restrict inference, not terminal presentation.
          (not (application-input-controller-failure controller))
          (not (application-input-controller-queued-work-paused-p controller))
          (not (if session-locked-p
-                  (let ((session (application-localgroup-session application)))
-                    (and session (localgroup-session-paused-p session)))
-                  (application-localgroup-paused-p application))))))
+                  (let ((session (application-channel-endpoint application)))
+                    (and session (channel-endpoint-paused-p session)))
+                  (application-world-terminal-paused-p application))))))
 
 (-> application-job-completions--controller-admissible-p
     (application-input-controller) boolean)
@@ -97,7 +97,7 @@ Persistence and follow-up editing restrict inference, not terminal presentation.
          (not (application-input-controller-queued-work-paused-p controller))
          (null (application-input-controller-follow-up-edit-index controller))
          (application-input-controller-pending-persistence-enabled-p controller)
-         (not (application-localgroup-paused-p application)))))
+         (not (application-world-terminal-paused-p application)))))
 
 (-> application-job-completions-awaited-count (application) (integer 0))
 (defun application-job-completions-awaited-count (application)
@@ -252,7 +252,7 @@ snapshot cannot change the meaning of an already finalized transcript entry."
   "Recheck terminal consumption and presentation under controller/session authority."
   (let* ((application (application-input-controller-application controller))
          (agent       (application-agent application))
-         (session     (application-localgroup-session application)))
+         (session     (application-channel-endpoint application)))
     (flet ((guard (deliver)
              (flet ((consume ()
                       (when (and (application-job-completions--presentation-admissible-p
@@ -324,7 +324,7 @@ Scanning and wake callbacks run outside these locks. Pause/resume writers releas
 session before acquiring controller; keep the same controller-to-session order
 as ordinary controller admission, without recursively locking the session."
   (let* ((application (application-input-controller-application controller))
-         (session     (application-localgroup-session application)))
+         (session     (application-channel-endpoint application)))
     (flet ((present ()
              (when (and (application-job-completions--presentation-admissible-p
                          controller :session-locked-p t)

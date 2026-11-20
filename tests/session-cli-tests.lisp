@@ -32,7 +32,7 @@
                                 expected))
                     "a failed selector reports every matching full ID and available context"))))
         (test-call-with-function-replacements
-         (list (list 'localgroup-statuses
+         (list (list 'world-terminal-statuses
                      (lambda (client-configuration)
                        (declare (ignore client-configuration))
                        statuses)))
@@ -49,7 +49,7 @@
               (not (find (conversation-pathname empty) (conversation-list configuration) :test #'equal))
               "a fresh live conversation can be absent from the saved-conversation picker")
              (setf statuses
-                   (list (list :localgroup-status :conversation-id "b6uouHL" :session-id "b6uouHL"
+                   (list (list :world-terminal-status :conversation-id "b6uouHL" :session-id "b6uouHL"
                                :conversation-title "Live empty task" :pid 424242
                                :cwd (namestring (config :working-directory configuration))))))
            (select "b6uouHL" "b6uouHL")
@@ -62,7 +62,7 @@
            (select "b6uouHJ" "b6uouHJ")
            (setf statuses
                  (append statuses
-                         (list (list :localgroup-status :conversation-id "b6uouHJ" :pid 424243))))
+                         (list (list :world-terminal-status :conversation-id "b6uouHJ" :pid 424243))))
            (select "b-6uouHJ" "b6uouHJ")
            (save "abcdef1" "Short exact ID")
            (save "abcdef123456" "Legacy first task")
@@ -108,8 +108,9 @@
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let* ((identifier     "b6uouHJ")
-           (record         (list #p"unused.sexp" :localgroup-endpoint
-                                 :session-id identifier :pid 424242))
+           (record         (cons #p"unused.sexp"
+                                 (image-daemon:daemon-registry-record
+                                  :identifier identifier :pid 424242)))
            (opened         nil)
            (attached       nil)
            (queried        nil)
@@ -133,12 +134,12 @@
               (lambda (screen welcome-configuration directory &rest arguments)
                 (declare (ignore welcome-configuration))
                 (incf welcomed)
-                (test-assert (and (null (world-sidebar-current (localgroup-screen-panel screen)))
+                (test-assert (and (null (world-sidebar-current (world-terminal-screen-panel screen)))
                                   (equal directory (namestring (uiop:getcwd))))
                              "welcome has no selected channel and uses the client's launch directory")
                 (let ((event (pop welcome-events)))
                   (if (functionp event) (funcall event arguments) event))))
-        (list 'localgroup-endpoint-records
+        (list 'world-terminal-endpoint-records
               (lambda (&rest arguments) (declare (ignore arguments)) (list record)))
         (list 'world-client-open
               (lambda (open-configuration &rest arguments)
@@ -152,7 +153,7 @@
                 (let ((channel (channel-subscription-identifier view)))
                   (test-assert (member channel (list identifier "c6uouHJ") :test #'string=)
                                "the client attaches to the channel the server opened")
-                  (test-assert (localgroup-screen-panel (channel-view-screen view))
+                  (test-assert (world-terminal-screen-panel (channel-view-screen view))
                                "plain starts and explicit opens attach with the same world navigation UI")
                   (push (list channel (if (channel-view-read-only-p view) ':read-only ':control))
                         attached)
@@ -164,7 +165,7 @@
               (lambda (candidate)
                 (declare (ignore candidate))
                 (cons "world" (list :session-id "world"))))
-        (list 'localgroup-query-record
+        (list 'world-terminal-query-record
               (lambda (entry operation &optional arguments)
                 (declare (ignore entry))
                 ;; The sidebar's own thread asks for the channels it shows.
@@ -174,7 +175,7 @@
                             operation)
                         queried))
                 (list :ok)))
-        (list 'localgroup-relay-exit
+        (list 'world-terminal-relay-exit
               (lambda (&rest arguments) (declare (ignore arguments)))))
        (lambda ()
          (let ((*error-output* (make-string-output-stream)))
@@ -202,12 +203,12 @@
                              (getf (first opened) :latest-p)
                              (not (getf (first opened) :pick-channel-p)))
                         "open without an ID asks the server for the latest workspace channel, not a picker")
-           (setf attach-error (make-condition 'localgroup-error
+           (setf attach-error (make-condition 'world-terminal-error
                                               :operation ':attach
                                               :message   "The attachment was rejected."))
            (test-assert (handler-case
                              (progn (main-dispatch (list "open" identifier)) nil)
-                          (localgroup-error (condition)
+                          (world-terminal-error (condition)
                             (and (search "rejected" (autolith-error-message condition))
                                  (equal queried '((:close t))))))
                         "a failed attach asks the server to close the channel started for this terminal while nobody controls it")
@@ -215,17 +216,17 @@
                  queried   nil)
            (test-assert (handler-case
                              (progn (main-dispatch (list "open" identifier)) nil)
-                          (localgroup-error (condition)
+                          (world-terminal-error (condition)
                             (and (search "rejected" (autolith-error-message condition))
                                  (null queried))))
                         "a failed attach leaves a channel the server already served")
            (setf attach-error nil
-                 open-error   (make-condition 'localgroup-error
+                 open-error   (make-condition 'world-terminal-error
                                               :operation ':spawn
                                               :message   "No world server could start."))
            (test-assert (handler-case
                              (progn (main-dispatch (list "open" identifier)) nil)
-                          (localgroup-error (condition)
+                          (world-terminal-error (condition)
                              (search "The world server is not available: No world server could start"
                                      (autolith-error-message condition))))
                         "a failed open ends the start with its reason instead of starting directly")
@@ -308,7 +309,7 @@
        (dolist (geometry '((120 32) (120 10) (60 10) (44 12) (20 8) (1 1)))
          (destructuring-bind (width height) geometry
            (let* ((terminal (make-instance 'recording-terminal :columns width :rows height))
-                  (screen   (localgroup-screen-create :terminal terminal))
+                  (screen   (world-terminal-screen-create :terminal terminal))
                   (frame    (main--welcome-frame screen "/launch/" :total 4 :local 2
                              :immutable-p t :recovered-p t :recovery-conversation-id "b6uouHJ"))
                   (rows     (coerce (clinedi:frame-snapshot-rows frame) 'list))
@@ -340,7 +341,7 @@
   (with-test-configuration (configuration)
     (dolist (last-event (list ':interrupt ':enter (list ':switch :session-id "b6uouHJ")))
       (let* ((terminal                    (make-instance 'recording-terminal :columns 80 :rows 24))
-             (screen                      (localgroup-screen-create :terminal terminal))
+             (screen                      (world-terminal-screen-create :terminal terminal))
              (events                      (list ':resize last-event))
              (started-p                   nil)
              (stopped-p                   nil)
@@ -359,15 +360,15 @@
           (list 'terminal-current-size (lambda () (values 12 44)))
           (list 'terminal-input-ready-p (lambda (candidate) (declare (ignore candidate)) t))
           (list 'terminal-read-event (lambda (candidate) (declare (ignore candidate)) (pop events)))
-          (list 'localgroup-screen-show-frame
+          (list 'world-terminal-screen-show-frame
                 (lambda (candidate frame &rest arguments)
                   (declare (ignore arguments))
-                  (setf last-frame frame (localgroup-screen-frame candidate) frame))))
+                  (setf last-frame frame (world-terminal-screen-frame candidate) frame))))
          (lambda ()
            (let ((exit (main--welcome-world-client screen configuration "/launch/"
                          :recovery-diagnosis "INTERNAL CRASH INSTRUCTIONS")))
              (test-assert (and started-p unwatched-p (not stopped-p)
-                               (eq last-frame (localgroup-screen-frame screen))
+                               (eq last-frame (world-terminal-screen-frame screen))
                                (= (clinedi:frame-snapshot-width last-frame) 44)
                                (= (clinedi:frame-snapshot-height last-frame) 12))
                           "welcome starts input, follows physical resize and releases only its watch on handoff")

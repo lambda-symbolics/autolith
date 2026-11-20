@@ -5,29 +5,29 @@
   "Call FUNCTION with a configuration, a lingering application without a terminal of its own, and its session."
   (with-test-configuration (configuration)
     (multiple-value-bind (application controller)
-        (test-localgroup--application configuration :presented-p t)
+        (test-world-terminal--application configuration :presented-p t)
       (unwind-protect
            (progn
              (configuration-ensure-directories configuration)
              (terminal-ui-start (application-ui application))
              (funcall function configuration application
-                      (localgroup-start application)))
-        (localgroup-stop application)
+                      (world-terminal-start application)))
+        (world-terminal-stop application)
         (application-input-controller-stop controller)
         (terminal-ui-stop (application-ui application))
         (application-release-conversation-lease application))))
   nil)
 
-(-> test-localgroup-client-checkpoint-recovery () null)
-(defun test-localgroup-client-checkpoint-recovery ()
+(-> test-world-terminal-client-checkpoint-recovery () null)
+(defun test-world-terminal-client-checkpoint-recovery ()
   "End a view as a lost attachment when its checkpoint reconnect fails, and signal an initial refusal as itself."
   (dolist (phase '(:wait :reattach))
     (client-recovery-tests--call-with-session
      (lambda (configuration application session)
        (declare (ignore application))
        (let ((entry (cons (image-daemon:daemon-runtime-registry-pathname session)
-                          (localgroup--registry-record session)))
-             (cause (make-condition (if (eq phase ':wait) 'localgroup-error 'localgroup-client-rejected)
+                          (world-terminal--registry-record session)))
+             (cause (make-condition (if (eq phase ':wait) 'world-terminal-error 'world-terminal-client-rejected)
                                     :operation ':attach
                                     :message   "Injected checkpoint failure."))
              (waits nil)
@@ -39,19 +39,19 @@
             ;; The reconnect runs on a thread of its own, so what it asks is checked afterwards.
             (test-call-with-function-replacements
              (list
-              (list 'localgroup--wait-for-checkpoint-entry
+              (list 'world-terminal--wait-for-checkpoint-entry
                     (lambda (candidate transition &key &allow-other-keys)
                       (push (list (first candidate) transition) waits)
                       (when (eq phase ':wait)
                         (error cause))
                       entry))
-              (list 'localgroup-client-connect
+              (list 'world-terminal-client-connect
                     (lambda (candidate &key after-sequence &allow-other-keys)
                       (push (list (first candidate) (integerp after-sequence)) calls)
                       (error cause))))
              (lambda ()
                (channel-subscription-event view (list :checkpoint-reconnect :id "transition"))
-               (localgroup-client-close (channel-subscription-connection view))
+               (world-terminal-client-close (channel-subscription-connection view))
                (multiple-value-bind (exit ended-p) (funcall await-exit)
                  (test-assert
                   (and ended-p
@@ -68,11 +68,11 @@
   (client-recovery-tests--call-with-session
    (lambda (configuration application session)
      (declare (ignore application))
-     (let* ((screen (localgroup-screen-create
+     (let* ((screen (world-terminal-screen-create
                      :terminal (make-instance 'queued-recording-terminal :rows 31 :columns 91)))
             (view   (channel-view-create
                      configuration (image-daemon:daemon-runtime-identifier session) screen))
-            (cause  (make-condition 'localgroup-client-rejected
+            (cause  (make-condition 'world-terminal-client-rejected
                                     :operation ':client
                                     :message   "Injected initial refusal."))
             (calls  0)
@@ -82,12 +82,12 @@
                     (lambda (candidate)
                       (declare (ignore candidate))
                       t))
-              (list 'localgroup-client-connect
+              (list 'world-terminal-client-connect
                     (lambda (&rest arguments)
                       (declare (ignore arguments))
                       (incf calls)
                       (error cause)))
-              (list 'localgroup--wait-for-checkpoint-entry
+              (list 'world-terminal--wait-for-checkpoint-entry
                     (lambda (&rest arguments)
                       (declare (ignore arguments))
                       (incf waits)
@@ -101,7 +101,7 @@
                 (= calls 1)
                 (zerop waits))
            "an initial refusal is signalled as itself, without checkpoint recovery")))
-       (localgroup-screen-close screen))))
+       (world-terminal-screen-close screen))))
   nil)
 
 (-> test-main-world-client-cleanup-cause nil null)
@@ -111,10 +111,10 @@
    (dolist (phase '(:exit :detach :primary-error))
      (let* ((terminal  (make-instance 'scripted-terminal :columns 80))
             (panel     (world-sidebar-create configuration))
-            (screen    (localgroup-screen-create :terminal terminal :panel panel))
+            (screen    (world-terminal-screen-create :terminal terminal :panel panel))
             (exit      (when (eq phase ':exit) '(:status 7 :message "finished")))
             (cause
-             (make-condition 'localgroup-error :operation ':attach :message
+             (make-condition 'world-terminal-error :operation ':attach :message
                              "original attachment failure"))
             (attempts  nil)
             (relayed-p nil)
@@ -123,7 +123,7 @@
         (list
          (list 'world-sidebar-create
                (lambda (&rest arguments) (declare (ignore arguments)) panel))
-         (list 'localgroup-client-screen-create
+         (list 'world-terminal-client-screen-create
                (lambda (&rest arguments) (declare (ignore arguments)) screen))
          (list 'world-sidebar-start
                (lambda (candidate) (declare (ignore candidate)) nil))
@@ -145,7 +145,7 @@
                  (funcall attached-function)
                  (when (eq phase ':primary-error) (error cause))
                   exit))
-         (list 'localgroup-client-screen-release
+         (list 'world-terminal-client-screen-release
                (lambda (candidate)
                  (declare (ignore candidate))
                  (push "client-screen" attempts)
@@ -155,7 +155,7 @@
                  (declare (ignore candidate))
                  (push "sidebar" attempts)
                  (error "private sidebar cleanup payload")))
-         (list 'localgroup-relay-exit
+         (list 'world-terminal-relay-exit
                (lambda (candidate result mode &key session-id)
                  (declare (ignore candidate mode))
                  (test-assert (equal session-id "bfirst1")
@@ -183,17 +183,17 @@
            "each shared-screen owner cleanup stage is attempted independently"))))))
   nil)
 
-(-> test-localgroup-client-accepted-setup-failure () null)
-(defun test-localgroup-client-accepted-setup-failure ()
+(-> test-world-terminal-client-accepted-setup-failure () null)
+(defun test-world-terminal-client-accepted-setup-failure ()
   "Signal a view's setup failure after its channel accepted it as itself, and release the channel, whatever cleanup fails."
   (client-recovery-tests--call-with-session
    (lambda (configuration application session)
      (dolist (stage '(:terminal-start :resize-watch :attached-callback))
        (let* ((terminal       (make-instance 'queued-recording-terminal :rows 31 :columns 91))
-              (screen         (localgroup-screen-create :terminal terminal))
+              (screen         (world-terminal-screen-create :terminal terminal))
               (view           (channel-view-create
                                configuration (image-daemon:daemon-runtime-identifier session) screen))
-              (cause          (make-condition 'localgroup-error :operation ':attach
+              (cause          (make-condition 'world-terminal-error :operation ':attach
                                                                 :message   "Injected setup failure."))
               (cleanup-cause  (make-condition 'simple-error :format-control "Injected cleanup failure."))
               (start-terminal (symbol-function 'terminal-start))
@@ -249,10 +249,10 @@
                            (eq (not (null (member ':resize-watch cleanups)))
                                (eq stage ':attached-callback)))
                       "the channel had accepted the view, and every cleanup the view owes is attempted")
-         (test-assert (and (test-localgroup--await-served session)
+         (test-assert (and (test-world-terminal--await-served session)
                            (not (application-clients-attached-p application)))
                       "the failed view releases its channel")
-         (localgroup-screen-close screen)))))
+         (world-terminal-screen-close screen)))))
   nil)
 
 (-> test-client-input-queue-lifecycle () null)
@@ -327,26 +327,26 @@
   "Read a history reply behind a presentation delta, and settle closure during a history request."
   (with-test-configuration (configuration)
     (dolist (answer-p '(t nil))
-      (let* ((screen     (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 80)))
+      (let* ((screen     (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 80)))
              (view       (channel-view-create configuration "history" screen))
              (wire       (concatenate 'string
                                       (image-daemon:daemon-packet-string '(:ui :operation :turn :active-p t))
                                       (if answer-p
                                           (image-daemon:daemon-packet-string '(:reply :id 1 :entries ("older"))) "")))
-             (connection (make-instance 'localgroup-client-connection :socket nil
+             (connection (make-instance 'world-terminal-client-connection :socket nil
                                         :stream                               (make-string-input-stream wire)))
              (reader     nil))
         (setf (channel-subscription-connection view) connection)
         (channel-view-apply view ':history :entries '("recent") :offset 1 :paged-p t)
         (test-call-with-function-replacements
-         (list (list 'localgroup-client--write-frame
+         (list (list 'world-terminal-client--write-frame
                      (lambda (candidate frame)
                        (declare (ignore frame))
                        (setf reader (make-thread
                                      (lambda ()
-                                       (localgroup-client--read
+                                       (world-terminal-client--read
                                         candidate (lambda (event) (channel-subscription-receive-event view event)))))
-                             (localgroup-client-connection-reader-thread candidate) reader)
+                             (world-terminal-client-connection-reader-thread candidate) reader)
                        nil)))
          (lambda ()
            (unwind-protect
@@ -366,7 +366,7 @@
              (channel-view--close-events view)
              (channel-subscription-close view)
              (when reader (join-thread reader))
-             (localgroup-screen-close screen)))))))
+             (world-terminal-screen-close screen)))))))
   nil)
 
 (-> test-channel-view-event-backpressure () null)
@@ -374,7 +374,7 @@
   "Retire an overrun view rather than dropping an ordered delta, by count or storage-byte budget."
   (dolist (large-p '(nil t))
     (let* ((view                             (make-instance 'channel-view))
-           (connection                       (make-instance 'localgroup-client-connection :socket nil
+           (connection                       (make-instance 'world-terminal-client-connection :socket nil
                                                             :stream                               (make-string-output-stream)))
            (*channel-view-event-count-limit* 2)
            (*channel-view-event-byte-limit*  1024))
@@ -385,8 +385,8 @@
           (dotimes (index 3)
             (channel-subscription-receive-event view (list :ui :operation :turn :active-p (evenp index)))))
       (test-assert (and (channel-subscription-closed-p view)
-                        (localgroup-client-connection-closed-p connection)
-                        (client-evaluator-closed-p (localgroup-client-connection-evaluator connection))
+                        (world-terminal-client-connection-closed-p connection)
+                        (client-evaluator-closed-p (world-terminal-client-connection-evaluator connection))
                         (eq (getf (rest (channel-view-exit view)) :kind) ':queue-overflow)
                         (zerop (deque-count (channel-view-events view)))
                         (zerop (channel-view-event-bytes view)))
@@ -399,7 +399,7 @@
 (defun test-channel-view-bounded-detach ()
   "A goodbye waiting behind a stalled writer cannot prevent retiring the view's connection."
   (let* ((view       (make-instance 'channel-view))
-         (connection (make-instance 'localgroup-client-connection :socket nil
+         (connection (make-instance 'world-terminal-client-connection :socket nil
                                     :stream                               (make-string-output-stream)))
          (gate       (sb-thread:make-semaphore))
          (started    (sb-thread:make-semaphore))
@@ -409,15 +409,15 @@
          (progn
            (setf writer (make-thread
                          (lambda ()
-                           (with-lock-held ((localgroup-client-connection-write-lock connection))
+                           (with-lock-held ((world-terminal-client-connection-write-lock connection))
                              (sb-thread:signal-semaphore started)
                              (sb-thread:wait-on-semaphore gate :timeout 5)))
                          :name "stalled detach writer"))
            (test-assert (sb-thread:wait-on-semaphore started :timeout 5) "Another writer owns the transport.")
            (sb-sys:with-deadline (:seconds 2)
              (let ((*channel-view-detach-seconds* 0.05)) (channel-view--leave view)))
-           (test-assert (and (localgroup-client-connection-closed-p connection)
-                             (client-evaluator-closed-p (localgroup-client-connection-evaluator connection)))
+           (test-assert (and (world-terminal-client-connection-closed-p connection)
+                             (client-evaluator-closed-p (world-terminal-client-connection-evaluator connection)))
                         "A bounded goodbye retires the connection and evaluator outside the writer lock."))
       (sb-thread:signal-semaphore gate)
       (when writer (join-thread writer))
@@ -429,7 +429,7 @@
   "Stream a large initial replay on the UI owner, then admit live delivery; reject broken prefixes."
   (with-test-configuration (configuration)
     (dolist (mode '(:replay :old :eof :closed :timeout))
-      (let* ((screen                           (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 80)))
+      (let* ((screen                           (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 80)))
              (view                             (channel-view-create configuration "replay" screen))
              (wire                             (with-output-to-string (output)
                                                  (write-string (image-daemon:daemon-packet-string '(:ui :operation :reset)) output)
@@ -439,7 +439,7 @@
                                                  (unless (eq mode ':eof)
                                                    (write-string (image-daemon:daemon-packet-string '(:ui :operation :replayed)) output))
                                                  (write-string (image-daemon:daemon-packet-string '(:ui :operation :turn :active-p t)) output)))
-             (connection                       (make-instance 'localgroup-client-connection :socket nil
+             (connection                       (make-instance 'world-terminal-client-connection :socket nil
                                                               :stream                               (make-string-input-stream wire)
                                                               :attached                             (list :attached :sequence 0 :record-sequence 0
                                                                                                           :presentation-replay-p (not (eq mode ':old)))))
@@ -459,27 +459,27 @@
                    (test-call-with-function-replacements
                     (list (list 'daemon-connect
                                 (lambda (port) (declare (ignore port))
-                                  (values nil (localgroup-client-connection-stream connection))))
+                                  (values nil (world-terminal-client-connection-stream connection))))
                           (list 'daemon-write-packet (lambda (&rest values) (declare (ignore values)) nil))
-                          (list 'localgroup-client--read-greeting
+                          (list 'world-terminal-client--read-greeting
                                 (lambda (stream cancelled-p) (declare (ignore stream cancelled-p))
-                                  (localgroup-client-connection-attached connection)))
+                                  (world-terminal-client-connection-attached connection)))
                           (list 'daemon-read-decodable-packet
                                 (lambda (stream) (declare (ignore stream)) (sleep 5))))
                     (lambda ()
                       (test-assert
                        (handler-case
-                           (localgroup-client-connect
-                            '("replay" :localgroup :port 1 :token "unused") :event-function (constantly nil)
+                           (world-terminal-client-connect
+                            '("replay" :world-terminal :port 1 :token "unused") :event-function (constantly nil)
                             :initialize-function
                             (lambda (created)
                               (setf candidate created)
                               (channel-subscription-initialize-connection view created)))
                          (sb-sys:deadline-timeout () t))
                        "A stalled initial prefix respects the handshake deadline.")))
-                   (test-assert (and candidate (localgroup-client-connection-closed-p candidate)
-                                     (client-evaluator-closed-p (localgroup-client-connection-evaluator candidate))
-                                     (null (localgroup-client-connection-reader-thread candidate)))
+                   (test-assert (and candidate (world-terminal-client-connection-closed-p candidate)
+                                     (client-evaluator-closed-p (world-terminal-client-connection-evaluator candidate))
+                                     (null (world-terminal-client-connection-reader-thread candidate)))
                                 "A failed prefix retires transport and evaluation without starting a reader.")))
                 (:eof
                  (test-assert (handler-case (progn (channel-subscription-initialize-connection view connection) nil)
@@ -491,7 +491,7 @@
                                    (not (channel-subscription-closed-p view)))
                               "The initial transcript never accumulates in the bounded live queue.")
                  (test-assert
-                  (eq (getf (rest (daemon-read-decodable-packet (localgroup-client-connection-stream connection))) :operation)
+                  (eq (getf (rest (daemon-read-decodable-packet (world-terminal-client-connection-stream connection))) :operation)
                       (if (eq mode ':old) ':reset ':turn))
                   "Only an advertised replay prefix is consumed, stopping before the first live event.")
                  (let ((*channel-view-replaying* view))
@@ -500,14 +500,14 @@
                                 "Prefix presentation cannot wait for its not-yet-started reader."))
                  (when (eq mode ':replay)
                    (setf (channel-subscription-connection view) connection)
-                   (channel-subscription-finish-attachment view (localgroup-client-connection-attached connection))
+                   (channel-subscription-finish-attachment view (world-terminal-client-connection-attached connection))
                    (channel-subscription-receive-event view '(:ui :operation :turn :active-p t))
                    (test-assert (not (channel-view-turn-active-p view)) "The last replayed state precedes live delivery.")
                    (channel-view--drain-events view)
                    (test-assert (channel-view-turn-active-p view) "Live delivery follows the replay boundary.")))))
-          (localgroup-client--disconnect connection)
+          (world-terminal-client--disconnect connection)
           (channel-subscription-close view)
-          (localgroup-screen-close screen)))))
+          (world-terminal-screen-close screen)))))
   nil)
 
 (-> client-history-tests--text (channel-view) string)
@@ -544,8 +544,8 @@
                     :session-id))
             (application  (world-host-application (world-server--find-host server identifier)))
             (conversation (application-conversation application))
-            (screen-a     (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
-            (screen-b     (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
+            (screen-a     (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
+            (screen-b     (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
             (view-a       (channel-view-create configuration identifier screen-a))
             (view-b       (channel-view-create configuration identifier screen-b)))
        (unwind-protect
@@ -561,7 +561,7 @@
                     (client-history-tests--settle view-a))))
               (client-history-tests--settle view-a)
               (test-assert (and (search "history-item-001" (client-history-tests--text view-a))
-                                (not (search "history-item-060" (test-localgroup--presented-text application))))
+                                (not (search "history-item-060" (test-world-terminal--presented-text application))))
                            "The first view retains entries evicted from the server replay cache.")
               ;; Persist just before attachment, and publish the same record just after it.
               (conversation-append-user-message conversation "history-boundary-301")
@@ -626,8 +626,8 @@
                                       "The aggregate is bounded even when each packet fits separately."))))))))
          (channel-subscription-close view-b)
          (channel-subscription-close view-a)
-         (localgroup-screen-close screen-b)
-         (localgroup-screen-close screen-a)))))
+         (world-terminal-screen-close screen-b)
+         (world-terminal-screen-close screen-a)))))
   nil)
 
 (-> test-channel-view-stream-history-cut () null)
@@ -641,9 +641,9 @@
                            (world-tests--workspace root "stream-history"))) :session-id))
             (application  (world-host-application (world-server--find-host server identifier)))
             (conversation (application-conversation application))
-            (screen-a     (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
-            (screen-b     (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
-            (screen-c     (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
+            (screen-a     (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
+            (screen-b     (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
+            (screen-c     (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
             (view-a       (channel-view-create configuration identifier screen-a))
             (view-b       (channel-view-create configuration identifier screen-b))
             (view-c       (channel-view-create configuration identifier screen-c)))
@@ -702,14 +702,14 @@
                                       (= 2 (client-history-tests--occurrences "cache miss" display)))
                                  "Live and fresh views show both cache notices once, in request order.")))))
          (dolist (view (list view-c view-b view-a)) (channel-subscription-close view))
-         (dolist (screen (list screen-c screen-b screen-a)) (localgroup-screen-close screen))))))
+         (dolist (screen (list screen-c screen-b screen-a)) (world-terminal-screen-close screen))))))
   nil)
 
 (-> test-channel-view-history-admission () null)
 (defun test-channel-view-history-admission ()
   "Respect exact builtin identity and keep page failures local without resubmission."
   (with-test-configuration (configuration)
-    (let* ((screen     (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
+    (let* ((screen     (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
            (view       (channel-view-create configuration "history-admission" screen))
            (page-calls 0)
            (sent       nil)
@@ -729,7 +729,7 @@
                        (:overridden
                         (list :history-page-p t :builtin-p nil))
                        (:failure
-                        (error 'localgroup-error :operation ':transcript-history :message "fixture page failure"))
+                        (error 'world-terminal-error :operation ':transcript-history :message "fixture page failure"))
                        (:malformed
                         nil))))
              (list 'channel-view--send-input
@@ -763,7 +763,7 @@
               (test-assert (and (search "fixture page failure" (client-history-tests--text view))
                                 (search "did not return a transcript history page" (client-history-tests--text view)))
                            "Both transport and malformed-page failures are visible in this view.")))
-        (localgroup-screen-close screen))))
+        (world-terminal-screen-close screen))))
   nil)
 
 (-> test-channel-view-drafts () null)
@@ -788,8 +788,8 @@
                                  (setf initial (list (line-editor-text editor) (line-editor-cursor editor))
                                        seen-p t)))
                              (when (eq (first (scripted-terminal-events terminal)) ':draft-loss)
-                               (error 'localgroup-error :operation ':client :message "Injected input loss."))))
-            screen (localgroup-screen-create :terminal terminal))
+                               (error 'world-terminal-error :operation ':client :message "Injected input loss."))))
+            screen (world-terminal-screen-create :terminal terminal))
       (test-call-with-function-replacements
        (list
         (list 'terminal--terminal-mode-or-nil (lambda (candidate) (declare (ignore candidate)) ':test))
@@ -798,7 +798,7 @@
         (list 'channel-subscription-attach
               (lambda (candidate)
                 (when attach-fails-p
-                  (error 'localgroup-error :operation ':attach :message "Injected attach refusal."))
+                  (error 'world-terminal-error :operation ':attach :message "Injected attach refusal."))
                 (when modal-at-attach-p
                   (channel-view-apply candidate ':modal :open-p t))
                 (when replay-input
@@ -818,7 +818,7 @@
                           replay-input replay modal-at-attach-p modal-p
                           (scripted-terminal-events terminal) (copy-tree events))
                     (let ((failure (handler-case (progn (channel-view-run view) nil)
-                                     (localgroup-error (condition) condition))))
+                                     (world-terminal-error (condition) condition))))
                       (test-assert (eq (not (null failure)) (not (null (or refuse-p (member ':draft-loss events)))))
                                    "only deliberately injected transport failures signal from a view")
                       (values initial failure))))
@@ -860,12 +860,12 @@
                                "submitted input is not resurrected on return")
                   (test-assert (equal (run screen "new" '((:switch :session-id "a"))) '("" 0))
                                "opening another fresh channel starts with an empty composer")
-                  (let ((other (localgroup-screen-create :terminal terminal)))
+                  (let ((other (world-terminal-screen-create :terminal terminal)))
                     (unwind-protect
                          (test-assert (equal (run other "a" '(:detach)) '("" 0))
                                       "another terminal client cannot reuse this client's drafts")
-                      (localgroup-screen-close other))))
-             (localgroup-screen-close screen)))))))
+                      (world-terminal-screen-close other))))
+             (world-terminal-screen-close screen)))))))
   nil)
 
 (-> test-channel-view-interleaved-history () null)
@@ -879,7 +879,7 @@
                                :session-id))
             (application  (world-host-application (world-server--find-host server identifier)))
             (conversation (application-conversation application))
-            (screen       (localgroup-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
+            (screen       (world-terminal-screen-create :terminal (make-instance 'scripted-terminal :columns 90)))
             (view         (channel-view-create configuration identifier screen))
             (markers      '("chronology-empty-channel" "chronology-earlier-input" "(permissions :full)"
                             "chronology-command-result" "chronology-later-input"
@@ -950,5 +950,5 @@
                                       (getf fields :more-p))
                                  "An overflow notice that cannot fit preserves the no-progress cursor."))))
            (channel-subscription-close view)
-           (localgroup-screen-close screen))))))
+           (world-terminal-screen-close screen))))))
   nil)

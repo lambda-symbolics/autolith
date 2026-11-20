@@ -51,20 +51,20 @@
 (-> world-server-tests--open (cons string &rest t) list)
 (defun world-server-tests--open (entry workspace &rest arguments)
   "Open a channel for WORKSPACE through the world ENTRY with ARGUMENTS and return the response."
-  (localgroup-query-record entry ':open
+  (world-terminal-query-record entry ':open
                            (append (list :directory workspace
                                          :rows      30
                                          :columns   90
                                          :styled-p  nil)
                                    arguments)))
 
-(-> world-server-tests--session (world-server string) localgroup-session)
+(-> world-server-tests--session (world-server string) channel-endpoint)
 (defun world-server-tests--session (server identifier)
-  "Return the localgroup session of channel IDENTIFIER hosted by SERVER."
+  "Return the world-terminal session of channel IDENTIFIER hosted by SERVER."
   (let ((host (world-server--find-host server identifier)))
     (unless host
       (error "Channel ~A is not hosted." identifier))
-    (or (application-localgroup-session (world-host-application host))
+    (or (application-channel-endpoint (world-host-application host))
         (error "Channel ~A has no session." identifier))))
 
 (-> world-server-tests--call-with-endpoint-failure
@@ -172,12 +172,12 @@ Keep the override until the captured thread exits; replacement threads pass thro
                            (world-client-entry configuration))
                       "repair preserves runtime identity and discoverability")
                      (daemon-write-packet
-                      stream (list :localgroup-request :version *daemon-protocol-version*
+                      stream (list :world-terminal-request :version *daemon-protocol-version*
                                    :token token :operation ':status :arguments nil))
-                     (test-assert (eq (first (test-localgroup--read-packet stream)) ':ok)
+                     (test-assert (eq (first (test-world-terminal--read-packet stream)) ':ok)
                                   "a previously accepted connection completes after listener repair")
                      (test-assert
-                      (eq (first (localgroup-query-record (world-client-entry configuration) ':status)) ':ok)
+                      (eq (first (world-terminal-query-record (world-client-entry configuration) ':status)) ':ok)
                       "new authenticated connections reach the repaired endpoint")
                      (let ((replacement (image-daemon:daemon-runtime-server-thread runtime)))
                        (world-server-tests--call-with-endpoint-failure
@@ -275,7 +275,7 @@ Keep the override until the captured thread exits; replacement threads pass thro
                   (starts  0)
                   (done    (sb-thread:make-semaphore)))
              (multiple-value-bind (connection seen await)
-                 (test-localgroup--present (world-server-tests--session server identifier))
+                 (test-world-terminal--present (world-server-tests--session server identifier))
                (declare (ignore seen))
                (setf (world-endpoint-repair-attempted-p runtime) (eq mode ':repeated))
                (unwind-protect
@@ -324,7 +324,7 @@ Keep the override until the captured thread exits; replacement threads pass thro
                                                     (non-empty-string-p (getf (rest event) :message)))))
                                     "unrepairable failure stops normally and tells attached terminals why")))
                  (setf (world-server-checkpointing-p server) nil)
-                 (localgroup-client-close connection))))))
+                 (world-terminal-client-close connection))))))
         (test-assert (and (not (world-server-running-p configuration))
                           (null (world-client-entry configuration)))
                      "normal final shutdown releases the lease and unpublishes discovery"))))
@@ -359,7 +359,7 @@ Keep the override until the captured thread exits; replacement threads pass thro
     (let ((channels nil))
       (labels ((open-channel (identifier &optional launch)
                  "Open IDENTIFIER using a caller default that cannot override a channel choice."
-                 (localgroup-query-record
+                 (world-terminal-query-record
                   (world-client-entry configuration) ':open
                   (list :channel identifier :launch launch :permission-mode ':auto
                         :rows 30 :columns 90 :styled-p nil)))
@@ -420,7 +420,7 @@ Keep the override until the captured thread exits; replacement threads pass thro
                                                                 :name "helper" :role "general" :created-at 1500)
        (flet ((visit ()
                 "Open the child and wait until its host is idle."
-                (localgroup-query-record entry ':open (list :channel "bmaintkid" :switch-p t))
+                (world-terminal-query-record entry ':open (list :channel "bmaintkid" :switch-p t))
                 (let ((host (world-server--find-host server "bmaintkid")))
                   (test-assert (task-tests--wait-until (lambda () (world-server--host-idle-p host)) 30)
                                "the visited finished child has an idle host")
@@ -442,13 +442,13 @@ Keep the override until the captured thread exits; replacement threads pass thro
          (let* ((host        (visit))
                 (application (world-host-application host))
                 (controller  (application-input-controller application))
-                (connection  (test-localgroup--present (world-server-tests--session server "bmaintkid"))))
+                (connection  (test-world-terminal--present (world-server-tests--session server "bmaintkid"))))
            (unwind-protect
                 (test-assert
                  (handler-case (progn (channel-remove configuration '("bmaintkid")) nil)
                    (task-error (condition) (search "terminal" (autolith-error-message condition))))
                  "removing an attached child refuses with an attachment-specific reason")
-             (localgroup-client-close connection))
+             (world-terminal-client-close connection))
            (test-assert (task-tests--wait-until (lambda () (not (world-host-attached-p host))) 10)
                         "the terminal that left no longer shows the child")
            (with-lock-held ((application-input-controller-lock controller))
@@ -477,7 +477,7 @@ Keep the override until the captured thread exits; replacement threads pass thro
      (world-tests--persisted-conversation configuration "bactivitypeer" 2000)
      (world-tests--child-conversation configuration "bactivitykid" :root "bactivityparent"
                                      :parent "bactivityparent" :name "helper" :role "general" :created-at 1500)
-     (localgroup-query-record (world-client-entry configuration) ':open
+     (world-terminal-query-record (world-client-entry configuration) ':open
                               (list :channel "bactivityparent" :switch-p t))
      (let* ((parent  (world-host-application (world-server--find-host server "bactivityparent")))
             (ui      (application-presentation parent))
@@ -574,7 +574,7 @@ run once the wake has."
                                :session-id))
             (application (world-host-application (world-server--find-host server identifier))))
        (multiple-value-bind (connection seen await)
-           (test-localgroup--present (world-server-tests--session server identifier))
+           (test-world-terminal--present (world-server-tests--session server identifier))
          (declare (ignore seen))
          (unwind-protect
               (progn
@@ -593,7 +593,7 @@ run once the wake has."
                                                (search "world server stopped by autolith stop"
                                                        message)))))
                              "the attached terminal is told the server was stopped by autolith stop"))
-           (localgroup-client-close connection))))))
+           (world-terminal-client-close connection))))))
   nil)
 
 (-> world-server-tests--call-with-terminal-client
@@ -612,7 +612,7 @@ attaches as a client that presents, applies what the channel publishes, and
 acts on the keys. With READ-ONLY-P the view only watches. CLIENT-VERSION is
 the version the client says it is, when it says one."
   (let* ((terminal (make-instance 'queued-recording-terminal :rows 31 :columns 91))
-         (screen   (localgroup-screen-create :terminal terminal))
+         (screen   (world-terminal-screen-create :terminal terminal))
          (view     (channel-view-create configuration identifier screen :read-only-p read-only-p))
          (attached (sb-thread:make-semaphore))
          (exit     nil)
@@ -657,7 +657,7 @@ the version the client says it is, when it says one."
          ;; A view that still runs ends at the detach key.
          (queued-recording-terminal-enqueue terminal ':detach)
          (sb-thread:join-thread thread :default nil :timeout 10)
-         (localgroup-client-screen-release screen)))))
+         (world-terminal-client-screen-release screen)))))
   nil)
 
 (-> test-world-server-control-z-detach () null)
@@ -739,7 +739,7 @@ the version the client says it is, when it says one."
    (lambda (server configuration root)
      (declare (ignore server root))
      (let ((output (test-call-with-function-replacements
-                    (list (list 'localgroup--client-configuration (lambda () configuration)))
+                    (list (list 'world-terminal--client-configuration (lambda () configuration)))
                     (lambda ()
                       (with-output-to-string (*standard-output*)
                          (let ((command (parse-command-line (main--top-level-command) '("status"))))
@@ -761,7 +761,7 @@ the version the client says it is, when it says one."
           (styles                      nil)
           (styled-p                    t)
           (*world-client-stop-timeout* 0)
-          (write-line                  (symbol-function 'localgroup--write-styled-line))
+          (write-line                  (symbol-function 'world-terminal--write-styled-line))
           (*standard-output*           (make-string-output-stream))
           (*error-output*              (make-string-output-stream)))
       (test-call-with-function-replacements
@@ -770,26 +770,25 @@ the version the client says it is, when it says one."
               (lambda (status &optional finish-output-p)
                 (declare (ignore finish-output-p))
                 (throw 'stop-cli-exit status)))
-        (list 'localgroup--client-configuration (lambda () configuration))
+        (list 'world-terminal--client-configuration (lambda () configuration))
         (list 'world-client-entry
               (lambda (client)
                 (declare (ignore client))
                 (when present-p
                   (cons #P"unused.sexp"
-                        (list :localgroup-endpoint :session-id "world"
-                              :pid pid :port 1234 :token "test")))))
-        (list 'daemon-call
+                        (image-daemon:daemon-registry-record :identifier "world" :token "test" :port 1234 :pid pid)))))
+        (list 'world-terminal-call
               (lambda (port token operation &key arguments)
                 (declare (ignore port token arguments))
                 (test-assert (eq operation ':stop) "stop sends one shutdown request")
                 (if (eq reply ':transport-error)
                     (error "Transport failed.")
                     (list reply :operation operation :message "Rejected."))))
-        (list 'localgroup--record-stale-p
+        (list 'world-terminal--record-stale-p
               (lambda (record condition) (declare (ignore record condition)) nil))
-        (list 'localgroup--status-output-styled-p
+        (list 'world-terminal--status-output-styled-p
               (lambda (stream) (declare (ignore stream)) styled-p))
-        (list 'localgroup--write-styled-line
+        (list 'world-terminal--write-styled-line
               (lambda (stream spans enabled-p)
                 (push (mapcar #'terminal-span-style spans) styles)
                 (funcall write-line stream spans enabled-p)))
@@ -919,7 +918,7 @@ the version the client says it is, when it says one."
                 (terminal    (terminal-ui-terminal ui)))
            (multiple-value-bind (connection seen await)
                (if attached-p
-                   (test-localgroup--present (world-server-tests--session server first-id)
+                   (test-world-terminal--present (world-server-tests--session server first-id)
                                              :rows rows :columns columns :styled-p styled-p)
                    (values nil nil nil))
              (declare (ignore seen))
@@ -954,7 +953,7 @@ the version the client says it is, when it says one."
                         (application-present next-application
                                              (list (terminal-span ':brand "new-channel presentation")))
                         (multiple-value-bind (next-connection next-seen next-await)
-                            (test-localgroup--present (world-server-tests--session server second)
+                            (test-world-terminal--present (world-server-tests--session server second)
                                                       :rows rows :columns columns :styled-p styled-p)
                           (declare (ignore next-seen))
                           (unwind-protect
@@ -966,9 +965,9 @@ the version the client says it is, when it says one."
                                                   (find '(:brand "new-channel presentation") entry
                                                         :test #'equal)))))
                                 "the terminal that attaches is shown what the new channel presented before, with its style")
-                            (localgroup-client-close next-connection))))))
+                            (world-terminal-client-close next-connection))))))
                (when connection
-                 (localgroup-client-close connection)))))))))
+                 (world-terminal-client-close connection)))))))))
   nil)
 
 (-> test-world-client-new-command () null)
@@ -977,7 +976,7 @@ the version the client says it is, when it says one."
   (world-server-tests--call
    (lambda (server configuration root)
      (test-call-with-function-replacements
-      (list (list 'localgroup--client-configuration (lambda () configuration)))
+      (list (list 'world-terminal--client-configuration (lambda () configuration)))
       (lambda ()
         (let ((identifiers nil))
           (dotimes (index 2)
@@ -992,7 +991,7 @@ the version the client says it is, when it says one."
               (test-assert host "each invocation hosts a fresh channel in the same workspace")
               (let* ((identifier (world-host-channel host))
                      (session    (world-server-tests--session server identifier))
-                     (status     (rest (localgroup-status-snapshot session))))
+                     (status     (rest (world-terminal-status-snapshot session))))
                 (push identifier identifiers)
                 (test-assert (search (channel-open-command identifier) output)
                              "new prints a usable open command for the channel it created")
@@ -1013,7 +1012,7 @@ the version the client says it is, when it says one."
      (world-participant-rename configuration "btell11" "receiver")
      (let ((started nil))
        (test-call-with-function-replacements
-        (list (list 'localgroup--client-configuration (lambda () configuration))
+        (list (list 'world-terminal--client-configuration (lambda () configuration))
               (list 'world-server--start-host
                     (lambda (candidate &key conversation-id directory arguments)
                       (declare (ignore candidate directory arguments))
@@ -1073,7 +1072,7 @@ the version the client says it is, when it says one."
      (let ((application nil)
            (picks       0))
        (test-call-with-function-replacements
-        (list (list 'localgroup--client-configuration (lambda () configuration))
+        (list (list 'world-terminal--client-configuration (lambda () configuration))
               (list 'terminal-ui-select
                     (lambda (&rest arguments)
                       (declare (ignore arguments))
@@ -1215,7 +1214,7 @@ the version the client says it is, when it says one."
                          (non-empty-string-p first-id)
                          (getf (rest opened) :started-p))
                     "the first open of a directory starts a channel there")
-       (test-assert (eql (getf (rest (rest (localgroup--find-record configuration first-id))) :pid)
+       (test-assert (eql (getf (rest (rest (world-terminal--find-record configuration first-id))) :pid)
                          (current-process-id))
                     "the opened channel publishes its own endpoint from the server")
        (test-assert (string= workspace
@@ -1234,7 +1233,7 @@ the version the client says it is, when it says one."
                            (not (getf (rest joined) :started-p)))
                       "a second open of the directory joins the uncontrolled channel"))
        (let ((session (world-server-tests--session server first-id)))
-         (test-assert (and (eq (first (daemon-call (image-daemon:daemon-runtime-port session)
+         (test-assert (and (eq (first (world-terminal-call (image-daemon:daemon-runtime-port session)
                                                    (image-daemon:daemon-runtime-token session)
                                                    ':attach
                                                    :arguments (list :mode ':control :rows 31 :columns 91)))
@@ -1242,19 +1241,19 @@ the version the client says it is, when it says one."
                            (not (world-host-attached-p (world-server--find-host server first-id))))
                       "a hosted channel answers the attach operation of an older terminal client with an error"))
        (multiple-value-bind (connection seen await)
-           (test-localgroup--present (world-server-tests--session server first-id) :client-pid 424242)
+           (test-world-terminal--present (world-server-tests--session server first-id) :client-pid 424242)
          (declare (ignore seen))
          (unwind-protect
               (let* ((host       (world-server--find-host server first-id))
                      (other      (world-server-tests--open entry workspace))
                      (other-id   (getf (rest other) :session-id))
                      (other-host (world-server--find-host server other-id)))
-                (test-assert (and (eq (first (localgroup-client-connection-attached connection))
+                (test-assert (and (eq (first (world-terminal-client-connection-attached connection))
                                       ':attached)
                                   (funcall await ':reset)
                                   (world-host-attached-p host))
                              "a terminal attaches to the hosted channel as a client that presents it")
-                (let ((status (rest (getf (localgroup-client-call connection ':state) :state))))
+                (let ((status (rest (getf (world-terminal-client-call connection ':state) :state))))
                   (test-assert (and (getf status :terminal-attached-p)
                                     (eql (getf status :terminal-client-pid) 424242))
                                "the channel's status says a terminal shows it and names its process"))
@@ -1266,7 +1265,7 @@ the version the client says it is, when it says one."
                 (test-assert (equal (sort (world-server--channels-of entry) #'string<)
                                     (sort (list first-id other-id) #'string<))
                              "the server lists both channels")
-                (localgroup-query-record entry ':close (list :channel other-id))
+                (world-terminal-query-record entry ':close (list :channel other-id))
                 ;; The host leaves the server only after its session released
                 ;; every resource, including the endpoint record.
                 (test-assert (task-tests--wait-until
@@ -1274,9 +1273,9 @@ the version the client says it is, when it says one."
                               20)
                              "closing a channel ends its session")
                 (test-assert (and (null (world-server--find-host server other-id))
-                                  (null (localgroup--find-record-or-nil configuration other-id)))
+                                  (null (world-terminal--find-record-or-nil configuration other-id)))
                              "a closed channel unpublishes its endpoint"))
-           (localgroup-client-close connection)))
+           (world-terminal-client-close connection)))
        (test-assert (task-tests--wait-until
                      (lambda ()
                        (not (world-host-attached-p (world-server--find-host server first-id))))
@@ -1284,12 +1283,12 @@ the version the client says it is, when it says one."
                     "the terminal's departure releases the channel")
        (test-assert (world-host-live-p (world-server--find-host server first-id))
                     "a channel outlives the terminal that left without detaching")
-       (localgroup-query-record entry ':close (list :channel first-id))
+       (world-terminal-query-record entry ':close (list :channel first-id))
        (test-assert (task-tests--wait-until
                      (lambda () (null (world-server--hosts server)))
                      20)
                     "closing the last channel leaves the server running without channels")
-       (test-assert (getf (rest (localgroup-query-record entry ':status)) :status)
+       (test-assert (getf (rest (world-terminal-query-record entry ':status)) :status)
                     "the server answers with no channels open")
        (let ((resumed (world-server-tests--open entry workspace)))
          (test-assert (and (getf (rest resumed) :started-p)
@@ -1323,7 +1322,7 @@ the version the client says it is, when it says one."
                     (test-assert (and (composer-p "draft")
                                       (= 2 (line-editor-cursor editor)))
                                  "the reopened channel restores its draft after recall"))))))))
-       (localgroup-query-record entry ':close (list :channel first-id))
+       (world-terminal-query-record entry ':close (list :channel first-id))
        (test-assert (task-tests--wait-until
                      (lambda () (null (world-server--hosts server)))
                      20)
@@ -1337,16 +1336,16 @@ the version the client says it is, when it says one."
            (conversation-lease-release lease)))
        (test-assert (handler-case
                         (progn
-                          (localgroup-query-record entry ':open (list :directory "/nonexistent/autolith"))
+                          (world-terminal-query-record entry ':open (list :directory "/nonexistent/autolith"))
                           nil)
-                      (localgroup-error (condition)
+                      (world-terminal-error (condition)
                         (search "does not exist" (autolith-error-message condition))))
                     "opening a missing directory is refused")
        (test-assert (handler-case
                         (progn
-                          (localgroup-query-record entry ':close (list :channel "nosuch1"))
+                          (world-terminal-query-record entry ':close (list :channel "nosuch1"))
                           nil)
-                      (localgroup-error (condition)
+                      (world-terminal-error (condition)
                         (search "not open" (autolith-error-message condition))))
                     "closing an unknown channel is refused"))))
   nil)
@@ -1376,7 +1375,7 @@ the version the client says it is, when it says one."
           (test-assert (search "no terminal controls" (terminal--spans-text (first presented)))
                        "without a controller there is no terminal to move")
           (multiple-value-bind (connection seen await)
-              (test-localgroup--present (world-server-tests--session server id-a))
+              (test-world-terminal--present (world-server-tests--session server id-a))
             (declare (ignore seen))
             (unwind-protect
                  (progn
@@ -1390,7 +1389,7 @@ the version the client says it is, when it says one."
                                          (lambda (event)
                                            (equal (getf (rest event) :session-id) id-b)))
                                 "the controller is sent the switch request naming the channel"))
-              (localgroup-client-close connection)))
+              (world-terminal-client-close connection)))
           (setf presented nil)
           (test-assert (and (eq (application--builtin-open-command application "zzzzzzz") ':continue)
                             (= 1 (length presented))
@@ -1581,7 +1580,7 @@ the version the client says it is, when it says one."
                                    :session-id)
                              id)
                     "an open stating what the channel already runs joins it")
-       (test-assert (and (string= (getf (rest (localgroup-query-record
+       (test-assert (and (string= (getf (rest (world-terminal-query-record
                                                entry ':open
                                                (list :channel id
                                                      :launch  '(:permission-mode :full-access)
@@ -1592,13 +1591,13 @@ the version the client says it is, when it says one."
                              ':full-access))
                     "a permission mode stated explicitly takes effect on a channel nobody controls")
        (test-call-with-function-replacements
-        (list (list 'localgroup--task-counts
+        (list (list 'world-terminal--task-counts
                     (lambda (application)
                       (declare (ignore application))
                       (values 1 1))))
         (lambda ()
           (test-assert (and (handler-case
-                                (progn (localgroup-query-record
+                                (progn (world-terminal-query-record
                                         entry ':open
                                         (list :channel id
                                               :launch  '(:permission-mode :ask)
@@ -1696,7 +1695,7 @@ the version the client says it is, when it says one."
               (multiple-value-bind (identifier started-p) (open-latest :latest-p t)
                 (test-assert (and (string= identifier "blater1") (not started-p))
                              "the next open reuses the loaded newest channel"))
-              (let ((connection (test-localgroup--present
+              (let ((connection (test-world-terminal--present
                                  (world-server-tests--session server "blater1"))))
                 (unwind-protect
                      (progn
@@ -1706,7 +1705,7 @@ the version the client says it is, when it says one."
                        (multiple-value-bind (identifier started-p) (open-latest)
                          (test-assert (and (string= identifier hosted) (not started-p))
                                       "other directory opens still seek an unattended host")))
-                  (localgroup-client-close connection))))))))))
+                  (world-terminal-client-close connection))))))))))
   nil)
 
 (-> test-world-server-startup-inbox () null)
@@ -1805,7 +1804,7 @@ the version the client says it is, when it says one."
                                                          :channel     opened
                                                          :mcp-servers '((:object "name" "editor")))
                                nil)
-                      (localgroup-error (condition)
+                      (world-terminal-error (condition)
                         (search "cannot take the editor's MCP servers"
                                 (autolith-error-message condition))))
                     "a running channel refuses launch-time MCP servers"))))
@@ -1866,14 +1865,14 @@ the version the client says it is, when it says one."
 (-> world-server--channels-of (cons) list)
 (defun world-server--channels-of (entry)
   "Return the channel identifiers the world ENTRY reports."
-  (getf (rest (getf (rest (localgroup-query-record entry ':status)) :status)) :channels))
+  (getf (rest (getf (rest (world-terminal-query-record entry ':status)) :status)) :channels))
 
-(-> localgroup--find-record-or-nil (configuration string) (option cons))
-(defun localgroup--find-record-or-nil (configuration identifier)
+(-> world-terminal--find-record-or-nil (configuration string) (option cons))
+(defun world-terminal--find-record-or-nil (configuration identifier)
   "Return the endpoint entry of IDENTIFIER, or NIL when none is published."
   (handler-case
-      (localgroup--find-record configuration identifier)
-    (localgroup-error ()
+      (world-terminal--find-record configuration identifier)
+    (world-terminal-error ()
       nil)))
 
 (-> world-server-tests--session-lock-order () null)
@@ -1881,7 +1880,7 @@ the version the client says it is, when it says one."
   "Exercise admission from a controller callback without acquiring its mutex again."
   (let* ((application (make-instance 'application))
          (controller  (make-instance 'application-input-controller :application application))
-         (session     (make-instance 'localgroup-session :application application))
+         (session     (make-instance 'channel-endpoint :application application))
          (failure     (make-condition 'simple-error :format-control "Session test failure.")))
     (setf (application-input-controller application) controller)
     (with-lock-held ((application-input-controller-lock controller))
@@ -1889,14 +1888,14 @@ the version the client says it is, when it says one."
         (dolist (state '(:healthy :stopping :closing :failed-runtime :failed-controller
                          :stopped-controller))
           (setf (image-daemon:daemon-runtime-stopping-p session) (eq state ':stopping)
-                (localgroup-session-closing-p session) (eq state ':closing)
+                (channel-endpoint-closing-p session) (eq state ':closing)
                 (image-daemon:daemon-runtime-failure session)
                 (when (eq state ':failed-runtime) failure)
                 (application-input-controller-failure controller)
                 (when (eq state ':failed-controller) failure)
                 (application-input-controller-stopping-p controller)
                 (eq state ':stopped-controller))
-          (test-assert (eq (localgroup-session-admits-attachment-p session)
+          (test-assert (eq (channel-endpoint-admits-attachment-p session)
                            (eq state ':healthy))
                        (format nil "admission observes ~S without reversing controller/runtime lock order"
                                state))))))
@@ -1920,7 +1919,7 @@ the version the client says it is, when it says one."
               (other       (world-host-application host-b))
               (session-a   (world-server-tests--session server id-a))
               (observed    nil))
-         (multiple-value-bind (connection seen) (test-localgroup--present session-a)
+         (multiple-value-bind (connection seen) (test-world-terminal--present session-a)
            (unwind-protect
                 (progn
                   ;; A job run in B leaves its pool's reusable workers waiting.
@@ -1936,14 +1935,14 @@ the version the client says it is, when it says one."
                                       (task-tests--wait-until
                                        (lambda ()
                                          (not (thread-alive-p
-                                               (localgroup-client-connection-reader-thread connection))))
+                                               (world-terminal-client-connection-reader-thread connection))))
                                        10)
                                       (list (eq *active-application* application)
                                             (remove-if-not #'thread-alive-p
                                                            (set-difference (sb-thread:list-all-threads)
                                                                            baseline))
                                             (world-server-runtime server)
-                                            (application-localgroup-session application)
+                                            (application-channel-endpoint application)
                                             (world-host-paused-p host-a)
                                             (world-host-paused-p host-b)
                                             (sb-thread:thread-name (current-thread))))))))
@@ -1958,7 +1957,7 @@ the version the client says it is, when it says one."
                                          (mapcar #'sb-thread:thread-name threads))))
                   (test-assert (find ':checkpoint-reconnect (funcall seen) :key #'first)
                                "an attached terminal is told to reconnect"))
-             (localgroup-client-close connection)))
+             (world-terminal-client-close connection)))
          (test-assert (task-tests--wait-until
                        (lambda () (and (world-host-live-p host-a) (world-host-live-p host-b))) 30)
                       "both channels are served again")
@@ -2012,8 +2011,8 @@ the version the client says it is, when it says one."
                           (progn (world-server-tests--open (world-client-entry configuration)
                                                            workspace-a)
                                  nil)
-                        (localgroup-error (condition)
-                          (localgroup-error-retry-p condition)))
+                        (world-terminal-error (condition)
+                          (world-terminal-error-retry-p condition)))
                       "an open during a checkpoint is told to come back")
          (setf (world-server-checkpointing-p server) nil)
          (test-call-with-function-replacements
@@ -2037,14 +2036,14 @@ the version the client says it is, when it says one."
                                :pathname nil))))
           (lambda ()
             (application-checkpoint application)
-            (test-assert (search "checkpoint scheduled" (test-localgroup--presented-text application))
+            (test-assert (search "checkpoint scheduled" (test-world-terminal--presented-text application))
                          "the channel is told its checkpoint is scheduled")
             (test-assert (task-tests--wait-until
                           (lambda ()
                             (and (search "! checkpoint failed: synthetic fork failure"
-                                         (test-localgroup--presented-text application))
+                                         (test-world-terminal--presented-text application))
                                  (search "! world server checkpoint failed"
-                                         (test-localgroup--presented-text other))))
+                                         (test-world-terminal--presented-text other))))
                           30)
                          "each channel learns the outcome once it is served again")
             (test-assert (task-tests--wait-until
@@ -2052,7 +2051,7 @@ the version the client says it is, when it says one."
                           30)
                         "both channels serve again after a failed checkpoint")
            (dolist (hosted (list application other))
-             (let ((text (test-localgroup--presented-text hosted)))
+             (let ((text (test-world-terminal--presented-text hosted)))
                (test-assert
                 (= 1 (loop for start = 0 then (+ position (length "failed: synthetic fork failure"))
                            for position = (search "failed: synthetic fork failure" text :start2 start)
@@ -2087,20 +2086,20 @@ the version the client says it is, when it says one."
             (host-b     (world-server--find-host server id-b))
             (session-a  (world-server-tests--session server id-a))
             (session-b  (world-server-tests--session server id-b))
-            (connection (test-localgroup--present session-a)))
+            (connection (test-world-terminal--present session-a)))
        (unwind-protect
-            (let ((answer (localgroup-query-record entry ':close
+            (let ((answer (world-terminal-query-record entry ':close
                                                    (list :channel id-a :unattached-only-p t))))
               (test-assert (and (null (getf (rest answer) :closed-p))
                                 (world-host-live-p host-a)
-                                (localgroup-session-admits-attachment-p session-a)
-                                (not (localgroup-client-connection-closed-p connection)))
+                                (channel-endpoint-admits-attachment-p session-a)
+                                (not (world-terminal-client-connection-closed-p connection)))
                            "a channel another terminal controls survives a close meant for an idle one"))
-         (localgroup-client-close connection))
-       (let ((answer (localgroup-query-record entry ':close
+         (world-terminal-client-close connection))
+       (let ((answer (world-terminal-query-record entry ':close
                                               (list :channel id-b :unattached-only-p t))))
          (test-assert (and (getf (rest answer) :closed-p)
-                           (not (localgroup-session-admits-attachment-p session-b)))
+                           (not (channel-endpoint-admits-attachment-p session-b)))
                       "a channel nobody controls is committed to close and admits no terminal from then on")
          (test-assert (task-tests--wait-until (lambda () (not (world-host-live-p host-b))) 30)
                       "the committed close ends the channel")))))
@@ -2135,7 +2134,7 @@ the version the client says it is, when it says one."
         (lambda ()
           (unwind-protect
                (progn
-                 (localgroup-query-record entry ':close (list :channel identifier))
+                 (world-terminal-query-record entry ':close (list :channel identifier))
                  (test-assert (sb-thread:wait-on-semaphore releasing :timeout 20)
                               "cleanup reaches its deterministic lease-release latch")
                  (test-assert (and (eq host (world-server--find-host server identifier))
@@ -2247,7 +2246,7 @@ the version the client says it is, when it says one."
         (lambda ()
           (unwind-protect
               (progn
-               (localgroup-query-record entry ':close
+               (world-terminal-query-record entry ':close
                                         (list :channel identifier))
                (test-assert (sb-thread:wait-on-semaphore releasing :timeout 20)
                 "the closing host reaches ownership release")
@@ -2280,7 +2279,7 @@ the version the client says it is, when it says one."
                 (not (conversation-lease-busy-p configuration identifier)))
            "retiring the serving thread releases ownership and removes its host")
           (let ((opened
-                 (localgroup-query-record entry ':open
+                 (world-terminal-query-record entry ':open
                                           (list :channel identifier))))
             (test-assert
              (and (getf (rest opened) :started-p)
@@ -2341,7 +2340,7 @@ the version the client says it is, when it says one."
                                (mapcar #'world-delivery-identifier
                                        (world-inbox-deliveries configuration
                                                                (world-tests--inbox configuration))))
-           (localgroup-query-record entry ':person-unread)
+           (world-terminal-query-record entry ':person-unread)
            (test-assert (not (search "unread" (modeline)))
                         "the marker leaves once nothing waits in the inbox"))))))
   nil)
@@ -2476,7 +2475,7 @@ the version the client says it is, when it says one."
                      (declare (ignore candidate arguments))
                      (push ':spawn events)
                      (setf running t)
-                     (error 'localgroup-error
+                     (error 'world-terminal-error
                             :message   "The detached world server did not start within 1 seconds."
                             :operation ':spawn))))
        (lambda ()
@@ -2503,7 +2502,7 @@ the version the client says it is, when it says one."
                                                       :deadline (+ (get-internal-real-time)
                                                                    internal-time-units-per-second))))
                               nil)
-                          (localgroup-error () t))
+                          (world-terminal-error () t))
                         "a launch that fails while nobody holds the world still fails")
            (test-assert (equal (reverse events) '(1 :spawn))
                         "a failed cold launch reports preparation before spawning"))))))
@@ -2523,7 +2522,7 @@ the version the client says it is, when it says one."
          (loading         nil)
          (reports         nil)
          (lifecycle       nil)
-         (release         (symbol-function 'localgroup-client-screen-release)))
+         (release         (symbol-function 'world-terminal-client-screen-release)))
      (flet ((run (expected-channel)
               "Run one switch and check its sole final report names EXPECTED-CHANNEL."
               (setf opens nil
@@ -2554,7 +2553,7 @@ the version the client says it is, when it says one."
                                      (funcall attached-function))
                                    (list ':switch :session-id "bsecnd2"))
                                   ((and rejects-p (equal identifier "bsecnd2"))
-                                   (error 'localgroup-client-rejected
+                                   (error 'world-terminal-client-rejected
                                           :message   "Channel b-secnd2 is closing."
                                           :operation ':client))
                                   (t
@@ -2571,18 +2570,18 @@ the version the client says it is, when it says one."
                             (lambda (panel)
                               (declare (ignore panel))
                               (push ':stop lifecycle)))
-                      (list 'localgroup-client-screen-release
+                      (list 'world-terminal-client-screen-release
                             (lambda (screen)
                               (push ':release lifecycle)
                               (funcall release screen)))
-                      (list 'localgroup-relay-exit
+                      (list 'world-terminal-relay-exit
                             (lambda (candidate exit mode &key session-id)
                               (declare (ignore candidate))
                               (push (list session-id exit mode) reports)
                               (push ':report lifecycle)
                               (when quit-p
                                 (throw 'client-exit (getf exit :status)))))
-                      (list 'localgroup-screen-show-loading
+                      (list 'world-terminal-screen-show-loading
                             (lambda (screen text &rest arguments)
                               (declare (ignore screen))
                               (push (list text (getf arguments :agent-name)) loading)))
@@ -2596,7 +2595,7 @@ the version the client says it is, when it says one."
                                            "The switch progress keeps its agent name")
                               (push arguments opens)
                               (if refuse-p
-                                  (error 'localgroup-error :message
+                                  (error 'world-terminal-error :message
                                          "Channel b-secnd2 cannot take that."
                                          :operation ':open)
                                   (values (getf arguments :channel) nil)))))
@@ -2667,7 +2666,7 @@ the version the client says it is, when it says one."
   "Serve resize and cancellation during one wait, retire its pump, and reject late completion."
   (dolist (mode '(:finish :cancel :interrupt :late-cancel :pump-failure))
     (let* ((terminal (make-instance 'recording-terminal :columns 80 :rows 24))
-           (screen (localgroup-screen-create :terminal terminal))
+           (screen (world-terminal-screen-create :terminal terminal))
            (interrupt (symbol-function 'interrupt-thread))
            (paints 0) (resizes 0) (watch nil) (released-p nil) (cleaned-p nil)
            (deferred nil) (result nil))
@@ -2678,9 +2677,9 @@ the version the client says it is, when it says one."
         (list 'platform-unwatch-terminal-resize
               (lambda (platform token) (declare (ignore platform token)) (setf released-p t)))
         (list 'terminal-current-size (lambda () (values 23 81)))
-        (list 'localgroup-screen-resized
+        (list 'world-terminal-screen-resized
               (lambda (candidate) (declare (ignore candidate)) (incf resizes)))
-        (list 'localgroup-screen-tick
+        (list 'world-terminal-screen-tick
               (lambda (candidate)
                 (declare (ignore candidate))
                 (incf paints)
@@ -2713,11 +2712,11 @@ the version the client says it is, when it says one."
                                   (test-assert (null image-daemon:*daemon-connect-timeout-seconds*)
                                                "the interactive wait has no endpoint deadline")
                                   (loop until (or (>= paints 3)
-                                                  (funcall *localgroup-client-cancelled-p*))
+                                                  (funcall *world-terminal-client-cancelled-p*))
                                         do (sleep 0.01))
                                   (values ':ready t))
                              (setf cleaned-p t))))))
-                   (localgroup-client-cancelled () ':cancelled)
+                   (world-terminal-client-cancelled () ':cancelled)
                    (simple-error () ':pump-failed)))
            (test-assert (= 0.01 image-daemon:*daemon-connect-timeout-seconds*)
                         "returning restores the caller's endpoint deadline"))
@@ -2743,25 +2742,25 @@ the version the client says it is, when it says one."
                 (lambda (candidate &key ((:deadline limit)) &allow-other-keys)
                   (declare (ignore candidate)) (setf deadline limit) '("world")))
           (list 'terminal-current-size (lambda () (values 24 80)))
-          (list 'localgroup-query-record
+          (list 'world-terminal-query-record
                 (lambda (entry operation arguments)
                   (declare (ignore entry operation arguments))
                   (incf calls)
                   (when (= calls 1)
                     (case mode
                       (:ambiguous
-                       (error 'localgroup-error :operation ':open :message "Lost reply."
+                       (error 'world-terminal-error :operation ':open :message "Lost reply."
                                                :cause (make-condition 'simple-error :format-control "Lost reply.")))
                       ((:retry :cancel)
                        (setf cancelled-p (eq mode ':cancel))
-                       (error 'localgroup-error :operation ':open :message "Checkpoint busy." :retry-p t))))
+                       (error 'world-terminal-error :operation ':open :message "Checkpoint busy." :retry-p t))))
                   '(:ok :session-id "bsecnd2"))))
          (lambda ()
-           (let ((*localgroup-client-cancelled-p*
+           (let ((*world-terminal-client-cancelled-p*
                    (unless (eq mode ':bounded) (lambda () cancelled-p))))
              (setf result (handler-case (world-client-open configuration :channel "bsecnd2")
-                            (localgroup-client-cancelled () ':cancelled)
-                            (localgroup-error () ':ambiguous))))))
+                            (world-terminal-client-cancelled () ':cancelled)
+                            (world-terminal-error () ':ambiguous))))))
         (test-assert (if (eq mode ':bounded) (realp deadline) (null deadline))
                      "only an interactive cancellable open omits the total deadline")
         (test-assert (and (= calls (if (eq mode ':retry) 2 1))
@@ -2782,7 +2781,7 @@ the version the client says it is, when it says one."
             (current  nil)
             (closed   nil)
             (left-p   nil)
-            (release  (symbol-function 'localgroup-client-screen-release)))
+            (release  (symbol-function 'world-terminal-client-screen-release)))
         (test-call-with-function-replacements
          (list
           (list 'main--open-world-channel
@@ -2793,13 +2792,13 @@ the version the client says it is, when it says one."
                 (lambda (&rest arguments)
                   (declare (ignore arguments))
                   (when (eq failure ':cancel-open)
-                    (error 'localgroup-client-cancelled :operation ':switch :message "Cancelled."))
+                    (error 'world-terminal-client-cancelled :operation ':switch :message "Cancelled."))
                   (values "bsecnd2" (eq failure ':source-dies))))
           (list 'world-client-entry
                 (lambda (&rest arguments)
                   (declare (ignore arguments))
                   '("world")))
-          (list 'localgroup-query-record
+          (list 'world-terminal-query-record
                 (lambda (entry operation arguments)
                   (declare (ignore entry))
                   (push (list operation arguments) closed)
@@ -2807,29 +2806,29 @@ the version the client says it is, when it says one."
           (list 'world-sidebar-start (lambda (panel) (declare (ignore panel))))
           (list 'world-sidebar-stop
                 (lambda (panel) (setf current (world-sidebar-current panel))))
-          (list 'localgroup-client-screen-release
+          (list 'world-terminal-client-screen-release
                 (lambda (screen) (funcall release screen)))
           (list 'channel-view-run
                 (lambda (view &key attached-function notice client-version boot-p wait-function)
                   (declare (ignore client-version boot-p wait-function))
                   (let ((identifier (channel-subscription-identifier view))
-                        (panel      (localgroup-screen-panel (channel-view-screen view))))
+                        (panel      (world-terminal-screen-panel (channel-view-screen view))))
                     (push identifier attaches)
                     (when (and (string= identifier "bsecnd2") (eq failure ':cancel-attach))
-                      (error 'localgroup-client-cancelled :operation ':switch :message "Cancelled."))
+                      (error 'world-terminal-client-cancelled :operation ':switch :message "Cancelled."))
                     ;; A view discovers its channel's endpoint before it connects.
                     (when (or (and left-p (string= identifier "bfirst1")
                                    (eq failure ':source-dies))
                               (and (string= identifier "bsecnd2")
                                    (member failure '(:discover :source-dies))))
-                      (error 'localgroup-error :operation ':discover
+                      (error 'world-terminal-error :operation ':discover
                                               :message    "Endpoint disappeared."))
                     (when (string= identifier "bsecnd2")
                       (test-assert (string= (world-sidebar-current panel) "bfirst1")
                                    "the navigator commits no unacknowledged target")
                       (if (eq failure ':transport-error)
                           (error "Injected transport failure.")
-                          (error 'localgroup-error :operation ':connect
+                          (error 'world-terminal-error :operation ':connect
                                                   :message    "Target died before acknowledgment.")))
                     (funcall attached-function)
                     (cond
@@ -2839,7 +2838,7 @@ the version the client says it is, when it says one."
                       (t
                        (setf left-p t)
                        (list ':switch :session-id "bsecnd2"))))))
-          (list 'localgroup-relay-exit
+          (list 'world-terminal-relay-exit
                 (lambda (candidate exit mode &key session-id)
                   (declare (ignore candidate mode))
                   (setf reported (list session-id exit)))))
@@ -2860,7 +2859,7 @@ the version the client says it is, when it says one."
              "every pre-acknowledgment failure restores the live source without closing an existing target"))))
     (let ((discoveries 0)
           (attempts    nil)
-          (screen      (localgroup-screen-create
+          (screen      (world-terminal-screen-create
                         :terminal (make-instance 'recording-terminal :columns 80))))
       (unwind-protect
            (test-call-with-function-replacements
@@ -2869,15 +2868,15 @@ the version the client says it is, when it says one."
                    (lambda (terminal)
                      (declare (ignore terminal))
                      t))
-             (list 'localgroup--find-record
+             (list 'world-terminal--find-record
                    (lambda (candidate identifier)
                      (declare (ignore candidate identifier))
                      (list (incf discoveries))))
-             (list 'localgroup-client-connect
+             (list 'world-terminal-client-connect
                    (lambda (entry &rest arguments)
                      (declare (ignore arguments))
                      (push entry attempts)
-                     (error 'localgroup-error
+                     (error 'world-terminal-error
                             :operation ':connect
                             :message   (if (= (first entry) 1)
                                            "Endpoint was replaced."
@@ -2886,9 +2885,9 @@ the version the client says it is, when it says one."
               ;; Neither endpoint accepts the client; only the attempts matter here.
               (handler-case
                   (main--attach-world-channel configuration "bsecnd2" ':control :screen screen)
-                (localgroup-error ()
+                (world-terminal-error ()
                   nil))))
-        (localgroup-client-screen-release screen))
+        (world-terminal-client-screen-release screen))
       (test-assert
        (and (= discoveries 2) (equal (reverse attempts) '((1) (2))))
        "one changed endpoint is discovered again and tried once before acknowledgment")))
@@ -3066,22 +3065,22 @@ the version the client says it is, when it says one."
                             (error condition))))
               (lambda ()
                 (handler-case (progn (main--open-world-channel configuration) nil)
-                  (localgroup-error (failure)
+                  (world-terminal-error (failure)
                     (autolith-error-message failure)))))))
       (test-assert (search "cannot take --immutable"
-                           (open-with (make-condition 'localgroup-error
+                           (open-with (make-condition 'world-terminal-error
                                                       :message   "Channel b-first1 is already running and cannot take --immutable."
                                                       :operation ':open)))
                    "a refusal the server answered ends the start with its reason")
-      (test-assert (search "The world server is not available: Localgroup session world is unavailable."
-                           (open-with (make-condition 'localgroup-error
-                                                      :message   "Localgroup session world is unavailable."
+      (test-assert (search "The world server is not available: World-Terminal session world is unavailable."
+                           (open-with (make-condition 'world-terminal-error
+                                                      :message   "World-Terminal session world is unavailable."
                                                       :operation ':open
                                                       :cause     (make-condition 'simple-error
                                                                                  :format-control "refused"))))
                    "a server that cannot be reached ends the start instead of running it in this process")
       (test-assert (search "did not start within 1 seconds"
-                           (open-with (make-condition 'localgroup-error
+                           (open-with (make-condition 'world-terminal-error
                                                       :message   "The detached world server did not start within 1 seconds."
                                                       :operation ':spawn)))
                    "a server that cannot be started ends the start with the reason")))
@@ -3104,20 +3103,20 @@ the version the client says it is, when it says one."
                      (opened    (world-server-tests--open entry workspace)))
                 (test-assert (getf (rest opened) :session-id)
                              "a channel opens before the stop")
-                (localgroup--print-response (localgroup-query-record entry ':stop)
+                (world-terminal--print-response (world-terminal-query-record entry ':stop)
                                             (make-string-output-stream))
                 (test-assert (task-tests--wait-until
                               (lambda () (not (thread-alive-p main))) 30)
                              "a stop request ends every channel and the main thread")
                 (test-assert (and (null (world-server--hosts server))
-                                  (null (localgroup-endpoint-records configuration))
+                                  (null (world-terminal-endpoint-records configuration))
                                   (null (join-thread main)))
                              "the stopped server leaves no channel endpoints and no exit status")
                 (test-assert (handler-case
                                  (progn
                                    (world-server-tests--open entry workspace)
                                    nil)
-                               (localgroup-error (condition)
+                               (world-terminal-error (condition)
                                  (search "stopping" (autolith-error-message condition))))
                              "a stopping server opens no channel"))
            (image-daemon:daemon-stop-thread main)
@@ -3152,7 +3151,7 @@ the version the client says it is, when it says one."
            (conversation-append-user-message conversation "working")
            (world-register-conversation configuration conversation)))
        (multiple-value-bind (connection seen await)
-           (test-localgroup--present (world-server-tests--session server id-a) :columns 100)
+           (test-world-terminal--present (world-server-tests--session server id-a) :columns 100)
            (application-input-controller-begin-external-work controller)
            (unwind-protect
                 (test-call-with-function-replacements
@@ -3211,7 +3210,7 @@ the version the client says it is, when it says one."
                      (test-assert (and (member ':switch picks) (member ':channel picks))
                                   "argument-free channel commands reach their pickers while A works"))))
              (application-input-controller-finish-external-work controller)
-            (localgroup-client-close connection))))))
+            (world-terminal-client-close connection))))))
   nil)
 
 
@@ -3293,8 +3292,8 @@ terminal publication and join the serving owner before restoring the provider."
           (unwind-protect
                (progn
                  (setf parent-client
-                       (test-localgroup--present (application-localgroup-session parent) :client-pid 424239))
-                 (localgroup-client-call parent-client ':submit :text "Delegate this work.")
+                       (test-world-terminal--present (application-channel-endpoint parent) :client-pid 424239))
+                 (world-terminal-client-call parent-client ':submit :text "Delegate this work.")
                  (test-assert (sb-thread:wait-on-semaphore entered :timeout 30)
                               "ordinary child.spawn admits a real pool job and enters its first request")
                  (setf job
@@ -3336,7 +3335,7 @@ terminal publication and join the serving owner before restoring the provider."
                     (test-assert (not (thread-alive-p owner))
                                  "the serving owner ends before the provider fixture is restored")))))
             (when parent-client
-              (localgroup-client-close parent-client))))))))
+              (world-terminal-client-close parent-client))))))))
   nil)
 
 (-> test-world-server-open-running-child () null)
@@ -3349,7 +3348,7 @@ terminal publication and join the serving owner before restoring the provider."
      (destructuring-bind (&key root parent job host application thread release statistics
                               &allow-other-keys)
          context
-       (let ((endpoint    (application-localgroup-session application))
+       (let ((endpoint    (application-channel-endpoint application))
              (state       (application-participant-state application))
              (connections nil)
              (seen        nil))
@@ -3364,7 +3363,7 @@ terminal publication and join the serving owner before restoring the provider."
                              "ordinary permission changes have an independent mutable state")
                 (dotimes (index 3)
                   (multiple-value-bind (connection events)
-                      (test-localgroup--present endpoint :client-pid (+ 424240 index)
+                      (test-world-terminal--present endpoint :client-pid (+ 424240 index)
                                                        :watches-p    (= index 2))
                     (push connection connections)
                     (push events seen)))
@@ -3392,7 +3391,7 @@ terminal publication and join the serving owner before restoring the provider."
                             (progn (agent-observer-evaluate-on-client observer '("(+ 1 2)")) nil)
                           (client-evaluation-error () t)))
                    "presentation preserves assignment authorization and does not grant client evaluation"))
-                (localgroup-client-call (second connections) ':submit :text "queued follow-up")
+                (world-terminal-client-call (second connections) ':submit :text "queued follow-up")
                 (test-assert
                  (= (length (getf (funcall statistics) :requests)) 1)
                  "direct input queues honestly behind the pooled assignment")
@@ -3409,7 +3408,7 @@ terminal publication and join the serving owner before restoring the provider."
                  "terminal settlement permits exactly one ordinary queued follow-up")
                 (test-assert (and (eq (job-state job) ':completed)
                                   (eq (getf (job-result job) :status) ':success)
-                                  (eq endpoint (application-localgroup-session application))
+                                  (eq endpoint (application-channel-endpoint application))
                                   (eq (world-host-application host) application)
                                   (eq (application-participant-state application) state)
                                   (not (typep (application-agent application) 'task-child-agent))
@@ -3432,20 +3431,20 @@ terminal publication and join the serving owner before restoring the provider."
                                              (equal (getf (rest event) :source) "ordinary-follow-up-result"))) all))))
                     10)
                    "each original client sees live assignment and follow-up output without reattaching"))
-                (let ((later (test-localgroup--present endpoint :client-pid 424250)))
+                (let ((later (test-world-terminal--present endpoint :client-pid 424250)))
                   (unwind-protect
                        (progn
-                         (localgroup-client-call later ':submit :text "attached after settlement")
+                         (world-terminal-client-call later ':submit :text "attached after settlement")
                          (test-assert
                           (task-tests--wait-until
                            (lambda () (= (length (getf (funcall statistics) :requests)) 3)) 10)
                           "a client joining after settlement can submit an ordinary turn"))
-                    (localgroup-client-close later)))
-                (localgroup-client-close (first connections))
+                    (world-terminal-client-close later)))
+                (world-terminal-client-close (first connections))
                 (test-assert (and (application-clients-controlled-p application)
-                                  (getf (localgroup-client-call (second connections) ':state) :state))
+                                  (getf (world-terminal-client-call (second connections) ':state) :state))
                              "detaching the first controller leaves the second connected and usable")
-                (localgroup-client-call (second connections) ':submit
+                (world-terminal-client-call (second connections) ':submit
                                         :text "(settings :turn-timestamps-p t)")
                 (test-assert
                  (task-tests--wait-until
@@ -3457,7 +3456,7 @@ terminal publication and join the serving owner before restoring the provider."
                                     (every (lambda (owner) (eq owner (world-host-thread host)))
                                            (rest (getf observed :requests))))
                                "one provider owner runs at a time, with the initial request on the original job thread")))
-           (dolist (connection connections) (localgroup-client-close connection)))))))
+           (dolist (connection connections) (world-terminal-client-close connection)))))))
   nil)
 
 
@@ -3511,7 +3510,7 @@ terminal publication and join the serving owner before restoring the provider."
        (destructuring-bind (&key server configuration job host application release &allow-other-keys)
            context
          (let* ((identifier (task-job-execution-identifier job))
-                (endpoint   (application-localgroup-session application))
+                (endpoint   (application-channel-endpoint application))
                 (connection nil))
            (unwind-protect
                 (progn
@@ -3528,21 +3527,21 @@ terminal publication and join the serving owner before restoring the provider."
                     (world-server-open server (list :channel identifier :switch-p t))
                     (world-server--unload-cold-hosts server :now (+ now (/ grace 2)))
                     (test-assert (and (world-host-live-p host)
-                                      (eq endpoint (application-localgroup-session application)))
+                                      (eq endpoint (application-channel-endpoint application)))
                                  "an accepted open keeps its endpoint throughout the pre-attach grace")
                     (when attach-p
-                      (setf connection (test-localgroup--present endpoint :client-pid 424262)))
+                      (setf connection (test-world-terminal--present endpoint :client-pid 424262)))
                     (world-server--unload-cold-hosts server
                                                    :now (+ now grace internal-time-units-per-second))
                     (if attach-p
                         (test-assert (and (world-host-live-p host)
                                           (null (world-host-idle-grace-seconds host))
-                                          (getf (localgroup-client-call connection ':state) :state))
+                                          (getf (world-terminal-client-call connection ':state) :state))
                                      "a later attachment restores ordinary idle policy and keeps its usable endpoint")
                         (test-assert
                          (and (task-tests--wait-until
                                (lambda () (null (world-server--find-host server identifier))) 15)
                               (not (conversation-lease-busy-p configuration identifier)))
                          "the existing sweeper retires an unviewed assignment after grace and releases its lease"))))
-             (when connection (localgroup-client-close connection))))))))
+             (when connection (world-terminal-client-close connection))))))))
   nil)

@@ -628,7 +628,7 @@
                     (apply-input (symbol-function 'application-input-controller--schedule-apply))
                     (result      nil)
                     (thread      nil))
-               (localgroup-client-call (channel-subscription-connection session) ':submit :text "background")
+               (world-terminal-client-call (channel-subscription-connection session) ':submit :text "background")
                (acp-session-test-gated-wait provider)
                (unwind-protect
                     (test-call-with-function-replacements
@@ -716,11 +716,11 @@
                 (idle-id    (agentcomms:client-new-session client (namestring root)))
                 (session    (acp-service--session service identifier))
                 (transport  (channel-subscription-connection session))
-                (call       (symbol-function 'localgroup-client-call))
+                (call       (symbol-function 'world-terminal-client-call))
                 (thread     nil))
            (declare (ignore idle-id))
            (test-call-with-function-replacements
-            (list (list 'localgroup-client-call
+            (list (list 'world-terminal-client-call
                         (lambda (connection command &rest arguments)
                           (when (eq command ':cancel)
                             (incf cancel-count)

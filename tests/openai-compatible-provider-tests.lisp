@@ -264,7 +264,7 @@
                  (*active-application*   nil))
              (test-call-with-function-replacements
               (list
-               (list 'localgroup-handoff-selection
+               (list 'world-startup-selection
                      (lambda (configuration arguments)
                        (declare (ignore configuration arguments))
                        nil))
@@ -293,11 +293,11 @@
            (let ((observed-configuration nil))
              (test-call-with-function-replacements
               (list
-               (list 'localgroup-statuses
+               (list 'world-terminal-statuses
                      (lambda (configuration)
                        (setf observed-configuration configuration)
                        nil))
-               (list 'localgroup-print-statuses
+               (list 'world-terminal-print-statuses
                      (lambda (statuses)
                        (declare (ignore statuses))
                        nil)))
@@ -309,7 +309,7 @@
                    (string= (config :reasoning-effort
                              observed-configuration)
                             "minimal"))
-              "localgroup commands do not validate custom providers before init")))
+              "world-terminal commands do not validate custom providers before init")))
       (if old-environment-model
           (platform-setenv "AUTOLITH_MODEL" old-environment-model)
           (platform-unsetenv "AUTOLITH_MODEL"))
@@ -349,7 +349,7 @@
                               :cache-root        (config :cache-root configuration)
                               :codex-auth-path   (config :codex-auth-path configuration)
                               arguments)))
-               (list 'localgroup-handoff-selection
+               (list 'world-startup-selection
                      (lambda (configuration arguments)
                        (declare (ignore configuration arguments))
                        nil))

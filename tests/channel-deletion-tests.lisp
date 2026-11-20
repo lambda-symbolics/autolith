@@ -211,7 +211,7 @@
             (application (world-host-application host))
             (inbox       (channel-identifier (world-inbox-channel (world-load configuration)))))
        (multiple-value-bind (connection seen await)
-           (test-localgroup--present (world-server-tests--session server "delete-child"))
+           (test-world-terminal--present (world-server-tests--session server "delete-child"))
          (declare (ignore seen))
          (unwind-protect
               (let ((client (application-controlling-client application)))
@@ -261,9 +261,9 @@
                                       (lambda (event)
                                         (equal (getf (rest event) :session-id) inbox)))
                              "the invoking client is asked to move to the inbox")
-                (localgroup-client-close connection)
+                (world-terminal-client-close connection)
                 (let ((destination (world-host-application (world-server--find-host server inbox)))
-                      (moved       (test-localgroup--present (world-server-tests--session server inbox))))
+                      (moved       (test-world-terminal--present (world-server-tests--session server inbox))))
                   (unwind-protect
                        (progn
                          (test-assert (application-controlling-client destination)
@@ -275,12 +275,12 @@
                          (test-assert (and (null (world-channel-find (world-load configuration) "delete-child"))
                                            (null (world-server--find-host server "delete-child"))
                                            (application-controlling-client destination)
-                                           (not (localgroup-client-connection-closed-p moved))
+                                           (not (world-terminal-client-connection-closed-p moved))
                                            (not (application-input-controller-stopping-p
                                                  (application-input-controller destination))))
                                       "the old host releases its lease while the invoking client keeps a live inbox"))
-                    (localgroup-client-close moved))))
-           (localgroup-client-close connection))))))
+                    (world-terminal-client-close moved))))
+           (world-terminal-client-close connection))))))
   nil)
 
 (-> test-delete-channel-hosted-refusals () null)
@@ -304,9 +304,9 @@
            ;; The terminal that attached last is the one its user is at.
            (multiple-value-bind (observer observer-seen)
                (if (eq mode ':observer)
-                   (test-localgroup--present session)
+                   (test-world-terminal--present session)
                    (values nil nil))
-             (multiple-value-bind (connection seen await) (test-localgroup--present session)
+             (multiple-value-bind (connection seen await) (test-world-terminal--present session)
                (declare (ignore seen))
                (unwind-protect
                     (test-call-with-function-replacements
@@ -353,14 +353,14 @@
                                                (= 1 (task-orchestrator-session-live-count orchestrator)))
                                           "a queued execution is live work even without an active child")))
                          (unless (eq mode ':timeout)
-                           (localgroup-client-close connection))
+                           (world-terminal-client-close connection))
                          (test-assert (task-tests--wait-until (lambda () presented) 15)
                                       "a failed removal is reported as a failure in the destination")
                          (test-assert (and (world-channel-find (world-load configuration) identifier)
                                            (world-host-live-p (world-server--find-host server inbox))
                                            (null (uiop:directory-files (channel--removal-root configuration) "*.sexp"))
                                            (or (null observer)
-                                               (and (not (localgroup-client-connection-closed-p observer))
+                                               (and (not (world-terminal-client-connection-closed-p observer))
                                                     (application-clients-controlled-p application))))
                                       "a refusal preserves the channel, other clients, work and usable inbox")
                          (test-assert (if (eq mode ':timeout)
@@ -372,8 +372,8 @@
                    (job-cancel queued-job)
                    (job-await queued-job :timeout-seconds 5))
                  (when external-p (application-input-controller-finish-external-work controller))
-                 (localgroup-client-close connection)
-                 (when observer (localgroup-client-close observer))))))))))
+                 (world-terminal-client-close connection)
+                 (when observer (world-terminal-client-close observer))))))))))
   nil)
 
 (-> test-delete-channel-standalone-refusals () null)

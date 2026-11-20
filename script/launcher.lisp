@@ -42,7 +42,7 @@
 ;;;; -- Launcher Options --
 
 (defparameter *launcher-value-options*
-  '("--permissions" "--localgroup-handoff" "--id" "--input"
+  '("--permissions" "--world-startup" "--id" "--input"
     "--prompt" "--role" "--timeout-seconds" "--output" "--events" "--generation"
     "--status" "--capsule" "--original-argument" "--workspace" "--token"
     "--days" "--examples")
@@ -59,7 +59,7 @@ Pristine recovery keeps the default.")
 (defstruct launcher-request
   "The launcher options separated from the application arguments."
   recovery-p from-source-p update-p uninstall-p data-p acp-p run-job-p
-  localgroup-handoff-p arguments)
+  world-startup-p arguments)
 
 (defun launcher-bootstrap-command-name (source-root)
   "Return the bootstrap command to show the user for SOURCE-ROOT."
@@ -115,8 +115,8 @@ before deleting the listed directories."
          (setf (launcher-request-from-source-p request) t)
          (push argument remaining))
         ((member argument *launcher-value-options* :test #'string=)
-         (when (string= argument "--localgroup-handoff")
-           (setf (launcher-request-localgroup-handoff-p request) t))
+         (when (string= argument "--world-startup")
+           (setf (launcher-request-world-startup-p request) t))
          (setf take-value-p t)
          (push argument remaining))
         ((and (plusp (length argument)) (char= (char argument 0) #\-))
@@ -697,7 +697,7 @@ boot therefore leaves the generation identity available to recovery."
                 ((or (launcher-request-acp-p request)
                      (launcher-request-data-p request)
                      (launcher-request-run-job-p request)
-                     (launcher-request-localgroup-handoff-p request)
+                     (launcher-request-world-startup-p request)
                      (member status *launcher-terminal-statuses*))
                  status)
                 (t

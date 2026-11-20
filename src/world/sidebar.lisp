@@ -758,7 +758,7 @@ A newly hosted channel without durable history sorts by its creation time."
   "Return live statuses and whether the endpoint answered; signal query failures."
   (let ((entry (world-client-entry (world-sidebar-configuration sidebar))))
     (if entry
-        (values (mapcar #'rest (getf (rest (localgroup-query-record entry ':channels)) :channels)) t)
+        (values (mapcar #'rest (getf (rest (world-terminal-query-record entry ':channels)) :channels)) t)
         (values nil nil))))
 
 (-> world-sidebar--pending (configuration) list)

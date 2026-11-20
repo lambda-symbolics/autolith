@@ -53,7 +53,7 @@
 (-> usage--line (stream list boolean) t)
 (defun usage--line (stream spans styled-p)
   "Write SPANS as one optionally styled line."
-  (localgroup--write-styled-line stream spans styled-p))
+  (world-terminal--write-styled-line stream spans styled-p))
 
 (-> usage--paragraph (stream string &key (:columns integer) (:styled-p boolean) (:style t)) null)
 (defun usage--paragraph (stream text &key columns styled-p (style ':plain))
@@ -179,8 +179,8 @@
 (-> usage-print-report (usage-report &key (:stream stream) (:styled-p boolean) (:columns integer)) null)
 (defun usage-print-report
     (report &key (stream *standard-output*)
-                 (styled-p (localgroup--status-output-styled-p stream))
-                 (columns (localgroup--status-output-columns stream)))
+                 (styled-p (world-terminal--status-output-styled-p stream))
+                 (columns (world-terminal--status-output-columns stream)))
   "Print REPORT as a compact, colored operating-system usage summary."
   (let ((columns (max 1 (min 104 columns))))
     (flet ((paragraph (text &optional (style ':plain))

@@ -5,19 +5,19 @@
 ;;; A terminal is a client of the world server. It finds the server through
 ;;; the world endpoint record, starts the server when none answers, asks it
 ;;; to open a channel, and attaches to that channel's endpoint like any
-;;; localgroup client. The server outlives the terminal.
+;;; world-terminal client. The server outlives the terminal.
 
 (-> world-client-entry (configuration) (option cons))
 (defun world-client-entry (configuration)
   "Return the reachable world endpoint entry of CONFIGURATION, or NIL.
 
 Records of dead processes are removed on the way."
-  (let ((directory (localgroup-world-directory configuration)))
+  (let ((directory (world-endpoint-directory configuration)))
     (image-daemon:daemon-registry-reconcile directory)
     (loop for entry in (image-daemon:daemon-registry-discover directory)
           when (handler-case
-                   (localgroup-query-record entry ':status)
-                 (localgroup-error ()
+                   (world-terminal-query-record entry ':status)
+                 (world-terminal-error ()
                    nil))
             return entry)))
 
@@ -30,14 +30,13 @@ Records of dead processes are removed on the way."
   "Start CONFIGURATION's world server and return its endpoint entry.
 
 Without ATTACH-EXPECTED-P no terminal is about to attach, as for autolith start."
-  (localgroup-handoff-spawn-fresh configuration
+  (world-startup-spawn-fresh configuration
                                   :permission-mode   permission-mode
                                   :immutable-p       immutable-p
                                   :pristine-p        (equal *world-image-selection* "pristine")
-                                  :attach-expected-p attach-expected-p
-                                  :world-p           t)
+                                  :attach-expected-p attach-expected-p)
   (or (world-client-entry configuration)
-      (error 'localgroup-error
+      (error 'world-terminal-error
              :message   "The world server started but its endpoint does not answer."
              :operation ':spawn)))
 
@@ -62,7 +61,7 @@ server each, the launch that loses the world's lease fails, and its client
 then waits for the winner like any other."
   (loop
     (let ((entry (world-client-entry configuration)))
-      (localgroup-client-check-cancellation)
+      (world-terminal-client-check-cancellation)
       (cond
         (entry
          (return entry))
@@ -73,12 +72,12 @@ then waits for the winner like any other."
                                                 :permission-mode   permission-mode
                                                 :immutable-p       immutable-p
                                                 :attach-expected-p attach-expected-p))
-           (localgroup-error (condition)
+           (world-terminal-error (condition)
              ;; Another client's server took the lease meanwhile: join it.
              (unless (world-server-running-p configuration)
                (error condition)))))
         ((and deadline (>= (get-internal-real-time) deadline))
-         (error 'localgroup-error
+         (error 'world-terminal-error
                 :message   "World server response timeout"
                 :operation ':open))
         (t
@@ -115,13 +114,13 @@ Return the opened channel's session identifier, whose endpoint answers by
 then, and whether the server started the channel for this open rather than
 sharing one it already served."
   (channel-loading-report 1 "Connecting to world")
-  (let ((deadline (unless *localgroup-client-cancelled-p*
+  (let ((deadline (unless *world-terminal-client-cancelled-p*
                     (+ (get-internal-real-time)
                        (* *world-client-wait-seconds* internal-time-units-per-second)))))
     (multiple-value-bind (rows columns)
         (terminal-current-size)
       (loop
-        (localgroup-client-check-cancellation)
+        (world-terminal-client-check-cancellation)
         (let* ((entry    (world-client--entry configuration
                                               :permission-mode   permission-mode
                                               :immutable-p       immutable-p
@@ -138,7 +137,7 @@ sharing one it already served."
                                    (/ (- deadline (get-internal-real-time))
                                       internal-time-units-per-second)))))
                        (channel-loading-report 2 "Selecting an available channel")
-                       (localgroup-query-record
+                       (world-terminal-query-record
                         entry ':open
                         (append (when channel
                                   (list :channel channel))
@@ -161,18 +160,18 @@ sharing one it already served."
                                       :rows               rows
                                       :columns            columns
                                       :styled-p           (not (null (terminal-environment-styling-p)))))))
-                   (localgroup-error (condition)
+                   (world-terminal-error (condition)
                      ;; Only an explicit rejection establishes that retrying is safe.
                      ;; A transport failure may follow an accepted mutating open.
-                     (localgroup-client-check-cancellation)
+                     (world-terminal-client-check-cancellation)
                      (if (and (or (null deadline) (< (get-internal-real-time) deadline))
-                              (localgroup-error-retry-p condition))
+                              (world-terminal-error-retry-p condition))
                          nil
                          (error condition))))))
           (if response
               (let ((identifier (getf (rest response) :session-id)))
                 (unless (non-empty-string-p identifier)
-                  (error 'localgroup-error
+                  (error 'world-terminal-error
                          :message   "The world server did not name the opened channel."
                          :operation ':open))
                 (when attach-expected-p
@@ -287,10 +286,10 @@ after it until the form closes or the input ends."
 (-> world-client--print-absent (stream) null)
 (defun world-client--print-absent (stream)
   "Report on STREAM that no world server is reachable."
-  (localgroup--write-styled-line
+  (world-terminal--write-styled-line
    stream
    (list (terminal-span ':notice "· no world server is running"))
-   (localgroup--status-output-styled-p stream))
+   (world-terminal--status-output-styled-p stream))
   nil)
 
 (-> world-client-print-server (configuration stream) null)
@@ -300,8 +299,8 @@ after it until the form closes or the input ends."
 Nothing is written while no server runs."
   (let ((entry (world-client-entry configuration)))
     (when entry
-      (let ((status (getf (rest (localgroup-query-record entry ':status)) :status)))
-        (localgroup--write-styled-line
+      (let ((status (getf (rest (world-terminal-query-record entry ':status)) :status)))
+        (world-terminal--write-styled-line
          stream
          (list (terminal-span ':notice "· world server PID ")
                (terminal-span ':success (princ-to-string (getf (rest status) :pid)))
@@ -310,7 +309,7 @@ Nothing is written while no server runs."
                                       (getf (rest status) :autolith-version)
                                       (length (getf (rest status) :channels))
                                       (getf (rest status) :stopping-p))))
-         (localgroup--status-output-styled-p stream)))))
+         (world-terminal--status-output-styled-p stream)))))
   nil)
 
 (-> world-client--start-command () clingon:command)
@@ -322,10 +321,10 @@ Nothing is written while no server runs."
    :handler
    (lambda (command)
      (when (command-arguments command)
-       (error 'localgroup-error
+       (error 'world-terminal-error
                :message  "start accepts no arguments."
               :operation ':arguments))
-     (let ((configuration (localgroup--client-configuration)))
+     (let ((configuration (world-terminal--client-configuration)))
        (unless (world-client-entry configuration)
          (world-client-start-server configuration :attach-expected-p nil))
        (world-client-print-server configuration *standard-output*)))))
@@ -341,23 +340,23 @@ Nothing is written while no server runs."
    (lambda (command)
      (let ((arguments (command-arguments command)))
        (unless (= (length arguments) 2)
-         (error 'localgroup-error
+         (error 'world-terminal-error
                  :message  "tell takes a channel or agent designator and one quoted message."
                 :operation ':arguments))
-       (let* ((configuration (localgroup--client-configuration))
+       (let* ((configuration (world-terminal--client-configuration))
               (entry         (or (world-client-entry configuration)
-                                 (error 'localgroup-error
+                                 (error 'world-terminal-error
                                          :message  "No world server is running; start it with autolith start."
                                         :operation ':tell)))
-              (answer        (rest (localgroup-query-record
+              (answer        (rest (world-terminal-query-record
                                     entry ':tell (list :channel (first arguments)
                                                        :text    (second arguments))))))
-         (localgroup--write-styled-line
+         (world-terminal--write-styled-line
           *standard-output*
           (list (terminal-span ':notice
                                (format nil "· sent to ~A"
                                        (conversation-identifier-display (getf answer :channel)))))
-          (localgroup--status-output-styled-p *standard-output*)))))))
+          (world-terminal--status-output-styled-p *standard-output*)))))))
 
 (defparameter *world-client-stop-timeout* 60
   "Seconds to wait for the recorded world server process to exit after accepting stop.")
@@ -385,22 +384,22 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
 (defun world-client--stop-server (entry stream)
   "Ask ENTRY to stop, report progress on STREAM, and confirm its process has exited."
   (let ((pid (getf (rest (rest entry)) :pid)))
-    (localgroup--print-response (localgroup-query-record entry ':stop) stream)
+    (world-terminal--print-response (world-terminal-query-record entry ':stop) stream)
     (force-output stream)
     (case (world-client--observe-exit pid)
       (:dead
-       (localgroup--write-styled-line
+       (world-terminal--write-styled-line
         stream
         (list (terminal-span ':success "· world server stopped"))
-        (localgroup--status-output-styled-p stream))
+        (world-terminal--status-output-styled-p stream))
        (force-output stream))
       (:alive
-       (error 'localgroup-error
+       (error 'world-terminal-error
               :operation ':stop
               :message   (format nil "Could not confirm world server exit: recorded PID ~D is still present (possibly reused)."
                                  pid)))
       (otherwise
-       (error 'localgroup-error
+       (error 'world-terminal-error
               :operation ':stop
               :message   (format nil "Could not confirm world server exit for recorded PID ~S."
                                  pid)))))
@@ -415,10 +414,10 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
    :handler
    (lambda (command)
      (when (command-arguments command)
-       (error 'localgroup-error
+       (error 'world-terminal-error
                :message  "stop accepts no arguments."
               :operation ':arguments))
-     (let* ((configuration (localgroup--client-configuration))
+     (let* ((configuration (world-terminal--client-configuration))
             (entry         (world-client-entry configuration)))
        (if entry
             (world-client--stop-server entry *standard-output*)

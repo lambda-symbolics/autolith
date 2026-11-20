@@ -40,7 +40,7 @@
          (evaluator  (make-instance 'client-evaluator
                                     :delivery (lambda (packet)
                                                 (push packet answers))))
-         (connection (make-instance 'localgroup-client-connection))
+         (connection (make-instance 'world-terminal-client-connection))
          (evaluated  0))
     (test-call-with-function-replacements
      (list (list 'self-evaluate-sources
@@ -62,7 +62,7 @@
                                 (lambda () (client-evaluate-request request))) ':invalid-request))
                       "Malformed or unidentified evaluation envelopes are refused before reading their forms.")
          (client-evaluator-start evaluator request)
-         (localgroup-client--evaluate connection request))
+         (world-terminal-client--evaluate connection request))
        (test-assert (and (zerop evaluated) (null answers))
                     "Neither an evaluator nor a connection evaluates or answers malformed envelopes."))))
   (client-evaluation-tests--consecutive-requests)
@@ -154,12 +154,12 @@
        (test-assert (eq (code "(+ 1 2)") ':no-client)
                     "a channel without clients has nobody to evaluate")
        (client-evaluation-tests--peer-cancellation application record)
-       (let ((plain (localgroup-client-connect record :name "plain")))
+       (let ((plain (world-terminal-client-connect record :name "plain")))
          (unwind-protect
               (test-assert (eq (code "(+ 1 2)") ':no-client)
                            "a client that never said it evaluates is not asked")
-           (localgroup-client-close plain)))
-       (let ((connection (localgroup-client-connect record :name "lisp" :evaluates-p t))
+           (world-terminal-client-close plain)))
+       (let ((connection (world-terminal-client-connect record :name "lisp" :evaluates-p t))
              (started    (sb-thread:make-semaphore))
              (gate       (sb-thread:make-semaphore)))
          (unwind-protect
@@ -173,31 +173,31 @@
                 (let* ((hub     (application-client-hub application))
                        (pending (make-instance 'client-evaluation
                                                :attachment (application-evaluating-attachment application)))
-                       (forger  (localgroup-client-connect record :name "forger")))
+                       (forger  (world-terminal-client-connect record :name "forger")))
                   (unwind-protect
                        (progn
                          (with-lock-held ((client-hub-lock hub))
                            (push pending (client-hub-evaluations hub)))
                          (test-assert
-                          (not (getf (localgroup-client-call
+                          (not (getf (world-terminal-client-call
                                       forger :evaluated :evaluation (client-evaluation-identifier pending)
                                       :succeeded-p t :text "forged") :accepted-p))
                           "A different structured connection cannot answer another attachment's evaluation.")
                          (dolist (fields '((:text "missing") (:succeeded-p :yes :text "truthy")))
                            (test-assert
-                            (not (getf (apply #'localgroup-client-call connection :evaluated
+                            (not (getf (apply #'world-terminal-client-call connection :evaluated
                                               :evaluation (client-evaluation-identifier pending) fields) :accepted-p))
                             "Structured replies require an explicit boolean status."))
                          (test-assert
                           (and (null (client-evaluation-answer pending))
-                               (getf (localgroup-client-call
+                               (getf (world-terminal-client-call
                                       connection :evaluated :evaluation (client-evaluation-identifier pending)
                                       :succeeded-p nil :text "reported failure") :accepted-p)
                                (equal (client-evaluation-answer pending) '(nil "reported failure")))
                           "Only the originating attachment can answer, including an explicit false status."))
                     (with-lock-held ((client-hub-lock hub))
                       (setf (client-hub-evaluations hub) (remove pending (client-hub-evaluations hub))))
-                    (localgroup-client-close forger)))
+                    (world-terminal-client-close forger)))
                 (test-call-with-function-replacements
                  (list (list 'client-evaluate-request
                              (lambda (request)
@@ -213,10 +213,10 @@
                    (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
                                 "The timed-out request occupied the evaluation worker.")
                    (sb-sys:with-deadline (:seconds 10)
-                     (localgroup-client-call connection ':state))
+                     (world-terminal-client-call connection ':state))
                    (test-assert (with-lock-held (*client-evaluator-lock*)
                                   (null (client-evaluator-work
-                                         (localgroup-client-connection-evaluator connection))))
+                                         (world-terminal-client-connection-evaluator connection))))
                                 "A negotiated cancellation detaches the timed-out work owner.")
                    (multiple-value-bind (failure message) (code "(+ 1 2)")
                      (test-assert (and (eq failure ':failed) (search "busy" message))
@@ -246,17 +246,17 @@
                                    (with-lock-held ((client-hub-lock hub))
                                      (setf (application-input-controller-turn-cancellation-p controller) t)))
                                   (:client-left
-                                   (localgroup-client-close connection)))
+                                   (world-terminal-client-close connection)))
                                 (join-thread asker)
                                 (test-assert (eq failure action)
                                              (format nil "An evaluation interrupted by ~S returned ~S." action failure))
                                 (when (eq action ':cancelled)
                                   (sb-sys:with-deadline (:seconds 10)
-                                    (localgroup-client-call connection ':state))))
+                                    (world-terminal-client-call connection ':state))))
                            (with-lock-held ((client-hub-lock hub))
                              (setf (application-input-controller-turn-cancellation-p controller) nil)))))))))
            (sb-thread:signal-semaphore gate 8)
-           (localgroup-client-close connection)
+           (world-terminal-client-close connection)
            (test-assert (task-tests--wait-until
                          (lambda ()
                            (with-lock-held (*client-evaluator-lock*)
@@ -272,8 +272,8 @@
   "Test a channel evaluates forms in the terminal client its user is at, before any other client that evaluates."
   (client-protocol-tests--call
    (lambda (application record)
-     (let ((terminal (test-localgroup--present record :evaluates-p t))
-           (other    (localgroup-client-connect record :name "lisp" :evaluates-p t)))
+     (let ((terminal (test-world-terminal--present record :evaluates-p t))
+           (other    (world-terminal-client-connect record :name "lisp" :evaluates-p t)))
        (unwind-protect
             (let ((controller (application-controlling-client application)))
               (test-assert (and controller
@@ -293,7 +293,7 @@
               (dolist (answer '((:evaluation 3)
                                 (:evaluation "none" :succeeded-p t :text "stray")
                                 (:evaluation "none")))
-                (test-assert (null (getf (apply #'localgroup-client-call terminal ':evaluated answer)
+                (test-assert (null (getf (apply #'world-terminal-client-call terminal ':evaluated answer)
                                          :accepted-p))
                              (format nil "the answer ~S is taken by nobody" answer)))
               (test-call-with-function-replacements
@@ -313,7 +313,7 @@
                                 (null *client-evaluator-active*)))
                             5)
                            "The terminal evaluation releases shared capacity before switching attachments.")
-              (localgroup-client-close terminal)
+              (world-terminal-client-close terminal)
               (test-assert (task-tests--wait-until
                             (lambda ()
                               (and (application-evaluating-attachment application)
@@ -322,8 +322,8 @@
                            "the terminal relinquishes control after closing")
               (test-assert (search "3" (application-evaluate-on-client application '("(+ 1 2)")))
                            "once the terminal left, the client attached last evaluates"))
-         (localgroup-client-close terminal)
-         (localgroup-client-close other)))))
+         (world-terminal-client-close terminal)
+         (world-terminal-client-close other)))))
   nil)
 
 (-> test-self-eval-client-target () null)
@@ -393,18 +393,18 @@ from the client")))
 (-> client-evaluation-tests--abandoned-owner () list)
 (defun client-evaluation-tests--abandoned-owner ()
   "Start gated work over a connection and return weak references to its owner and to it after teardown."
-  (let* ((connection (make-instance 'localgroup-client-connection
+  (let* ((connection (make-instance 'world-terminal-client-connection
                                     :socket nil
                                     :stream (make-string-output-stream)))
-         (owner      (localgroup-client-connection-evaluator connection))
+         (owner      (world-terminal-client-connection-evaluator connection))
          (other      (make-instance 'client-evaluator))
          (request    '(:evaluation :id "abandoned" :forms ("(values)"))))
-    (localgroup-client--evaluate connection request)
+    (world-terminal-client--evaluate connection request)
     (client-evaluator-cancel other "abandoned")
     (test-assert (eq owner (client-evaluator-work-owner *client-evaluator-active*))
                  "Cancellation from another attachment cannot abandon this owner.")
     (client-evaluator-cancel owner "abandoned")
-    (localgroup-client-close connection)
+    (world-terminal-client-close connection)
     (list (sb-ext:make-weak-pointer owner)
           (sb-ext:make-weak-pointer connection))))
 
@@ -494,21 +494,21 @@ from the client")))
   (let* ((gate            (sb-thread:make-semaphore))
          (started         (sb-thread:make-semaphore))
          (stream          (make-instance 'client-evaluation-tests-output :gate gate :started started))
-         (connection      (make-instance 'localgroup-client-connection :socket nil :stream stream))
-         (other           (make-instance 'localgroup-client-connection :socket nil
+         (connection      (make-instance 'world-terminal-client-connection :socket nil :stream stream))
+         (other           (make-instance 'world-terminal-client-connection :socket nil
                                         :stream                                (make-string-input-stream
                                                                                 (image-daemon:daemon-packet-string '(:reply :id 7 :ok t)))))
          (writer          nil)
          (queued          nil)
          (queued-failed-p nil))
-    (setf (gethash 7 (localgroup-client-connection-replies other)) nil)
+    (setf (gethash 7 (world-terminal-client-connection-replies other)) nil)
     (unwind-protect
          (progn
            (setf writer
                  (make-thread
                   (lambda ()
-                    (let ((*localgroup-client-evaluation-write-seconds* 0.25))
-                      (localgroup-client--evaluation-answer
+                    (let ((*world-terminal-client-evaluation-write-seconds* 0.25))
+                      (world-terminal-client--evaluation-answer
                        connection '(:evaluated :evaluation "write" :succeeded-p t :text "answer"))))
                   :name "evaluation partial writer"))
            (test-assert (sb-thread:wait-on-semaphore started :timeout 5)
@@ -516,41 +516,41 @@ from the client")))
            (setf queued
                  (make-thread
                   (lambda ()
-                    (handler-case (localgroup-client--write-frame connection "second-frame")
-                      (localgroup-error () (setf queued-failed-p t))))
+                    (handler-case (world-terminal-client--write-frame connection "second-frame")
+                      (world-terminal-error () (setf queued-failed-p t))))
                   :name "evaluation queued writer"))
            (sb-sys:with-deadline (:seconds 2)
              (client-evaluator-close (make-instance 'client-evaluator))
-             (localgroup-client--read other nil)
-             (localgroup-client-close other))
-           (test-assert (and (localgroup-client-connection-closed-p other)
-                             (gethash 7 (localgroup-client-connection-replies other)))
+             (world-terminal-client--read other nil)
+             (world-terminal-client-close other))
+           (test-assert (and (world-terminal-client-connection-closed-p other)
+                             (gethash 7 (world-terminal-client-connection-replies other)))
                         "A stalled writer holds neither shared admission nor another reader's close path.")
            (join-thread writer)
            (join-thread queued)
            (test-assert (and queued-failed-p (= 1 (client-evaluation-tests-output-writes stream))
-                             (localgroup-client-connection-write-failed-p connection)
-                             (localgroup-client-connection-closed-p connection)
-                             (client-evaluator-closed-p (localgroup-client-connection-evaluator connection))
-                             (zerop (hash-table-count (localgroup-client-connection-replies connection))))
+                             (world-terminal-client-connection-write-failed-p connection)
+                             (world-terminal-client-connection-closed-p connection)
+                             (client-evaluator-closed-p (world-terminal-client-connection-evaluator connection))
+                             (zerop (hash-table-count (world-terminal-client-connection-replies connection))))
                         "The interrupted frame retires before any queued writer, without an ACK entry."))
       (sb-thread:signal-semaphore gate 100)
       (when writer (join-thread writer))
       (when queued (join-thread queued))
-      (localgroup-client-close connection)
-      (localgroup-client-close other)))
+      (world-terminal-client-close connection)
+      (world-terminal-client-close other)))
   nil)
 
 (-> client-evaluation-tests--peer-cancellation (application cons) null)
 (defun client-evaluation-tests--peer-cancellation (application record)
   "Timeout old and new structured peers and verify cancellation is explicitly negotiated."
   (dolist (supports-p '(nil t))
-    (multiple-value-bind (socket stream) (daemon-connect (localgroup--record-port (rest record)))
+    (multiple-value-bind (socket stream) (daemon-connect (world-terminal--record-port (rest record)))
       (unwind-protect
            (progn
              (daemon-write-packet
-              stream (list :localgroup-request :version *daemon-protocol-version*
-                           :token (localgroup--record-token (rest record)) :operation ':client
+              stream (list :world-terminal-request :version *daemon-protocol-version*
+                           :token (world-terminal--record-token (rest record)) :operation ':client
                            :arguments          (append (list :name "compatibility" :evaluates-p t)
                                                        (when supports-p (list :cancels-evaluation-p t)))))
              (test-assert (eq (first (daemon-read-response stream ':client)) ':attached)

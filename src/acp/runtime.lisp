@@ -51,7 +51,7 @@ subsequent events after its bounded history snapshot."
                                :new-p           (null identifier)
                                :permission-mode (acp-service-permission-mode service)
                                :mcp-servers     (and servers (client-portable servers)))
-          (localgroup-error (condition)
+          (world-terminal-error (condition)
             (error 'agentcomms:acp-state-error :message (autolith-error-message condition))))
       (let ((session     (make-instance 'acp-session
                                         :service       service

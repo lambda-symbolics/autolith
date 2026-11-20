@@ -162,15 +162,14 @@ references in conversation records; raw output is independent of context storage
 
 Only the world server runs the agents of world channels, and it has no
 terminal. Every client follows a channel through the structured client
-protocol: =src/localgroup/clients.lisp= serves the =:client= endpoint
+protocol: =src/world/transport/clients.lisp= serves the =:client= endpoint
 operation and holds the client side of a connection,
 =src/application/clients.lisp= the per-channel membership, event sequencing,
 replay and portable values, and =src/application/approvals.lisp= the approval
 offered to every approving client at once.
 
-The server composes no rows. A session without a terminal of its own, which
-is every hosted channel and a detached rescue session, has a
-=channel-presentation= (=src/terminal/presentation.lisp=) as its UI: the
+Every world channel uses a =channel-presentation=
+(=src/terminal/presentation.lisp=) as its UI: the
 application sets it as it sets any terminal UI, and each change reaches the
 clients that said =:presents-p= as one =(:ui :operation OPERATION ...)= event. Transcript
 entries and records travel as styled spans, streamed Markdown as source,
@@ -189,15 +188,14 @@ queue. After attachment, the reader queues UI events and settles command
 replies; only the UI thread applies the events, including during modal input.
 
 The terminal client is such a presenting client. A =channel-view=
-(=src/localgroup/view.lisp=) applies the events to a terminal UI of its own
+(=src/world/transport/view.lisp=) applies the events to a terminal UI of its own
 with =presentation-apply=; that UI chooses the colors, wraps, renders
 Markdown again as its source grows, and paints into the pane the client's
 screen leaves beside the side panel. Keys are read where the terminal is:
 =terminal-ui-dispatch-event= (=src/terminal/input-dispatch.lisp=) edits the
-composer locally and hands what an edit asks of the session, such as
-submitting the draft or cancelling the turn, to an input port. A direct
-session's port is its input controller; a view's port sends the channel
-=(:input :action ACTION ...)=. Input runs in the channel in the order it
+composer locally and sends channel input, such as submitting a draft or
+cancelling a turn, as =(:input :action ACTION ...)= messages. Input runs in
+the channel in the order it
 arrived, on a thread beside the connection's reader, because a command may
 answer it with a question. A picker a command opens runs in the channel:
 the client shows its candidates and, while it is open, sends its keys with
@@ -207,10 +205,8 @@ shows in the client's composer while the user's own draft is set aside.
 A view opened read-only also says =:watches-p=. The channel is not laid out
 for its pane, asks it nothing and refuses its input, so it never disturbs the
 terminal that controls the channel. A view that leaves on purpose, by a
-detach or a switch to another channel, says =(:detach)= first. Hosted
-channels outlive their clients either way; a session that serves one
-terminal, such as a detached rescue session, ends when its last controlling
-client is lost without that word.
+detach or a switch to another channel, says =(:detach)= first. World-owned
+channels outlive their terminal clients.
 
 Two pages still take the whole pane and are laid out where their data is,
 in the channel: the memory manager and the onboarding tour. They paint
@@ -244,7 +240,7 @@ in the channel's work queue. Each waiting caller owns and closes its job pool;
 the channel thread runs the job between turns. A local condition adapter preserves
 original errors, and a list result preserves all return values.
 
-=src/localgroup/subscription.lisp= owns client-side attachment buffering, event
+=src/world/transport/subscription.lisp= owns client-side attachment buffering, event
 cursors, checkpoint reconnection, closure and exact submission waiting. ACP and
 script clients specialize synchronous presentation. A matching submission finishes
 after its terminal event is presented and its cursor advances; unrelated work and
@@ -581,7 +577,7 @@ merges outcome fields into invocation metadata before rendering.
 - OSC 133: =A= and =B= precede input, =C= starts execution, =D;STATUS=
   closes execution.
 - OSC 0: the interactive window title is =autolith - PATH=. Autolith writes
-  it at UI start, after localgroup attach, and after =(cwd "PATH")=.
+  it at UI start, after channel attachment, and after =(cwd "PATH")=.
 - OSC 7501: =protocol.lisp= encodes the root program-status report; =ui.lisp=
   serializes output and publishes root status at foreground execution and modal
   input boundaries. Root reports include the current conversation title. Autolith
@@ -692,10 +688,10 @@ Here's a rough, probably outdated map of the repository
 | Workers and tasks             | =src/workers/=, =src/task/=, cl-jobpond, sbcl-workers                                            |
 | Live mutation                 | =src/self/=, =src/state/{durable-mutations,image-commits}.lisp=, surgeon                         |
 | Images and recovery           | =src/startup/active-image.lisp=, =src/state/generations.lisp=, =recovery/=, =bin/=, sbcl-generations |
-| Configuration and transfer    | =src/configuration/=, =src/localgroup/=, =src/state/updates.lisp=, sexp-config                     |
+| Configuration and startup     | =src/configuration/=, =src/world/transport/startup.lisp=, =src/state/updates.lisp=, sexp-config |
 | Channels and world server     | =src/world/=, image-daemon                                                                     |
-| Channel clients               | =src/localgroup/clients.lisp=, =src/application/{clients,approvals}.lisp=, =src/acp/=            |
-| Client screen and sidebar     | =src/localgroup/screen.lisp=, =src/world/sidebar.lisp=, =src/world/sidebar-panel.lisp=, clinedi |
+| Channel clients               | =src/world/transport/clients.lisp=, =src/application/{clients,approvals}.lisp=, =src/acp/=      |
+| Client screen and sidebar     | =src/world/transport/screen.lisp=, =src/world/sidebar.lisp=, =src/world/sidebar-panel.lisp=, clinedi |
 
 Read [[file:guide.org][the guide]] for operating Autolith, and =AGENTS.md= for
 repository rules and development policy, especially using clankers.

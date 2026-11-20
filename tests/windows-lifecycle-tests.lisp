@@ -93,7 +93,7 @@
         (unwind-protect
              (progn
                (setf process
-                     (localgroup-handoff--launch-supervised
+                     (world-startup--launch-supervised
                       :arguments (windows-tests--command script)
                       :handoff-pathname handoff :directory root
                       :output    *standard-output*))
@@ -108,7 +108,7 @@
                  (let* ((*read-eval* nil) (pid (read input)))
                    (test-assert (platform-process-alive-p *platform* pid)
                                 "the root's child is running before cancellation")
-                   (test-assert (localgroup-handoff--stop-replacement process handoff)
+                   (test-assert (world-startup--stop-replacement process handoff)
                                 "handoff cancellation positively reaps the whole tree")
                    (test-assert (not (platform-process-alive-p *platform* pid))
                                 "no descendant survives a cancelled handoff"))))

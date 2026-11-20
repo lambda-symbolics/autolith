@@ -1,11 +1,11 @@
 (in-package #:autolith)
 
-;;;; -- Localgroup Tests --
+;;;; -- World-Terminal Tests --
 
-(-> test-localgroup--application (configuration &key (:presented-p boolean))
+(-> test-world-terminal--application (configuration &key (:presented-p boolean))
     (values application application-input-controller))
-(defun test-localgroup--application (configuration &key presented-p)
-  "Return a minimal APPLICATION and responsive controller for localgroup tests.
+(defun test-world-terminal--application (configuration &key presented-p)
+  "Return a minimal APPLICATION and responsive controller for world-terminal tests.
 
 With PRESENTED-P it has no terminal of its own, as a detached session: its UI
 is a presentation, which the clients of its endpoint render. Otherwise it
@@ -29,21 +29,21 @@ shows on a test terminal."
     (setf (application-input-controller application) controller)
     (values application controller)))
 
-(-> test-localgroup--read-packet (stream) list)
-(defun test-localgroup--read-packet (stream)
+(-> test-world-terminal--read-packet (stream) list)
+(defun test-world-terminal--read-packet (stream)
   "Return one packet after a bounded wait for STREAM input."
   (test-assert
    (task-tests--wait-until (lambda () (listen stream)) 10)
-   "the localgroup connection produces its next packet promptly")
+   "the world-terminal connection produces its next packet promptly")
   (or (daemon-read-packet stream)
-      (error "The localgroup connection closed before its next packet.")))
+      (error "The world-terminal connection closed before its next packet.")))
 
-(-> test-localgroup--present
-    ((or localgroup-session cons)
+(-> test-world-terminal--present
+    ((or channel-endpoint cons)
      &key (:rows integer) (:columns integer) (:styled-p boolean) (:evaluates-p boolean)
           (:watches-p boolean) (:client-pid (option integer)))
-    (values localgroup-client-connection function function))
-(defun test-localgroup--present
+    (values world-terminal-client-connection function function))
+(defun test-world-terminal--present
     (endpoint &key (rows 31) (columns 91) (styled-p t) evaluates-p watches-p client-pid)
   "Attach a client that presents to the channel at ENDPOINT, a session or its endpoint entry.
 
@@ -56,14 +56,14 @@ Return its connection, a function returning the events it has seen, oldest
 first, and a function that waits for a presentation event. That function
 takes an operation and optionally a test of the event; it returns the first
 (:ui :operation OPERATION ...) event the test accepts, or NIL when none came
-in time. The caller closes the connection with LOCALGROUP-CLIENT-CLOSE."
+in time. The caller closes the connection with WORLD-TERMINAL-CLIENT-CLOSE."
   (let* ((lock       (make-lock "presenting test client"))
          (events     nil)
-         (entry      (if (typep endpoint 'localgroup-session)
+         (entry      (if (typep endpoint 'channel-endpoint)
                          (cons (image-daemon:daemon-runtime-registry-pathname endpoint)
                                (image-daemon:daemon-runtime-record endpoint))
                          endpoint))
-         (connection (localgroup-client-connect
+         (connection (world-terminal-client-connect
                       entry
                       :name           "terminal"
                       :evaluates-p    evaluates-p
@@ -81,7 +81,7 @@ in time. The caller closes the connection with LOCALGROUP-CLIENT-CLOSE."
              (with-lock-held (lock)
                (reverse events))))
       ;; The channel reads this client's commands only after it settled the attachment.
-      (localgroup-client-call connection ':state)
+      (world-terminal-client-call connection ':state)
       (values connection
               #'seen
               (lambda (operation &optional (test (constantly t)))
@@ -97,8 +97,8 @@ in time. The caller closes the connection with LOCALGROUP-CLIENT-CLOSE."
                    20)
                   found))))))
 
-(-> test-localgroup--await-served (localgroup-session &optional (integer 0)) boolean)
-(defun test-localgroup--await-served (session &optional (remaining 0))
+(-> test-world-terminal--await-served (channel-endpoint &optional (integer 0)) boolean)
+(defun test-world-terminal--await-served (session &optional (remaining 0))
   "Wait until SESSION serves only REMAINING connections and return whether it came to that.
 
 A connection's serving thread ends after what the session does for a client that left."
@@ -108,15 +108,15 @@ A connection's serving thread ends after what the session does for a client that
        (= remaining (length (image-daemon:daemon-runtime-client-threads session)))))
    10))
 
-(-> test-localgroup--status (localgroup-session) list)
-(defun test-localgroup--status (session)
+(-> test-world-terminal--status (channel-endpoint) list)
+(defun test-world-terminal--status (session)
   "Return the fields of the status SESSION's endpoint answers a request with."
-  (rest (getf (rest (daemon-call (image-daemon:daemon-runtime-port session)
+  (rest (getf (rest (world-terminal-call (image-daemon:daemon-runtime-port session)
                                  (image-daemon:daemon-runtime-token session) ':status))
               :status)))
 
-(-> test-localgroup--event-text (list) string)
-(defun test-localgroup--event-text (event)
+(-> test-world-terminal--event-text (list) string)
+(defun test-world-terminal--event-text (event)
   "Return the plain text transcript presentation EVENT shows, or the empty string for any other event.
 
 An :APPEND shows its entry and a :RECORDS each record's entry on a line of its own."
@@ -136,28 +136,28 @@ An :APPEND shows its entry and a :RECORDS each record's entry on a line of its o
         (otherwise
          "")))))
 
-(-> test-localgroup--presented-text (application) string)
-(defun test-localgroup--presented-text (application)
+(-> test-world-terminal--presented-text (application) string)
+(defun test-world-terminal--presented-text (application)
   "Return the transcript text a client attaching to APPLICATION's hosted channel now would be replayed.
 
 Each transcript event takes a line of its own."
   (let ((presentation (application-presentation application)))
     (format nil "~{~A~%~}"
-            (remove "" (mapcar #'test-localgroup--event-text
+            (remove "" (mapcar #'test-world-terminal--event-text
                                (with-terminal-ui-locked (presentation)
                                  (channel-presentation-replay presentation)))
                     :test #'string=))))
 
-(-> test-localgroup-stop-retry () null)
-(defun test-localgroup-stop-retry ()
+(-> test-world-terminal-stop-retry () null)
+(defun test-world-terminal-stop-retry ()
   "Attempt independent cleanup stages and retain endpoint ownership for retry."
   (dolist (failing-stage '(:runtime :registry))
     (let* ((application (make-instance 'application))
-           (session     (make-instance 'localgroup-session :application application))
+           (session     (make-instance 'channel-endpoint :application application))
            (cause       (make-condition 'simple-error :format-control "cleanup failed"))
            (attempts    nil)
            (fail-p      t))
-      (setf (application-localgroup-session application) session)
+      (setf (application-channel-endpoint application) session)
       (flet ((attempt (stage)
                (push stage attempts)
                (when (and fail-p (eq stage failing-stage))
@@ -165,27 +165,27 @@ Each transcript event takes a line of its own."
         (test-call-with-function-replacements
          (list (list 'image-daemon:daemon-runtime-stop
                      (lambda (runtime) (declare (ignore runtime)) (attempt ':runtime)))
-               (list 'localgroup--delete-owned-registry
+               (list 'world-terminal--delete-owned-registry
                      (lambda (runtime) (declare (ignore runtime)) (attempt ':registry))))
          (lambda ()
-           (let ((failure (handler-case (localgroup-stop application)
-                            (localgroup-stop-error (condition) condition))))
+           (let ((failure (handler-case (world-terminal-stop application)
+                            (world-terminal-stop-error (condition) condition))))
              (test-assert
-              (and (typep failure 'localgroup-stop-error)
-                   (eq session (application-localgroup-session application))
+              (and (typep failure 'world-terminal-stop-error)
+                   (eq session (application-channel-endpoint application))
                     (equal (reverse attempts) '(:runtime :registry))
-                   (eq cause (second (first (localgroup-stop-error-failures failure)))))
+                   (eq cause (second (first (world-terminal-stop-error-failures failure)))))
               "cleanup preserves the original stage failure, attempts every stage, and retains ownership"))
            (setf fail-p nil attempts nil)
-           (localgroup-stop application)
+           (world-terminal-stop application)
            (test-assert
-            (and (null (application-localgroup-session application))
+            (and (null (application-channel-endpoint application))
                   (equal (reverse attempts) '(:runtime :registry)))
             "retry completes owned cleanup before releasing the application slot"))))))
   nil)
 
-(-> test-localgroup-endpoint-failure-isolation () null)
-(defun test-localgroup-endpoint-failure-isolation ()
+(-> test-world-terminal-endpoint-failure-isolation () null)
+(defun test-world-terminal-endpoint-failure-isolation ()
   "Exercise the installed daemon failure hook, pending storage and hosted-channel isolation."
   (world-server-tests--call
    (lambda (server configuration root)
@@ -199,12 +199,12 @@ Each transcript event takes a line of its own."
             (host        (world-server--find-host server failed-id))
             (application (world-host-application host))
             (controller  (application-input-controller application))
-            (session     (application-localgroup-session application))
+            (session     (application-channel-endpoint application))
             (healthy     (world-server-tests--session server healthy-id))
             (runtime     (world-server-runtime server))
             (failure     (make-condition 'simple-error :format-control "Injected channel accept failure.")))
        (with-lock-held ((image-daemon:daemon-runtime-lock session))
-         (setf (localgroup-session-paused-p session) t))
+         (setf (channel-endpoint-paused-p session) t))
        (test-assert (and (application-input-controller--enqueue controller ':message "accepted before failure")
                          (application-input-controller--enqueue controller ':command "help"))
                     "the paused channel accepts input before its endpoint fails")
@@ -220,7 +220,7 @@ Each transcript event takes a line of its own."
              (eq runtime (world-server-runtime server))
              (not (world-server-stopping-p server))
              (world-server-running-p configuration)
-             (eq (first (localgroup-query-record
+             (eq (first (world-terminal-query-record
                          (cons (image-daemon:daemon-runtime-registry-pathname healthy)
                                (image-daemon:daemon-runtime-record healthy)) ':status)) ':ok))
         "failure keeps its original condition and frames while the other channel and owner answer")
@@ -233,8 +233,8 @@ Each transcript event takes a line of its own."
           "a fresh controller restores accepted pending input once and in order")))))
   nil)
 
-(-> test-localgroup-message-dispatch () null)
-(defun test-localgroup-message-dispatch ()
+(-> test-world-terminal-message-dispatch () null)
+(defun test-world-terminal-message-dispatch ()
   "Test daemon messages reach a channel's inbox or its mission events, and nothing else is accepted."
   (with-test-configuration (configuration)
     (let ((application (make-instance 'application
@@ -242,10 +242,10 @@ Each transcript event takes a line of its own."
                                       :conversation  (conversation-create configuration :identifier "bself11"))))
       (flet ((rejected-p (envelope)
                "Return true when ENVELOPE is rejected as a daemon message."
-               (handler-case (progn (localgroup--message-dispatch application envelope) nil)
+               (handler-case (progn (world-terminal--message-dispatch application envelope) nil)
                  (image-daemon:daemon-message-error ()
                    t))))
-        (test-assert (equal (localgroup--message-dispatch application (list :action ':channel :id "m1"))
+        (test-assert (equal (world-terminal--message-dispatch application (list :action ':channel :id "m1"))
                             '(:ok :queued 0))
                      "a channel notice delivers the inbox, empty before the conversation persists")
         (test-assert (rejected-p (list :action ':event :id "e1" :receiver "bother11" :payload "tick"))
@@ -254,68 +254,68 @@ Each transcript event takes a line of its own."
                      "a message of any other kind is rejected"))))
   nil)
 
-(-> test-localgroup-orphan-reconciliation () null)
-(defun test-localgroup-orphan-reconciliation ()
+(-> test-world-terminal-orphan-reconciliation () null)
+(defun test-world-terminal-orphan-reconciliation ()
   "Verify server and client startup reconcile their configured registry root."
   (with-test-configuration (configuration)
     (let ((application nil) (controller nil) (session nil) (directories nil))
       (unwind-protect
            (progn
              (multiple-value-setq (application controller)
-               (test-localgroup--application configuration))
+               (test-world-terminal--application configuration))
              (test-call-with-function-replacements
               (list (list 'image-daemon:daemon-registry-reconcile
                           (lambda (directory) (push directory directories) 0))
                     (list 'configuration-create
                           (lambda (&rest arguments) (declare (ignore arguments)) configuration)))
               (lambda ()
-                (setf session (localgroup-start application))
-                (test-assert (eq (localgroup--client-configuration) configuration)
+                (setf session (world-terminal-start application))
+                (test-assert (eq (world-terminal--client-configuration) configuration)
                              "client startup uses its configured state")))
              (test-assert (and (= (length directories) 2)
                                (every (lambda (directory)
-                                        (equal directory (localgroup-registry-directory configuration)))
+                                        (equal directory (world-channel-endpoint-directory configuration)))
                                       directories))
                           "both startup paths reconcile the configured discovery directory"))
-        (when session (localgroup-stop application))
+        (when session (world-terminal-stop application))
         (when controller (application-input-controller-stop controller))
         (when application (application-release-conversation-lease application)))))
   nil)
 
-(-> test-localgroup--show-rows
-    (localgroup-screen list
+(-> test-world-terminal--show-rows
+    (world-terminal-screen list
      &key (:height integer) (:width integer) (:cursor-row integer) (:cursor-column integer)
           (:cursor-visible-p t) (:whole-screen-p t))
     null)
-(defun test-localgroup--show-rows
+(defun test-world-terminal--show-rows
     (screen rows
      &key height width (cursor-row 0) (cursor-column 0) (cursor-visible-p t) whole-screen-p)
   "Show ROWS, a pane's display rows from its top, as SCREEN's frame of HEIGHT by WIDTH."
-  (localgroup-screen-show-frame screen
+  (world-terminal-screen-show-frame screen
                                 (clinedi:make-frame-snapshot rows :height height :width width)
                                 :cursor-row       cursor-row
                                 :cursor-column    cursor-column
                                 :cursor-visible-p cursor-visible-p
                                 :whole-screen-p   whole-screen-p))
 
-(-> test-localgroup-screen-paints-frames () null)
-(defun test-localgroup-screen-paints-frames ()
+(-> test-world-terminal-screen-paints-frames () null)
+(defun test-world-terminal-screen-paints-frames ()
   "Test a client painting its pane's frames on its own terminal."
   (let* ((terminal (make-instance 'recording-terminal :columns 40 :rows 8))
-         (screen   (localgroup-screen-create :terminal terminal)))
+         (screen   (world-terminal-screen-create :terminal terminal)))
     (flet ((output ()
              "Return everything written to the client terminal so far."
              (apply #'concatenate 'string (reverse (recording-terminal-chunks terminal))))
 
            (show (&rest rows)
              "Show ROWS as the pane's frame."
-             (test-localgroup--show-rows screen rows :height 8 :width 40
+             (test-world-terminal--show-rows screen rows :height 8 :width 40
                                                      :cursor-row 3 :cursor-column 1)))
-      (test-assert (and (not (localgroup-screen-active-p screen))
+      (test-assert (and (not (world-terminal-screen-active-p screen))
                         (zerop (length (output))))
                    "a screen without a frame leaves the terminal alone")
       (show "hello" "" "world")
-      (test-assert (and (localgroup-screen-active-p screen)
+      (test-assert (and (world-terminal-screen-active-p screen)
                         (search (alternate-screen-enter-sequence) (output))
                         (search "hello" (output))
                         (search "world" (output)))
@@ -325,20 +325,20 @@ Each transcript event takes a line of its own."
       (test-assert (and (search "bye" (output)) (not (search "world" (output))))
                    "a later frame repaints only the rows that changed")
       (setf (recording-terminal-chunks terminal) nil)
-      (localgroup-screen-resized screen)
+      (world-terminal-screen-resized screen)
       (test-assert (and (search "bye" (output)) (search "world" (output)))
                    "a resize repaints the whole frame")
-      (localgroup-screen-close screen)
-      (test-assert (and (not (localgroup-screen-active-p screen))
+      (world-terminal-screen-close screen)
+      (test-assert (and (not (world-terminal-screen-active-p screen))
                         (search (alternate-screen-leave-sequence) (output)))
                    "closing gives the screen back")
-      (localgroup-screen-close screen)
+      (world-terminal-screen-close screen)
       (test-assert (= 1 (count-if (lambda (chunk) (search (alternate-screen-leave-sequence) chunk))
                                   (recording-terminal-chunks terminal)))
                    "closing an inactive screen writes nothing")))
   (dolist (failure '(:enter :leave))
     (let* ((terminal       (make-instance 'recording-terminal :columns 40 :rows 8))
-           (screen         (localgroup-screen-create :terminal terminal))
+           (screen         (world-terminal-screen-create :terminal terminal))
            (write-function (symbol-function 'terminal--write))
            (condition      (make-condition 'terminal-error :operation ':write
                                                           :message    "Injected screen transition failure."
@@ -365,20 +365,20 @@ Each transcript event takes a line of its own."
          (let ((failed-p nil))
            (handler-case
                (progn
-                 (test-localgroup--show-rows screen '("hello") :height 8 :width 40)
+                 (test-world-terminal--show-rows screen '("hello") :height 8 :width 40)
                  (when (eq failure ':leave)
-                   (localgroup-screen-close screen)))
+                   (world-terminal-screen-close screen)))
              (terminal-error (failure) (setf failed-p (eq failure condition))))
            (test-assert failed-p "The injected terminal failure reaches its caller"))
          (when (eq failure ':leave)
-           (test-assert (and (localgroup-screen-active-p screen)
-                             (null (localgroup-screen-token screen)))
+           (test-assert (and (world-terminal-screen-active-p screen)
+                             (null (world-terminal-screen-token screen)))
                         "Failed physical leave retains retry ownership but consumes the native token"))
-         (localgroup-client-screen-release screen)
+         (world-terminal-client-screen-release screen)
          (let ((bytes (apply #'concatenate 'string (reverse (recording-terminal-chunks terminal)))))
            (test-assert (and (search (alternate-screen-enter-sequence) bytes)
                              (search (alternate-screen-leave-sequence) bytes)
-                             (not (localgroup-screen-active-p screen)))
+                             (not (world-terminal-screen-active-p screen)))
                         "Failed entry is compensated and failed leave is retried by client finalization"))
          (test-assert (= 1 (count ':screen-test-token restored))
                       "Native fullscreen state is restored once even when physical leave is retried")
@@ -386,20 +386,20 @@ Each transcript event takes a line of its own."
            (test-assert (= 2 leave-attempts) "The finalizer retries the failed physical leave once"))))))
   nil)
 
-(defclass localgroup-tests-panel ()
+(defclass world-terminal-tests-panel ()
   ((rows
     :initarg       :rows
-    :reader        localgroup-tests-panel-rows
+    :reader        world-terminal-tests-panel-rows
     :type          list
     :documentation "The fixed rows the test panel shows."))
   (:documentation "A side panel of fixed rows for client screen tests."))
 
-(defmethod screen-panel-width ((panel localgroup-tests-panel) columns)
+(defmethod screen-panel-width ((panel world-terminal-tests-panel) columns)
   "Ten columns, however wide the terminal."
   (declare (ignore columns))
   10)
 
-(defmethod screen-panel-click ((panel localgroup-tests-panel) column row)
+(defmethod screen-panel-click ((panel world-terminal-tests-panel) column row)
   "Ask to switch from the first row, redraw from the second, and ignore the rest."
   (declare (ignore column))
   (case row
@@ -410,48 +410,48 @@ Each transcript event takes a line of its own."
     (otherwise
      nil)))
 
-(defmethod screen-panel-minimum-columns ((panel localgroup-tests-panel))
+(defmethod screen-panel-minimum-columns ((panel world-terminal-tests-panel))
   "Sixty columns."
   60)
 
-(defmethod screen-panel-refresh ((panel localgroup-tests-panel))
+(defmethod screen-panel-refresh ((panel world-terminal-tests-panel))
   "Nothing changes."
   nil)
 
-(defmethod screen-panel-rows ((panel localgroup-tests-panel) terminal &key height width focused-p)
+(defmethod screen-panel-rows ((panel world-terminal-tests-panel) terminal &key height width focused-p)
   "Return HEIGHT rows padded to WIDTH."
   (declare (ignore terminal focused-p))
   (loop for index below height
-        collect (format nil "~vA" width (or (nth index (localgroup-tests-panel-rows panel)) ""))))
+        collect (format nil "~vA" width (or (nth index (world-terminal-tests-panel-rows panel)) ""))))
 
-(-> test-localgroup-screen-loading () null)
-(defun test-localgroup-screen-loading ()
+(-> test-world-terminal-screen-loading () null)
+(defun test-world-terminal-screen-loading ()
   "Paint pending navigation in the channel pane and require the next channel's full frame."
   (dolist (columns '(90 40))
     (let* ((terminal (make-instance 'recording-terminal :columns columns :rows 8 :styled-p t))
-           (panel    (make-instance 'localgroup-tests-panel :rows '("sidebar")))
-           (screen   (localgroup-screen-create :terminal terminal :panel panel))
+           (panel    (make-instance 'world-terminal-tests-panel :rows '("sidebar")))
+           (screen   (world-terminal-screen-create :terminal terminal :panel panel))
            (text     "Loading channel")
            (name     "Ada 雪"))
       (unwind-protect
            (progn
-             (test-localgroup--show-rows screen '("previous" "" "" "old row")
+             (test-world-terminal--show-rows screen '("previous" "" "" "old row")
                                          :height 8 :width columns :whole-screen-p t)
              (setf (recording-terminal-chunks terminal) nil)
-             (localgroup-screen-show-loading screen text :agent-name name)
-             (test-assert (and (localgroup-screen-active-p screen)
-                               (null (localgroup-screen-frame screen))
-                               (not (third (localgroup-screen-cursor screen))))
+             (world-terminal-screen-show-loading screen text :agent-name name)
+             (test-assert (and (world-terminal-screen-active-p screen)
+                               (null (world-terminal-screen-frame screen))
+                               (not (third (world-terminal-screen-cursor screen))))
                           "loading keeps terminal ownership but drops the old frame and cursor")
-             (test-assert (eq (localgroup-screen-painted-layout screen)
+             (test-assert (eq (world-terminal-screen-painted-layout screen)
                               (if (> columns 70) ':beside ':session))
                           "loading reveals the docked sidebar or the narrow channel pane")
              (test-assert (some (lambda (chunk) (search text chunk))
                                 (recording-terminal-chunks terminal))
                           "the pending operation is painted before a channel can answer")
-             (localgroup-screen-show-loading screen text :step 4 :description "initializing"
+             (world-terminal-screen-show-loading screen text :step 4 :description "initializing"
                                                         :agent-name name)
-             (let* ((rows    (clinedi:frame-snapshot-rows (localgroup-screen--loading-frame screen)))
+             (let* ((rows    (clinedi:frame-snapshot-rows (world-terminal-screen--loading-frame screen)))
                     (heading (find-if (lambda (row) (search text row)) rows)))
                (test-assert (some (lambda (row) (find #\━ row)) rows)
                             "completed milestones fill the loading bar")
@@ -467,151 +467,151 @@ Each transcript event takes a line of its own."
                             "the loading heading uses a distinct color for the destination name"))
              (setf (terminal-columns terminal) 24
                    (recording-terminal-chunks terminal) nil)
-             (localgroup-screen-resized screen)
+             (world-terminal-screen-resized screen)
              (test-assert (and (recording-terminal-chunks terminal)
-                               (null (localgroup-screen-frame screen))
+                               (null (world-terminal-screen-frame screen))
                                (= 24 (clinedi:frame-snapshot-width
-                                      (localgroup-screen--loading-frame screen))))
+                                      (world-terminal-screen--loading-frame screen))))
                           "resizing repaints loading without establishing a channel frame")
-             (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
-               (test-localgroup--show-rows screen '("ready") :height height :width width)
-               (test-assert (equalp (clinedi:frame-snapshot-rows (localgroup-screen-frame screen))
+             (multiple-value-bind (height width) (world-terminal-screen-pane-size screen)
+               (test-world-terminal--show-rows screen '("ready") :height height :width width)
+               (test-assert (equalp (clinedi:frame-snapshot-rows (world-terminal-screen-frame screen))
                                     #("ready" "" "" "" "" "" "" ""))
                             "the new channel replaces loading without rows from the previous channel")
-               (test-assert (null (localgroup-screen-loading screen))
+               (test-assert (null (world-terminal-screen-loading screen))
                             "the destination's frame ends loading")))
-        (localgroup-screen-close screen))))
+        (world-terminal-screen-close screen))))
   (let* ((terminal (make-instance 'recording-terminal))
-         (screen   (localgroup-screen-create :terminal terminal)))
-    (localgroup-screen-show-loading screen "pending navigation")
+         (screen   (world-terminal-screen-create :terminal terminal)))
+    (world-terminal-screen-show-loading screen "pending navigation")
     (test-assert (null (recording-terminal-chunks terminal))
                  "loading paints only a screen the client already owns")
     (unwind-protect
          (progn
-           (localgroup-screen-show-loading screen "startup" :start-p t)
-           (test-assert (and (localgroup-screen-active-p screen)
-                             (localgroup-screen-loading screen))
+           (world-terminal-screen-show-loading screen "startup" :start-p t)
+           (test-assert (and (world-terminal-screen-active-p screen)
+                             (world-terminal-screen-loading screen))
                         "initial fullscreen loading can explicitly take the terminal"))
-      (localgroup-screen-close screen)))
+      (world-terminal-screen-close screen)))
   nil)
 
-(-> test-localgroup-screen-panel () null)
-(defun test-localgroup-screen-panel ()
+(-> test-world-terminal-screen-panel () null)
+(defun test-world-terminal-screen-panel ()
   "Test a client composing its side panel beside the session's frame and keeping the keys apart."
   (let* ((terminal (make-instance 'recording-terminal :columns 80 :rows 6))
-         (panel    (make-instance 'localgroup-tests-panel :rows '("PANEL-A" "PANEL-B")))
-         (screen   (localgroup-screen-create :terminal terminal :panel panel)))
+         (panel    (make-instance 'world-terminal-tests-panel :rows '("PANEL-A" "PANEL-B")))
+         (screen   (world-terminal-screen-create :terminal terminal :panel panel)))
     (flet ((output ()
              "Return everything written to the client terminal so far."
              (apply #'concatenate 'string (reverse (recording-terminal-chunks terminal))))
            (pane ()
              "Return the session's pane size as a list."
-             (multiple-value-list (localgroup-screen-pane-size screen))))
+             (multiple-value-list (world-terminal-screen-pane-size screen))))
       (test-assert (equal (pane) '(6 80))
                    "a streamed attachment initially receives the whole terminal width")
-      (test-assert (and (equal (localgroup-screen-filter-event screen '(:control #\s)) '(:control #\s))
-                        (equal (localgroup-screen-filter-event screen '(:click 20 2)) '(:click 20 2)))
+      (test-assert (and (equal (world-terminal-screen-filter-event screen '(:control #\s)) '(:control #\s))
+                        (equal (world-terminal-screen-filter-event screen '(:click 20 2)) '(:click 20 2)))
                    "streamed input bypasses the fullscreen panel")
-      (localgroup-screen-toggle-panel screen)
-      (test-assert (and (localgroup-screen-panel-shown-p screen)
-                        (not (localgroup-screen-drawer-open-p screen))
-                        (not (localgroup-screen-take-resize screen))
+      (world-terminal-screen-toggle-panel screen)
+      (test-assert (and (world-terminal-screen-panel-shown-p screen)
+                        (not (world-terminal-screen-drawer-open-p screen))
+                        (not (world-terminal-screen-take-resize screen))
                         (equal (pane) '(6 80)))
                    "a streamed toggle changes neither panel preference nor prompt geometry")
-      (test-localgroup--show-rows screen '("initial fullscreen") :height 6 :width 80)
-      (test-assert (and (localgroup-screen-active-p screen)
+      (test-world-terminal--show-rows screen '("initial fullscreen") :height 6 :width 80)
+      (test-assert (and (world-terminal-screen-active-p screen)
                         (equal (pane) '(6 69))
-                        (localgroup-screen-take-resize screen))
+                        (world-terminal-screen-take-resize screen))
                    "entering fullscreen reserves the sidebar and requests matching session dimensions")
-      (test-localgroup--show-rows screen '("host row" "second")
+      (test-world-terminal--show-rows screen '("host row" "second")
                                   :height 6 :width 69 :cursor-row 1 :cursor-column 2)
       (let ((painted (output)))
         (test-assert (and (search "PANEL-A   │host row" painted)
                           (search "PANEL-B   │second" painted))
                      "frames are painted beside the panel rows with a rule between"))
-      (test-assert (equal (localgroup-screen-filter-event screen '(:click 5 1))
+      (test-assert (equal (world-terminal-screen-filter-event screen '(:click 5 1))
                           '(:switch :session-id "bnext1"))
                    "a click the panel answers with a switch hands the request on")
       (let ((before (length (output))))
-        (test-assert (and (eq (localgroup-screen-filter-event screen '(:click 5 2)) ':ignore)
+        (test-assert (and (eq (world-terminal-screen-filter-event screen '(:click 5 2)) ':ignore)
                           (> (length (output)) before))
                      "a click that changes the panel repaints it and reaches no session"))
-      (test-assert (eq (localgroup-screen-filter-event screen '(:click 5 3)) ':ignore)
+      (test-assert (eq (world-terminal-screen-filter-event screen '(:click 5 3)) ':ignore)
                    "a click the panel ignores reaches no session")
-      (test-assert (equal (localgroup-screen-filter-event screen '(:click 20 2)) '(:click 9 2))
+      (test-assert (equal (world-terminal-screen-filter-event screen '(:click 20 2)) '(:click 9 2))
                    "a click in the session's pane is moved to its columns")
-      (test-assert (and (equal (localgroup-screen-filter-event screen '(:drag 20 3)) '(:drag 9 3))
-                        (equal (localgroup-screen-filter-event screen '(:drag 5 3)) '(:drag 1 3))
-                        (equal (localgroup-screen-filter-event screen '(:release 4 3)) '(:release 1 3)))
+      (test-assert (and (equal (world-terminal-screen-filter-event screen '(:drag 20 3)) '(:drag 9 3))
+                        (equal (world-terminal-screen-filter-event screen '(:drag 5 3)) '(:drag 1 3))
+                        (equal (world-terminal-screen-filter-event screen '(:release 4 3)) '(:release 1 3)))
                    "a drag goes to the pane, and over the panel stays on the pane's edge")
-      (test-assert (eq (localgroup-screen-filter-event screen ':page-up) ':page-up)
+      (test-assert (eq (world-terminal-screen-filter-event screen ':page-up) ':page-up)
                    "other events pass through")
-      (test-assert (and (eq (localgroup-screen-filter-event screen ':focus-next) ':ignore)
-                        (localgroup-screen-panel-focused-p screen)
-                        (not (localgroup-screen-take-resize screen))
-                        (eq (localgroup-screen-filter-event screen ':page-up) ':ignore)
-                        (eq (localgroup-screen-filter-event screen ':interrupt) ':interrupt))
+      (test-assert (and (eq (world-terminal-screen-filter-event screen ':focus-next) ':ignore)
+                        (world-terminal-screen-panel-focused-p screen)
+                        (not (world-terminal-screen-take-resize screen))
+                        (eq (world-terminal-screen-filter-event screen ':page-up) ':ignore)
+                        (eq (world-terminal-screen-filter-event screen ':interrupt) ':interrupt))
                    "the focus key moves the keyboard to the panel, which keeps every key but an interrupt")
-      (test-assert (and (eq (localgroup-screen-filter-event screen ':focus-next) ':ignore)
-                        (not (localgroup-screen-panel-focused-p screen))
-                        (eq (localgroup-screen-filter-event screen ':page-up) ':page-up))
+      (test-assert (and (eq (world-terminal-screen-filter-event screen ':focus-next) ':ignore)
+                        (not (world-terminal-screen-panel-focused-p screen))
+                        (eq (world-terminal-screen-filter-event screen ':page-up) ':page-up))
                    "the focus key gives the keyboard back to the session")
-      (localgroup-screen-filter-event screen ':focus-next)
-      (test-assert (and (eq (localgroup-screen-filter-event screen '(:control #\s)) ':ignore)
-                        (localgroup-screen-take-resize screen)
-                        (not (localgroup-screen-take-resize screen))
-                        (not (localgroup-screen-panel-focused-p screen))
+      (world-terminal-screen-filter-event screen ':focus-next)
+      (test-assert (and (eq (world-terminal-screen-filter-event screen '(:control #\s)) ':ignore)
+                        (world-terminal-screen-take-resize screen)
+                        (not (world-terminal-screen-take-resize screen))
+                        (not (world-terminal-screen-panel-focused-p screen))
                         (equal (pane) '(6 80)))
                    "the toggle key hides the panel, focused or not, and notes the pane's new size once")
-      (test-assert (and (eq (localgroup-screen-filter-event screen ':focus-next) ':ignore)
-                        (localgroup-screen-panel-focused-p screen)
+      (test-assert (and (eq (world-terminal-screen-filter-event screen ':focus-next) ':ignore)
+                        (world-terminal-screen-panel-focused-p screen)
                         (equal (pane) '(6 69))
-                        (eq (localgroup-screen-filter-event screen '(:control #\s)) ':ignore))
+                        (eq (world-terminal-screen-filter-event screen '(:control #\s)) ':ignore))
                    "the focus key shows a hidden panel and moves to it")
-      (localgroup-screen-take-resize screen)
-      (test-localgroup--show-rows screen '("wide channel")
+      (world-terminal-screen-take-resize screen)
+      (test-world-terminal--show-rows screen '("wide channel")
                                   :height 6 :width 80 :cursor-row 1 :cursor-column 2)
-      (test-assert (equal (localgroup-screen-filter-event screen '(:click 5 2)) '(:click 5 2))
+      (test-assert (equal (world-terminal-screen-filter-event screen '(:click 5 2)) '(:click 5 2))
                    "with the panel hidden clicks keep their columns")
-      (localgroup-screen-filter-event screen '(:control #\s))
-      (localgroup-screen-take-resize screen)
-      (test-localgroup--show-rows screen '("boot screen")
+      (world-terminal-screen-filter-event screen '(:control #\s))
+      (world-terminal-screen-take-resize screen)
+      (test-world-terminal--show-rows screen '("boot screen")
                                   :height 6 :width 69 :cursor-visible-p nil :whole-screen-p t)
       (test-assert (and (equal (pane) '(6 80))
-                        (localgroup-screen-take-resize screen))
+                        (world-terminal-screen-take-resize screen))
                    "a frame asking for the whole screen hides the panel and resizes the pane")
-      (test-localgroup--show-rows screen '("listener") :height 6 :width 80)
+      (test-world-terminal--show-rows screen '("listener") :height 6 :width 80)
       (test-assert (and (equal (pane) '(6 69))
-                        (localgroup-screen-take-resize screen))
+                        (world-terminal-screen-take-resize screen))
                    "the next ordinary frame brings the panel back")
-      (test-localgroup--show-rows screen '("docked channel") :height 6 :width 69)
-      (localgroup-screen-close screen)
+      (test-world-terminal--show-rows screen '("docked channel") :height 6 :width 69)
+      (world-terminal-screen-close screen)
       (test-assert (and (equal (pane) '(6 80))
-                        (localgroup-screen-take-resize screen)
-                        (not (localgroup-screen-take-resize screen))
-                        (equal (localgroup-screen-filter-event screen '(:control #\s)) '(:control #\s))
-                        (equal (localgroup-screen-filter-event screen '(:click 20 2)) '(:click 20 2)))
+                        (world-terminal-screen-take-resize screen)
+                        (not (world-terminal-screen-take-resize screen))
+                        (equal (world-terminal-screen-filter-event screen '(:control #\s)) '(:control #\s))
+                        (equal (world-terminal-screen-filter-event screen '(:click 20 2)) '(:click 20 2)))
                    "leaving fullscreen restores full-width streamed input despite the cached painted layout")
-      (test-localgroup--show-rows screen '("fullscreen again") :height 6 :width 80)
-      (test-assert (and (equal (pane) '(6 69)) (localgroup-screen-take-resize screen))
+      (test-world-terminal--show-rows screen '("fullscreen again") :height 6 :width 80)
+      (test-assert (and (equal (pane) '(6 69)) (world-terminal-screen-take-resize screen))
                    "a later fullscreen attachment restores the saved sidebar preference")
       (terminal-set-dimensions terminal 50 :rows 6)
       (test-assert (and (equal (pane) '(6 50))
-                        (eq (localgroup-screen-layout screen) ':session))
+                        (eq (world-terminal-screen-layout screen) ':session))
                    "a narrow terminal keeps the channel visible until the drawer is explicitly opened")
-      (localgroup-screen-close screen)))
+      (world-terminal-screen-close screen)))
   nil)
 
-(-> test-localgroup-screen-geometry () null)
-(defun test-localgroup-screen-geometry ()
+(-> test-world-terminal-screen-geometry () null)
+(defun test-world-terminal-screen-geometry ()
   "Test frame, layout and cursor installation across boot hints, toggles and terminal resizes."
   (with-test-configuration (configuration)
     (let* ((terminal (make-instance 'recording-terminal :columns 120 :rows 8))
            (sidebar  (world-sidebar-create configuration))
-           (screen   (localgroup-screen-create :terminal terminal :panel sidebar)))
+           (screen   (world-terminal-screen-create :terminal terminal :panel sidebar)))
       (labels ((send-frame (width text &key whole-p (height 8))
                  "Show a frame with an explicit geometry and whole-screen hint."
-                 (test-localgroup--show-rows screen (list text)
+                 (test-world-terminal--show-rows screen (list text)
                                              :height           height
                                              :width            width
                                              :cursor-row       1
@@ -626,12 +626,12 @@ Each transcript event takes a line of its own."
                (reset-output ()
                  "Start a fresh physical-output observation."
                  (setf (recording-terminal-chunks terminal) nil)))
-        (test-assert (equal (multiple-value-list (localgroup-screen-pane-size screen)) '(8 120))
+        (test-assert (equal (multiple-value-list (world-terminal-screen-pane-size screen)) '(8 120))
                      "a client reserves no sidebar columns before fullscreen entry")
         (send-frame 93 "undersized boot" :whole-p t)
         (test-assert (and (zerop (length (output)))
-                          (not (localgroup-screen-active-p screen))
-                          (not (localgroup-screen-take-resize screen)))
+                          (not (world-terminal-screen-active-p screen))
+                          (not (world-terminal-screen-take-resize screen)))
                      "an undersized whole-screen frame cannot paint or change the initial full-width geometry")
         (send-frame 120 "matching boot" :whole-p t)
         (test-assert (and (search "matching boot" (output))
@@ -639,27 +639,27 @@ Each transcript event takes a line of its own."
                      "the matching whole-screen boot frame is painted without a sidebar")
         (reset-output)
         (send-frame 120 "oversized channel")
-        (test-assert (and (zerop (length (output))) (localgroup-screen-take-resize screen))
+        (test-assert (and (zerop (length (output))) (world-terminal-screen-take-resize screen))
                      "boot completion requests pane geometry without shifting an oversized channel frame")
         (send-frame 93 "matching channel")
         (test-assert (and (search "│matching channel" (output))
                           (search (format nil "~C[2;30H" #\Escape) (output)))
                      "the pane frame, sidebar and offset composer cursor arrive together")
         (reset-output)
-        (localgroup-screen-toggle-panel screen)
+        (world-terminal-screen-toggle-panel screen)
         (test-assert (and (zerop (length (output)))
-                          (localgroup-screen-take-resize screen)
-                          (equal (localgroup-screen-filter-event screen '(:click 50 2)) '(:click 23 2)))
+                          (world-terminal-screen-take-resize screen)
+                          (equal (world-terminal-screen-filter-event screen '(:click 50 2)) '(:click 23 2)))
                      "a pending toggle preserves the painted layout and its pointer coordinates")
         (send-frame 120 "full-width channel")
         (test-assert (and (search "full-width channel" (output))
                           (not (search "│" (output)))
                           (search (format nil "~C[2;3H" #\Escape) (output))
-                          (equal (localgroup-screen-filter-event screen '(:click 50 2)) '(:click 50 2)))
+                          (equal (world-terminal-screen-filter-event screen '(:click 50 2)) '(:click 50 2)))
                      "a matching full-width frame installs its unshifted cursor and pointer coordinates")
         (reset-output)
         (terminal-set-dimensions terminal 140 :rows 9)
-        (localgroup-screen-resized screen)
+        (world-terminal-screen-resized screen)
         (test-assert (zerop (length (output)))
                      "terminal resizing never repaints a cached frame at a different geometry")
         (send-frame 120 "late old-size frame")
@@ -668,15 +668,15 @@ Each transcript event takes a line of its own."
         (send-frame 140 "resized channel" :height 9)
         (test-assert (search "resized channel" (output))
                      "the matching resized frame is painted immediately")
-        (localgroup-screen-close screen))))
+        (world-terminal-screen-close screen))))
   nil)
 
-(-> test-localgroup-picker-waits-for-relayed-input () null)
-(defun test-localgroup-picker-waits-for-relayed-input ()
+(-> test-world-terminal-picker-waits-for-relayed-input () null)
+(defun test-world-terminal-picker-waits-for-relayed-input ()
   "Test a modal picker blocks until the client that controls its channel sends a fresh event."
   (with-test-configuration (configuration)
     (multiple-value-bind (application controller)
-        (test-localgroup--application configuration :presented-p t)
+        (test-world-terminal--application configuration :presented-p t)
       (let ((ui            (application-ui application))
             (result        ':pending)
             (connection    nil)
@@ -686,7 +686,7 @@ Each transcript event takes a line of its own."
                (configuration-ensure-directories configuration)
                (terminal-ui-start ui)
                (multiple-value-bind (client seen await)
-                   (test-localgroup--present (localgroup-start application))
+                   (test-world-terminal--present (world-terminal-start application))
                  (declare (ignore seen))
                  (setf connection    client
                        picker-thread (make-thread
@@ -706,45 +706,45 @@ Each transcript event takes a line of its own."
                                          (* 2 *presentation-terminal-poll-seconds*)))
                                    (thread-alive-p picker-thread))
                               "an attached client that sends nothing neither submits nor cancels the picker")
-                 (test-assert (getf (localgroup-client-call connection ':event :event ':submit) :accepted-p)
+                 (test-assert (getf (world-terminal-client-call connection ':event :event ':submit) :accepted-p)
                               "the open picker takes its client's key")
                  (test-assert (task-tests--wait-until (lambda () (not (eq result ':pending))) 10)
                               "a fresh submit event from the client completes the picker")
                  (test-assert (equal result "default")
                               "the fresh submit accepts the selected item")))
-          (when connection (localgroup-client-close connection))
+          (when connection (world-terminal-client-close connection))
           (when picker-thread (join-thread picker-thread))
-          (localgroup-stop application)
+          (world-terminal-stop application)
           (application-input-controller-stop controller)
           (terminal-ui-stop ui)))))
   nil)
 
-(-> test-localgroup-remote-detach-never-pauses-reader () null)
-(defun test-localgroup-remote-detach-never-pauses-reader ()
+(-> test-world-terminal-remote-detach-never-pauses-reader () null)
+(defun test-world-terminal-remote-detach-never-pauses-reader ()
   "Test a remote detach tells the controlling terminal client to leave without joining the input reader."
   (with-test-configuration (configuration)
     (multiple-value-bind (application controller)
-        (test-localgroup--application configuration :presented-p t)
+        (test-world-terminal--application configuration :presented-p t)
         (flet ((refusal (session)
                  "Return the message a detach of SESSION is refused with, or NIL when it is taken."
-                 (handler-case (progn (localgroup--detach-terminal session) nil)
-                   (localgroup-error (condition)
+                 (handler-case (progn (world-terminal--detach-terminal session) nil)
+                   (world-terminal-error (condition)
                      (autolith-error-message condition)))))
           (unwind-protect
                (progn
                  (configuration-ensure-directories configuration)
                  (terminal-ui-start (application-ui application))
-                 (let* ((session    (localgroup-start application))
+                 (let* ((session    (world-terminal-start application))
                         (identifier (image-daemon:daemon-runtime-identifier session))
                         (entry      (cons (image-daemon:daemon-runtime-registry-pathname session)
-                                          (localgroup--registry-record session))))
+                                          (world-terminal--registry-record session))))
                    (test-assert (search "No terminal shows" (refusal session))
                                 "a channel nobody shows has no terminal to detach")
-                   (let ((watcher (test-localgroup--present session :watches-p t)))
+                   (let ((watcher (test-world-terminal--present session :watches-p t)))
                      (unwind-protect
                           (test-assert (search "No terminal shows" (refusal session))
                                        "a client that only watches is no terminal to detach")
-                       (localgroup-client-close watcher)))
+                       (world-terminal-client-close watcher)))
                    (world-server-tests--call-with-terminal-client
                     configuration identifier
                     (lambda (type await-exit view)
@@ -756,25 +756,25 @@ Each transcript event takes a line of its own."
                                 (declare (ignore arguments))
                                 (error "Remote detach tried to pause the responsive reader."))))
                        (lambda ()
-                         (let ((result (localgroup-query-record entry ':detach)))
+                         (let ((result (world-terminal-query-record entry ':detach)))
                            (test-assert (and (eq (first result) ':ok)
                                              (not (getf (rest result) :scheduled-p)))
                                         "a remote detach is answered at once"))))
                       (test-assert (multiple-value-bind (exit ended-p) (funcall await-exit)
                                      (and ended-p (null exit)))
                                    "the controlling terminal client leaves as after its own detach")))
-                   (test-assert (test-localgroup--await-served session)
+                   (test-assert (test-world-terminal--await-served session)
                                 "the session finishes serving the client that left")
                    (test-assert (and (not (application-terminal-attached-p application))
                                      (null (application-input-controller-exit-reason controller)))
                                 "a session whose terminal was told to leave keeps running without it")))
-            (localgroup-stop application)
+            (world-terminal-stop application)
             (application-input-controller-stop controller)
             (terminal-ui-stop (application-ui application))))))
   nil)
 
-(-> test-localgroup-session-identifiers () null)
-(defun test-localgroup-session-identifiers ()
+(-> test-channel-endpoint-identifiers () null)
+(defun test-channel-endpoint-identifiers ()
   "Test canonical timestamp-bearing IDs and retained legacy discovery behavior."
   (let* ((timestamp (encode-universal-time 5 4 3 2 1 2025 0))
          (canonical (identifier-from-seed timestamp 0)))
@@ -782,32 +782,28 @@ Each transcript event takes a line of its own."
       (unwind-protect
           (progn
            (configuration-ensure-directories configuration)
-           (let ((pathname (localgroup-registry-pathname configuration "abcdef012345")))
+           (let ((pathname (world-channel-endpoint-pathname configuration "abcdef012345")))
              (snapshot-write pathname
-                             (list :localgroup-endpoint :version
-                                   image-daemon:*daemon-registry-version* :session-id
-                                   "abcdef012345" :pid 1 :address "127.0.0.1" :port 1
-                                   :token "legacy-token" :created-at timestamp))
+                             (image-daemon:daemon-registry-record :identifier "abcdef012345" :token "legacy-token" :port 1
+                                     :created-at timestamp :pid 1))
              (test-assert
               (string=
-               (localgroup--record-session-id
-                (rest (localgroup--find-record configuration "ABCDEF012345")))
+               (world-terminal--record-session-id
+                (rest (world-terminal--find-record configuration "ABCDEF012345")))
                "abcdef012345")
               "legacy hexadecimal identifiers remain discoverable through normalized input")))
         (test-assert
-         (localgroup-handoff--record-p
-          (list :localgroup-handoff :version *localgroup-handoff-version* :session-id
-                "abcdef012345" :token "legacy-token" :created-at timestamp :mode ':detach
-                :state ':pending :fresh-conversation-p nil :old-pid 1 :replacement-pid
-                nil :conversation-id canonical :draft ""))
+         (world-startup--record-p
+          (list :world-startup :launch-id "abcdef012345" :version *world-startup-version* :token
+      "legacy-token" :created-at timestamp :state ':pending :old-pid 1 :replacement-pid nil))
          "legacy session identifiers remain valid in detached handoff records")
         (uiop/filesystem:delete-directory-tree (test-configuration-root configuration)
                                                :validate t :if-does-not-exist
                                                ':ignore))))
   nil)
 
-(-> test-localgroup-cli-targets () null)
-(defun test-localgroup-cli-targets ()
+(-> test-world-terminal-cli-targets () null)
+(defun test-world-terminal-cli-targets ()
   "Exercise top-level operations, optional targets, discovery, and CLI validation."
   (with-test-configuration (configuration root)
     (declare (ignore root))
@@ -819,12 +815,9 @@ Each transcript event takes a line of its own."
       (labels ((publish (session-id port)
                  "Publish a private endpoint using PORT as its test identity."
                  (snapshot-write
-                  (localgroup-registry-pathname configuration session-id)
-                  (list :localgroup-endpoint
-                        :version image-daemon:*daemon-registry-version*
-                        :session-id session-id :pid 1 :address "127.0.0.1"
-                        :port port :token "cli-test-token"
-                        :created-at (get-universal-time))))
+                  (world-channel-endpoint-pathname configuration session-id)
+                  (image-daemon:daemon-registry-record :identifier session-id :token "cli-test-token" :port port
+                                     :created-at (get-universal-time) :pid 1)))
 
                (invoke (arguments)
                  "Dispatch ARGUMENTS through the actual top-level CLI tree."
@@ -837,7 +830,7 @@ Each transcript event takes a line of its own."
                  "Require structured failure and the applicable discovery candidates."
                  (let ((condition
                          (handler-case (progn (invoke arguments) nil)
-                           (localgroup-error (condition) condition))))
+                           (world-terminal-error (condition) condition))))
                    (test-assert (and condition
                                      (eq (daemon-error-operation condition) operation)
                                      (null calls))
@@ -863,11 +856,11 @@ Each transcript event takes a line of its own."
                       "top-level operations and optional selectors route each request")))))
         (test-call-with-function-replacements
          (list
-          (list 'localgroup--client-configuration (lambda () configuration))
+          (list 'world-terminal--client-configuration (lambda () configuration))
           ;; Routing tests model already exited fixture processes.
           (list 'ls-compat.posix:process-state
                 (lambda (pid) (declare (ignore pid)) ':dead))
-          (list 'daemon-call
+          (list 'world-terminal-call
                 (lambda (port token operation &key arguments)
                   (declare (ignore token))
                   (when (eq operation ':status) (push port probes))
@@ -877,7 +870,7 @@ Each transcript event takes a line of its own."
                     (push (list port operation arguments) calls))
                   (list :ok         :operation operation
                         :session-id (nth (1- port) '("b6uouHJ" "c6uouHJ" "d6uouHJ")))))
-          (list 'localgroup--run-status
+          (list 'world-terminal--run-status
                 (lambda (&key sexp-p) (push (list :status sexp-p) calls) nil)))
          (lambda ()
            (test-assert (equal (invoke '("status")) '((:status nil)))
@@ -889,7 +882,7 @@ Each transcript event takes a line of its own."
                                 ("status" "extra")
                                 ("start" "extra") ("stop" "extra")))
              (reject arguments ':arguments nil))
-           (dolist (arguments '(("localgroup" "status") ("lg" "status")
+           (dolist (arguments '(("world-terminal" "status") ("lg" "status")
                                 ("kill") ("kill" "b6uouHJ")
                                 ("attach") ("unknown")))
              (test-assert
@@ -901,7 +894,7 @@ Each transcript event takes a line of its own."
              (reject arguments ':discover nil))
            (publish "d6uouHJ" 3)
            (reject '("pause") ':discover nil)
-           (test-assert (not (probe-file (localgroup-registry-pathname configuration "d6uouHJ")))
+           (test-assert (not (probe-file (world-channel-endpoint-pathname configuration "d6uouHJ")))
                         "implicit discovery prunes stale endpoints")
            ;; A stale endpoint does not make a sole live endpoint ambiguous.
            (publish "d6uouHJ" 3)
@@ -921,7 +914,7 @@ Each transcript event takes a line of its own."
            (dolist (selector '("b6uouHJ" "b-6uouHJ" "b-6" "builder" "BUILDER"
                                "@builder" "@BUILDER"))
              (check-targets selector))
-           (test-assert (not (probe-file (localgroup-registry-pathname configuration "d6uouHJ")))
+           (test-assert (not (probe-file (world-channel-endpoint-pathname configuration "d6uouHJ")))
                         "a stale endpoint is removed while selecting the sole live endpoint")
            ;; Multiple reachable endpoints require a selector for every operation.
            (publish "c6uouHJ" 2)
@@ -935,13 +928,13 @@ Each transcript event takes a line of its own."
            ;; Explicit unavailable targets fail rather than falling back to a live one.
            (publish "d6uouHJ" 3)
            (reject '("pause" "d") ':pause '("d6uouHJ"))
-           (test-assert (not (probe-file (localgroup-registry-pathname configuration "d6uouHJ")))
+           (test-assert (not (probe-file (world-channel-endpoint-pathname configuration "d6uouHJ")))
                         "explicit operations prune an unreachable target")
            (reject '("pause" "z") ':discover '("z")))))))
   nil)
 
-(-> test-localgroup-session-prefixes () null)
-(defun test-localgroup-session-prefixes ()
+(-> test-channel-endpoint-prefixes () null)
+(defun test-channel-endpoint-prefixes ()
   "Test CLI session selection by unique canonical, displayed, and legacy prefixes."
   (with-test-configuration (configuration root)
     (declare (ignore root))
@@ -951,12 +944,9 @@ Each transcript event takes a line of its own."
       (labels ((publish (session-id)
                  "Publish a private discovery record for SESSION-ID."
                  (snapshot-write
-                  (localgroup-registry-pathname configuration session-id)
-                  (list :localgroup-endpoint
-                        :version image-daemon:*daemon-registry-version*
-                        :session-id session-id :pid 1 :address "127.0.0.1"
-                        :port 1 :token "prefix-test-token"
-                        :created-at (get-universal-time))))
+                  (world-channel-endpoint-pathname configuration session-id)
+                  (image-daemon:daemon-registry-record :identifier session-id :token "prefix-test-token" :port 1
+                                     :created-at (get-universal-time) :pid 1)))
 
                (invoke (arguments)
                  "Run one CLI command and return its single endpoint call."
@@ -982,7 +972,7 @@ Each transcript event takes a line of its own."
                              (progn
                                (invoke (list "pause" selector))
                                nil)
-                           (localgroup-error (condition)
+                           (world-terminal-error (condition)
                              condition))))
                    (test-assert
                     (and condition
@@ -996,13 +986,13 @@ Each transcript event takes a line of its own."
                     "a failed selector reports discovery details without an endpoint call"))))
         (test-call-with-function-replacements
          (list
-          (list 'localgroup--client-configuration (lambda () configuration))
+          (list 'world-terminal--client-configuration (lambda () configuration))
           ;; Prefix routing uses fixture records whose processes have exited.
           (list 'ls-compat.posix:process-state
                 (lambda (pid) (declare (ignore pid)) ':dead))
-          (list 'localgroup-query-record
+          (list 'world-terminal-query-record
                 (lambda (entry operation &optional arguments)
-                  (let ((session-id (localgroup--record-session-id (rest entry))))
+                  (let ((session-id (world-terminal--record-session-id (rest entry))))
                     (push (list session-id operation arguments) calls)
                     (list :ok :operation operation :session-id session-id)))))
          (lambda ()
@@ -1036,49 +1026,49 @@ Each transcript event takes a line of its own."
                           "each CLI operation resolves its session fragment")))))))
   nil)
 
-(-> test-localgroup-protocol () null)
-(defun test-localgroup-protocol ()
+(-> test-world-terminal-protocol () null)
+(defun test-world-terminal-protocol ()
   "Test bounded safe packets, private discovery, status, and control routing."
-  (test-localgroup-session-identifiers)
+  (test-channel-endpoint-identifiers)
   (let* ((timestamp     (encode-universal-time 5 4 3 2 1 2025 0))
          (status
-          (list :localgroup-status :session-id (identifier-from-seed timestamp 0) :pid
+          (list :world-terminal-status :session-id (identifier-from-seed timestamp 0) :pid
                 41234 :terminal-client-pid 51234 :state ':idle :created-at timestamp :conversation-display-id
                 "n-ew1234" :queued-input-count 0 :steering-input-count 0 :task-live-count
                 0 :cwd "/tmp/example"))
          (titled-status (append status (list :conversation-title "Named local session")))
          (plain-output
           (with-output-to-string (stream)
-            (localgroup-print-statuses (list status titled-status) :stream stream :styled-p nil
+            (world-terminal-print-statuses (list status titled-status) :stream stream :styled-p nil
                                        :columns 100)))
          (styled-output
           (with-output-to-string (stream)
-            (localgroup-print-statuses (list status) :stream stream :styled-p t :columns
+            (world-terminal-print-statuses (list status) :stream stream :styled-p t :columns
                                        100)))
          (title-output
           (with-output-to-string (stream)
-            (localgroup-print-statuses (list titled-status) :stream stream :styled-p nil
+            (world-terminal-print-statuses (list titled-status) :stream stream :styled-p nil
                                        :columns 80)))
          (fallback-output
           (with-output-to-string (stream)
-            (localgroup-print-statuses (list status) :stream stream :styled-p nil
+            (world-terminal-print-statuses (list status) :stream stream :styled-p nil
                                        :columns 52)))
          (narrow-output
           (with-output-to-string (stream)
-            (localgroup-print-statuses (list titled-status status) :stream stream :styled-p nil
+            (world-terminal-print-statuses (list titled-status status) :stream stream :styled-p nil
                                        :columns 24))))
     (test-assert
      (and (search (identifier-display (getf (rest status) :session-id)) plain-output)
           (search "51234" plain-output) (search "/tmp/example" plain-output)
           (not (search (string #\Esc) plain-output)))
-     "localgroup status renders session fields without ANSI controls")
+     "world-terminal status renders session fields without ANSI controls")
     (test-assert
      (and (search "Named local session" title-output)
           (search "Named local session" narrow-output)
           (search "n-ew1234" fallback-output)
-          (eq (localgroup--status-field-style titled-status ':conversation) ':plain)
-          (eq (localgroup--status-field-style status ':conversation) ':code))
-     "localgroup status shows titles at every width and falls back to coded IDs")
+          (eq (world-terminal--status-field-style titled-status ':conversation) ':plain)
+          (eq (world-terminal--status-field-style status ':conversation) ':code))
+     "world-terminal status shows titles at every width and falls back to coded IDs")
     (labels ((separator-positions (line separator)
                "Return the character offsets of SEPARATOR within LINE."
                (loop for character across line
@@ -1110,11 +1100,11 @@ Each transcript event takes a line of its own."
                                          #\Box_Drawings_Light_Vertical_And_Horizontal
                                          #\Box_Drawings_Light_Vertical)))))
                  table))
-           (format nil "localgroup columns align without outer borders at ~D columns" columns)))))
+           (format nil "world-terminal columns align without outer borders at ~D columns" columns)))))
     (test-assert
      (and (search (terminal-style-sequence ':brand) styled-output)
           (search (terminal-style-sequence ':success) styled-output))
-     "localgroup status applies semantic ANSI styles only when requested")
+     "world-terminal status applies semantic ANSI styles only when requested")
     (test-assert
      (and (search "2025-01-02T03:04Z" styled-output)
           (notany (lambda (character) (find character "│┌┐└┘├┤┬┴┼")) narrow-output)
@@ -1122,9 +1112,9 @@ Each transcript event takes a line of its own."
                   narrow-output)
           (every (lambda (line) (<= (text-cell-width line) 24))
                  (uiop/utility:split-string narrow-output :separator '(#\Newline))))
-     "localgroup status exposes start times and fits separated borderless narrow cards"))
+     "world-terminal status exposes start times and fits separated borderless narrow cards"))
   (with-test-configuration (configuration)
-    (let ((screen (localgroup-screen-create
+    (let ((screen (world-terminal-screen-create
                    :terminal (make-instance 'recording-terminal :columns 80))))
       (test-call-with-function-replacements
        (list
@@ -1142,7 +1132,7 @@ Each transcript event takes a line of its own."
               (progn
                 (channel-view-run (channel-view-create configuration "NONTTY" screen :read-only-p t))
                 nil)
-            (localgroup-error (condition)
+            (world-terminal-error (condition)
               (and (eq (daemon-error-operation condition) ':attach)
                    (search "interactive terminal" (autolith-error-message condition)))))
           "a terminal client rejects noninteractive input before connecting")))))
@@ -1155,18 +1145,18 @@ Each transcript event takes a line of its own."
         (progn
          (configuration-ensure-directories configuration)
          (multiple-value-setq (application controller)
-           (test-localgroup--application configuration))
+           (test-world-terminal--application configuration))
          (conversation-append-user-message (application-conversation application)
-                                           "named localgroup session")
-         (setf session (localgroup-start application))
+                                           "named world-terminal session")
+         (setf session (world-terminal-start application))
          (let* ((record-pathname (image-daemon:daemon-runtime-registry-pathname session))
                 (record          (image-daemon:daemon-registry-read record-pathname))
                 (response
-                 (daemon-call (image-daemon:daemon-runtime-port session)
+                 (world-terminal-call (image-daemon:daemon-runtime-port session)
                               (image-daemon:daemon-runtime-token session) ':status))
                 (status          (getf (rest response) :status)))
            (test-assert (image-daemon:daemon-registry-record-p record)
-            "localgroup start publishes one valid private record")
+            "world-terminal start publishes one valid private record")
            (test-assert
             (and (eq (first response) ':ok)
                  (identifier-p (image-daemon:daemon-runtime-identifier session))
@@ -1176,19 +1166,19 @@ Each transcript event takes a line of its own."
                  (string= (getf (rest status) :session-id)
                           (image-daemon:daemon-runtime-identifier session))
                  (string= (getf (rest status) :conversation-title)
-                          "Named localgroup session")
+                          "Named world-terminal session")
                  (getf (rest status) :idle-p) (getf (rest status) :waiting-for-input-p)
                  (zerop (getf (rest status) :task-live-count)))
-            "new localgroup endpoints publish their active conversation identity")
+            "new world-terminal endpoints publish their active conversation identity")
            (dolist (case '((0 0 :idle t) (1 0 :working nil) (0 1 :working nil)))
              (destructuring-bind (children executions expected-state idle-p) case
                (test-call-with-function-replacements
-                (list (list 'localgroup--task-counts
+                (list (list 'world-terminal--task-counts
                             (lambda (owner)
                               (declare (ignore owner))
                               (values children 0 (+ children executions)))))
                 (lambda ()
-                  (let ((properties (rest (localgroup-status-snapshot session))))
+                  (let ((properties (rest (world-terminal-status-snapshot session))))
                     (test-assert
                      (and (eq (getf properties :state) expected-state)
                           (eq (getf properties :idle-p) idle-p)
@@ -1198,7 +1188,7 @@ Each transcript event takes a line of its own."
            (test-assert
             (eq
              (first
-              (daemon-call (image-daemon:daemon-runtime-port session) "wrong-token"
+              (world-terminal-call (image-daemon:daemon-runtime-port session) "wrong-token"
                            ':status))
              ':error)
             "an invalid capability token receives no successful status"))
@@ -1207,25 +1197,25 @@ Each transcript event takes a line of its own."
                (created-at (image-daemon:daemon-runtime-created-at session)))
            (test-assert
             (eq
-             (application-call-with-localgroup-quiesced application
+             (application-call-with-world-terminal-quiesced application
                                                         (lambda ()
                                                           (and
                                                            (null
-                                                            (application-localgroup-session
+                                                            (application-channel-endpoint
                                                              application))
                                                            ':quiesced)))
              ':quiesced)
-            "checkpoint quiescence removes every localgroup runtime thread")
-           (setf session (application-localgroup-session application))
+            "checkpoint quiescence removes every world-terminal runtime thread")
+           (setf session (application-channel-endpoint application))
            (test-assert
             (and (string= (image-daemon:daemon-runtime-identifier session) identifier)
                  (string= (image-daemon:daemon-runtime-token session) token)
                  (= (image-daemon:daemon-runtime-created-at session) created-at))
             "checkpoint quiescence preserves the active conversation identity"))
-         (daemon-call (image-daemon:daemon-runtime-port session)
+         (world-terminal-call (image-daemon:daemon-runtime-port session)
                       (image-daemon:daemon-runtime-token session) ':pause)
-         (test-assert (application-localgroup-paused-p application)
-          "localgroup pause holds queued primary work")
+         (test-assert (application-world-terminal-paused-p application)
+          "world-terminal pause holds queued primary work")
          (let ((kill-response-state nil)
                (write-packet        (symbol-function 'daemon-write-packet)))
            (test-call-with-function-replacements
@@ -1243,39 +1233,39 @@ Each transcript event takes a line of its own."
                        result))))
             (lambda ()
               (let ((response
-                      (daemon-call (image-daemon:daemon-runtime-port session)
+                      (world-terminal-call (image-daemon:daemon-runtime-port session)
                                    (image-daemon:daemon-runtime-token session) ':kill)))
                 (test-assert (eq (first response) ':ok)
-                             "localgroup kill returns its acknowledgement")
+                             "world-terminal kill returns its acknowledgement")
                 (test-assert
                  (task-tests--wait-until (lambda () kill-response-state) 10)
-                 "localgroup kill writes its acknowledgement")
+                 "world-terminal kill writes its acknowledgement")
                 (test-assert (rest kill-response-state)
-                             "localgroup kill writes its acknowledgement before shutdown")
+                             "world-terminal kill writes its acknowledgement before shutdown")
                 (test-assert
                  (task-tests--wait-until
                   (lambda () (application-input-controller-stopping-p controller)) 10)
-                 "localgroup kill requests ordinary graceful shutdown after acknowledgement"))))))
-      (when application (localgroup-stop application))
+                 "world-terminal kill requests ordinary graceful shutdown after acknowledgement"))))))
+      (when application (world-terminal-stop application))
       (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
                                              ':ignore)))
   nil)
 
-(-> test-localgroup-checkpoint-reconnect-transition () null)
-(defun test-localgroup-checkpoint-reconnect-transition ()
+(-> test-world-terminal-checkpoint-reconnect-transition () null)
+(defun test-world-terminal-checkpoint-reconnect-transition ()
   "Test repeated checkpoint reconnects of a controlling and a watching terminal client over real sockets."
   (with-test-configuration (configuration)
     (multiple-value-bind (application controller)
-        (test-localgroup--application configuration :presented-p t)
+        (test-world-terminal--application configuration :presented-p t)
       (let ((presentation (application-ui application)))
         (unwind-protect
              (progn
                (configuration-ensure-directories configuration)
                (terminal-ui-start presentation)
-               (let* ((session    (localgroup-start application))
+               (let* ((session    (world-terminal-start application))
                       (identifier (image-daemon:daemon-runtime-identifier session))
                       (pathname   (image-daemon:daemon-runtime-registry-pathname session))
-                      (entry      (cons pathname (localgroup--registry-record session))))
+                      (entry      (cons pathname (world-terminal--registry-record session))))
                  (world-server-tests--call-with-terminal-client
                   configuration identifier
                   (lambda (type await-controlling-exit controlling)
@@ -1297,7 +1287,7 @@ Each transcript event takes a line of its own."
 
                                 (disconnected-p (view)
                                   "Return true once VIEW's connection to the old endpoint ended."
-                                  (localgroup-client-connection-closed-p
+                                  (world-terminal-client-connection-closed-p
                                    (channel-subscription-connection view)))
 
                                 (shown (view text)
@@ -1313,10 +1303,10 @@ Each transcript event takes a line of its own."
                            (present "old" iteration)
                            (test-assert
                             (eq (handler-case
-                                    (application-call-with-localgroup-quiesced
+                                    (application-call-with-world-terminal-quiesced
                                      application
                                      (lambda ()
-                                       (test-assert (null (application-localgroup-session application))
+                                       (test-assert (null (application-channel-endpoint application))
                                                     "the endpoint is absent in the saver context")
                                        (present "gap" iteration)
                                        (test-assert (task-tests--wait-until
@@ -1326,17 +1316,17 @@ Each transcript event takes a line of its own."
                                                      10)
                                                     "both clients lose the endpoint that stopped for the checkpoint")
                                        (when (= iteration 1)
-                                         (error 'localgroup-error :message   "Synthetic save failure."
+                                         (error 'world-terminal-error :message   "Synthetic save failure."
                                                                   :operation ':checkpoint))
                                        ':saved))
-                                  (localgroup-error ()
+                                  (world-terminal-error ()
                                     ':failed))
                                 (if (zerop iteration) ':saved ':failed))
                             "checkpoint success and failure restore the parent endpoint")
                            (test-assert (task-tests--wait-until #'attached-p 10)
                                         "both clients reconnect to the parent endpoint")
-                           (setf session (application-localgroup-session application))
-                           (let ((status (rest (localgroup-status-snapshot session))))
+                           (setf session (application-channel-endpoint application))
+                           (let ((status (rest (world-terminal-status-snapshot session))))
                              (test-assert
                               (and (eql (getf status :terminal-client-pid) (current-process-id))
                                    (equal (getf status :observer-client-pids) (list (current-process-id)))
@@ -1345,9 +1335,9 @@ Each transcript event takes a line of its own."
                            (test-assert (null (application-input-controller-exit-reason controller))
                                         "a controlling client that leaves for a checkpoint is no lost terminal")
                            (test-assert
-                            (equal (localgroup--wait-for-checkpoint-entry
-                                    entry (localgroup-session-checkpoint-reconnect-id session))
-                                   (cons pathname (localgroup--registry-record session)))
+                            (equal (world-terminal--wait-for-checkpoint-entry
+                                    entry (channel-endpoint-checkpoint-reconnect-id session))
+                                   (cons pathname (world-terminal--registry-record session)))
                             "the persistent transition accepts another authenticated client")
                            (present "new" iteration))
                          (dolist (view (list controlling watching))
@@ -1359,36 +1349,36 @@ Each transcript event takes a line of its own."
                          (test-assert (and (<= (shown controlling "version mismatch") 1)
                                            (zerop (shown watching "version mismatch")))
                                       "a reconnect shows a client of another version no further version note")
-                         (localgroup-finish-attachments application :status 0 :message "done")
+                         (world-terminal-finish-attachments application :status 0 :message "done")
                          (dolist (await-exit (list await-controlling-exit await-watching-exit))
                            (test-assert (equal (funcall await-exit) '(:status 0 :message "done" :details nil))
                                         "the reconnected client receives the normal application exit"))))
                      :read-only-p t))
                   :client-version "0.0.0")
-                 (localgroup-stop application)
+                 (world-terminal-stop application)
                  (test-assert (null (image-daemon:daemon-registry-read pathname))
                               "stopping a checkpoint endpoint removes its extended registry record")))
-          (localgroup-stop application)
+          (world-terminal-stop application)
           (application-input-controller-stop controller)
           (terminal-ui-stop presentation)
           (application-release-conversation-lease application)))))
   nil)
 
-(-> test-localgroup-checkpoint-reconnect-boundaries () null)
-(defun test-localgroup-checkpoint-reconnect-boundaries ()
+(-> test-world-terminal-checkpoint-reconnect-boundaries () null)
+(defun test-world-terminal-checkpoint-reconnect-boundaries ()
   "Test bounded rejection of a checkpoint endpoint with another identity or authentication."
   (with-test-configuration (configuration)
    (multiple-value-bind (application controller)
-       (test-localgroup--application configuration)
+       (test-world-terminal--application configuration)
      (unwind-protect
          (let* ((session
-                 (localgroup-start application :checkpoint-reconnect-id
+                 (world-terminal-start application :checkpoint-reconnect-id
                                    "expected"))
-                (record                                     (localgroup--registry-record session))
+                (record                                     (world-terminal--registry-record session))
                 (entry
                  (cons (image-daemon:daemon-runtime-registry-pathname session)
                        record))
-                (*localgroup-handoff-start-timeout-seconds* 0.1))
+                (*world-startup-start-timeout-seconds* 0.1))
            (dolist
                (change
                 (list (list :checkpoint-reconnect-id "stale")
@@ -1418,10 +1408,10 @@ Each transcript event takes a line of its own."
                     (test-assert
                      (handler-case
                       (progn
-                       (localgroup--wait-for-checkpoint-entry old-entry
+                       (world-terminal--wait-for-checkpoint-entry old-entry
                                                               "expected")
                        nil)
-                      (localgroup-error nil t))
+                      (world-terminal-error nil t))
                      "a missing, mismatched or unauthenticated endpoint is rejected")
                     (test-assert
                      (<
@@ -1429,19 +1419,19 @@ Each transcript event takes a line of its own."
                          internal-time-units-per-second)
                       1)
                      "endpoint rejection has a bounded wait")))))))
-       (localgroup-stop application)
+       (world-terminal-stop application)
        (application-input-controller-stop controller)
        (application-release-conversation-lease application))))
   nil)
 
-(-> test-localgroup-checkpoint-source-precheck-order () null)
-(defun test-localgroup-checkpoint-source-precheck-order ()
+(-> test-world-terminal-checkpoint-source-precheck-order () null)
+(defun test-world-terminal-checkpoint-source-precheck-order ()
   "Test a source-validation failure leaves the attached client connected."
   (unless (or (platform-supports-p *platform* ':forked-image-saver)
               (platform-supports-p *platform* ':restartable-image-saver))
     (test-withheld ':forked-image-saver
                    "checkpoint source validation with an attached client")
-    (return-from test-localgroup-checkpoint-source-precheck-order nil))
+    (return-from test-world-terminal-checkpoint-source-precheck-order nil))
   (with-test-configuration (configuration)
     (let* ((application   nil)
            (controller    nil)
@@ -1452,11 +1442,11 @@ Each transcript event takes a line of its own."
            (progn
              (configuration-ensure-directories configuration)
              (multiple-value-setq (application controller)
-               (test-localgroup--application configuration :presented-p t))
+               (test-world-terminal--application configuration :presented-p t))
              (terminal-ui-start (application-ui application))
-             (setf session (localgroup-start application))
+             (setf session (world-terminal-start application))
              (multiple-value-bind (client seen await)
-                 (test-localgroup--present session)
+                 (test-world-terminal--present session)
                (declare (ignore seen))
                (setf connection client)
                (let ((*checkpoint-thread-quiescer*
@@ -1486,30 +1476,30 @@ Each transcript event takes a line of its own."
                   "source-check failure is reported before session quiescence")
                  (test-assert (zerop quiesce-count)
                               "source-check failure does not invoke session quiescence")
-                 (test-assert (eq (application-localgroup-session application) session)
-                              "source-check failure preserves the active localgroup session"))
+                 (test-assert (eq (application-channel-endpoint application) session)
+                              "source-check failure preserves the active world-terminal session"))
                (terminal-ui-append-finalized (application-ui application) ':after-source-failure
                                              "after-source-failure")
                (test-assert (and (funcall await ':append
                                           (lambda (event)
                                             (search "after-source-failure"
-                                                    (test-localgroup--event-text event))))
-                                 (not (localgroup-client-connection-closed-p connection)))
+                                                    (test-world-terminal--event-text event))))
+                                 (not (world-terminal-client-connection-closed-p connection)))
                             "the original connection receives output after the failure")))
-        (when connection (localgroup-client-close connection))
-        (when application (localgroup-stop application))
+        (when connection (world-terminal-client-close connection))
+        (when application (world-terminal-stop application))
         (when controller (application-input-controller-stop controller))
         (when application
           (terminal-ui-stop (application-ui application))
           (application-release-conversation-lease application)))))
   nil)
 
-(-> test-localgroup-detached-terminal-lifecycle () null)
-(defun test-localgroup-detached-terminal-lifecycle ()
+(-> test-world-terminal-detached-terminal-lifecycle () null)
+(defun test-world-terminal-detached-terminal-lifecycle ()
   "Test a detached session meeting its first terminal client and bounded shutdown with idle clients."
   (with-test-configuration (configuration)
     (multiple-value-bind (application controller)
-        (test-localgroup--application configuration :presented-p t)
+        (test-world-terminal--application configuration :presented-p t)
       (let ((ui            (application-ui application))
             (session       nil)
             (connection    nil)
@@ -1521,76 +1511,76 @@ Each transcript event takes a line of its own."
              (progn
                (configuration-ensure-directories configuration)
                (terminal-ui-start ui)
-               (setf session (localgroup-start application))
+               (setf session (world-terminal-start application))
                (test-assert (and (not (application-terminal-attached-p application))
-                                 (eq (getf (test-localgroup--status session) :terminal-attachment)
+                                 (eq (getf (test-world-terminal--status session) :terminal-attachment)
                                      ':detached))
                             "a detached session is at no terminal before a client attaches")
-               (setf connection (test-localgroup--present session))
+               (setf connection (test-world-terminal--present session))
                (test-assert (and (application-terminal-attached-p application)
-                                 (eq (getf (test-localgroup--status session) :terminal-attachment)
+                                 (eq (getf (test-world-terminal--status session) :terminal-attachment)
                                      ':remote))
                             "the first controlling client puts the detached session at a terminal")
                (setf wedged-thread
                      (make-thread (lambda () (loop (sleep 60)))
-                                  :name "Autolith wedged localgroup test client"))
+                                  :name "Autolith wedged world-terminal test client"))
                (with-lock-held ((image-daemon:daemon-runtime-lock session))
                  (push wedged-thread (image-daemon:daemon-runtime-client-threads session)))
                (setf stop-thread
                      (make-thread
                       (lambda ()
-                        (handler-case (localgroup-stop application)
+                        (handler-case (world-terminal-stop application)
                           (error (condition)
                             (setf stop-failure condition)))
                         (setf stopped-p t))
-                      :name "Autolith localgroup stop test"))
+                      :name "Autolith world-terminal stop test"))
                (test-assert (task-tests--wait-until (lambda () stopped-p) 3)
-                            "localgroup shutdown never waits indefinitely for idle clients")
+                            "world-terminal shutdown never waits indefinitely for idle clients")
                (test-assert
                 (and (null stop-failure) (not (thread-alive-p wedged-thread))
-                     (null (application-localgroup-session application))
+                     (null (application-channel-endpoint application))
                      (not (probe-file (image-daemon:daemon-runtime-registry-pathname session))))
                 "bounded shutdown reaps clients and unpublishes the session")
                (test-assert (task-tests--wait-until
-                             (lambda () (localgroup-client-connection-closed-p connection))
+                             (lambda () (world-terminal-client-connection-closed-p connection))
                              10)
                             "the idle client's connection ends with the endpoint")
                (test-assert (null (application-input-controller-exit-reason controller))
                             "a client the stopping endpoint let go is no lost terminal"))
-          (when connection (localgroup-client-close connection))
+          (when connection (world-terminal-client-close connection))
           (image-daemon:daemon-stop-thread stop-thread)
           (image-daemon:daemon-stop-thread wedged-thread)
-          (when (application-localgroup-session application) (localgroup-stop application))
+          (when (application-channel-endpoint application) (world-terminal-stop application))
           (application-input-controller-stop controller)
           (terminal-ui-stop ui)
           (application-release-conversation-lease application)))))
   nil)
 
-(-> test-localgroup-client-pids () null)
-(defun test-localgroup-client-pids ()
+(-> test-world-terminal-client-pids () null)
+(defun test-world-terminal-client-pids ()
   "Exercise client PID and attachment reporting through watching, control, detach and connection loss."
   (with-test-configuration (configuration)
     (multiple-value-bind (application controller)
-        (test-localgroup--application configuration :presented-p t)
+        (test-world-terminal--application configuration :presented-p t)
       (let ((session     nil)
             (connections nil))
         (labels ((attach (&rest arguments)
                    "Attach a presenting test client and retain its connection for cleanup."
                    (multiple-value-bind (connection seen await)
-                       (apply #'test-localgroup--present session arguments)
+                       (apply #'test-world-terminal--present session arguments)
                      (declare (ignore seen))
                      (push connection connections)
                      (values connection await)))
 
                  (reported-p (pid observers attachment)
                    "Check the controlling PID, observer PIDs, attachment kind and CLI projection together."
-                   (let ((status (test-localgroup--status session)))
+                   (let ((status (test-world-terminal--status session)))
                      (and (eql (getf status :terminal-client-pid) pid)
                           (equal (getf status :observer-client-pids) observers)
                           (= (getf status :observer-count) (length observers))
                           (eq (getf status :terminal-attachment) attachment)
                           (eq (getf status :terminal-attached-p) (eq attachment ':remote))
-                          (string= (localgroup--status-field-text (cons :localgroup-status status) ':pid)
+                          (string= (world-terminal--status-field-text (cons :world-terminal-status status) ':pid)
                                    (if pid (princ-to-string pid) "-")))))
 
                  (await-report (pid observers attachment)
@@ -1602,7 +1592,7 @@ Each transcript event takes a line of its own."
                (progn
                  (configuration-ensure-directories configuration)
                  (terminal-ui-start (application-ui application))
-                 (setf session (localgroup-start application))
+                 (setf session (world-terminal-start application))
                  (await-report nil nil ':detached)
                  (let ((watcher (attach :watches-p t :client-pid 1201)))
                    (await-report nil '(1201) ':detached)
@@ -1613,38 +1603,38 @@ Each transcript event takes a line of its own."
                    (let ((earlier (attach :client-pid 2201)))
                      (await-report 2201 '(1201 1202) ':remote)
                      (test-assert
-                      (and (= (getf (test-localgroup--status session) :pid) (current-process-id))
-                           (eq (localgroup-owner-reachability
+                      (and (= (getf (test-world-terminal--status session) :pid) (current-process-id))
+                           (eq (world-terminal-owner-reachability
                                 (image-daemon:daemon-runtime-registry-pathname session)
                                 (image-daemon:daemon-runtime-identifier session) (current-process-id))
                                ':reachable))
                       "the endpoint's process identity and owner reachability use the server PID")
                      (let ((later (attach :client-pid 3301)))
                        (await-report 3301 '(1201 1202 2201) ':remote)
-                       (localgroup-client-call earlier ':state)
+                       (world-terminal-client-call earlier ':state)
                        (await-report 2201 '(1201 1202 3301) ':remote)
-                       (localgroup-client-call watcher ':state)
+                       (world-terminal-client-call watcher ':state)
                        (await-report 2201 '(1201 1202 3301) ':remote)
-                       (localgroup-client-close later)
+                       (world-terminal-client-close later)
                        (await-report 2201 '(1201 1202) ':remote))
-                     (localgroup-client-call earlier ':detach)
-                     (localgroup-client-close earlier)
+                     (world-terminal-client-call earlier ':detach)
+                     (world-terminal-client-close earlier)
                      (await-report nil '(1201 1202) ':detached))
                    (multiple-value-bind (control await) (attach :client-pid 4401)
                      (await-report 4401 '(1201 1202) ':remote)
-                     (localgroup--detach-terminal session)
+                     (world-terminal--detach-terminal session)
                      (test-assert (funcall await ':detach)
                                   "a remote detach tells the controlling client to leave")
-                     (localgroup-client-close control)
+                     (world-terminal-client-close control)
                      (await-report nil '(1201 1202) ':detached))
                    (let ((control (attach :client-pid 5501)))
                      (await-report 5501 '(1201 1202) ':remote)
-                     (localgroup-client-close control)
+                     (world-terminal-client-close control)
                      (await-report nil '(1201 1202) ':detached))
-                   (localgroup-client-close watcher)
+                   (world-terminal-client-close watcher)
                    (await-report nil '(1202) ':detached))
                  (dolist (pid '(nil 0 -1 "123" 1.5))
-                   (let ((connection (localgroup-client-connect
+                   (let ((connection (world-terminal-client-connect
                                       (cons (image-daemon:daemon-runtime-registry-pathname session)
                                             (image-daemon:daemon-runtime-record session))
                                       :name      "terminal"
@@ -1655,21 +1645,21 @@ Each transcript event takes a line of its own."
                                    (lambda () (reported-p nil '(1202) ':remote)) 5)
                                   (format nil "a controlling client that states the process ~S is reported without one"
                                           pid))
-                     (localgroup-client-close connection)
+                     (world-terminal-client-close connection)
                      (await-report nil '(1202) ':detached))))
-            (mapc #'localgroup-client-close connections)
-            (when session (localgroup-stop application))
+            (mapc #'world-terminal-client-close connections)
+            (when session (world-terminal-stop application))
             (application-input-controller-stop controller)
             (terminal-ui-stop (application-ui application))
             (application-release-conversation-lease application))))))
   nil)
 
-(-> test-localgroup-attachments () null)
-(defun test-localgroup-attachments ()
+(-> test-world-terminal-attachments () null)
+(defun test-world-terminal-attachments ()
   "Test a client that watches and a client that controls a session's presentation over the endpoint."
   (with-test-configuration (configuration)
     (multiple-value-bind (application controller)
-        (test-localgroup--application configuration :presented-p t)
+        (test-world-terminal--application configuration :presented-p t)
       (let* ((ui       (application-ui application))
              (terminal (terminal-ui-terminal ui))
              (session  nil)
@@ -1679,12 +1669,12 @@ Each transcript event takes a line of its own."
                  "Wait for a transcript event that shows TEXT and return whether one came."
                  (not (null (funcall await ':append
                                      (lambda (event)
-                                       (search text (test-localgroup--event-text event)))))))
+                                       (search text (test-world-terminal--event-text event)))))))
 
                (refusal (connection command &rest arguments)
                  "Return the message COMMAND is refused with, or NIL when the channel takes it."
-                 (handler-case (progn (apply #'localgroup-client-call connection command arguments) nil)
-                   (localgroup-error (condition)
+                 (handler-case (progn (apply #'world-terminal-client-call connection command arguments) nil)
+                   (world-terminal-error (condition)
                      (autolith-error-message condition))))
 
                (work-items ()
@@ -1696,9 +1686,9 @@ Each transcript event takes a line of its own."
                  (configuration-ensure-directories configuration)
                  (terminal-ui-start ui)
                  (terminal-ui-append-finalized ui ':before-attachment "before attachment")
-                 (setf session (localgroup-start application))
+                 (setf session (world-terminal-start application))
                  (multiple-value-bind (connection seen await)
-                     (test-localgroup--present session :rows 11 :columns 41 :watches-p t)
+                     (test-world-terminal--present session :rows 11 :columns 41 :watches-p t)
                    (declare (ignore seen))
                    (setf watcher connection)
                    (test-assert (shows-p await "before attachment")
@@ -1725,34 +1715,34 @@ Each transcript event takes a line of its own."
                    (test-assert (and (null (work-items))
                                     (= (terminal-columns terminal) 80))
                                 "what a watching client was refused changed nothing")
-                   (test-assert (and (eq (first (getf (localgroup-client-call watcher ':state) :state))
-                                         ':localgroup-status)
+                   (test-assert (and (eq (first (getf (world-terminal-client-call watcher ':state) :state))
+                                         ':world-terminal-status)
                                      (null (refusal watcher ':input-history :start 0 :limit 5)))
                                 "a watching client may ask for the channel's state and input history"))
                  (multiple-value-bind (connection seen await)
-                     (test-localgroup--present session :rows 31 :columns 91)
+                     (test-world-terminal--present session :rows 31 :columns 91)
                    (declare (ignore seen))
                    (setf control connection)
                    (test-assert (and (terminal-interactive-p terminal)
                                      (application-terminal-attached-p application)
                                      (= (terminal-rows terminal) 31)
                                      (= (terminal-columns terminal) 91)
-                                     (eq (getf (test-localgroup--status session) :terminal-attachment)
+                                     (eq (getf (test-world-terminal--status session) :terminal-attachment)
                                          ':remote))
                                 "a controlling client puts the channel at a terminal and lays it out for its pane")
                    (test-assert (shows-p await "observer output")
                                 "a controlling client is replayed what the channel showed before it")
-                   (localgroup-client-call control ':input :action ':submit :text "remote")
+                   (world-terminal-client-call control ':input :action ':submit :text "remote")
                    (test-assert (equal (work-items) (list (list ':message "remote")))
                                 "a controlling client's submission uses the ordinary input queue")
-                   (localgroup-client-call control ':geometry :rows 44 :columns 120)
+                   (world-terminal-client-call control ':geometry :rows 44 :columns 120)
                    (test-assert (and (= (terminal-rows terminal) 44) (= (terminal-columns terminal) 120))
                                 "a controlling client's new pane size lays the channel out again")
-                   (localgroup-client-call control ':detach)
-                   (localgroup-client-close control)
-                   (test-assert (test-localgroup--await-served session 1)
+                   (world-terminal-client-call control ':detach)
+                   (world-terminal-client-close control)
+                   (test-assert (test-world-terminal--await-served session 1)
                                 "the session finishes serving the client that left"))
-                 (test-assert (and (eq (getf (test-localgroup--status session) :terminal-attachment)
+                 (test-assert (and (eq (getf (test-world-terminal--status session) :terminal-attachment)
                                        ':detached)
                                    (null (application-input-controller-exit-reason controller)))
                               "a client that says it leaves on purpose leaves the session running without a terminal")
@@ -1804,20 +1794,20 @@ Each transcript event takes a line of its own."
                              (format nil "a terminal client of version ~S shows ~:[no version note~;one note of both versions below the channel's transcript~]"
                                      client-version noted-p)))))
                       :client-version client-version))))
-            (when control (localgroup-client-close control))
-            (when watcher (localgroup-client-close watcher))
-            (when session (localgroup-stop application))
+            (when control (world-terminal-client-close control))
+            (when watcher (world-terminal-client-close watcher))
+            (when session (world-terminal-stop application))
             (application-input-controller-stop controller)
             (terminal-ui-stop ui)
             (application-release-conversation-lease application))))))
   nil)
 
-(-> test-localgroup-open-instruction-relay () null)
-(defun test-localgroup-open-instruction-relay ()
+(-> test-world-terminal-open-instruction-relay () null)
+(defun test-world-terminal-open-instruction-relay ()
   "Test the terminal client reports reopen advice after its channel told it that the session exits."
   (with-test-configuration (configuration)
     (multiple-value-bind (application controller)
-        (test-localgroup--application configuration :presented-p t)
+        (test-world-terminal--application configuration :presented-p t)
       (let* ((conversation (application-conversation application))
              (identifier   (conversation-identifier conversation)))
         (unwind-protect
@@ -1825,7 +1815,7 @@ Each transcript event takes a line of its own."
                (configuration-ensure-directories configuration)
                (conversation-append-user-message conversation "keep this conversation")
                (terminal-ui-start (application-ui application))
-               (localgroup-start application)
+               (world-terminal-start application)
                (world-server-tests--call-with-terminal-client
                 configuration identifier
                 (lambda (type await-exit view)
@@ -1837,11 +1827,11 @@ Each transcript event takes a line of its own."
                                 (application-input-controller--forced-exit-message
                                  controller ':turn-cancellation)))
                    "The server's forced-exit notice leaves reopen advice to the client")
-                  (localgroup-finish-attachments application :status 0 :message "Channel closed.")
+                  (world-terminal-finish-attachments application :status 0 :message "Channel closed.")
                   (multiple-value-bind (exit ended-p) (funcall await-exit)
                     (let* ((command  (application--open-command application))
                            (output   (with-output-to-string (*error-output*)
-                                       (localgroup-relay-exit configuration exit ':read-only
+                                       (world-terminal-relay-exit configuration exit ':read-only
                                                               :session-id identifier)))
                            (position (search command output)))
                       (test-assert (and ended-p
@@ -1851,18 +1841,18 @@ Each transcript event takes a line of its own."
                       (test-assert (and position
                                         (not (search command output :start2 (+ position (length command)))))
                                    "The client reports the attached channel's reopen command exactly once"))))))
-          (when (application-localgroup-session application) (localgroup-stop application))
+          (when (application-channel-endpoint application) (world-terminal-stop application))
           (application-input-controller-stop controller)
           (terminal-ui-stop (application-ui application))
           (application-release-conversation-lease application)))))
   nil)
 
-(-> test-localgroup-session-exit-relay () null)
-(defun test-localgroup-session-exit-relay ()
+(-> test-channel-endpoint-exit-relay () null)
+(defun test-channel-endpoint-exit-relay ()
   "Test a detached session's launcher exit reaches its controlling terminal client."
   (with-test-configuration (configuration)
     (multiple-value-bind (application controller)
-        (test-localgroup--application configuration :presented-p t)
+        (test-world-terminal--application configuration :presented-p t)
       (let ((message "Autolith will update to 9.9.9 after restoring the terminal.")
             (details (list :crash-capsule "/tmp/capsule.sexp")))
         (unwind-protect
@@ -1870,10 +1860,10 @@ Each transcript event takes a line of its own."
                (configuration-ensure-directories configuration)
                (terminal-ui-start (application-ui application))
                (world-server-tests--call-with-terminal-client
-                configuration (image-daemon:daemon-runtime-identifier (localgroup-start application))
+                configuration (image-daemon:daemon-runtime-identifier (world-terminal-start application))
                 (lambda (type await-exit view)
                   (declare (ignore type view))
-                  (test-assert (localgroup-finish-attachments application
+                  (test-assert (world-terminal-finish-attachments application
                                                               :status  76
                                                               :message message
                                                               :details details)
@@ -1882,21 +1872,21 @@ Each transcript event takes a line of its own."
                                       (list :status 76 :message message :details details))
                                "the controlling terminal receives the launcher status, message and details")))
                (multiple-value-bind (plain plain-controller)
-                   (test-localgroup--application configuration)
+                   (test-world-terminal--application configuration)
                  (unwind-protect
                       (test-assert
-                       (not (localgroup-finish-attachments plain :status 76 :message message))
+                       (not (world-terminal-finish-attachments plain :status 76 :message message))
                        "a session on its own terminal has no clients to tell")
                    (application-input-controller-stop plain-controller)
                    (application-release-conversation-lease plain))))
-          (when (application-localgroup-session application) (localgroup-stop application))
+          (when (application-channel-endpoint application) (world-terminal-stop application))
           (application-input-controller-stop controller)
           (terminal-ui-stop (application-ui application))
           (application-release-conversation-lease application)))))
   nil)
 
-(-> test-localgroup-relay-exit () null)
-(defun test-localgroup-relay-exit ()
+(-> test-world-terminal-relay-exit () null)
+(defun test-world-terminal-relay-exit ()
   "Test the relaying process exits like its session, and observers only report it."
   (with-test-configuration (configuration)
     (let* ((statuses nil)
@@ -1918,7 +1908,7 @@ Each transcript event takes a line of its own."
                                (list nil ':control) (list nil ':read-only)))
               (destructuring-bind (result mode) case
                 (let* ((report   (with-output-to-string (*error-output*)
-                                   (localgroup-relay-exit configuration result mode :session-id "bopen1")))
+                                   (world-terminal-relay-exit configuration result mode :session-id "bopen1")))
                        (command  (channel-open-command "bopen1"))
                        (position (search command report)))
                   (test-assert (and position
@@ -1932,7 +1922,7 @@ Each transcript event takes a line of its own."
             (let* ((command  (channel-open-command "bopen1"))
                    (message  (format nil "Channel closed. Run ~A" command))
                    (report   (with-output-to-string (*error-output*)
-                               (localgroup-relay-exit configuration (list :status 78 :message message)
+                               (world-terminal-relay-exit configuration (list :status 78 :message message)
                                                       ':control :session-id "bopen1")))
                    (position (search command report)))
               (test-assert (and position
@@ -1941,17 +1931,17 @@ Each transcript event takes a line of its own."
               (test-assert (eql (first statuses) 78)
                            "Already-reported advice preserves the controlling exit status"))
            (with-output-to-string (*error-output*)
-             (localgroup-relay-exit configuration crash ':read-only))
+             (world-terminal-relay-exit configuration crash ':read-only))
            (test-assert (not (probe-file pointer))
                         "an observer leaves the session's crash capsule to the controller")
            (with-output-to-string (*error-output*)
-             (localgroup-relay-exit configuration crash ':control))
+             (world-terminal-relay-exit configuration crash ':control))
            (test-assert (and (eql (first statuses) 70)
                              (string= (uiop:read-file-line pointer) (namestring capsule)))
                         "the controlling terminal hands the session's crash capsule to its launcher")
            (delete-file pointer)
            (with-output-to-string (*error-output*)
-             (localgroup-relay-exit
+             (world-terminal-relay-exit
               configuration
               (list :status 70 :details (list :crash-capsule "/tmp/elsewhere.sexp"))
               ':control))
@@ -1984,35 +1974,30 @@ Each transcript event takes a line of its own."
                              kind (eq kind :fatal))))))
   nil)
 
-(-> test-localgroup-query-keeps-slow-endpoint () null)
-(defun test-localgroup-query-keeps-slow-endpoint ()
+(-> test-world-terminal-query-keeps-slow-endpoint () null)
+(defun test-world-terminal-query-keeps-slow-endpoint ()
   "Test a late answer keeps an endpoint record while a refused connection prunes it."
   (with-test-configuration (configuration)
     (let* ((listener (make-instance 'sb-bsd-sockets:inet-socket
                                     :type     ':stream
                                     :protocol ':tcp))
-           (pathname (localgroup-registry-pathname configuration "slowendpoint"))
+           (pathname (world-channel-endpoint-pathname configuration "slowendpoint"))
            (record   nil))
       (unwind-protect
            (progn
              (sb-bsd-sockets:socket-bind
               listener (sb-bsd-sockets:make-inet-address "127.0.0.1") 0)
              (sb-bsd-sockets:socket-listen listener 4)
-             (setf record (list :localgroup-endpoint
-                                :version    1
-                                :session-id "slowendpoint"
-                                :pid        (current-process-id)
-                                :address    "127.0.0.1"
-                                :port       (nth-value 1 (sb-bsd-sockets:socket-name listener))
-                                :token      "token"
-                                :created-at 1))
+             (setf record (image-daemon:daemon-registry-record :identifier "slowendpoint" :token "token" :port
+                                     (nth-value 1 (sb-bsd-sockets:socket-name listener))
+                                     :created-at 1 :pid (current-process-id)))
              (ensure-directories-exist pathname)
              (image-daemon:daemon-registry-publish pathname record)
              (flet ((query-fails-p ()
                       (let ((image-daemon:*daemon-connect-timeout-seconds* 0.2))
                         (handler-case
-                            (progn (localgroup-query-record (cons pathname record) ':status) nil)
-                          (localgroup-error () t)))))
+                            (progn (world-terminal-query-record (cons pathname record) ':status) nil)
+                          (world-terminal-error () t)))))
                (test-assert (query-fails-p) "an endpoint that never answers fails the request")
                (test-assert (probe-file pathname)
                             "a live process that answers late keeps its record")

@@ -8,7 +8,7 @@
   (let ((entry (or entry (world-client-entry configuration))))
     (when entry
       (handler-case
-          (mapcar #'rest (getf (rest (localgroup-query-record entry ':channels)) :channels))
+          (mapcar #'rest (getf (rest (world-terminal-query-record entry ':channels)) :channels))
         (autolith-error ()
           nil)))))
 
@@ -45,7 +45,7 @@ No presentation discovery is written back to the world store."
   (remove-duplicates
    (append (mapcar (lambda (status) (getf status :session-id))
                    (world-channel-statuses configuration))
-           (loop for entry in (handler-case (localgroup-endpoint-records configuration)
+           (loop for entry in (handler-case (world-terminal-endpoint-records configuration)
                                 (autolith-error ()
                                   nil))
                  for properties = (rest (rest entry))

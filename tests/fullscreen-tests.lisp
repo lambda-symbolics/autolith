@@ -747,7 +747,7 @@
 (defun test-terminal-fullscreen-relayed-wheel ()
   "Take only well-formed wheel events from a client and scroll the viewport with them."
   (let ((terminal (make-instance 'recording-terminal :columns 40 :rows 12))
-        (events   (remove-if-not #'localgroup--terminal-event-p
+        (events   (remove-if-not #'world-terminal--terminal-event-p
                                  '((:scroll 0) (:scroll "up") (:scroll -1 :extra)
                                    (:scroll -1) (:scroll 1)))))
     (test-assert (equal events '((:scroll -1) (:scroll 1)))
@@ -1071,8 +1071,8 @@
                    "completed commands expose no cancellation hit regions")))
   nil)
 
-(-> test-localgroup-click-events () null)
-(defun test-localgroup-click-events ()
+(-> test-world-terminal-click-events () null)
+(defun test-world-terminal-click-events ()
   "Test relayed click, drag and release packets are accepted only with bounded one-based coordinates."
   (dolist (case '(((:click 3 7) t)
                   ((:click 1 1) t)
@@ -1086,7 +1086,7 @@
                   ((:drag 0 7) nil)
                   ((:scroll -1) t)))
     (destructuring-bind (event expected) case
-      (test-assert (eq expected (localgroup--terminal-event-p event))
+      (test-assert (eq expected (world-terminal--terminal-event-p event))
                    (format nil "relay validation of ~S" event))))
   nil)
 

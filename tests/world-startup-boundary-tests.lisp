@@ -1,43 +1,40 @@
 (in-package #:autolith)
 
-(-> test-localgroup--write-startup-ticket
-    (application localgroup-session keyword)
+(-> test-world-terminal--write-startup-ticket
+    (application channel-endpoint keyword)
     pathname)
-(defun test-localgroup--write-startup-ticket (application session mode)
+(defun test-world-terminal--write-startup-ticket (application session mode)
   "Publish a startup ticket for cancellation boundary tests."
   (let ((conversation (application-conversation application)))
     (unless (conversation-persisted-p conversation)
-      (conversation-append-record conversation (list :localgroup-handoff :mode mode))))
+      (conversation-append-record conversation (list :world-startup :launch-id nil))))
   (let* ((configuration (application-configuration application))
          (conversation  (application-conversation application))
          (pathname
-          (localgroup-handoff--pathname configuration
+          (world-startup--pathname configuration
                                         (image-daemon:daemon-runtime-identifier
                                          session)))
          (draft         (line-editor-text (terminal-ui-editor (application-ui application))))
          (record
-          (list :localgroup-handoff :version *localgroup-handoff-version* :session-id
-                (image-daemon:daemon-runtime-identifier session) :token
-                (image-daemon:daemon-runtime-token session) :created-at
-                (image-daemon:daemon-runtime-created-at session) :mode mode :state
-                ':pending :fresh-conversation-p nil :old-pid (current-process-id)
-                :replacement-pid nil :conversation-id
-                (conversation-identifier conversation) :draft draft)))
-    (localgroup-handoff--write-record pathname record)
+          (list :world-startup :launch-id (image-daemon:daemon-runtime-identifier session) :version
+      *world-startup-version* :token (image-daemon:daemon-runtime-token session) :created-at
+      (image-daemon:daemon-runtime-created-at session) :state ':pending :old-pid
+      (current-process-id) :replacement-pid nil)))
+    (world-startup--write-record pathname record)
     pathname))
 
-;;;; -- Localgroup Handoff Boundary Tests --
+;;;; -- World-Terminal Handoff Boundary Tests --
 
-(-> test-localgroup-handoff-cancellation () null)
-(defun test-localgroup-handoff-cancellation ()
+(-> test-world-startup-cancellation () null)
+(defun test-world-startup-cancellation ()
   "Test that timeout cancellation defeats delayed startup and reaps its process."
   (with-platform-capability (':detached-sessions
                              "handoff cancellation against a supervised process")
-    (test-localgroup--handoff-cancellation))
+    (test-world-terminal--handoff-cancellation))
   nil)
 
-(-> test-localgroup--handoff-cancellation () null)
-(defun test-localgroup--handoff-cancellation ()
+(-> test-world-terminal--handoff-cancellation () null)
+(defun test-world-terminal--handoff-cancellation ()
   "Race a supervised replacement against handoff timeout and claim cancellation."
   (let* ((configuration       (test-configuration))
          (root                (test-configuration-root configuration))
@@ -55,12 +52,12 @@
     (unwind-protect
          (progn
            (configuration-ensure-directories configuration)
-           (setf application (values (test-localgroup--leased-application configuration))
-                 session     (localgroup-start application)
-                 pathname    (test-localgroup--write-startup-ticket application session ':detach))
-           (let ((record (localgroup-handoff--read configuration pathname)))
+           (setf application (values (test-world-terminal--leased-application configuration))
+                 session     (world-terminal-start application)
+                 pathname    (test-world-terminal--write-startup-ticket application session ':detach))
+           (let ((record (world-startup--read configuration pathname)))
              (setf process
-                   (localgroup-handoff--launch-supervised
+                   (world-startup--launch-supervised
                      :arguments       (list (namestring sb-ext:*runtime-pathname*)
                                             "--noinform" "--non-interactive"
                                             "--eval" "(sleep 30)")
@@ -71,16 +68,16 @@
                    (make-thread
                     (lambda ()
                       (sleep 0.1)
-                      (let ((*localgroup-handoff-setsid-function* (lambda () 0)))
+                      (let ((*world-startup-setsid-function* (lambda () 0)))
                         (setf startup-cancelled-p
                               (handler-case
                                   (progn
-                                    (localgroup-handoff-begin-startup record)
+                                    (world-startup-begin-startup record)
                                     nil)
-                                (localgroup-error () t)))))
+                                (world-terminal-error () t)))))
                     :name "Autolith delayed handoff startup"))
              (test-assert
-              (localgroup-handoff--stop-replacement process pathname)
+              (world-startup--stop-replacement process pathname)
               "timeout cancellation positively reaps the launched process")
              (join-thread startup-thread)
              (test-assert
@@ -90,14 +87,14 @@
                     (image-daemon:handoff-ticket-sibling pathname ':cancelled)))
               "a delayed replacement cannot reclaim an invalidated handoff"))
            (setf claimed-pathname
-                 (test-localgroup--write-startup-ticket application session ':detach))
+                 (test-world-terminal--write-startup-ticket application session ':detach))
            (let ((record
-                   (localgroup-handoff--read
+                   (world-startup--read
                     configuration claimed-pathname)))
              (setf claim-thread
                    (make-thread
                     (lambda ()
-                      (let ((*localgroup-handoff-setsid-function*
+                      (let ((*world-startup-setsid-function*
                               (lambda ()
                                 (with-lock-held (claim-lock)
                                   (setf claim-entered-p t))
@@ -107,7 +104,7 @@
                                     (return))
                                   (sleep 0.01))
                                 0)))
-                        (localgroup-handoff-begin-startup record)))
+                        (world-startup-begin-startup record)))
                     :name "Autolith claimed handoff race"))
              (test-assert
               (task-tests--wait-until
@@ -115,7 +112,7 @@
                  (with-lock-held (claim-lock) claim-entered-p))
                2)
               "replacement reaches the post-claim startup boundary")
-             (localgroup-handoff--cancel claimed-pathname)
+             (world-startup--cancel claimed-pathname)
              (with-lock-held (claim-lock)
                (setf release-claim-p t))
              (join-thread claim-thread)
@@ -123,12 +120,12 @@
               (and
                (not (probe-file
                      (image-daemon:handoff-ticket-sibling claimed-pathname ':claimed)))
-               (let ((*localgroup-startup-record* record))
+               (let ((*world-startup-record* record))
                  (handler-case
                      (progn
-                       (localgroup-handoff-assert-startup-active)
+                       (world-startup-assert-startup-active)
                        nil)
-                   (localgroup-error () t))))
+                   (world-terminal-error () t))))
               "cancellation after atomic claim cannot be overwritten by PID acknowledgement")))
       (when (and startup-thread (thread-alive-p startup-thread))
         (ignore-errors (join-thread startup-thread)))
@@ -144,7 +141,7 @@
       (when claimed-pathname
         (image-daemon:handoff-ticket-delete claimed-pathname))
       (when application
-        (localgroup-stop application)
+        (world-terminal-stop application)
         (application-release-conversation-lease application))
       (platform-delete-directory-tree *platform* root
                                       :validate          t

@@ -26,7 +26,7 @@
   ((screen
     :initarg       :screen
     :reader        pane-terminal-screen
-    :type          localgroup-screen
+    :type          world-terminal-screen
     :documentation "The client screen whose channel pane this terminal is.")
    (request-function
     :initarg       :request-function
@@ -44,11 +44,11 @@ Its frames go to the screen, which composes them beside the side panel and
 paints the client's own terminal. Its input is that terminal's, less what the
 side panel takes."))
 
-(-> pane-terminal-create (localgroup-screen &key (:request-function (option function))
+(-> pane-terminal-create (world-terminal-screen &key (:request-function (option function))
                                                (:service-function (option function))) pane-terminal)
 (defun pane-terminal-create (screen &key request-function service-function)
   "Return the terminal of SCREEN's channel pane at its current size."
-  (multiple-value-bind (rows columns) (localgroup-screen-pane-size screen)
+  (multiple-value-bind (rows columns) (world-terminal-screen-pane-size screen)
     (make-instance 'pane-terminal
                    :screen           screen
                    :request-function request-function
@@ -56,7 +56,7 @@ side panel takes."))
                    :rows             rows
                    :columns          columns
                    :interactive-p    t
-                   :styled-p         (terminal-styled-p (localgroup-screen-terminal screen)))))
+                   :styled-p         (terminal-styled-p (world-terminal-screen-terminal screen)))))
 
 (defmethod terminal-start ((terminal pane-terminal))
   "Count TERMINAL as started; the screen's own terminal is its client's to start."
@@ -71,13 +71,13 @@ side panel takes."))
 (defmethod terminal--write ((terminal pane-terminal) text)
   "Write control TEXT, such as a title or a clipboard sequence, to the screen's terminal between frames."
   (let ((screen (pane-terminal-screen terminal)))
-    (with-lock-held ((localgroup-screen-lock screen))
-      (terminal--write (localgroup-screen-terminal screen) text)))
+    (with-lock-held ((world-terminal-screen-lock screen))
+      (terminal--write (world-terminal-screen-terminal screen) text)))
   nil)
 
 (defmethod terminal-flush ((terminal pane-terminal))
   "Flush the screen's terminal."
-  (terminal-flush (localgroup-screen-terminal (pane-terminal-screen terminal))))
+  (terminal-flush (world-terminal-screen-terminal (pane-terminal-screen terminal))))
 
 (defmethod terminal-plain-output-p ((terminal pane-terminal))
   "Return NIL: a pane shows frames, never plain output."
@@ -87,7 +87,7 @@ side panel takes."))
   "Return whether the screen's terminal has input."
   (let ((service (pane-terminal-service-function terminal)))
     (when service (funcall service)))
-  (terminal-input-ready-p (localgroup-screen-terminal (pane-terminal-screen terminal))))
+  (terminal-input-ready-p (world-terminal-screen-terminal (pane-terminal-screen terminal))))
 
 (defmethod terminal-read-event ((terminal pane-terminal))
   "Read one event for a modal reader of the pane, less what the side panel takes.
@@ -98,8 +98,8 @@ modal reader so the view can act on it."
   (let ((service (pane-terminal-service-function terminal)))
     (when service (funcall service)))
   (let* ((screen (pane-terminal-screen terminal))
-         (event  (localgroup-screen-filter-event
-                  screen (terminal-read-event (localgroup-screen-terminal screen)))))
+         (event  (world-terminal-screen-filter-event
+                  screen (terminal-read-event (world-terminal-screen-terminal screen)))))
     (cond
       ((and (consp event) (eq (first event) ':switch))
        (let ((function (pane-terminal-request-function terminal)))
@@ -123,7 +123,7 @@ modal reader so the view can act on it."
      &key (cursor-row 0) (cursor-column 0) (cursor-visible-p t) whole-screen-p)
   "Give the screen ROWS as the pane's complete frame; it paints what changed."
   (declare (ignore painter))
-  (localgroup-screen-show-frame
+  (world-terminal-screen-show-frame
    (pane-terminal-screen terminal)
    (clinedi:make-frame-snapshot rows
                                 :height (max 1 (terminal-rows terminal))
@@ -158,7 +158,7 @@ modal reader so the view can act on it."
   ((screen
     :initarg       :screen
     :reader        channel-view-screen
-    :type          localgroup-screen
+    :type          world-terminal-screen
     :documentation "The client's screen the view paints its pane of.")
    (ui
     :accessor      channel-view-ui
@@ -254,12 +254,12 @@ modal reader so the view can act on it."
 
 (defmethod channel-subscription-arguments ((view channel-view))
   "Say that this client presents, whether it only watches, and how large and how styled its pane is."
-  (multiple-value-bind (rows columns) (localgroup-screen-pane-size (channel-view-screen view))
+  (multiple-value-bind (rows columns) (world-terminal-screen-pane-size (channel-view-screen view))
     (list :presents-p t
           :watches-p  (channel-view-read-only-p view)
           :rows       rows
           :columns    columns
-          :styled-p   (terminal-styled-p (localgroup-screen-terminal (channel-view-screen view)))
+          :styled-p   (terminal-styled-p (world-terminal-screen-terminal (channel-view-screen view)))
           :client-pid (current-process-id))))
 
 (-> channel-view--finish (channel-view list) null)
@@ -271,7 +271,7 @@ modal reader so the view can act on it."
   nil)
 
 (-> channel-view-create
-    (configuration string localgroup-screen &key (:read-only-p boolean)) channel-view)
+    (configuration string world-terminal-screen &key (:read-only-p boolean)) channel-view)
 (defun channel-view-create (configuration identifier screen &key read-only-p)
   "Return a view of channel IDENTIFIER that paints SCREEN's pane, not yet attached.
 
@@ -305,14 +305,14 @@ With READ-ONLY-P it watches the channel and sends it no input."
 
 The prefix is unsequenced and ends at :REPLAYED. Consuming one packet at a
 time avoids retaining a second transcript in the bounded live event queue."
-  (when (eq (getf (rest (localgroup-client-connection-attached connection)) :presentation-replay-p) t)
+  (when (eq (getf (rest (world-terminal-client-connection-attached connection)) :presentation-replay-p) t)
     (with-lock-held ((channel-subscription-lock view))
       (when (channel-subscription-closed-p view)
         (error 'channel-subscription-unavailable :message "The view closed during attachment."))
       (setf (channel-subscription-connection view) connection))
     (let ((*channel-view-replaying* view))
-      (loop for packet = (daemon-read-decodable-packet (localgroup-client-connection-stream connection))
-            do (unless (and (localgroup-message-p packet) (eq (first packet) ':ui)
+      (loop for packet = (daemon-read-decodable-packet (world-terminal-client-connection-stream connection))
+            do (unless (and (world-terminal-message-p packet) (eq (first packet) ':ui)
                             (null (getf (rest packet) :sequence)))
                  (error 'channel-subscription-unavailable
                         :message "The channel's initial presentation ended before its replay boundary."))
@@ -402,7 +402,7 @@ reader objects exceed the budget rather than escaping its bound."
                                       :message                 "The view fell behind its channel; reconnect to resynchronize."))
       (channel-subscription--mark-closed view)
       (let ((connection (channel-subscription-connection view)))
-        (when connection (localgroup-client--disconnect connection)))))
+        (when connection (world-terminal-client--disconnect connection)))))
   nil)
 
 (-> channel-view--drain-events (channel-view) null)
@@ -690,15 +690,15 @@ its user submits."
 (defun channel-view--follow-size (view)
   "Give the pane's UI the size the screen now leaves it, and tell the channel once it settles."
   (let* ((screen   (channel-view-screen view))
-         (terminal (localgroup-screen-terminal screen))
+         (terminal (world-terminal-screen-terminal screen))
          (ui       (channel-view-ui view))
          (now      (get-internal-real-time)))
     (when (shiftf *terminal-resize-pending-p* nil)
       (multiple-value-bind (rows columns) (terminal-current-size)
         (terminal-set-dimensions terminal columns :rows rows))
-      (localgroup-screen-resized screen))
-    (localgroup-screen-take-resize screen)
-    (multiple-value-bind (rows columns) (localgroup-screen-pane-size screen)
+      (world-terminal-screen-resized screen))
+    (world-terminal-screen-take-resize screen)
+    (multiple-value-bind (rows columns) (world-terminal-screen-pane-size screen)
       (let ((pane (terminal-ui-terminal ui)))
         (unless (and (= rows (terminal-rows pane)) (= columns (terminal-columns pane)))
           (terminal-ui-resize ui columns :rows rows)
@@ -718,15 +718,15 @@ its user submits."
 (defun channel-view--step (view)
   "Repaint what time changed, then handle one waiting terminal event or rest a moment."
   (let* ((screen   (channel-view-screen view))
-         (terminal (localgroup-screen-terminal screen))
+         (terminal (world-terminal-screen-terminal screen))
          (ui       (channel-view-ui view)))
     (channel-view--drain-events view)
-    (localgroup-screen-tick screen)
+    (world-terminal-screen-tick screen)
     (channel-view--follow-size view)
     (terminal-ui-refresh-status ui)
     (terminal-ui-fullscreen--autoscroll-tick ui)
     (if (terminal-input-ready-p terminal)
-        (let ((event (localgroup-screen-filter-event screen (terminal-read-event terminal))))
+        (let ((event (world-terminal-screen-filter-event screen (terminal-read-event terminal))))
           (cond
             ((eq event ':ignore)
              nil)
@@ -749,7 +749,7 @@ its user submits."
 (-> channel-view--server-version (channel-view) (option string))
 (defun channel-view--server-version (view)
   "Return the version the server stated when it accepted VIEW, or NIL for one too old to present."
-  (let ((version (getf (rest (localgroup-client-connection-attached
+  (let ((version (getf (rest (world-terminal-client-connection-attached
                               (channel-subscription-connection view)))
                        :server-version)))
     (and (non-empty-string-p version) version)))
@@ -822,10 +822,10 @@ leaves the channel running and gives the terminal back."
       (unwind-protect
            (handler-case
                (sb-sys:with-deadline (:seconds *channel-view-detach-seconds*)
-                 (localgroup-client-send connection ':detach))
+                 (world-terminal-client-send connection ':detach))
              (sb-sys:deadline-timeout () nil)
              (error () nil))
-        (localgroup-client--disconnect connection))))
+        (world-terminal-client--disconnect connection))))
   nil)
 
 (-> channel-view--save-draft (channel-view) null)
@@ -840,8 +840,8 @@ leaves the channel running and gives the terminal back."
                           (or (channel-view-stashed-draft view) "")
                           (terminal-ui--submission-input ui (copy-seq (line-editor-text editor)))))
              (draft   (list :input input :cursor (unless modal-p (line-editor-cursor editor)))))
-        (with-lock-held ((localgroup-screen-lock screen))
-          (setf (gethash (channel-subscription-identifier view) (localgroup-screen-channel-drafts screen))
+        (with-lock-held ((world-terminal-screen-lock screen))
+          (setf (gethash (channel-subscription-identifier view) (world-terminal-screen-channel-drafts screen))
                 draft)))))
   nil)
 
@@ -849,8 +849,8 @@ leaves the channel running and gives the terminal back."
 (defun channel-view--restore-draft (view)
   "Restore this client's draft after VIEW attached, without carrying history between channels."
   (let* ((screen (channel-view-screen view))
-         (draft  (with-lock-held ((localgroup-screen-lock screen))
-                   (gethash (channel-subscription-identifier view) (localgroup-screen-channel-drafts screen))))
+         (draft  (with-lock-held ((world-terminal-screen-lock screen))
+                   (gethash (channel-subscription-identifier view) (world-terminal-screen-channel-drafts screen))))
          (ui     (channel-view-ui view)))
     (when draft
       (with-terminal-ui-locked (ui)
@@ -881,11 +881,11 @@ NOTICE and a CLIENT-VERSION that differs from the server's are shown below
 the transcript once the channel has replayed it. With BOOT-P the client's boot screen stays until the user
 starts the session."
   (let* ((ui            (channel-view-ui view))
-         (terminal      (localgroup-screen-terminal (channel-view-screen view)))
+         (terminal      (world-terminal-screen-terminal (channel-view-screen view)))
          (resize-watch  nil)
          (draft-ready-p nil))
     (unless (terminal--terminal-mode-or-nil terminal)
-      (error 'localgroup-error
+      (error 'world-terminal-error
              :message    "Opening a channel requires an interactive terminal."
              :operation  ':attach
              :session-id (channel-subscription-identifier view)))
@@ -903,7 +903,7 @@ starts the session."
                  (platform-watch-terminal-resize *platform*
                                                  (lambda ()
                                                    (setf *terminal-resize-pending-p* t))))
-           (multiple-value-bind (rows columns) (localgroup-screen-pane-size (channel-view-screen view))
+           (multiple-value-bind (rows columns) (world-terminal-screen-pane-size (channel-view-screen view))
              (setf (channel-view-pane-size view) (list rows columns)))
            (when attached-function
              (funcall attached-function))

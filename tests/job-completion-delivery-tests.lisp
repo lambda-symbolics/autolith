@@ -399,7 +399,7 @@
             (entered                                  (sb-thread:make-semaphore :count 0))
             (release (sb-thread:make-semaphore :count 0)) (jobs nil))
        (setf (application-input-controller application) controller
-             (application-localgroup-session application) (make-instance 'localgroup-session :application application))
+             (application-channel-endpoint application) (make-instance 'channel-endpoint :application application))
        (labels ((hold (&optional quick-p)
                   (flet ((wait () (sb-thread:signal-semaphore entered)
                                   (sb-thread:wait-on-semaphore release :timeout 20)))
@@ -513,7 +513,7 @@
               (presented nil) (handler nil) (failure nil) (gate-p t))
          (labels ((close-boundary (closed-p)
                     (if (eq boundary 'session-pause)
-                        (if closed-p (application-localgroup-pause application) (application-localgroup-resume application))
+                        (if closed-p (application-world-terminal-pause application) (application-world-terminal-resume application))
                         (with-lock-held ((application-input-controller-lock controller))
                           (setf (slot-value controller boundary)
                                 (when closed-p (if (eq boundary 'failure) (make-condition 'simple-error) t)))))))

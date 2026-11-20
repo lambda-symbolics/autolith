@@ -1,15 +1,15 @@
 (in-package #:autolith)
 
-;;;; -- Localgroup Process Handoff Tests --
+;;;; -- World-Terminal Process Handoff Tests --
 
-(-> test-localgroup--leased-application (configuration &key (:persisted-p boolean))
+(-> test-world-terminal--leased-application (configuration &key (:persisted-p boolean))
     (values application application-input-controller conversation))
-(defun test-localgroup--leased-application (configuration &key persisted-p)
+(defun test-world-terminal--leased-application (configuration &key persisted-p)
   "Return a leased application without a terminal of its own, its controller and its conversation.
 
 With PERSISTED-P its conversation holds a message."
   (multiple-value-bind (application controller)
-      (test-localgroup--application configuration :presented-p t)
+      (test-world-terminal--application configuration :presented-p t)
     (let ((conversation (application-conversation application)))
       (when persisted-p
         (conversation-append-user-message conversation "persisted"))
@@ -18,8 +18,8 @@ With PERSISTED-P its conversation holds a message."
              configuration (conversation-identifier conversation)))
       (values application controller conversation))))
 
-(-> test-localgroup-handoff-site-arguments () null)
-(defun test-localgroup-handoff-site-arguments ()
+(-> test-world-startup-site-arguments () null)
+(defun test-world-startup-site-arguments ()
   "Test detached replacements retain the configured site root."
   (let* ((site-container
            (uiop:ensure-directory-pathname
@@ -41,7 +41,7 @@ With PERSISTED-P its conversation holds a message."
            (let ((handoff-pathname (merge-pathnames "handoff.sexp" root)))
              (dolist (enabled-p '(nil t))
                (let ((arguments
-                       (localgroup-handoff--arguments
+                       (world-startup--arguments
                         configuration handoff-pathname
                         :permission-mode ':auto
                         :immutable-p     enabled-p
@@ -57,7 +57,7 @@ With PERSISTED-P its conversation holds a message."
                           (list "--site-config-root"
                                 (namestring
                                    (config :site-config-root configuration))
-                                "--localgroup-handoff"
+                                "--world-startup"
                                 (namestring handoff-pathname))))
                   "detached launch arguments preserve the site root and launch modes")))))
       (when root
@@ -69,19 +69,19 @@ With PERSISTED-P its conversation holds a message."
                                       :if-does-not-exist ':ignore)))
   nil)
 
-(-> test-localgroup--abandonment-fixture
+(-> test-world-terminal--abandonment-fixture
     (configuration &key (:persisted-p boolean))
-    (values application application-input-controller localgroup-session))
-(defun test-localgroup--abandonment-fixture (configuration &key persisted-p)
+    (values application application-input-controller channel-endpoint))
+(defun test-world-terminal--abandonment-fixture (configuration &key persisted-p)
   "Return a started application without a terminal of its own, its controller and its session."
   (configuration-ensure-directories configuration)
   (multiple-value-bind (application controller)
-      (test-localgroup--leased-application configuration :persisted-p persisted-p)
+      (test-world-terminal--leased-application configuration :persisted-p persisted-p)
     (terminal-ui-start (application-ui application))
-    (values application controller (localgroup-start application))))
+    (values application controller (world-terminal-start application))))
 
-(-> test-localgroup-lingering-session () null)
-(defun test-localgroup-lingering-session ()
+(-> test-world-terminal-lingering-session () null)
+(defun test-world-terminal-lingering-session ()
   "Test a lingering session surviving lost clients and checkpoint restarts."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
@@ -89,32 +89,32 @@ With PERSISTED-P its conversation holds a message."
          (controller    nil))
     (unwind-protect
         (multiple-value-bind (fixture-application fixture-controller session)
-            (test-localgroup--abandonment-fixture configuration :persisted-p t)
+            (test-world-terminal--abandonment-fixture configuration :persisted-p t)
           (setf application fixture-application
                 controller fixture-controller)
           (application-input-controller--enqueue controller ':message "queued input")
-          (localgroup-client-close (test-localgroup--present session))
+          (world-terminal-client-close (test-world-terminal--present session))
           (test-assert
-           (and (test-localgroup--await-served session)
+           (and (test-world-terminal--await-served session)
                 (null (application-input-controller-exit-reason controller)))
            "a lingering session outlives a client that vanished without detaching")
-          (application-call-with-localgroup-quiesced application (lambda () nil))
-          (let ((restarted (application-localgroup-session application)))
+          (application-call-with-world-terminal-quiesced application (lambda () nil))
+          (let ((restarted (application-channel-endpoint application)))
             (test-assert
              (and restarted
                   (not (eq restarted session))
                   (null (application-input-controller-exit-reason controller)))
              "a checkpoint restart keeps the session lingering")))
-      (test-localgroup--abandonment-cleanup application controller root)))
+      (test-world-terminal--abandonment-cleanup application controller root)))
   nil)
 
-(-> test-localgroup--abandonment-cleanup
+(-> test-world-terminal--abandonment-cleanup
     ((option application) (option application-input-controller) pathname)
     null)
-(defun test-localgroup--abandonment-cleanup (application controller root)
+(defun test-world-terminal--abandonment-cleanup (application controller root)
   "Stop APPLICATION's endpoint, UI and CONTROLLER, then delete ROOT."
   (when application
-    (localgroup-stop application)
+    (world-terminal-stop application)
     (application-release-conversation-lease application))
   (when controller
     (application-input-controller-stop controller))
@@ -123,110 +123,15 @@ With PERSISTED-P its conversation holds a message."
   (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)
   nil)
 
-(-> test-localgroup-fresh-session-spawn () null)
-(defun test-localgroup-fresh-session-spawn ()
-  "Test client-first spawn records, launch options, and start-failure cleanup."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (launches      nil))
-    (unwind-protect
-         (progn
-           (configuration-ensure-directories configuration)
-           (let* ((*localgroup-fresh-launch-function*
-                    (lambda (launch-configuration &key session-id handoff-pathname
-                                                       permission-mode immutable-p pristine-p)
-                      (declare (ignore launch-configuration pristine-p))
-                      (push (list session-id handoff-pathname permission-mode
-                                  immutable-p)
-                            launches)))
-                  (*localgroup-fresh-wait-function*
-                    (lambda (configuration token old-pid)
-                      (declare (ignore configuration token old-pid))
-                      "active-conversation"))
-                  (session-id
-                    (localgroup-handoff-spawn-fresh
-                     configuration
-                     :permission-mode    ':sandboxed
-                     :immutable-p        t
-                     :recovery-diagnosis "diagnose the crash")))
-             (destructuring-bind (launched-id pathname permission immutable-p)
-                 (first launches)
-               (test-assert (and (= (length launches) 1)
-                                 (string= session-id "active-conversation")
-                                 (not (string= launched-id session-id))
-                                 (eq permission ':sandboxed)
-                                 immutable-p)
-                            "a fresh spawn launches one replacement with its options")
-               (let ((record (localgroup-handoff--read configuration pathname)))
-                 (test-assert
-                  (and (eq (getf (rest record) :state) ':pending)
-                       (getf (rest record) :fresh-conversation-p)
-                       (null (getf (rest record) :conversation-id))
-                       (string= (getf (rest record) :recovery-diagnosis)
-                                "diagnose the crash")
-                       (typep (getf (rest record) :rows) '(integer 1))
-                       (typep (getf (rest record) :columns) '(integer 1))
-                       (typep (getf (rest record) :styled-p) 'boolean)
-                       (null (getf (rest record) :session-id))
-                       (string= (getf (rest record) :launch-id) launched-id))
-                  "a fresh spawn records terminal presentation and session state")))
-             (localgroup-handoff-spawn-fresh configuration
-                                             :conversation-id   "open-id"
-                                             :attach-expected-p nil)
-             (let ((record (localgroup-handoff--read
-                            configuration (second (first launches)))))
-               (test-assert
-                (null (getf (rest record) :attach-expected-p))
-                "an explicitly detached spawn does not expect a terminal")))
-           (let* ((*localgroup-startup-record*
-                    '(:localgroup-handoff
-                      :rows 41 :columns 93 :styled-p t))
-                  (ui       (application-terminal-ui-create :configuration configuration))
-                  (terminal (terminal-ui-terminal ui)))
-             (test-assert
-              (and (typep ui 'channel-presentation)
-                   (= (terminal-rows terminal) 41)
-                   (= (terminal-columns terminal) 93)
-                   (terminal-styled-p terminal)
-                   (not (terminal-interactive-p terminal)))
-              "a detached start gets a presentation laid out for the pane its startup record states"))
-           (test-assert
-            (not (typep (application-terminal-ui-create :configuration configuration)
-                        'channel-presentation))
-            "a start without a startup record shows on its own terminal")
-           (let ((*localgroup-fresh-launch-function*
-                   (lambda (&rest arguments)
-                     (declare (ignore arguments))))
-                 (*localgroup-fresh-wait-function*
-                   (lambda (&rest arguments)
-                     (declare (ignore arguments))
-                     nil)))
-             (test-assert
-              (handler-case
-                  (progn (localgroup-handoff-spawn-fresh configuration) nil)
-                (localgroup-error (condition)
-                  (search "did not start"
-                          (autolith-error-message condition))))
-              "a replacement that never starts signals instead of attaching")
-             (test-assert
-              (= (length (directory
-                          (merge-pathnames
-                           "*.sexp"
-                           (localgroup-handoff-directory configuration))))
-                 2)
-              "a failed fresh spawn removes its own pending record")))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> test-localgroup-conversation-identity () null)
-(defun test-localgroup-conversation-identity ()
+(-> test-world-terminal-conversation-identity () null)
+(defun test-world-terminal-conversation-identity ()
   "Test active IDs through resume selection, new, fork, reconnect and conflicts."
   (with-test-configuration (configuration)
    (let ((application nil) (controller nil) (connection nil) (await nil) (session nil))
      (unwind-protect
          (progn
           (multiple-value-setq (application controller)
-            (test-localgroup--leased-application configuration))
+            (test-world-terminal--leased-application configuration))
           (let* ((first    (application-conversation application))
                  (provider (provider-create configuration))
                  (registry (make-instance 'tool-registry))
@@ -239,11 +144,11 @@ With PERSISTED-P its conversation holds a message."
                                 :conversation first :tool-registry registry :worker
                                 nil))
             (terminal-ui-start (application-ui application))
-            (setf session (localgroup-start application))
+            (setf session (world-terminal-start application))
             (labels ((assert-identity (conversation)
                        (let* ((identifier (conversation-identifier conversation))
-                              (status     (localgroup-status-snapshot session))
-                              (entry      (localgroup--find-record configuration identifier)))
+                              (status     (world-terminal-status-snapshot session))
+                              (entry      (world-terminal--find-record configuration identifier)))
                          (test-assert
                           (and
                            (string= (image-daemon:daemon-runtime-identifier session)
@@ -251,36 +156,17 @@ With PERSISTED-P its conversation holds a message."
                            (string= (getf (rest status) :session-id) identifier)
                            (string= (getf (rest status) :conversation-id) identifier)
                            (string= (getf (rest (rest entry)) :session-id) identifier)
-                           (= (length (localgroup-endpoint-records configuration)) 1))
+                           (= (length (world-terminal-endpoint-records configuration)) 1))
                           "one endpoint names the exact active conversation"))))
               (assert-identity first)
               (test-assert (not (conversation-persisted-p first))
                "publishing a fresh endpoint does not persist unused conversation data")
-              (test-assert
-               (string=
-                (localgroup-handoff--wait-for-fresh configuration
-                                                    (image-daemon:daemon-runtime-token
-                                                     session)
-                                                    0)
-                (conversation-identifier first))
-               "client-first readiness discovers the actual conversation by its capability")
-              (let ((record (localgroup--registry-record session)))
-                (test-assert
-                 (and
-                  (null
-                   (localgroup-handoff--ready-conversation-id record "wrong-token" 0))
-                  (null
-                   (localgroup-handoff--ready-conversation-id record
-                                                              (image-daemon:daemon-runtime-token
-                                                               session)
-                                                              (sb-posix:getpid))))
-                 "readiness rejects another capability and the launching process"))
               (multiple-value-bind (client seen client-await)
-                  (test-localgroup--present session :watches-p t)
+                  (test-world-terminal--present session :watches-p t)
                 (declare (ignore seen))
                 (setf connection client
                       await      client-await)
-                (test-assert (eq (first (localgroup-client-connection-attached client)) ':attached)
+                (test-assert (eq (first (world-terminal-client-connection-attached client)) ':attached)
                  "the initial picker conversation accepts a client"))
               (conversation-append-user-message first "source")
               (conversation-append-user-message saved "saved")
@@ -300,7 +186,7 @@ With PERSISTED-P its conversation holds a message."
                   (application-install-conversation application fork)
                   (assert-identity fork))
                 (test-assert
-                 (and (eq session (application-localgroup-session application))
+                 (and (eq session (application-channel-endpoint application))
                       (= port (image-daemon:daemon-runtime-port session))
                       (string= token (image-daemon:daemon-runtime-token session)))
                  "conversation changes preserve the endpoint transport")
@@ -309,13 +195,13 @@ With PERSISTED-P its conversation holds a message."
                 (test-assert
                  (and (funcall await ':append
                                (lambda (event)
-                                 (search "conversation switched" (test-localgroup--event-text event))))
-                      (not (localgroup-client-connection-closed-p connection)))
+                                 (search "conversation switched" (test-world-terminal--event-text event))))
+                      (not (world-terminal-client-connection-closed-p connection)))
                  "an attached client receives output after conversation changes"))
               (let* ((before     (application-conversation application))
                      (blocked    (conversation-create configuration))
                      (identifier (conversation-identifier blocked))
-                     (pathname   (localgroup-registry-pathname configuration identifier))
+                     (pathname   (world-channel-endpoint-pathname configuration identifier))
                      (record
                       (image-daemon:daemon-registry-record :identifier identifier :pid
                        (sb-posix:getpid) :port 12345 :token
@@ -375,19 +261,19 @@ With PERSISTED-P its conversation holds a message."
               (application-resume-conversation application
                                                (conversation-identifier saved))
               (assert-identity saved)
-              (localgroup-client-close (shiftf connection nil))
-              (let ((old-record (localgroup--registry-record session))
+              (world-terminal-client-close (shiftf connection nil))
+              (let ((old-record (world-terminal--registry-record session))
                     (pathname   (image-daemon:daemon-runtime-registry-pathname session)))
-                (localgroup-stop application)
-                (setf session (localgroup-start application))
-                (localgroup--remove-stale-record pathname old-record)
+                (world-terminal-stop application)
+                (setf session (world-terminal-start application))
+                (world-terminal--remove-stale-record pathname old-record)
                 (assert-identity saved))
-              (application-call-with-localgroup-quiesced application (lambda () t))
-              (setf session (application-localgroup-session application))
+              (application-call-with-world-terminal-quiesced application (lambda () t))
+              (setf session (application-channel-endpoint application))
               (assert-identity saved))))
-       (when connection (localgroup-client-close connection))
+       (when connection (world-terminal-client-close connection))
        (when application
-         (localgroup-stop application)
+         (world-terminal-stop application)
          (application-release-conversation-lease application)
          (application-disconnect-task-presentation application)
          (when (slot-boundp application 'tool-registry)
@@ -396,35 +282,31 @@ With PERSISTED-P its conversation holds a message."
        (when application (terminal-ui-stop (application-ui application))))))
   nil)
 
-(-> test-localgroup-world-spawn () null)
-(defun test-localgroup-world-spawn ()
+(-> test-world-startup-spawn () null)
+(defun test-world-startup-spawn ()
   "Test a world server launch recording its kind and resolving the world endpoint."
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let* ((launched   nil)
            (waited     nil)
-           (*localgroup-fresh-launch-function*
+           (*world-startup-launch-function*
              (lambda (launch-configuration &key handoff-pathname &allow-other-keys)
                (declare (ignore launch-configuration))
                (push handoff-pathname launched)))
-           (*localgroup-fresh-wait-function*
-             (lambda (&rest arguments)
-               (declare (ignore arguments))
-               (error "A world launch must not wait for a session endpoint.")))
-           (*localgroup-world-wait-function*
+           (*world-startup-wait-function*
              (lambda (wait-configuration token old-pid)
                (declare (ignore wait-configuration))
                (setf waited (list token old-pid))
                "world"))
-           (identifier (localgroup-handoff-spawn-fresh configuration :world-p t))
-           (record     (localgroup-handoff--read configuration (first launched))))
+           (identifier (world-startup-spawn-fresh configuration))
+           (record     (world-startup--read configuration (first launched))))
       (test-assert (and (string= identifier "world")
-                        (getf (rest record) :world-p)
                         (equal waited (list (getf (rest record) :token) (current-process-id))))
                    "a world launch records its kind and resolves the world endpoint under its token"))
     (let* ((token   (daemon-random-token))
            (runtime (image-daemon:daemon-runtime-create
-                     :directory        (localgroup-world-directory configuration)
+                      :class            'channel-endpoint
+                     :directory        (world-endpoint-directory configuration)
                      :identifier       "world"
                      :token            token
                      :request-function (lambda (runtime request &key socket stream)
@@ -434,10 +316,10 @@ With PERSISTED-P its conversation holds a message."
       (image-daemon:daemon-runtime-start runtime)
       (unwind-protect
            (progn
-             (test-assert (string= (localgroup-world--wait-for-fresh configuration token 0) "world")
+             (test-assert (string= (world-startup--wait-for-fresh configuration token 0) "world")
                           "the world wait resolves a published endpoint carrying the launch token")
-             (test-assert (string= (let ((*localgroup-handoff-start-timeout-seconds* 0))
-                                     (localgroup-world--wait-for-fresh configuration "other-token" 0))
+             (test-assert (string= (let ((*world-startup-start-timeout-seconds* 0))
+                                     (world-startup--wait-for-fresh configuration "other-token" 0))
                                    "world")
                           "the world wait takes an answering endpoint under another token: that launch lost the race to it"))
         (image-daemon:daemon-runtime-stop runtime))))

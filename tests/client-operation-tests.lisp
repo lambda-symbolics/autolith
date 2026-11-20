@@ -2,7 +2,7 @@
 
 ;;;; -- Headless Operation Admission Tests --
 
-(-> client-operation-tests--steering-cwd (application localgroup-client-connection) null)
+(-> client-operation-tests--steering-cwd (application world-terminal-client-connection) null)
 (defun client-operation-tests--steering-cwd (application connection)
   "Exercise decoded cwd admission, durable receipt failure and client completion."
   (let* ((configuration     (application-configuration application))
@@ -138,7 +138,7 @@
                                     (eq (getf (rest (getf completion :event)) :kind) ':steering)))
                              completions))
                  "retry projects one receipt and completes without repeating the runtime setter")
-                (let* ((reply (localgroup-client-call connection ':operation :method "_autolith/state"
+                (let* ((reply (world-terminal-client-call connection ':operation :method "_autolith/state"
                                                       :params                        (client-portable (json-object))))
                        (state (getf reply :result)))
                   (test-assert
@@ -164,7 +164,7 @@
             (channel     (getf (rest (world-server-tests--open entry (world-tests--workspace root "admission")))
                                :session-id))
             (application (world-host-application (world-server--find-host server channel)))
-            (connection  (localgroup-client-connect (localgroup--find-record configuration channel)
+            (connection  (world-terminal-client-connect (world-terminal--find-record configuration channel)
                                                     :name "admission test"))
             (entered     (sb-thread:make-semaphore))
             (release     (sb-thread:make-semaphore))
@@ -200,7 +200,7 @@
                              (funcall publication owner))))
                (lambda ()
                  (dolist (mode '(:auto :ask :full-access))
-                   (localgroup-client-call connection ':mode :value mode)
+                   (world-terminal-client-call connection ':mode :value mode)
                    (idle)
                    (test-assert (eq mode (application-permission-mode application))
                                 "structured modes use the registered permissions command")
@@ -213,8 +213,8 @@
                   (list (list 'application--command-sandbox-available-p (constantly nil)))
                   (lambda ()
                     (test-assert
-                     (handler-case (progn (localgroup-client-call connection ':mode :value ':sandboxed) nil)
-                       (localgroup-error () t))
+                     (handler-case (progn (world-terminal-client-call connection ':mode :value ':sandboxed) nil)
+                       (world-terminal-error () t))
                      "structured sandbox mode retains the command sandbox guard")
                     (idle)
                     (test-assert
@@ -247,7 +247,7 @@
                         :name "client admission active work"))
                  (test-assert (sb-thread:wait-on-semaphore entered :timeout 10)
                               "a real channel work item owns execution")
-                 (localgroup-client-call connection ':mode :value ':auto)
+                 (world-terminal-client-call connection ':mode :value ':auto)
                  (let ((result (invoke "permissions" "ask")))
                    (test-assert (and (stringp (gethash "text" result))
                                      (equal "scheduled" (gethash "delivery" result)))
@@ -279,7 +279,7 @@
                  (client-operation-tests--steering-cwd application connection)))
            (sb-thread:signal-semaphore release)
            (when waiter (join-thread waiter))
-           (localgroup-client-close connection))))))
+           (world-terminal-client-close connection))))))
   nil)
 
 (-> test-client-operation-catalog-authority () null)
@@ -292,12 +292,12 @@
             (channel    (getf (rest (world-server-tests--open
                                      entry (world-tests--workspace root "catalog")))
                              :session-id))
-            (connection (localgroup-client-connect
-                         (localgroup--find-record configuration channel) :name "catalog test"))
+            (connection (world-terminal-client-connect
+                         (world-terminal--find-record configuration channel) :name "catalog test"))
             (command    (application-command-find "/permissions")))
        (labels ((request (method)
                   "Call one shared semantic method without an ACP session."
-                  (getf (localgroup-client-call connection ':operation
+                  (getf (world-terminal-client-call connection ':operation
                                                :method method
                                                :params (client-portable (json-object)))
                         :result)))
@@ -342,10 +342,10 @@
                       "removed metadata choices cannot be encoded as permission inputs")
                      (test-assert
                       (handler-case
-                          (progn (localgroup-client-call connection ':mode :value ':auto) nil)
-                        (localgroup-error () t))
+                          (progn (world-terminal-client-call connection ':mode :value ':auto) nil)
+                        (world-terminal-error () t))
                       "structured mode admission honors the current supported choices")))))
-           (localgroup-client-close connection))))))
+           (world-terminal-client-close connection))))))
   nil)
 
 (-> test-client-state-goal () null)

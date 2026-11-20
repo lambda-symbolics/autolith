@@ -192,7 +192,7 @@ An exception leaves the intent on disk and exposes RETRY-CLEANUP."
   "Ask the world to release idle unattended hosts before TOOL-NAME leases CHANNELS."
   (let ((entry (world-client-entry configuration)))
     (when entry
-      (let ((states (getf (rest (localgroup-query-record entry ':quiesce
+      (let ((states (getf (rest (world-terminal-query-record entry ':quiesce
                                                       (list :channels channels)))
                          :states)))
         (dolist (state states)
