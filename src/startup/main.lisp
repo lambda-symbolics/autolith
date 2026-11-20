@@ -1363,16 +1363,22 @@ only rediscovers the same endpoint; choosing another channel is explicit."
   (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
     (let* ((content-width (max 1 (min 88 width)))
            (terminal      (localgroup-screen-terminal screen))
+           (title
+             (list (terminal-span ':brand (format nil "AUTOLITH v~A" *autolith-version*))))
+           (details
+             (list* (application--banner-metadata-field "workspace"
+                     (sanitize-text directory :single-line-p t))
+                    (application--banner-metadata-field
+                     "agents" (if total (format nil "~D (~D here)" total local)
+                                  "catalogue unavailable"))
+                    (when immutable-p
+                      (list (application--banner-metadata-field "mode" "immutable")))))
+           (divider-width
+             (min content-width
+                  (loop for row in (cons title details) maximize (terminal--spans-width row))))
            (metadata
-             (list (list (terminal-span ':brand (format nil "AUTOLITH v~A" *autolith-version*)))
-                   (application--banner-metadata-field "workspace"
-                    (sanitize-text directory :single-line-p t))
-                   (application--banner-metadata-field
-                    "agents" (if total (format nil "~D (~D here)" total local)
-                                 "catalogue unavailable"))
-                   (application--banner-metadata-field
-                    "mode" (format nil "~A~A" (if immutable-p "immutable" "mutable")
-                                   (if recovered-p ", recovered" "")))))
+             (list* title (list (terminal-span ':dim (make-string divider-width :initial-element #\─)))
+                    details))
            (header
              (cond
                ((>= content-width (+ (application--banner-logo-width)
