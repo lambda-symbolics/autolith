@@ -64,8 +64,7 @@ Every role talks through channels, so any child can answer its parent."
 (defun task-role-restrict-tool-registry (registry configuration &key retain)
   "Leave in REGISTRY only the tools the child role of CONFIGURATION may use, and return it.
 
-This is the registry of a child's own channel, which serves it outside any
-spawned run: it lacks yield, and the role decides whether it spawns.
+This is the registry of a child's own channel. The role decides whether it spawns.
 Runtimes in RETAIN belong to another registry."
   (let* ((definition (task-role-definition configuration (config :child-role configuration)))
          (spawn-p    (not (null (task-agent-definition-spawns definition))))
@@ -104,7 +103,7 @@ Runtimes in RETAIN belong to another registry."
      &key (:orchestrator (option task-orchestrator)) (:depth (integer 0)))
     tool-registry)
 (defun task-child-tool-registry (parent-registry definition &key orchestrator depth)
-  "Build a restricted child registry with yield and structurally bounded spawning."
+  "Build a restricted child registry with structurally bounded spawning."
   (let ((registry (make-instance 'tool-registry))
         (spawn-p  (and (task-agent-definition-spawns definition)
                        (< depth (task-orchestrator-maximum-depth orchestrator)))))
@@ -340,7 +339,7 @@ the root's cache key. Siblings with matching prefixes still share one key."
            '(:id :name :agent :assignment :error :label :model :conversation-file))
    (mapcar (lambda (key)
              (list :indicator key :validate (lambda (value) (typep value 'boolean))))
-           '(:yielded-p :structured-output-present-p :detached))))
+           '(:structured-output-present-p :detached))))
 
 (-> task--read-result-artifact
     ((or pathname string) &key (:maximum-octets (integer 1))) list)
@@ -476,7 +475,6 @@ the root's cache key. Siblings with matching prefixes still share one key."
                                          ':failed)
          :output                      (task--result-output completion (task-job-progress job) provider-result)
          :error                       (task-completion-error completion)
-         :yielded-p                   nil
          :structured-output-present-p nil
          :structured-output           nil
          :label                       (task-completion-label completion))))
@@ -494,7 +492,6 @@ the root's cache key. Siblings with matching prefixes still share one key."
                                             (task--bounded-output tail)
                                             "(no output)")
            :error                       message
-           :yielded-p                   nil
            :structured-output-present-p nil
            :structured-output           nil
            :label                       nil))))
@@ -572,7 +569,7 @@ Live executions retain their pool ownership and remain inspectable after return.
 
 (-> task-run-child (task-job) list)
 (defun task-run-child (job)
-  "Create and run JOB's real in-process child session through terminal yield."
+  "Create and run JOB's real in-process child session through a terminal child turn."
   (let* ((parent       (task-job-parent-agent job))
          (definition   (task-job-definition job))
          (orchestrator (task-job-orchestrator job))

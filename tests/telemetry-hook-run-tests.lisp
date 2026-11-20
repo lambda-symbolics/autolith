@@ -9,7 +9,7 @@
                   ((:state :running) :error :internal "unfinished-run")
                   ((:state :completed) :success nil nil)
                   ((:state :succeeded) :success nil nil)
-                  ((:state :failed :yielded-p t :request-count 1) :error :internal nil)
+                  ((:state :failed :request-count 1) :error :internal nil)
                   ((:state :failed :request-count 1) :error :provider nil)
                   ((:state :failed :request-count 0) :error :internal nil)
                   ((:state :aborted) :cancelled :cancelled nil)
@@ -276,7 +276,7 @@
                            (bt:signal-semaphore started)
                            (bt:wait-on-semaphore released)
                            (telemetry-note-model :run child-run :provider "local")
-                           (list :status ':success :yielded-p t :request-count 1))))
+                            (list :status ':success :request-count 1))))
              (lambda ()
                (telemetry-call-with-run
                 configuration
@@ -348,7 +348,7 @@
                                          (:error
                                           (error "Injected child failure."))
                                          (otherwise
-                                          (list :status ':success :yielded-p t :request-count 0))))))
+                                            (list :status ':success :request-count 0))))))
                          (when (eq exit ':publication-throw)
                            (list (list 'task-job--publish-terminal-record
                                        (lambda (&rest arguments) (declare (ignore arguments)) (throw 'leave t))))))

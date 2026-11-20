@@ -27,7 +27,7 @@
   (let ((retained
           (loop for field in
                   '(:id :name :agent :agent-source :assignment :status
-                    :output :error :yielded-p
+                    :output :error
                     :structured-output-present-p :structured-output :label
                     :request-count :usage :unknown-usage :duration-ms :model
                     :reservation-charged-tokens :reservation-charge-requests
@@ -157,7 +157,6 @@
            (setf terminal
                  (append (list :state         final-state
                                :published-p   (not (null (getf final-result :output-path)))
-                               :yielded-p     (getf final-result :yielded-p)
                                :request-count (getf final-result :request-count)
                                :cancellation-reason
                                (or (job-cancellation-reason job)

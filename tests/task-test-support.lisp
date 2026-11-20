@@ -746,7 +746,6 @@ admission offers no such thing on purpose."
           :status                      status
           :output                      output
           :error                       error
-          :yielded-p                   t
           :structured-output-present-p nil
           :structured-output           nil
           :label                       nil
