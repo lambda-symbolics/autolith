@@ -421,10 +421,8 @@ local-user override."
 
 (-> application-path--query-match-p (string string) boolean)
 (defun application-path--query-match-p (path query)
-  "Return true when PATH contains QUERY as a contiguous case-insensitive substring."
-  (or (zerop (length query))
-      (and (search (string-downcase query) (string-downcase path))
-           t)))
+  "Return true when QUERY's characters match PATH in order, ignoring case."
+  (not (null (sito:score query path))))
 
 (-> application-path-search-files
     (application string &key (:limit (integer 1)))
@@ -433,8 +431,7 @@ local-user override."
     (application query &key (limit *terminal-path-completion-limit*))
   "Return ranked workspace-relative paths for QUERY through fff.
 
-fff's own fuzzy matcher is a loose subsequence. Keep its ranking, then drop
-paths that do not contain QUERY as a contiguous substring."
+Keep fff's candidate ordering and accept fuzzy subsequences through sito."
   (let* ((registry (application-tool-registry application))
          (tool     (and registry (tool-registry-find registry "search" "files"))))
     (unless (typep tool 'search-tool)

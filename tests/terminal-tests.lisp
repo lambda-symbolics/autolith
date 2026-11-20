@@ -2213,11 +2213,10 @@
                     (format nil
                             "2 results shown, 2 matched, 80 indexed; page 0.~%src/model-selection.lisp [git:clean] [12 bytes]~%docs/guide.org [40 bytes]~%next-page: 1~%")))
             "fff result text yields relative paths")
-           (test-assert (application-path--query-match-p "docs/guide.org" "guide")
-                        "a contiguous query matches the path")
-           (test-assert (not (application-path--query-match-p
-                              "src/configuration/directory.lisp" "guide"))
-                        "a loose subsequence is not a path match")
+           (dolist (case '(("guide" t) ("gde" t) ("GDE" t) ("edg" nil) ("zzq" nil) ("" t)))
+             (test-assert (eq (application-path--query-match-p "docs/guide.org" (first case))
+                              (second case))
+                          "@ path acceptance uses case-insensitive ordered fuzzy characters."))
            (test-assert
             (equal '("docs/guide.org")
                    (mapcar (lambda (entry) (getf entry :name))
@@ -2260,16 +2259,16 @@
                (terminal-ui-set-input active-ui "/docs/docu")
                (test-assert (null (terminal-ui--matching-completions active-ui))
                             "/docs/docu without @ is not a file mention")
-               (terminal-ui-set-input active-ui "read @docs/g and stop")
-               (line-editor-set-text
-                (terminal-ui-editor active-ui)
-                "read @docs/g and stop"
-                :cursor 11)
+                (terminal-ui-set-input active-ui "read @docs/gde and stop")
+                (line-editor-set-text
+                 (terminal-ui-editor active-ui)
+                 "read @docs/gde and stop"
+                 :cursor 13)
                (test-assert
                 (equal '("docs/guide.org")
                        (mapcar (lambda (entry) (getf entry :name))
                                (terminal-ui--matching-completions active-ui)))
-                "@ mentions complete in the middle of a draft")
+                 "non-contiguous @ paths complete in the middle of a draft")
                (terminal-ui-process-event active-ui :complete)
                (test-assert
                 (string= (line-editor-text (terminal-ui-editor active-ui))
@@ -2277,11 +2276,11 @@
                 "accepting an @ mention drops @ and keeps the rest")
                (terminal-ui--end-completion active-ui)
                (selector-set-items (terminal-ui-completion-selector active-ui) nil)
-               (let ((source "(channel.send :text \"read @docs/g\")"))
+                (let ((source "(channel.send :text \"read @docs/gde\")"))
                 (line-editor-set-text
                  (terminal-ui-editor active-ui)
                  source
-                 :cursor 32)
+                 :cursor 34)
                 (test-assert
                  (equal '("docs/guide.org")
                         (mapcar (lambda (entry) (getf entry :name))
@@ -2298,6 +2297,36 @@
       (platform-delete-directory-tree *platform* root
                                       :validate          t
                                       :if-does-not-exist ':ignore)))
+  (let* ((application (application-tests--ui-application))
+         (terminal (make-instance 'recording-terminal :columns 72))
+         (ui (terminal-ui-create
+              :terminal terminal
+              :path-search-function (lambda (query)
+                                      (application-path-search-files application query)))))
+    (test-call-with-function-replacements
+     (list (list 'search-worker-request
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   (format nil "3 results shown, 3 matched, 3 indexed; page 0.~%docs/guide.org [40 bytes]~%src/guided-engine.lisp [80 bytes]~%other.txt [12 bytes]~%"))))
+     (lambda ()
+       (with-terminal-ui (active ui)
+         (terminal-ui-set-input active "read @gde and stop")
+         (line-editor-set-text (terminal-ui-editor active) "read @gde and stop" :cursor 8)
+         (test-assert (equal '("docs/guide.org" "src/guided-engine.lisp")
+                             (mapcar (lambda (entry) (getf entry :name))
+                                     (terminal-ui--matching-completions active)))
+                      "The indexed @ UI accepts non-contiguous matches in source order.")
+         (test-assert (equal '("docs/guide.org")
+                             (application-path-search-files application "gde" :limit 1))
+                      "The indexed path cap follows fuzzy acceptance.")
+         (terminal-ui-process-event active :complete)
+         (test-assert (string= "read docs/guide.org and stop"
+                               (line-editor-text (terminal-ui-editor active)))
+                      "Indexed fuzzy completion replaces only the @ token.")
+         (terminal-ui--end-completion active)
+         (terminal-ui-set-input active "read @zzq")
+         (test-assert (null (terminal-ui--matching-completions active))
+                      "The indexed @ UI rejects candidates without an ordered match.")))))
   nil)
 
 (-> test-terminal-mention-completion () null)

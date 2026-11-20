@@ -184,7 +184,6 @@ submit."
            (directory
              (uiop:ensure-directory-pathname
               (uiop:merge-pathnames* directory-relative root)))
-           (downcased-prefix (string-downcase prefix))
            (matches
              (and (terminal-path--under-root-p directory root)
                   (loop for (pathname . directory-p) in (terminal-path--list-children
@@ -199,9 +198,7 @@ submit."
                                   (plusp (length relative-name))
                                   (terminal-path--safe-relative-p relative-name)
                                   (not (terminal-path--skip-child-p basename prefix))
-                                  (uiop:string-prefix-p
-                                   downcased-prefix
-                                   (string-downcase basename)))
+                                  (not (null (sito:score prefix basename))))
                           collect
                         (let ((insert
                                 (if (and directory-p
