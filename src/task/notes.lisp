@@ -42,42 +42,6 @@ bound so the child can adapt instead of silently losing the note."
       (remhash parent-identifier *task-note-queues*)
       pending)))
 
-(defmethod tool-execute
-    ((tool task-note-tool) (context tool-context) arguments)
-  "Queue one interim child note for the parent's next provider request."
-  (declare (ignore tool))
-  (let ((agent (tool-context-agent context)))
-    (unless (typep agent 'task-child-agent)
-      (error 'task-error
-             :message   "yield.note is available only inside a child agent."
-             :tool-name "yield.note"))
-    (let ((note (tool-argument arguments "note" :required t)))
-      (unless (and (stringp note) (non-empty-string-p note))
-        (error 'task-error
-               :message   "yield.note requires non-empty note text."
-               :tool-name "yield.note"))
-      (when (> (length note) *task-note-maximum-characters*)
-        (error 'task-error
-               :message   (format nil "A note may contain at most ~D characters."
-                                  *task-note-maximum-characters*)
-               :tool-name "yield.note"))
-      (let* ((job    (task-child-agent-job agent))
-             (parent (task-job-parent-agent job))
-             (label  (format nil "~A ~A"
-                             (task-agent-definition-name
-                              (task-child-agent-definition agent))
-                             (session-job-identifier job)))
-             (status (task-note-post
-                      (conversation-identifier (agent-conversation parent))
-                      label
-                      note)))
-        (task-progress-append-output (task-job-progress job)
-                                     (format nil "~%[note] ~A~%" note))
-        (if (eq status ':accepted)
-            (tool-success
-             "Note queued for the parent's next turn. Continue the assignment; yield.submit remains the required terminal result.")
-            (tool-failure
-             "The parent's note queue is full; continue working and let yield.submit carry the result."))))))
 
 (-> context--task-notes (request-context) (option context-contribution))
 (defun context--task-notes (request)
