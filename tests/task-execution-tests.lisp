@@ -349,7 +349,6 @@
             :definition    definition
             :identity      (task-job-identity job)
             :depth         1
-            :completion    (make-instance 'task-completion)
             :orchestrator  orchestrator
             :job           job))
          (context

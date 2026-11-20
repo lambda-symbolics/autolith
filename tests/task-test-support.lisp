@@ -415,12 +415,12 @@
                 :instructions instructions)
           properties))
 
-(-> task-tests--yield-fixture
+(-> task-tests--child-fixture
     (configuration task-agent-definition string &key (:state keyword))
     list)
-(defun task-tests--yield-fixture
+(defun task-tests--child-fixture
     (configuration definition identifier &key (state ':running))
-  "Return an isolated child, yield registry, and completion fixture in STATE."
+  "Return a test child and job in STATE."
   (let* ((orchestrator    (task-tests--orchestrator))
          (parent-registry (make-instance 'tool-registry))
          (parent-conversation
@@ -439,10 +439,9 @@
             orchestrator
             :identifier      identifier
             :definition      definition
-            :item            (list :task "Exercise the terminal yield contract.")
+            :item            (list :task "Exercise child execution.")
             :parent-agent    parent
             :root-identifier (conversation-identifier parent-conversation)))
-         (completion      (make-instance 'task-completion))
          (registry
            (task-child-tool-registry
             parent-registry definition :orchestrator orchestrator
@@ -462,16 +461,8 @@
             :definition    definition
             :identity      (task-job-identity job)
             :depth         1
-            :completion    completion
             :orchestrator  orchestrator
-            :job           job))
-         (context
-           (make-instance 'tool-context
-                          :configuration configuration
-                          :worker        nil
-                          :conversation  conversation
-                          :registry      registry
-                          :agent         child)))
+            :job           job)))
     (ecase state
       (:queued
        nil)
@@ -479,22 +470,7 @@
        (with-lock-held ((cl-jobpond::job--lock job))
          (setf (job-state job) ':running))
        (task-job--set-progress-state job ':running)))
-    (list :registry     registry
-          :context      context
-          :completion   completion
-          :job          job
-          :child        child
-          :conversation conversation)))
-
-(-> task-tests--execute-yield (list string) tool-result)
-(defun task-tests--execute-yield (fixture arguments)
-  "Execute provider JSON ARGUMENTS through FIXTURE's actual tool registry."
-  (tool-registry-execute-call
-   (getf fixture :registry)
-   (json-object "namespace" "yield"
-                "name" "submit"
-                "arguments" arguments)
-   (getf fixture :context)))
+    (list :job job :child child :conversation conversation)))
 
 (-> task-tests--read-exact-native-value (string) t)
 (defun task-tests--read-exact-native-value (source)
@@ -725,7 +701,6 @@ admission offers no such thing on purpose."
      :definition    (task-job-definition job)
      :identity      (task-job-identity job)
      :depth         depth
-     :completion    (make-instance 'task-completion)
      :orchestrator  (task-job-orchestrator job)
      :job           job)))
 

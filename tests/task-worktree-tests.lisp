@@ -550,7 +550,6 @@
                                              :tool-registry (agent-tool-registry parent)
                                              :worker nil :definition (task-job-definition job)
                                              :identity (task-job-identity job) :depth 1
-                                             :completion    (make-instance 'task-completion)
                                              :orchestrator (task-job-orchestrator job) :job job))
               (child-context  (make-instance 'tool-context :configuration child :worker nil
                                             :agent agent :conversation conversation

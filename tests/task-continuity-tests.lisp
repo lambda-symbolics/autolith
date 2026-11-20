@@ -202,7 +202,7 @@
                 (ensure-directories-exist target)
                 (task-continuity--write target copy))
        (task-continuity--write (merge-pathnames "result.sexp" (uiop:pathname-directory-pathname path))
-                       (list :status ':success :output body :structured-output body
+                         (list :status ':success :output body
                              :duration-ms 321 :request-count 7
                              :usage                  '(("input_tokens" 42))
                              :worktree-artifact-path "patch.sexp"))
@@ -215,7 +215,6 @@
                            (equal "patch.sexp" (getf result :worktree-artifact-path)))
                       "Inventory retains reported timing, usage and artifact metadata")
          (test-assert (and (null (getf result :output))
-                           (null (getf result :structured-output))
                            (< (length (task--write-readable-sexp row)) 6000))
                       "Inventory omits full terminal result bodies"))
        (let ((*task-tool-content-limit* 8000)

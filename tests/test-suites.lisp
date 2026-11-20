@@ -1480,7 +1480,6 @@
   test-task-agent-discovery-precedence
   test-task-agents-tool
   test-task-tool-default-argument-types
-  test-task-native-output-contracts
   test-task-child-steering-mailbox
   test-task-child-messaging)
 

@@ -87,9 +87,6 @@
 (defparameter *task-retained-progress-output-limit* 1000
   "The streamed output characters retained for a terminal job.")
 
-(defparameter *task-retained-structured-output-limit* 2000
-  "The readable structured-result characters retained outside its artifact.")
-
 (defparameter *task-tool-content-limit* 16000
   "The maximum provider-visible characters returned by task and job tools.")
 
@@ -109,7 +106,7 @@
   "The largest job.list page accepted by the provider tool.")
 
 (defparameter *task-result-label-maximum-characters* 256
-  "The maximum child yield label length accepted and retained.")
+  "The maximum length of a retained task result label.")
 
 (defparameter *task-steering-maximum-items* 32
   "The most accepted child steering messages awaiting durable append.")
@@ -122,30 +119,6 @@
 
 (defparameter *task-response-promotion-maximum-items* 32
   "The most steered child responses awaiting one verbal result each.")
-
-(defclass task-completion nil
-  ((called-p :initform nil :accessor task-completion-called-p :type
-             boolean :documentation
-             "True after internal completion state is recorded.")
-   (status :initform nil :accessor task-completion-status :type
-           (option keyword) :documentation
-           "The internal success, failed, or aborted status.")
-   (text :initform nil :accessor task-completion-text :type
-         (option string) :documentation
-         "The optional human-readable child result.")
-   (data :initform nil :accessor task-completion-data :type t
-         :documentation "Internal retained result data.")
-   (data-present-p :initform nil :accessor task-completion-data-present-p
-                   :type boolean :documentation
-                   "True when internal result data is present.")
-   (error :initform nil :accessor task-completion-error :type
-          (option string) :documentation
-          "The optional child-reported failure text.")
-   (label :initform nil :accessor task-completion-label :type
-          (option string) :documentation
-          "The optional concise result label."))
-  (:documentation
-   "Internal result and cancellation continuity state for one child agent."))
 
 (defclass task-progress nil
   ((lock :initform (make-lock "Autolith task progress") :reader
@@ -530,25 +503,6 @@ parent, and borrowed capabilities are released at terminal state."))
           (setf (task-job-steering-closed-p job) t)
           t))))))
 
-(-> task-job--call-with-yield-claim
-    (task-job function)
-    (values boolean keyword))
-(defun task-job--call-with-yield-claim (job function)
-  "Call FUNCTION under JOB's terminal-yield claim, or return its rejection reason."
-  (cl-jobpond:job-call-with-admission
-   job
-   (lambda ()
-     (with-lock-held ((task-job-steering-lock job))
-       (cond
-         ((task-job-steering-closed-p job)
-          (values nil ':closed))
-         ((task-job--steering-pending-p job)
-          (values nil ':steering-pending))
-         (t
-          (setf (task-job-steering-closed-p job) t)
-          (funcall function)
-          (values t ':accepted)))))))
-
 (defclass task-child-agent (agent)
   ((definition :initarg :definition :reader task-child-agent-definition
                :type task-agent-definition :documentation
@@ -560,9 +514,6 @@ parent, and borrowed capabilities are released at terminal state."))
    (depth :initarg :depth :reader task-child-agent-depth :type
           (integer 1) :documentation
           "The explicit child depth below the primary agent.")
-   (completion :initarg :completion :reader task-child-agent-completion
-               :type task-completion :documentation
-               "The internal result and cancellation continuity state.")
    (orchestrator
     :initarg       :orchestrator
     :reader        task-child-agent-orchestrator
@@ -592,15 +543,9 @@ parent, and borrowed capabilities are released at terminal state."))
 
 (defmethod agent-turn-complete-p
     ((agent task-child-agent) (result provider-result))
-  "Return true after the child provider turn reaches its ordinary terminal boundary."
-  (declare (ignore agent))
-  (call-next-method))
-
-(defmethod agent-turn-completion-details ((agent task-child-agent))
-  "Return no child-facing terminal-yield details."
-  (declare (ignore agent))
-  nil)
-
+  "Claim normal completion only when the child has no pending steering."
+  (and (call-next-method)
+       (task-job--claim-normal-completion (task-child-agent-job agent))))
 (defclass task-tool-result (tool-result)
   ((details :initarg :details :reader task-tool-result-details
             :reader tool-result-details :type t

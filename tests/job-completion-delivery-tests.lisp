@@ -367,7 +367,7 @@
                                       :configuration configuration :conversation (conversation-create configuration)
                                       :provider (agent-provider parent) :tool-registry (agent-tool-registry parent)
                                       :worker nil :definition definition :identity nil :depth 1
-                                      :completion (make-instance 'task-completion) :orchestrator runtime :job owner-job))
+                                      :orchestrator runtime :job owner-job))
             (job        (job-completion-tests--start child runtime)))
        (task-completion-restore parent)
        (test-assert (null (task-completion-pending parent))

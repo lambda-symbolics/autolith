@@ -719,27 +719,6 @@
                                            :if-does-not-exist   ':ignore)))
   nil)
 
-(-> test-task-native-output-contracts () null)
-(defun test-task-native-output-contracts ()
-  "Test product provenance and tool conditions around generic output contracts."
-  (let ((condition
-          (handler-case
-              (progn
-                (task-output-schema-normalize
-                 '(:type :array) :pathname #P"role.sexp" :source ':programmatic
-                 :definition-name "invalid-output")
-                nil)
-            (task-agent-definition-error (condition) condition))))
-    (test-assert
-     (and condition
-          (eq (task-agent-definition-error-field condition) ':items)
-          (eq (task-agent-definition-error-source condition) ':programmatic)
-          (equal (task-agent-definition-error-pathname condition) #P"role.sexp")
-          (string= (task-agent-definition-error-definition-name condition) "invalid-output"))
-     "generic schema diagnostics include exact child-role provenance"))
-  nil)
-
-
 (-> test-task-child-steering-mailbox () null)
 (defun test-task-child-steering-mailbox ()
   "Test bounded child steering, terminal claims, and durable safe-boundary delivery."
@@ -749,10 +728,10 @@
            (task-agent-definition-create
             :name         "steering-child"
             :description  "Exercise child steering."
-            :instructions "Accept steering before yielding."
+            :instructions "Accept steering before completing."
             :source       ':test)))
     (labels ((fixture (identifier &key (state ':running))
-               (task-tests--yield-fixture
+               (task-tests--child-fixture
                 configuration definition identifier :state state))
 
              (mark-running (job)
@@ -768,17 +747,9 @@
                    (agent-steering-input-content entry)))
                 entries))
 
-             (valid-yield (fixture)
-               (task-tests--execute-yield
-                fixture
-                "{\"status\":\"success\",\"text\":\"done\"}"))
-
-             (run-claim-race (index claim-kind)
-               (let* ((fixture
-                        (fixture
-                         (format nil "steering-~(~A~)-race-~D"
-                                 claim-kind index)))
-                      (job               (mark-running (getf fixture :job)))
+             (run-claim-race (index)
+               (let* ((fixture          (fixture (format nil "steering-completion-race-~D" index)))
+                      (job              (mark-running (getf fixture :job)))
                       (normal-result
                         (agent-test-result
                          "normal-race"
@@ -827,13 +798,9 @@
                                        (progn
                                          (await-release)
                                          (setf claim-result
-                                               (ecase claim-kind
-                                                 (:yield
-                                                  (valid-yield fixture))
-                                                 (:normal
-                                                  (agent-turn-complete-p
-                                                   (getf fixture :child)
-                                                   normal-result)))))
+                                               (agent-turn-complete-p
+                                                (getf fixture :child)
+                                                normal-result)))
                                      (condition (condition)
                                        (setf claim-condition condition))))
                                  :name "Autolith steering completion race"))
@@ -850,43 +817,17 @@
                           (setf enqueue-thread nil)
                           (join-thread claim-thread)
                           (setf claim-thread nil)
-                          (let ((enqueue-won-p
-                                  (eq enqueue-reason ':accepted))
-                                (claim-won-p
-                                  (ecase claim-kind
-                                    (:yield
-                                     (and claim-result
-                                          (tool-result-success-p claim-result)))
-                                    (:normal
-                                     claim-result))))
-                            (test-assert
-                             (and (null enqueue-condition)
-                                  (null claim-condition)
-                                  (not (eq enqueue-won-p claim-won-p))
-                                  (if enqueue-won-p
-                                      (and (eq enqueue-reason ':accepted)
-                                           (not
-                                            (task-completion-called-p
-                                             (getf fixture :completion)))
-                                           (= (task-job-steering-pending-count job)
-                                              1))
-                                      (and (eq enqueue-reason ':closed)
-                                           (ecase claim-kind
-                                             (:yield
-                                              (task-completion-called-p
-                                               (getf fixture :completion)))
-                                             (:normal
-                                              (and
-                                               (not
-                                                (task-completion-called-p
-                                                 (getf fixture :completion)))
-                                               (task-job-steering-closed-p job))))
-                                           (zerop
-                                            (task-job-steering-pending-count
-                                             job)))))
-                             (format nil
-                                     "enqueue and ~(~A~) completion share one atomic winner"
-                                     claim-kind))))
+                           (let ((enqueue-won-p (eq enqueue-reason ':accepted)))
+                             (test-assert
+                              (and (null enqueue-condition)
+                                   (null claim-condition)
+                                   (not (eq enqueue-won-p claim-result))
+                                   (if enqueue-won-p
+                                       (= (task-job-steering-pending-count job) 1)
+                                       (and (eq enqueue-reason ':closed)
+                                            (task-job-steering-closed-p job)
+                                            (zerop (task-job-steering-pending-count job)))))
+                              "enqueue and normal completion share one atomic winner")))
                      (with-lock-held (gate-lock)
                        (setf released-p t)
                        (task--condition-broadcast gate-condition))
@@ -1009,40 +950,6 @@
                               (zerop (task-job-steering-pending-count job)))
                          "count rejection retains queued and in-flight steering")))))
                 (task-job-close-steering job))
-              (let* ((fixture (fixture "steering-yield"))
-                     (job     (mark-running (getf fixture :job))))
-                (multiple-value-bind (entry reason)
-                    (task-job-enqueue-steering job "context before yield")
-                  (declare (ignore reason))
-                  (let ((queued-result (valid-yield fixture)))
-                    (test-assert
-                     (and (not (tool-result-success-p queued-result))
-                          (not
-                           (task-completion-called-p
-                            (getf fixture :completion)))
-                          (= (task-job-steering-pending-count job) 1))
-                     "queued steering rejects terminal yield without mutation"))
-                  (task-job-take-steering job)
-                  (let ((in-flight-result (valid-yield fixture)))
-                    (test-assert
-                     (and (not (tool-result-success-p in-flight-result))
-                          (not
-                           (task-completion-called-p
-                            (getf fixture :completion))))
-                     "unacknowledged steering still rejects terminal yield"))
-                  (task-job-acknowledge-steering
-                   job (agent-steering-input-identifier entry))
-                  (let ((accepted-result (valid-yield fixture)))
-                    (test-assert
-                     (and (tool-result-success-p accepted-result)
-                          (task-completion-called-p
-                           (getf fixture :completion)))
-                     "yield succeeds after every steering append is durable"))
-                  (multiple-value-bind (late-entry late-reason)
-                      (task-job-enqueue-steering job "after yield")
-                    (test-assert
-                     (and (null late-entry) (eq late-reason ':closed))
-                     "accepted yield rejects every later steering message"))))
               (let* ((fixture (fixture "steering-normal-stop"))
                      (job     (mark-running (getf fixture :job)))
                      (child   (getf fixture :child))
@@ -1301,8 +1208,7 @@
                     (task-orchestrator-remove-listener orchestrator listener)
                     (task-job-close-steering job))))
               (dotimes (index 12)
-                (run-claim-race index ':yield)
-                (run-claim-race index ':normal))
+                 (run-claim-race index))
               (let* ((fixture      (fixture "steering-tool-free"))
                      (job          (mark-running (getf fixture :job)))
                      (orchestrator (task-job-orchestrator job))
@@ -1340,7 +1246,6 @@
                         :definition    (task-child-agent-definition base-child)
                         :identity      (task-child-agent-identity base-child)
                         :depth         (task-child-agent-depth base-child)
-                        :completion    (task-child-agent-completion base-child)
                         :orchestrator  (task-child-agent-orchestrator base-child)
                         :job           job))
                      (events       nil)
@@ -1457,14 +1362,6 @@
                 (test-assert
                  (job-cancel job :reason ':steering-claim-test)
                  "cancellation precedes the terminal claim checks")
-                (let ((yield-result (valid-yield fixture)))
-                  (test-assert
-                   (and (not (tool-result-success-p yield-result))
-                        (not
-                         (task-completion-called-p
-                          (getf fixture :completion)))
-                        (not (task-job-steering-closed-p job)))
-                   "cancelled child rejects terminal yield without closing its mailbox"))
                 (test-assert
                  (and (not (agent-turn-complete-p child normal-result))
                       (not (task-job-steering-closed-p job)))
@@ -1536,14 +1433,6 @@
                          (test-assert
                           (and (null entry) (eq reason ':closing))
                           "an active publication claim rejects steering"))
-                       (let ((yield-result (valid-yield fixture)))
-                         (test-assert
-                          (and (not (tool-result-success-p yield-result))
-                               (not
-                                (task-completion-called-p
-                                 (getf fixture :completion)))
-                               (not (task-job-steering-closed-p job)))
-                          "an active publication claim rejects terminal yield"))
                        (test-assert
                         (and (not (agent-turn-complete-p child normal-result))
                              (not (task-job-steering-closed-p job)))
@@ -1611,10 +1500,10 @@
          (definition    (task-agent-definition-create
                          :name         "messaging-child"
                          :description  "Exercise child messaging."
-                         :instructions "Note progress, then yield."
-                         :source       ':test))
-         (fixture       (task-tests--yield-fixture configuration definition
-                                                   "messaging-child-1"))
+                          :instructions "Send a progress note, then finish."
+                          :source       ':test))
+         (fixture       (task-tests--child-fixture configuration definition
+                                                  "messaging-child-1"))
          (job           (getf fixture :job))
          (parent        (task-job-parent-agent job)))
     (unwind-protect

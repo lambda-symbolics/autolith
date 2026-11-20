@@ -401,21 +401,16 @@ the root's cache key. Siblings with matching prefixes still share one key."
         (when (probe-file temporary)
           (delete-file temporary))))))
 
-(-> task--result-output (task-completion task-progress provider-result) string)
-(defun task--result-output (completion progress result)
-  "Select bounded child output from COMPLETION, PROGRESS, and provider RESULT."
-  (let ((text
-         (or (task-completion-text completion)
-             (provider-result-assistant-text result)
-             (let ((tail (with-lock-held ((task-progress-lock progress))
-                           (copy-seq (task-progress-output-tail progress)))))
-               (and (non-empty-string-p tail) tail)))))
+(-> task--result-output (task-progress provider-result) string)
+(defun task--result-output (progress result)
+  "Select bounded text from the final provider response or streamed output."
+  (let* ((answer (provider-result-assistant-text result))
+         (text   (if (non-empty-string-p answer)
+                     answer
+                     (with-lock-held ((task-progress-lock progress))
+                       (copy-seq (task-progress-output-tail progress))))))
     (cond ((non-empty-string-p text)
            (task--bounded-output text))
-          ((task-completion-data-present-p completion)
-           (task--bounded-output
-            (task--write-readable-sexp
-             (task-json->sexp (task-completion-data completion)))))
           ((plusp (task-progress-request-count progress))
            (format nil "(no output) after ~D req"
                    (task-progress-request-count progress)))
@@ -459,23 +454,20 @@ the root's cache key. Siblings with matching prefixes still share one key."
 (-> task--assemble-child-result
     (task-job &key (:provider-result provider-result)
                    (:child agent)
-                   (:conversation conversation)
-                   (:completion task-completion))
+                    (:conversation conversation))
     list)
 (defun task--assemble-child-result
-    (job &key provider-result child conversation completion)
+    (job &key provider-result child conversation)
   "Assemble the ordinary child outcome with shared execution metadata."
   (task--execution-metadata job :configuration (agent-configuration child))
   (setf (getf (task-job-execution-metadata job) :conversation-file)
         (namestring (conversation-pathname conversation)))
   (task--terminal-result
    job
-   (list :status                      (if (agent-turn-complete-p child provider-result)
-                                         ':success
-                                         ':failed)
-         :output                      (task--result-output completion (task-job-progress job) provider-result)
-         :error                       (task-completion-error completion)
-         :label                       (task-completion-label completion))))
+   (list :status (if (agent-turn-complete-p child provider-result)
+                     ':success
+                     ':failed)
+         :output (task--result-output (task-job-progress job) provider-result))))
 
 (-> task--failed-result (task-job keyword (option string)) list)
 (defun task--failed-result (job status message)
@@ -591,7 +583,6 @@ Live executions retain their pool ownership and remain inspectable after return.
                     (namestring (conversation-pathname conversation)))
               conversation)))
          (worker       (lisp-worker-pool-create configuration))
-         (completion   (make-instance 'task-completion))
          (taken        (make-hash-table :test #'equal))
          (registry
           (task-child-tool-registry (agent-tool-registry parent) definition
@@ -606,7 +597,6 @@ Live executions retain their pool ownership and remain inspectable after return.
                          :tool-registry registry :worker worker
                          :initargs      (list :definition definition
                                               :identity (task-job-identity job) :depth depth
-                                              :completion completion
                                               :orchestrator orchestrator :job job)))
          (progress     (task-job-progress job))
          (observer
@@ -673,8 +663,7 @@ Live executions retain their pool ownership and remain inspectable after return.
                (task--assemble-child-result
                 job :provider-result result
                     :child           child
-                    :conversation    conversation
-                    :completion      completion)))
+                      :conversation    conversation)))
         (unwind-protect
              (progn
                (task-job-cancel-execution-descendants job ':parent-finished)

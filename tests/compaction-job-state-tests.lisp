@@ -116,7 +116,7 @@
                                                        :storage-root (task--artifact-root configuration owner-job))
                                       :provider (agent-provider parent) :tool-registry (agent-tool-registry parent)
                                       :worker nil :definition definition :identity nil :depth 1
-                                      :completion (make-instance 'task-completion) :orchestrator runtime :job owner-job)))
+                                      :orchestrator runtime :job owner-job)))
        (conversation-append-user-message (agent-conversation child) "Child-owned work.")
        (let* ((primary-job  (job-completion-tests--start parent runtime))
               (child-job    (job-completion-tests--start child runtime))
