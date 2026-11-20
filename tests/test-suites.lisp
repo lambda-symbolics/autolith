@@ -1017,7 +1017,7 @@
   test-open-command-direct
   test-rename-command
   test-channel-id-command
-  test-application-codex-fast-mode-command
+  test-application-typed-boolean-controls
   test-application-compact-setting-transitions
   test-application-settings-command
   test-application-mcp-reload-capability-change

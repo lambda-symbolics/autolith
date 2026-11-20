@@ -2765,12 +2765,10 @@ provider and for a window set through =AUTOLITH_CONTEXT_WINDOW=.
 ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
 advertises Fast support. Fast responses count more heavily against plan usage;
 the exact rate is set by OpenAI per model and is not tracked here. The built-in
-GPT-6.1, GPT-6, and GPT-5.6 models support it. Use =(fast)= to inspect it, and
-=(fast t)= or =(fast nil)= to change the saved preference. The activity status line displays
-=FAST= while the active model uses Fast mode. Other providers and unknown Codex
-models keep the preference but use the standard path. Set
-=AUTOLITH_CODEX_FAST_MODE=on= or =off= to override the saved choice for one
-process; while it is set, =(fast t)= and =(fast nil)= are unavailable.
+GPT-6.1, GPT-6, and GPT-5.6 models support it. Set =:codex-fast-mode-p= with
+=(settings)=. Other providers and unknown Codex models use the standard path.
+Set =AUTOLITH_CODEX_FAST_MODE= to =on= or =off= to override the saved choice for
+one process.
 
 If a request fails before model generation begins, Autolith retries it up to
 six times with jittered delays.

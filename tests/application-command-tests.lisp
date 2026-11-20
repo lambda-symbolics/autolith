@@ -794,7 +794,7 @@
            (*read-eval*   nil))
        (dolist
            (case
-            '(("fast" :codex-fast-mode-p) ("trace" :reasoning-traces-p)
+            '(("trace" :reasoning-traces-p)
               ("timestamps" :turn-timestamps-p) ("cache-misses" :cache-miss-notices-p)
               ("ste" :simple-technical-english-p) ("titles" :session-title-generation-p)
               ("hurry-up" :hurry-up-p) ("compact-tool" :compact-view-p)))
@@ -906,137 +906,6 @@
           (application-operation-call application "compact-tool")
           (test-assert (and (zerop resets) (zerop publications))
                        "compact view status has no runtime side effects"))))))
-  nil)
-
-(-> test-application-codex-fast-mode-command () null)
-(defun test-application-codex-fast-mode-command ()
-  "Test /fast status, persistence, runtime installation, and validation."
-  (test-application-typed-boolean-controls)
-  (let* ((configuration
-           (configuration-copy (test-configuration) :codex-fast-mode-p nil))
-         (root               (test-configuration-root configuration))
-         (application        (make-instance 'application
-                                            :configuration configuration))
-         (previous-fast-mode (uiop:getenv "AUTOLITH_CODEX_FAST_MODE"))
-         (presented          nil)
-         (installed          nil)
-         (published-count    0))
-    (unwind-protect
-         (progn
-           (platform-unsetenv "AUTOLITH_CODEX_FAST_MODE")
-           (test-call-with-function-replacements
-            (list
-             (list
-              'application-present
-              (lambda (candidate entry)
-                (declare (ignore candidate))
-                (push entry presented)
-                t))
-             (list
-              'application--install-configuration
-              (lambda (candidate replacement &key conversation)
-                (declare (ignore conversation))
-                (setf (application-configuration candidate) replacement)
-                (push (config :codex-fast-mode-p replacement) installed)
-                nil))
-             (list
-              'application-publish-recovery-session
-              (lambda (candidate)
-                (declare (ignore candidate))
-                (incf published-count)
-                nil)))
-            (lambda ()
-             (flet ((saved-fast-mode-p ()
-                      "Return the Codex Fast mode value stored in the preferences file."
-                      (getf (preferences--form->plist
-                             (snapshot-read
-                              (configuration-preferences-path
-                               (application-configuration application))))
-                            :codex-fast-mode-p)))
-              (test-assert
-               (eq (application--builtin-fast-command application) ':continue)
-               "/fast status completes through the canonical command")
-              (test-assert
-               (search "Fast mode is off." (first presented))
-               "/fast reports the disabled state")
-              (test-assert
-               (eq (application--builtin-fast-command application ':status)
-                   ':continue)
-               "/fast status accepts its explicit spelling")
-              (let ((codex-configuration
-                      (application-configuration application)))
-                (setf (application-configuration application)
-                      (configuration-copy codex-configuration :model "grok-4.5"))
-                (application--builtin-fast-command application ':status)
-                (test-assert
-                 (and (search "preference is off" (first presented))
-                      (search "standard path" (first presented)))
-                 "/fast identifies an inactive saved preference outside Codex")
-                (setf (application-configuration application)
-                      codex-configuration))
-              (test-assert
-               (and (not (probe-file (configuration-preferences-path
-                                      (application-configuration application))))
-                    (null installed)
-                    (zerop published-count))
-               "/fast status has no persistence or runtime side effects")
-              (test-assert
-               (eq (application--builtin-fast-command application t)
-                   ':continue)
-               "/fast on completes through the canonical command")
-              (test-assert
-               (and (config :codex-fast-mode-p
-                     (application-configuration application))
-                    (eq (saved-fast-mode-p) t)
-                    (eq (first installed) t)
-                    (= published-count 1)
-                    (search "enabled and saved" (first presented)))
-               "/fast on persists and installs the enabled state")
-              (test-assert
-               (eq (application--builtin-fast-command application nil)
-                   ':continue)
-               "/fast off completes through the canonical command")
-              (test-assert
-               (and (not
-                     (config :codex-fast-mode-p
-                      (application-configuration application)))
-                    (null (saved-fast-mode-p))
-                    (null (first installed))
-                    (= published-count 2)
-                    (search "disabled and saved" (first presented)))
-               "/fast off persists and installs the disabled state")
-              (test-assert
-               (handler-case
-                   (progn
-                     (application--builtin-fast-command application "turbo")
-                     nil)
-                 (configuration-error ()
-                   t))
-               "/fast rejects unsupported modes")
-              (platform-setenv "AUTOLITH_CODEX_FAST_MODE" "off")
-              (application--builtin-fast-command application ':status)
-              (test-assert
-               (search "AUTOLITH_CODEX_FAST_MODE controls it" (first presented))
-               "/fast status reports the process environment override")
-              (test-assert
-               (handler-case
-                   (progn
-                     (application--builtin-fast-command application t)
-                     nil)
-                 (configuration-error ()
-                   t))
-               "/fast cannot supersede the process environment override")
-              (test-assert
-               (and (null (saved-fast-mode-p))
-                    (= (length installed) 2)
-                    (= published-count 2))
-               "invalid or environment-controlled /fast input has no side effects")))))
-      (if previous-fast-mode
-          (platform-setenv "AUTOLITH_CODEX_FAST_MODE" previous-fast-mode)
-          (platform-unsetenv "AUTOLITH_CODEX_FAST_MODE"))
-      (platform-delete-directory-tree *platform* root
-                                      :validate          t
-                                      :if-does-not-exist ':ignore)))
   nil)
 
 (defclass application-authentication-test-provider (model-provider)

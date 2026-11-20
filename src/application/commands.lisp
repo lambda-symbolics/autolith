@@ -616,10 +616,7 @@ combination."
   "Persist and apply Codex Fast mode for future provider requests."
   (when (application--codex-fast-mode-environment-p)
     (error 'configuration-error
-           :message
-           (format nil
-                   "AUTOLITH_CODEX_FAST_MODE controls Fast mode for this ~
-                    process; unset it before using (fast t) or (fast nil).")))
+           :message "Unset AUTOLITH_CODEX_FAST_MODE before changing the Fast mode setting."))
   (let ((configuration (application-configuration application)))
     (setf (config :codex-fast-mode-p configuration) enabled-p)
     (application--install-configuration application configuration)
@@ -678,49 +675,6 @@ combination."
 (defun application--parse-permissions-control (text)
   "Read a slash command-permission action."
   (application--parse-control text '(:ask :auto :sandbox :full :list :clear)))
-
-(-> application-codex-fast-mode-command (application &optional t) null)
-(defun application-codex-fast-mode-command (application &optional (argument ':status))
-  "Set or report APPLICATION's persisted Codex Fast mode."
-  (let* ((configuration (application-configuration application))
-         (mode          (application--boolean-control argument))
-         (enabled-p     (config :codex-fast-mode-p configuration))
-         (available-p
-           (configuration-codex-fast-mode-available-p configuration)))
-    (cond
-      ((eq mode ':status)
-       (application-present
-        application
-        (cond
-          ((application--codex-fast-mode-environment-p)
-           (format nil
-                   "Fast mode is ~A for this process. ~
-                    AUTOLITH_CODEX_FAST_MODE controls it.~:[ The current ~
-                    model uses the standard path.~;~]"
-                   (if enabled-p "on" "off")
-                   available-p))
-          (available-p
-           (format nil
-                   "Fast mode is ~A. This setting persists across restarts."
-                   (if enabled-p "on" "off")))
-          (t
-           (format nil
-                   "Fast mode preference is ~A. The current model uses the standard path."
-                   (if enabled-p "on" "off"))))))
-      ((eq mode ':on)
-       (application-set-codex-fast-mode application t)
-       (application-present
-        application
-        (if available-p
-            "Fast mode is enabled and saved. Fast responses count more heavily against plan usage."
-            "Fast mode preference is enabled and saved. The current model uses the standard path.")))
-      ((eq mode ':off)
-       (application-set-codex-fast-mode application nil)
-       (application-present application "Fast mode is disabled and saved."))
-      (t
-       (error 'configuration-error
-              :message "Usage: (fast), (fast t), or (fast nil)."))))
-  nil)
 
 (-> application-set-reasoning-traces (application boolean) null)
 (defun application-set-reasoning-traces (application enabled-p)
@@ -3386,21 +3340,6 @@ pristine or recovery session runs apart from it."
        application
        (application-selection-line
         (config :reasoning-effort (application-configuration application))))))
-  ':continue)
-
-(define-application-command application--builtin-fast-command
-    (:name              "/fast"
-     :help-topic        :models
-     :help-order        5
-     :description       "show or change Codex Fast mode"
-     :tip               "Use `(fast t)` to request priority service, which counts more heavily against plan usage; use `(fast nil)` for normal service."
-     :busy-behavior     :apply
-     :terminal-behavior :shared
-     :callable          t
-     :slash-parser      application--parse-boolean-control
-     :static-options    (t nil :status))
-    (application &optional (mode ':status))
-  (application-codex-fast-mode-command application mode)
   ':continue)
 
 (define-application-command application--builtin-trace-command
