@@ -1894,7 +1894,8 @@ for an agent, a child agent included: it is the resident of its nested
 channel and messages as that participant under its role's ordinary tool
 policy. A message reaches the channel's residents, every subscriber of
 the channel and every participant it mentions as =@name= or =@id=, wherever
-they reside. An agent can use =@parent= as the channel in =channel.send= or
+they reside. An absolute path addresses a channel, not a participant mention.
+An agent can use =@parent= as the channel in =channel.send= or
 as a mention. It reaches the closest active ancestor, or you if there is
 none. In a message to the sender's own child, =@parent= in the text
 reaches nobody else: the child reads it as the sender, as in "report to
@@ -1905,9 +1906,9 @@ you or reaches you through =@parent=, is a notice: it goes to your inbox and no
 agent takes it as a turn. Once a terminal shows the inbox, the notice is
 recorded in the inbox's history and shown in full; until then it waits,
 unread. The sidebar counts it, and so does the modeline of every channel,
-as in =✉ 2 unread=, in plain mode too. Each notice ends with the form that goes
-where it was said, such as =(open "b-6uouHJ")=; in fullscreen, clicking it
-runs it as if you had typed it. =(open "inbox")= opens the inbox, which
+as in =✉ 2 unread=. Each notice ends with the form that goes where it was said,
+such as =(open "b-6uouHJ")=; click it to run it as if you had typed it.
+=(open "inbox")= opens the inbox, which
 the =(open)= picker lists first. Typing in the inbox
 reaches no agent; =(tell "ID" "text")= writes to a channel from there.
 Messages you write elsewhere name the channel you wrote them in as their
