@@ -677,14 +677,13 @@ The boot screen then waits for =Space= or =Enter= before opening the listener,
 rotating the startup tip every ten seconds while it waits. =Ctrl-C= on the
 waiting boot screen halts the session. Turn the wait off for future launches
 with =(setf (config :boot-screen-linger-p) nil)= or for one launch with
-=AUTOLITH_BOOT_LINGER=off=, and change the rotation with
-=(setf (config :boot-screen-tip-seconds) 30)= or =AUTOLITH_BOOT_TIP_SECONDS=.
+=AUTOLITH_BOOT_LINGER=off=.
 Direct-session boot animation lasts =(config :boot-screen-seconds)= seconds
 (3.5 by default); =AUTOLITH_BOOT_DURATION= also sets the duration. When opening
 a hosted channel, boot progress follows the actual work without replaying the
 animation afterward.
 Skip the boot screen entirely with =(setf (config :boot-screen-p) nil)= or
-=AUTOLITH_BOOT_SCREEN=off=; =(settings)= lists all four.
+=AUTOLITH_BOOT_SCREEN=off=; =(settings)= lists these options.
 
 ** Almighty theme
 

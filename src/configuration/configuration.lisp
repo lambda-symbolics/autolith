@@ -643,16 +643,6 @@ Ordinary native defaults remain lazy and follow the current environment."
   :environment                        "AUTOLITH_BOOT_LINGER"
   :default                            t)
 
-(define-setting :boot-screen-tip-seconds (integer-setting)
-  :label                                 "Boot tip rotation"
-  :group                                 :terminal
-  :documentation                         "Seconds between startup tips while the boot screen waits."
-  :scope                                 :durable
-  :minimum                               1
-  :maximum                               3600
-  :environment                           "AUTOLITH_BOOT_TIP_SECONDS"
-  :default                               10)
-
 (define-setting :permission-mode (choice-setting)
   :label                         "Saved permission mode"
   :group                         :behavior

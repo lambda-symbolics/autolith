@@ -8,8 +8,7 @@
   (with-test-configuration (configuration root)
     (setf configuration
           (configuration-copy configuration :working-directory root :onboarding-p t
-                              :fullscreen-p fullscreen-p :boot-screen-seconds 0
-                              :boot-screen-tip-seconds 1))
+                              :fullscreen-p fullscreen-p :boot-screen-seconds 0))
     (let* ((*terminal-theme*       *terminal-theme*)
            (*terminal-style-table* *terminal-style-table*)
            (terminal               (make-instance 'queued-recording-terminal :columns 100 :rows 32))

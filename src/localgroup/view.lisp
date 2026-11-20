@@ -801,8 +801,7 @@ leaves the channel running and gives the terminal back."
          (when (eq (terminal-ui-boot-sequence
                     ui
                     :presented-p t
-                    :linger-p    (config :boot-screen-linger-p configuration)
-                    :tip-seconds (config :boot-screen-tip-seconds configuration))
+                    :linger-p    (config :boot-screen-linger-p configuration))
                    ':interrupt)
            (channel-view--finish view (list ':detached)))
       (with-terminal-ui-locked (ui)

@@ -134,8 +134,7 @@ remaining selected revisions; interruption leaves them pending."
                                           (null (application-presentation application)))
                     :linger-p        t
                     :resize-callback #'application-pending-terminal-size
-                    :duration        (config :boot-screen-seconds configuration)
-                    :tip-seconds     (config :boot-screen-tip-seconds configuration))
+                    :duration        (config :boot-screen-seconds configuration))
                (:interrupt
                 ':interrupted)
                (:listener
@@ -206,7 +205,6 @@ Without BOOT-SCREEN-P the session skips both and only takes the screen."
                  ui :screen-p     (and boot-screen-p (config :boot-screen-p configuration))
                  :duration        (config :boot-screen-seconds configuration)
                  :linger-p        (config :boot-screen-linger-p configuration)
-                 :tip-seconds     (config :boot-screen-tip-seconds configuration)
                  :resize-callback #'application-pending-terminal-size
                  :halted-function
                  (lambda () (application-input-controller-exit-requested-p controller))
