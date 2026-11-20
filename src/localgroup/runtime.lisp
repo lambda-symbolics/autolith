@@ -20,9 +20,6 @@
            (linger-p :initarg :linger-p :initform nil :accessor localgroup-session-linger-p :type
             boolean :documentation
             "Whether the session outlives every client, as a world server's channels do.")
-           (attach-watchdog-thread :initform nil :accessor
-            localgroup-session-attach-watchdog-thread :type t :documentation
-            "The bounded thread exiting a launch nobody attaches to.")
            (owner-thread :initform (current-thread) :reader localgroup-session-owner-thread
             :documentation "The serving thread that published this endpoint."))
           (:documentation "One authenticated local control endpoint for a primary application."))
@@ -279,8 +276,6 @@ conversation transaction can roll back before releasing either lease."
 
 ;;;; -- Localgroup Terminal Ownership --
 
-(defparameter *localgroup-first-attach-timeout-seconds* 60
-  "The maximum seconds a launch waits for the client it was started for.")
 
 (-> localgroup--attach-expected-p (list) boolean)
 (defun localgroup--attach-expected-p (startup-values)
@@ -369,32 +364,6 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
     (when exit-p (localgroup--exit-abandoned-session session))
     exit-p))
 
-(-> localgroup--first-attach-overdue-p (localgroup-session) boolean)
-(defun localgroup--first-attach-overdue-p (session)
-  "Return true when SESSION never met the controlling client it was launched for."
-  (and (not (with-lock-held ((image-daemon:daemon-runtime-lock session))
-              (localgroup-session-controller-seen-p session)))
-       (not (application-terminal-attached-p (localgroup-session-application session)))))
-
-(-> localgroup--attach-watchdog (localgroup-session) null)
-(defun localgroup--attach-watchdog (session)
-  "Exit SESSION when no controlling client attaches within the first-attach timeout."
-  (let ((deadline
-         (+ (get-internal-real-time)
-            (* *localgroup-first-attach-timeout-seconds*
-               internal-time-units-per-second))))
-    (loop
-     (when
-         (with-lock-held ((image-daemon:daemon-runtime-lock session))
-           (or (image-daemon:daemon-runtime-stopping-p session)
-               (localgroup-session-controller-seen-p session)))
-       (return))
-     (when (>= (get-internal-real-time) deadline)
-       (when (localgroup--first-attach-overdue-p session)
-         (localgroup--exit-abandoned-session session))
-       (return))
-     (sleep 0.25)))
-  nil)
 
 (-> localgroup--terminal-event-p (t) boolean)
 (defun localgroup--terminal-event-p (event)
@@ -529,10 +498,6 @@ last controlling client vanishes."
            (localgroup--publish-registry session)
            (application-mission-schedules-host application session)
            (setf completed-p t)
-           (when (and (not restart-p) (localgroup--attach-expected-p startup-values))
-             (setf (localgroup-session-attach-watchdog-thread session)
-                   (make-thread (lambda () (localgroup--attach-watchdog session))
-                                :name "Autolith localgroup attach watchdog")))
            (unless restart-p (localgroup-handoff-finish-startup application))
            session)
       (unless completed-p
@@ -632,10 +597,6 @@ Any other message is rejected, as a request this process has no use for."
       (flet ((attempt (stage function)
                (handler-case (funcall function)
                  (error (condition) (push (list stage condition) failures)))))
-        (attempt ':watchdog
-                 (lambda ()
-                   (image-daemon:daemon-stop-thread
-                    (localgroup-session-attach-watchdog-thread session))))
         (attempt ':runtime (lambda () (image-daemon:daemon-runtime-stop session)))
         (attempt ':registry (lambda () (localgroup--delete-owned-registry session))))
       (when failures

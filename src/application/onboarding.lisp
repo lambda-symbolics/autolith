@@ -2,6 +2,9 @@
 
 ;;;; -- Application Integration --
 
+(defparameter *application-onboarding-client-wait-seconds* 60
+  "How long onboarding waits for an interactive terminal before serving the channel.")
+
 (-> application-onboarding--call-fullscreen (application function) t)
 (defun application-onboarding--call-fullscreen (application function)
   "Call FUNCTION with exclusive fullscreen ownership, restoring the user's mode."
@@ -191,7 +194,7 @@ Without BOOT-SCREEN-P the session skips both and only takes the screen."
            (when (application-input-controller-exit-requested-p controller)
              (throw 'onboarding-client-wait-ended nil))
            (sleep seconds))
-         *localgroup-first-attach-timeout-seconds*)))
+         *application-onboarding-client-wait-seconds*)))
     (let ((outcome
             (cond
               ((and pending (terminal-interactive-p terminal)
