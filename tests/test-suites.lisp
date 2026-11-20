@@ -833,6 +833,9 @@
 (define-test-suite presentation
   test-presentation-wire-forms
   test-presentation-model-publishes
+  test-presentation-idle-completion-refresh
+  test-presentation-idle-completion-retry
+  test-presentation-idle-status-phases
   test-presentation-transport-batches
   test-presentation-applies
   test-presentation-pages-and-readers

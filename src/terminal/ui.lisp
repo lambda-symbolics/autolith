@@ -605,20 +605,28 @@ the draft is exact."
 
 ;;;; -- Operation Completion Suggestions --
 
-(-> terminal-ui--current-completions (terminal-ui) list)
-(defun terminal-ui--current-completions (ui)
-  "Return and validate UI's current static or dynamically provided completions."
-  (let ((completions
-          (if (terminal-ui-completion-function ui)
-              (funcall (terminal-ui-completion-function ui))
-              (terminal-ui-completions ui))))
+(-> terminal-ui--completion-snapshot (terminal-ui) (values t t))
+(defun terminal-ui--completion-snapshot (ui)
+  "Return UI's raw completions and optional provider revision."
+  (if (terminal-ui-completion-function ui)
+      (funcall (terminal-ui-completion-function ui))
+      (values (terminal-ui-completions ui) nil)))
+
+(-> terminal-ui--validate-completions (t) list)
+(defun terminal-ui--validate-completions (completions)
+  "Validate a captured completion snapshot before use."
     (unless (and (listp completions)
                  (every #'terminal-completion-p completions))
       (error 'terminal-error
              :message   "The completion provider returned invalid entries."
              :operation ':complete
              :cause     nil))
-    completions))
+  completions)
+
+(-> terminal-ui--current-completions (terminal-ui) list)
+(defun terminal-ui--current-completions (ui)
+  "Return and validate UI's current static or dynamically provided completions."
+  (terminal-ui--validate-completions (terminal-ui--completion-snapshot ui)))
 
 (-> terminal-ui--operation-completion-prefix-p (string) boolean)
 (defun terminal-ui--operation-completion-prefix-p (text)
@@ -3613,6 +3621,12 @@ thread."
           (terminal-ui-command-pending-completions ui) nil))
   ui)
 
+(defgeneric terminal-ui--refresh-completions (ui)
+  (:documentation "Refresh UI's published completion catalog under its presentation lock."))
+
+(defmethod terminal-ui--refresh-completions ((ui terminal-ui))
+  "A directly rendered terminal has no catalog to publish."
+  nil)
 (-> terminal-ui-refresh-status (terminal-ui) boolean)
 (defun terminal-ui-refresh-status (ui)
   "Repaint changed live timing without waiting for a contended presentation lock."
@@ -3620,6 +3634,7 @@ thread."
       (terminal-ui--call-with-lock-if-available
        ui
        (lambda ()
+         (terminal-ui--refresh-completions ui)
          (let* ((status-now
                   (and (or (terminal-ui--status-row-visible-p ui)
                            (terminal-ui-notice ui))

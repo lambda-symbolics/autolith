@@ -1214,12 +1214,14 @@ RETAIN lists runtime identities another registry shares and still owns."
 (-> tool-registry-delete-if (tool-registry function) tool-registry)
 (defun tool-registry-delete-if (registry predicate)
   "Delete every tool satisfying PREDICATE from REGISTRY and return REGISTRY."
-  (ordered-map-delete-if
-   (lambda (canonical-name tool)
-     (declare (ignore canonical-name))
-     (funcall predicate tool))
-   (tool-registry-tool-map registry))
-  (extension-registry--advance-generation)
+  (with-extension-registry-transaction
+    (unwind-protect
+         (ordered-map-delete-if
+          (lambda (canonical-name tool)
+            (declare (ignore canonical-name))
+            (funcall predicate tool))
+          (tool-registry-tool-map registry))
+      (extension-registry--advance-generation)))
   registry)
 
 (-> tool-registry-restrict (tool-registry function &key (:retain list)) tool-registry)

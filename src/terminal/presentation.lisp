@@ -461,6 +461,10 @@ channel, the client sends its events, and they are read here."))
     :initform      (make-hash-table :test #'eq)
     :reader        channel-presentation-published-state
     :documentation "What each state operation last told the clients, by operation.")
+   (published-completion-revision
+    :initform      nil
+    :accessor      channel-presentation-published-completion-revision
+    :documentation "The provider revision of the last complete catalog publication.")
    (agent-activity-arguments
     :initform      nil
     :accessor      channel-presentation-agent-activity-arguments
@@ -821,29 +825,54 @@ state that did not change is not sent again."))
               (when (and (stringp primary) (<= (length primary) 4096))
                 (list :primary primary))))))
 
+(-> channel-presentation--completion-entries (t) list)
+(defun channel-presentation--completion-entries (snapshot)
+  "Validate and normalize the captured catalog for the client protocol."
+  (remove nil (mapcar #'presentation--completion-entry
+                     (terminal-ui--validate-completions snapshot))))
+
 (defmethod channel-presentation-state ((ui channel-presentation) (operation (eql :completions)))
-  "Describe the authoritative catalog connected to this channel's application."
-  (let ((entries (remove nil (mapcar #'presentation--completion-entry
-                                    (terminal-ui--current-completions ui)))))
+  "Describe the current catalog, including when a new client attaches."
+  (let ((entries (channel-presentation--completion-entries (terminal-ui--completion-snapshot ui))))
     (values (list :entries entries) entries)))
+
+(-> channel-presentation--completion-events (list) list)
+(defun channel-presentation--completion-events (entries)
+  "Split a logical catalog into bounded events, including an empty reset."
+  (loop with remaining = (length entries)
+        for tail = entries then (nthcdr 32 tail)
+        for first-p = t then nil
+        collect (list :ui :operation ':completions
+                      :entries (subseq tail 0 (min 32 remaining))
+                      :reset-p first-p :complete-p (<= remaining 32))
+        while (> remaining 32)
+        do (decf remaining 32)))
 
 (-> channel-presentation--state-events (channel-presentation keyword) (values list t))
 (defun channel-presentation--state-events (ui operation)
   "Return bounded state events and the signature of their complete logical state."
   (multiple-value-bind (fields signature) (channel-presentation-state ui operation)
-    (values
-     (if (eq operation ':completions)
-         (loop with entries = (getf fields :entries)
-               with remaining = (length entries)
-               for tail = entries then (nthcdr 32 tail)
-               for first-p = t then nil
-               collect (list :ui      :operation operation
-                             :entries (subseq tail 0 (min 32 remaining))
-                             :reset-p first-p :complete-p (<= remaining 32))
-               while (> remaining 32)
-               do (decf remaining 32))
-         (list (list* :ui :operation operation fields)))
-     signature)))
+    (values (if (eq operation ':completions)
+                (channel-presentation--completion-events (getf fields :entries))
+                (list (list* :ui :operation operation fields)))
+            signature)))
+
+(defmethod terminal-ui--refresh-completions ((ui channel-presentation))
+  "Poll the provider and publish a changed catalog, retrying failed publication."
+  (multiple-value-bind (snapshot revision) (terminal-ui--completion-snapshot ui)
+    (unless (and revision (eq revision (channel-presentation-published-completion-revision ui)))
+      (let ((entries (channel-presentation--completion-entries snapshot))
+            (published (channel-presentation-published-state ui)))
+        (multiple-value-bind (previous present-p) (gethash ':completions published)
+          (unless (and present-p (equal previous entries))
+            ;; A failed batch may have sent some chunks. Retry from the reset.
+            (remhash ':completions published)
+            (setf (channel-presentation-published-completion-revision ui) nil)
+            (dolist (event (channel-presentation--completion-events entries))
+              (channel-presentation--publish ui ':completions (nthcdr 3 event)))
+            (setf (gethash ':completions published) entries)))
+        (setf (channel-presentation-published-completion-revision ui) revision))))
+  nil)
 
 (-> channel-presentation--publish-state (channel-presentation keyword) null)
 (defun channel-presentation--publish-state (ui operation)
@@ -961,17 +990,22 @@ event, as a terminal tells it, so it lays itself out again."
 
 (defmethod terminal-ui--present-live
     ((ui channel-presentation) &key status-now appended-text appended-display appended-regions)
-  "Compose nothing: let an expired notice go and tell the clients what an open picker shows."
+  "Publish the hosted live state and acknowledge its status signature."
   (declare (ignore appended-text appended-display appended-regions))
-  (terminal-ui--expire-notice-at
-   ui (or status-now (and (terminal-ui-notice ui) (funcall (terminal-ui-clock-function ui)))))
-  ;; A page lasts while its owner keeps the live rows suspended.
-  (unless (terminal-ui-live-output-suspended-p ui)
-    (setf (channel-presentation-page ui) nil))
-  (channel-presentation--publish-state ui ':page)
-  (channel-presentation--publish-state ui ':selector)
-  (channel-presentation--publish-state ui ':draft)
-  (channel-presentation--publish-state ui ':completions)
+  (let ((now (or status-now
+                 (and (or (terminal-ui--status-row-visible-p ui)
+                          (terminal-ui-notice ui))
+                      (funcall (terminal-ui-clock-function ui))))))
+    (terminal-ui--expire-notice-at ui now)
+    ;; A page lasts while its owner keeps the live rows suspended.
+    (unless (terminal-ui-live-output-suspended-p ui)
+      (setf (channel-presentation-page ui) nil))
+    (channel-presentation--publish-state ui ':page)
+    (channel-presentation--publish-state ui ':selector)
+    (channel-presentation--publish-state ui ':draft)
+    (terminal-ui--refresh-completions ui)
+    (setf (terminal-ui-status-rendered-signature ui)
+          (and now (terminal-ui--animation-signature-at ui now))))
   nil)
 
 
