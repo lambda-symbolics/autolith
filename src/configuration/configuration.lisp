@@ -691,12 +691,6 @@ Ordinary native defaults remain lazy and follow the current environment."
   :maximum                            10080
   :default                            30)
 
-(define-setting :management-repl-enabled-p (boolean-setting)
-  :label                                   "Management REPL"
-  :group                                   :management
-  :documentation                           "Whether the authenticated active-image management endpoint starts."
-  :environment                             "AUTOLITH_MANAGEMENT_REPL")
-
 (define-setting :management-repl-transport (management-transport-setting)
   :label                                   "Management transport"
   :group                                   :management
@@ -738,62 +732,6 @@ Ordinary native defaults remain lazy and follow the current environment."
   :environment                                   "AUTOLITH_MANAGEMENT_REPL_TOKEN_FILE"
   :default                                       (lambda (configuration)
                                                    (merge-pathnames "management-repl.token" (config :config-root configuration))))
-
-(define-setting :management-repl-evaluation-timeout (integer-setting)
-  :label                                            "Management timeout"
-  :group                                            :management
-  :documentation                                    "The management request deadline in seconds."
-  :minimum                                          1
-  :environment                                      "AUTOLITH_MANAGEMENT_REPL_TIMEOUT"
-  :default                                          10)
-
-(define-setting :management-repl-maximum-frame-size (integer-setting)
-  :label                                            "Management frame size"
-  :group                                            :management
-  :documentation                                    "The maximum management wire frame size in octets."
-  :minimum                                          128
-  :environment                                      "AUTOLITH_MANAGEMENT_REPL_MAX_FRAME"
-  :default                                          1048576)
-
-(define-setting :management-repl-maximum-source-size (integer-setting)
-  :label                                             "Management source size"
-  :group                                             :management
-  :documentation                                     "The maximum evaluation source size in UTF-8 octets."
-  :minimum                                           1
-  :environment                                       "AUTOLITH_MANAGEMENT_REPL_MAX_SOURCE"
-  :default                                           262144)
-
-(define-setting :management-repl-maximum-output-size (integer-setting)
-  :label                                             "Management output size"
-  :group                                             :management
-  :documentation                                     "The maximum captured output and value text size."
-  :minimum                                           1
-  :environment                                       "AUTOLITH_MANAGEMENT_REPL_MAX_OUTPUT"
-  :default                                           262144)
-
-(define-setting :management-repl-queue-capacity (integer-setting)
-  :label                                        "Management queue"
-  :group                                        :management
-  :documentation                                "The maximum queued management evaluations."
-  :minimum                                      1
-  :environment                                  "AUTOLITH_MANAGEMENT_REPL_QUEUE_CAPACITY"
-  :default                                      8)
-
-(define-setting :management-repl-maximum-clients (integer-setting)
-  :label                                         "Management clients"
-  :group                                         :management
-  :documentation                                 "The maximum accepted management clients, including authentication."
-  :minimum                                       1
-  :environment                                   "AUTOLITH_MANAGEMENT_REPL_MAX_CLIENTS"
-  :default                                       8)
-
-(define-setting :management-repl-authentication-timeout (integer-setting)
-  :label                                                "Management auth timeout"
-  :group                                                :management
-  :documentation                                        "The absolute authentication deadline in seconds."
-  :minimum                                              1
-  :environment                                          "AUTOLITH_MANAGEMENT_REPL_AUTH_TIMEOUT"
-  :default                                              10)
 
 (define-setting :slynk-directory (optional-directory-setting)
   :label                         "Slynk directory"

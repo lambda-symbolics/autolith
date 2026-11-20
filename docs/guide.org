@@ -2231,11 +2231,10 @@ when the tool runtime is retired.
 
 ** Active-image management endpoint
 
-The management REPL is an opt-in endpoint for trusted programs to evaluate
+The management REPL is an always-enabled endpoint for trusted programs to evaluate
 Common Lisp in the running =AUTOLITH= image. It uses image-daemon's evaluation
 protocol, with =eval-connect= and =eval-call= as a complete Lisp client. It does
-not use the localgroup protocol, Swank, or Slynk. It is disabled unless
-=AUTOLITH_MANAGEMENT_REPL= is set to =on=.
+not use the localgroup protocol, Swank, or Slynk.
 
 Every connection authenticates with a fresh random nonce and HMAC-SHA-256. The
 client never sends the reusable token. Put a nonempty token in a regular file
@@ -2247,19 +2246,14 @@ The following environment variables configure newly created applications:
 
 | Variable | Default | Meaning |
 |-
-| =AUTOLITH_MANAGEMENT_REPL= | =off= | Enable the endpoint. |
 | =AUTOLITH_MANAGEMENT_REPL_TRANSPORT= | =unix=, or =tcp= on Windows | =unix= or =tcp=. |
 | =AUTOLITH_MANAGEMENT_REPL_UNIX_SOCKET= | =${XDG_STATE_HOME:-~/.local/state}/autolith/management/repl.sock= | Unix socket pathname. |
 | =AUTOLITH_MANAGEMENT_REPL_TCP_ADDRESS= | =127.0.0.1= | IPv4 loopback listener address. |
 | =AUTOLITH_MANAGEMENT_REPL_TCP_PORT= | =4141= | TCP listener port. |
 | =AUTOLITH_MANAGEMENT_REPL_TOKEN_FILE= | =${XDG_CONFIG_HOME:-~/.config}/autolith/management-repl.token= | Mode-0600 token file. |
-| =AUTOLITH_MANAGEMENT_REPL_TIMEOUT= | =10= | Evaluation deadline in seconds. |
-| =AUTOLITH_MANAGEMENT_REPL_MAX_FRAME= | =1048576= | Maximum wire-frame octets. |
-| =AUTOLITH_MANAGEMENT_REPL_MAX_SOURCE= | =262144= | Maximum UTF-8 source octets. |
-| =AUTOLITH_MANAGEMENT_REPL_MAX_OUTPUT= | =262144= | Maximum captured output and value text. |
-| =AUTOLITH_MANAGEMENT_REPL_QUEUE_CAPACITY= | =8= | Maximum queued evaluations. |
-| =AUTOLITH_MANAGEMENT_REPL_MAX_CLIENTS= | =8= | Maximum accepted clients, including authentication. |
-| =AUTOLITH_MANAGEMENT_REPL_AUTH_TIMEOUT= | =10= | Absolute authentication deadline in seconds. |
+
+Evaluation and authentication deadlines are 10 seconds. Frames are bounded to
+1 MiB, source and output to 256 KiB, and queued evaluations and clients to 64.
 
 TCP accepts IPv4 loopback addresses only. This endpoint does not provide server
 TLS, and arbitrary Lisp results may contain secrets. Challenge-response prevents
@@ -2308,7 +2302,7 @@ After authentication, send one request at a time:
 #+END_SRC
 
 The source string must contain exactly one form. A dedicated serial evaluator
-thread reads it in package =AUTOLITH=, applies the configured deadline, prevents
+thread reads it in package =AUTOLITH=, applies the 10-second deadline, prevents
 interactive debugger entry, and captures standard, error, trace, query, debug,
 and terminal output in a bounded Gray stream. Successful responses have this
 shape:

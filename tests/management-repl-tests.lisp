@@ -3,32 +3,22 @@
 ;;;; -- Management REPL Test Support --
 
 (-> management-repl-test-configuration
-    (pathname &key (:transport keyword) (:address string) (:port integer)
-                   (:timeout integer) (:maximum-output-size integer))
+    (pathname &key (:transport keyword) (:address string) (:port integer))
     configuration)
 (defun management-repl-test-configuration
     (root &key (transport (if (platform-supports-p *platform* ':local-sockets)
                               ':unix
                               ':tcp))
-               (address "127.0.0.1") (port 4141)
-               (timeout 1) (maximum-output-size 4096))
-  "Return an enabled management configuration rooted under ROOT."
+               (address "127.0.0.1") (port 4141))
+  "Return a management configuration rooted under ROOT."
   (configuration-create
    :source-root                            (asdf:system-source-directory :autolith)
    :working-directory                      (asdf:system-source-directory :autolith)
-   :management-repl-enabled-p              t
    :management-repl-transport              transport
    :management-repl-unix-socket-path       (merge-pathnames "private/repl.sock" root)
    :management-repl-tcp-address            address
    :management-repl-tcp-port               port
-   :management-repl-token-file-path        (merge-pathnames "token" root)
-   :management-repl-evaluation-timeout     timeout
-   :management-repl-maximum-frame-size     65536
-   :management-repl-maximum-source-size    4096
-   :management-repl-maximum-output-size    maximum-output-size
-   :management-repl-queue-capacity         2
-   :management-repl-maximum-clients        2
-   :management-repl-authentication-timeout 1))
+   :management-repl-token-file-path        (merge-pathnames "token" root)))
 
 (-> management-repl-test-write-token (configuration string) null)
 (defun management-repl-test-write-token (configuration token)
@@ -76,13 +66,9 @@
   (every
    (lambda (reader)
      (equal (config reader left) (config reader right)))
-   (list :management-repl-enabled-p           :management-repl-transport
+   (list :management-repl-transport
          :management-repl-unix-socket-path    :management-repl-tcp-address
-         :management-repl-tcp-port            :management-repl-token-file-path
-         :management-repl-evaluation-timeout  :management-repl-maximum-frame-size
-         :management-repl-maximum-source-size :management-repl-maximum-output-size
-         :management-repl-queue-capacity      :management-repl-maximum-clients
-         :management-repl-authentication-timeout)))
+         :management-repl-tcp-port            :management-repl-token-file-path)))
 
 
 ;;;; -- Focused Tests --
@@ -96,8 +82,7 @@
                   (uiop:temporary-directory))))
          (configuration
            (management-repl-test-configuration
-            root :transport ':tcp :address "127.0.0.2" :port 4545
-            :timeout 7 :maximum-output-size 2048))
+            root :transport ':tcp :address "127.0.0.2" :port 4545))
          (clone (configuration-copy configuration))
          (reconnect
            (application--reconnect-configuration configuration nil)))
@@ -109,13 +94,6 @@
            (test-assert
             (management-repl-test-same-settings-p configuration reconnect)
             "non-environment reconnect preserves explicit management settings")
-           (test-assert
-            (not (config :management-repl-enabled-p
-                  (configuration-create
-                   :source-root (asdf:system-source-directory :autolith)
-                   :working-directory
-                   (asdf:system-source-directory :autolith))))
-            "management endpoint is disabled by default")
            (let ((relative
                    (configuration-create
                     :source-root                      (asdf:system-source-directory :autolith)

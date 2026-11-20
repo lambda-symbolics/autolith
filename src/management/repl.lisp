@@ -46,17 +46,13 @@
 
 (-> management-repl-start (t) (option eval-endpoint))
 (defun management-repl-start (owner)
-  "Start OWNER's configured management endpoint when enabled and return it."
-  (let ((configuration (management-repl-owner-configuration owner)))
-    (cond
-      ((not (config :management-repl-enabled-p configuration))
-       nil)
-      ((management-repl-owner-endpoint owner))
-      (t
-       (let ((endpoint (management-repl--call
-                        (lambda ()
-                          (eval-endpoint-start (management-repl--endpoint configuration))))))
-         (setf (management-repl-owner-endpoint owner) endpoint))))))
+  "Start OWNER's configured management endpoint and return it."
+  (or (management-repl-owner-endpoint owner)
+      (let* ((configuration (management-repl-owner-configuration owner))
+             (endpoint      (management-repl--call
+                             (lambda ()
+                               (eval-endpoint-start (management-repl--endpoint configuration))))))
+        (setf (management-repl-owner-endpoint owner) endpoint))))
 
 (-> management-repl-stop (t) null)
 (defun management-repl-stop (owner)
@@ -102,13 +98,13 @@
    :tcp-port               (config :management-repl-tcp-port configuration)
    :token-pathname         (config :management-repl-token-file-path configuration)
    :package                '#:autolith
-   :evaluation-timeout     (config :management-repl-evaluation-timeout configuration)
-   :authentication-timeout (config :management-repl-authentication-timeout configuration)
-   :maximum-frame-size     (config :management-repl-maximum-frame-size configuration)
-   :maximum-source-size    (config :management-repl-maximum-source-size configuration)
-   :maximum-output-size    (config :management-repl-maximum-output-size configuration)
-   :queue-capacity         (config :management-repl-queue-capacity configuration)
-   :maximum-clients        (config :management-repl-maximum-clients configuration)
+   :evaluation-timeout     10
+   :authentication-timeout 10
+   :maximum-frame-size     1048576
+   :maximum-source-size    262144
+   :maximum-output-size    262144
+   :queue-capacity         64
+   :maximum-clients        64
    :error-function         #'management-repl--report))
 
 (-> management-repl--call (function) t)
