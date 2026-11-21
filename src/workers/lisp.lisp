@@ -266,6 +266,34 @@
 
 ;;;; -- Tool Result Adaptation --
 
+(defparameter *evaluation-section-character-limit* 8000
+  "Character budget shared by the printed output and values, including section headings.")
+
+(-> evaluation-details (list (option string) &key (:limit integer)) list)
+(defun evaluation-details (result-values output &key (limit *evaluation-section-character-limit*))
+  "Bound printed output and values together, reserving space for both when present.
+
+An empty :VALUES string denotes zero values; a returned NIL is printed as NIL."
+  (let* ((budget      (max 0 (- limit (length (format nil "Output:~%~%Values:~%")))))
+         (output-text (bounded-string (or output "") :limit (if result-values (floor budget 2) budget)))
+         (value-limit (- budget (length output-text)))
+         (stream      (bounded-output-stream-create value-limit)))
+    (format stream "~{~A~%~}" result-values)
+    (let ((text (bounded-output-stream-text stream)))
+      (list :output output-text
+            :values (if (and (plusp value-limit) (bounded-output-stream-truncated-p stream))
+                        (concatenate 'string (subseq text 0 (1- value-limit)) "…")
+                        text)))))
+
+(-> evaluation-text (list) string)
+(defun evaluation-text (evaluation)
+  "Render the same printed evaluation sections for the model."
+  (with-output-to-string (stream)
+    (let ((output (getf evaluation :output)))
+      (when (non-empty-string-p output)
+        (format stream "Output:~%~A~%" output)))
+    (format stream "Values:~%~A" (getf evaluation :values))))
+
 (-> worker-response--failure-code (list) keyword)
 (defun worker-response--failure-code (properties)
   "Project worker condition metadata through fixed categories, never class names or reports."
@@ -293,21 +321,27 @@
          (backtrace     (getf properties :backtrace))
          (form-count    (getf properties :form-count)))
     (if (eq status :ok)
-        (tool-success
-         (with-output-to-string (stream)
-           (when (non-empty-string-p output)
-             (format stream "Output:~%~A~%" output))
-           (format stream "Values:~%~{~A~%~}" result-values)))
-        (tool-failure
-         (with-output-to-string (stream)
-           (when (and form-count (> form-count 1))
-             (format stream "Form ~D of ~D failed: " (getf properties :form-index) form-count))
-           (format stream "~A" (or message "Worker operation failed."))
-           (when (non-empty-string-p output)
-             (format stream "~%~%Output:~%~A" output))
-           (when (non-empty-string-p backtrace)
-             (format stream "~%~%Backtrace:~%~A" backtrace)))
-         :code (worker-response--failure-code properties)))))
+        (let ((evaluation (evaluation-details result-values output)))
+          (tool-success (evaluation-text evaluation)
+                        :details (list :evaluation evaluation)))
+        (let* ((condition-text (if (and form-count (> form-count 1))
+                                   (format nil "Form ~D of ~D failed: ~A"
+                                           (getf properties :form-index) form-count
+                                           (or message "Worker operation failed."))
+                                   (or message "Worker operation failed.")))
+               (condition-text (bounded-string condition-text :limit *evaluation-section-character-limit*))
+               (output         (bounded-string (or output "") :limit *evaluation-section-character-limit*))
+               (backtrace      (bounded-string (or backtrace "") :limit *evaluation-section-character-limit*)))
+          (tool-failure
+           (with-output-to-string (stream)
+             (write-string condition-text stream)
+             (when (non-empty-string-p output)
+               (format stream "~%~%Output:~%~A" output))
+             (when (non-empty-string-p backtrace)
+               (format stream "~%~%Backtrace:~%~A" backtrace)))
+           :code    (worker-response--failure-code properties)
+           :details (list :evaluation (list :condition condition-text
+                                            :output output :backtrace backtrace)))))))
 
 (-> lisp-tool-repl-name (hash-table) string)
 (defun lisp-tool-repl-name (arguments)

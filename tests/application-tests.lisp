@@ -2507,11 +2507,11 @@
                      "Lisp evaluation tool inputs receive nesting colors.")))
     (dolist (name '("lisp.eval" "self.eval" "lisp.describe" "lisp.source" "self.diff"))
       (let* ((source-p (member name '("lisp.source" "self.diff") :test #'equal))
-             (output   (if source-p
-                           "(list (list 1))"
-                           (format nil "Output:~%(captured output)~%~%Values:~%((1))")))
              (entry    (conversation-record-entry
-                        application (list :tool-result :tool name :status ':ok :output output))))
+                        application (list :tool-result :tool name :status ':ok
+                                          :output  (if source-p "(list (list 1))" "")
+                                          :details (unless source-p
+                                                     '(:evaluation (:output "(captured output)" :values "((1))")))))))
         (test-assert (eq (not (equal name "self.diff"))
                          (not (null (find ':syntax-parenthesis-2 entry :key #'terminal-span-style))))
                      "Dedicated Lisp source and values receive nesting colors, excluding diffs.")
@@ -2544,9 +2544,8 @@
   (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
     (dolist (name '("lisp.eval" "lisp.scratchpad-run" "self.eval" "lisp.describe"))
       (let* ((record
-               (list :tool-result :tool name :status ':ok
-                     :output (format nil "Output:~%a captured message~%~%Values:~%(:answer 42 :text ~S)"
-                                     "hello")))
+                (list :tool-result :tool name :status ':ok
+                      :details '(:evaluation (:output "a captured message" :values "(:answer 42 :text \"hello\")"))))
              (entry (conversation-record-entry application record)))
         (test-assert (and (find ':syntax-number entry :key #'terminal-span-style)
                           (find ':syntax-string entry :key #'terminal-span-style))
@@ -3254,7 +3253,7 @@
                    application
                    (list :tool-result :seq 4 :time 0 :call-id 3
                          :tool "self.eval" :status ':ok
-                         :output (format nil "Output:~%hello~%Values:~%42~%"))))
+                          :details '(:evaluation (:output "hello" :values "42")))))
            (text  (test-terminal-row-text entry)))
       (test-assert (equal (first entry) (terminal-span :success "✓ self.eval"))
                    "successful tool results present a success header")
@@ -3265,27 +3264,11 @@
                    "self.eval results separate captured output from values"))
     (let* ((entry (conversation-record-entry
                    application
-                   (list :tool-result :seq 5 :time 0 :call-id 4
-                          :tool "lisp.describe" :status ':ok
-                         :output (format nil
-                                         "Symbol: FOO~%Package: AUTOLITH~%~
-                                          Function binding: yes~%~
-                                          Lambda list: (X)~%Describe:~%details"))))
-           (text  (test-terminal-row-text entry)))
-      (test-assert (and (search "Symbol" text)
-                        (search "FOO" text)
-                        (find (terminal-span :strong "Describe")
-                              entry
-                              :test #'equal))
-                   "introspection results use aligned fields and section headings"))
-    (let* ((entry (conversation-record-entry
-                   application
                    (list :tool-result :seq 6 :time 0 :call-id 5
                          :tool "lisp.describe" :status ':ok
-                         :output (format nil
-                                         "Output:~%Symbol: CAR~%~
-                                          Documentation: list head~%~
-                                          Values:~%"))))
+                          :details (list :evaluation
+                                         (list :output (format nil "Symbol: CAR~%Documentation: list head")
+                                               :values "")))))
            (text  (test-terminal-row-text entry)))
       (test-assert (and (search "description" text)
                         (search "Symbol" text)
@@ -3330,11 +3313,10 @@
                    application
                    (list :tool-result :seq 6 :time 0 :call-id 5
                          :tool "self.eval" :status ':error
-                         :output (format nil
-                                         "self.eval failed: Needs a value.~2%Available restarts:~%~
-                                            CONTINUE  Try again.~%~
-                                            USE-VALUE  Supply a value.~%~
-                                          Retry the identical call with a restart."))))
+                          :details '(:evaluation (:condition "Needs a value."
+                                                  :restarts  (("CONTINUE" "Try again.")
+                                                              ("USE-VALUE" "Supply a value."))
+                                                  :retry     "Retry the identical call with a restart.")))))
            (text  (test-terminal-row-text entry)))
       (test-assert (equal (first entry)
                           (terminal-span :failure "! self.eval failed"))

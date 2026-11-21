@@ -1603,4 +1603,6 @@ signals with the candidate canonical names."
         (tool-failure
          (format nil "~A failed: ~A" canonical-name condition)
          :code     (tool-failure-code condition)
+         :details  (when (typep condition 'self-correctable-error)
+                     (list :evaluation (self-correctable-error-sections condition)))
          :denied-p (typep condition '(or tool-authority-denied command-authorization-unavailable)))))))
