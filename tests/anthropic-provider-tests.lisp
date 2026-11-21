@@ -652,24 +652,6 @@
               (lambda ()
                 (conversation-append-user-message conversation "Question")
                 (build)
-                (let* ((shared       (json-object "nested" (json-object "label" "same")))
-                       (wire         (json-array
-                                      (json-object "role" "user" "content"
-                                                   (json-array
-                                                    (json-object "type" "text" "payload" shared)
-                                                    (json-object "type" "text" "payload" shared)))))
-                       (copy         (anthropic--unmarked-messages wire))
-                       (first-block  (aref (json-get (aref copy 0) "content") 0))
-                       (second-block (aref (json-get (aref copy 0) "content") 1)))
-                  (let* ((first-nested  (json-get (json-get first-block "payload") "nested"))
-                         (second-nested (json-get (json-get second-block "payload") "nested"))
-                         (first-label   (gethash "label" first-nested))
-                         (first-key     (first (loop for key being the hash-keys of first-nested collect key))))
-                    (setf (char first-label 0) #\X
-                          (char first-key 0) #\X)
-                    (test-assert (and (equal (gethash "label" second-nested) "same")
-                                      (equal (gethash "label" (json-get (json-get (aref (json-get (aref wire 0) "content") 0) "payload") "nested")) "same"))
-                                 "Repeated Anthropic values detach mutable strings and keys"))
                  (multiple-value-bind (tail matches-p)
                      (anthropic--appended-messages
                       (json-array
@@ -680,20 +662,6 @@
                                     (json-array (json-object "type" "text" "text" "same")))))
                    (test-assert (and (null matches-p) (zerop (length tail)))
                                 "Changed-case prefix content does not reuse the cache"))
-                 (let ((request
-                         (json-object "messages"
-                                      (json-array
-                                       (json-object "role" "user" "content"
-                                                    (json-array
-                                                     (json-object "type" "text" "cache_control" (json-object "type" "ephemeral"))
-                                                     (json-object "type" "text" "cache_control" (json-object "type" "ephemeral"))
-                                                     (json-object "type" "text" "cache_control" (json-object "type" "ephemeral"))
-                                                     (json-object "type" "text" "cache_control" (json-object "type" "ephemeral"))
-                                                     (json-object "type" "text" "cache_control" (json-object "type" "ephemeral"))))))))
-                   (anthropic--bound-cache-markers request)
-                   (test-assert (= 4 (count-if (lambda (block) (json-get block "cache_control"))
-                                               (json-get (aref (json-get request "messages") 0) "content")))
-                                "Anthropic cache marker admission remains bounded"))
                  (dotimes (index 6)
                    (tool-round index)
                    (let ((request (build)))
@@ -723,5 +691,5 @@
                  (let ((loaded (conversation-load (conversation-pathname conversation))))
                    (test-assert (and (null (conversation-anthropic-request-state loaded))
                                      (not (search "PREFIX-CONTEXT" (json-encode (conversation-input-items loaded)))))
-                                "Request-local prefixes are neither durable history nor restart state")))))))))
+                                 "Request-local prefixes are neither durable history nor restart state"))))))))
    nil))

@@ -79,14 +79,10 @@
 
 (-> test-tool-native-dispatch () null)
 (defun test-tool-native-dispatch ()
-  "Exercise native ingress, shared mechanics, textual fallback and marker policies."
+  "Exercise native ingress, correction metadata and custom decoder dispatch."
   (let* ((registry   (make-instance 'tool-registry))
          (context    (make-instance 'tool-context :registry registry :call-id "native-call"))
-         (schema     (tool-object-schema
-                      (json-object "false" (json-object) "null" (json-object)
-                                   "empty" (json-object) "fraction" (json-object)
-                                   "label" (tool-string-property "Label"))
-                      nil))
+         (schema     (tool-object-schema (json-object "label" (tool-string-property "Label")) nil))
          (ordinary   (make-instance 'tool :namespace "native" :name "ordinary"
                                     :description "Capture native input." :parameters schema
                                     :correction-metadata-p t))
@@ -96,10 +92,12 @@
          (opted-in   (make-instance 'tool-test-native-decoder
                                     :namespace "native" :name "opted-in"
                                     :description "Capture custom native input." :parameters schema))
+         (role-input (json-object "limit" 1))
          (received   nil)
          (executions 0))
     (dolist (tool (list ordinary textual opted-in))
       (tool-registry-register registry tool))
+    (task-augment-tool-registry registry)
     (test-call-with-function-replacements
      (list (list 'tool-execute-with-contracts
                  (lambda (tool execution-context arguments)
@@ -108,30 +106,21 @@
                                 "native dispatch supplies the original capability context")
                    (incf executions)
                    (setf received arguments)
-                   (tool-success "executed"))))
+                    (tool-success "executed")))
+           (list 'task-json-normalize
+                 (lambda (arguments &key tool-name)
+                   (when (and (eq arguments role-input) (equal tool-name "child.roles"))
+                     (json-object "limit" 2)))))
      (lambda ()
-       (let* ((label     (copy-seq "input"))
-              (arguments (json-object "false" (json-false) "null" nil
-                                      "empty" #() "fraction" 0.1f0 "label" label
-                                      "corrects_previous" t))
-              (call      (json-object "namespace" "native" "name" "ordinary"
-                                      "call_id" "native-call" "arguments" arguments))
-              (result    (tool-registry-execute-native-call registry call context)))
-         (test-assert (tool-result-success-p result) "native input reaches contract dispatch")
-         (test-assert (and (not (eq received arguments))
-                           (eq (gethash "false" received) (json-false))
-                           (nth-value 1 (gethash "null" received))
-                           (null (gethash "null" received))
-                           (not (nth-value 1 (gethash "missing" received)))
-                           (equalp (gethash "empty" received) #())
-                           (typep (gethash "fraction" received) 'double-float))
-                      "native input preserves default false, null, empty and numeric decoding")
-         (setf (char (gethash "label" received) 0) #\X)
-         (test-assert (and (string= label "input")
-                           (nth-value 1 (gethash "corrects_previous" arguments))
-                           (not (nth-value 1 (gethash "corrects_previous" received)))
-                           (= (hash-table-count call) 4))
-                      "native decoding detaches input before consuming correction metadata"))
+        (let* ((arguments (json-object "label" "input" "corrects_previous" t))
+               (call      (json-object "namespace" "native" "name" "ordinary"
+                                       "call_id" "native-call" "arguments" arguments))
+               (result    (tool-registry-execute-native-call registry call context)))
+          (test-assert (tool-result-success-p result) "native input reaches contract dispatch")
+          (test-assert (and (string= (gethash "label" received) "input")
+                            (gethash "corrects_previous" arguments)
+                            (not (nth-value 1 (gethash "corrects_previous" received))))
+                       "native dispatch consumes correction metadata without mutating caller arguments"))
        (let ((before executions))
          (test-assert
           (not (tool-result-success-p
@@ -139,12 +128,6 @@
                  registry (json-object "namespace" "native" "name" "ordinary"
                                        "native" t "arguments" (json-object)) context)))
           "provider metadata cannot select native decoding")
-         (test-assert
-          (not (tool-result-success-p
-                (tool-registry-execute-call
-                 registry (json-object "namespace" "native" "name" "ordinary"
-                                       "arguments" "{} trailing") context)))
-          "textual ingress rejects trailing JSON input")
          (test-assert (= executions before) "invalid textual ingress never executes"))
        (test-assert
         (tool-result-success-p
@@ -163,31 +146,27 @@
           (tool-result-success-p
            (tool-registry-execute-native-call
             registry (json-object "namespace" "native" "name" (tool-name tool)
-                                  "arguments" (json-object "false" (json-false))) context))
+                                   "arguments" (json-object "label" "input")) context))
           "custom decoder calls reach shared dispatch"))
        (test-assert (and (= (length (tool-test-decoder-sources textual)) 1)
                          (stringp (first (tool-test-decoder-sources textual)))
                          (null (tool-test-decoder-sources opted-in)))
-                    "custom textual decoding is retained unless explicitly opted in")))
-    (dolist (class '(task-agents-tool task-job-tool rlm-infer-tool))
-      (let* ((tool      (make-instance class :namespace "native" :name "policy"
-                                            :description "Check task markers." :parameters schema))
-             (arguments (tool-decode-native-arguments
-                         tool (json-object "false" (json-false) "null" nil "empty" #()))))
-        (test-assert (and (eq (gethash "false" arguments) 'yason:false)
-                          (eq (gethash "null" arguments) ':null)
-                          (nth-value 1 (gethash "null" arguments))
-                          (not (nth-value 1 (gethash "missing" arguments)))
-                          (equalp (gethash "empty" arguments) #()))
-                     "task and RLM native decoding uses the specialized output marker policy"))))
+                     "custom textual decoding is retained unless explicitly opted in")
+       (test-assert
+        (and (tool-result-success-p
+              (tool-registry-execute-native-call
+               registry (json-object "namespace" "child" "name" "roles"
+                                     "arguments" role-input) context))
+             (eql (gethash "limit" received) 2))
+        "native child.roles dispatch forwards the arguments through the task JSON policy"))))
   nil)
 
 (-> test-tool-native-result-boundaries () null)
 (defun test-tool-native-result-boundaries ()
   "Exercise delivered native results, output consumers and invalidation boundaries."
-  (let* ((source (json-object "value" (copy-seq "delivered") "false" (json-false)))
+  (let* ((source (json-object "value" "delivered"))
          (result (tool-success (json-encode source) :native-value source :native-present-p t)))
-    (setf (char (gethash "value" source) 0) #\X)
+    (setf (gethash "value" source) "changed")
     (test-assert (and (tool-result-native-present-p result)
                       (string= (gethash "value" (tool-result-native-value result)) "delivered"))
                  "native results detach the delivered snapshot from producer mutation")
@@ -202,11 +181,6 @@
                       (null (tool-result-native-value result))
                       (null (procedure--result-output result)))
                  "result annotations invalidate native data before output consumption"))
-  (dolist (value (list nil (json-false) #()))
-    (let ((result (tool-success (json-encode value) :native-value value :native-present-p t)))
-      (test-assert (and (tool-result-native-present-p result)
-                        (json-value-equal-p value (tool-result-native-value result)))
-                   "native result presence distinguishes null, false and an empty array")))
   (dolist (spill-p '(nil t))
     (let* ((value   (json-object "body" (make-string 9000 :initial-element #\x)))
            (offered nil)

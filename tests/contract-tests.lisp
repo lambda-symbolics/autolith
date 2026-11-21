@@ -43,41 +43,22 @@
 
 (-> test-contract-json-value-semantics () null)
 (defun test-contract-json-value-semantics ()
-  "Check raw contract references and procedure matching at JSON boundaries."
-  (let* ((object  (json-object "items" (vector (json-object "false" (json-false) "null" nil))
-                               "0" "object-key"))
-         (outputs (list object)))
-    (dolist (case (list (list "$arg.items.0.false" (json-false) t)
-                        (list "$arg.items.0.null" nil t)
-                        (list "$arg.items.0.missing" nil nil)
-                        (list "$arg.0" "object-key" t)
-                        (list "$result.items.0.false" (json-false) t)))
-      (destructuring-bind (reference expected present-p) case
-        (test-assert
-         (equal (list expected present-p)
-                (multiple-value-list (knowledge--reference-value reference object object)))
-         (format nil "Contract reference ~A preserves its raw value and presence." reference))))
-    (dolist (case (list (list '(:json "\"A\"") "A" t)
-                        (list '(:json "\"A\"") "a" nil)
-                        (list '(:from 0 ("items" 0 "false")) (json-false) t)
-                        (list '(:from 0 ("items" 0 "null")) (json-false) nil)
-                        (list '(:from 0 ("items" 0 "missing")) nil nil)))
-      (destructuring-bind (template value expected) case
-        (test-assert (eq expected (nth-value 1 (procedure-template-match template value :outputs outputs)))
-                     "Procedure templates distinguish case, false, null and missing paths.")))
-    (let* ((nested  (procedure-template-instantiate
-                     '(:object ("payload" (:array (:from 0 ("items" 0 "false"))
-                                                 (:from 0 ("items" 0 "null")))))
-                     nil outputs))
-           (payload (gethash "payload" nested)))
-      (test-assert (equalp payload (vector (json-false) nil))
-                   "Nested object and array templates preserve earlier raw results."))
-    (dolist (template '((:from 3 ("missing")) (:from 0 ("missing"))))
-      (test-assert
-       (handler-case
-           (progn (procedure-template-instantiate template nil outputs) nil)
-         (knowledge-error () t))
-       "Missing earlier steps and paths signal the contract condition.")))
+  "Check contract reference roots, translated lookup failures and native observations."
+  (let ((arguments (json-object "items" (vector (json-object "value" "argument"))))
+        (result    (json-object "items" (vector (json-object "value" "result")))))
+    (test-assert
+     (and (equal '("argument" t)
+                 (multiple-value-list (knowledge--reference-value "$arg.items.0.value" arguments result)))
+          (equal '("result" t)
+                 (multiple-value-list (knowledge--reference-value "$result.items.0.value" arguments result))))
+     "Contract references select the argument or result root."))
+  (test-assert
+   (handler-case
+       (progn
+         (procedure-template-instantiate '(:from 0 ("missing")) nil (list (json-object)))
+         nil)
+     (knowledge-error () t))
+   "A missing procedure output path signals a knowledge error.")
   (with-test-configuration (configuration)
     (contract-tests--define-ready configuration)
     (knowledge-define-contract

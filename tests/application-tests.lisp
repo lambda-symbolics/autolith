@@ -2434,7 +2434,7 @@
 
 (-> test-native-tool-result-presentation-bounds () null)
 (defun test-native-tool-result-presentation-bounds ()
-  "Bound hostile native details, malformed metadata and deeply nested JSON."
+  "Bound native details and literal tool text at the transcript boundary."
   (let ((application (application-tests--ui-application :columns 100)))
     (dolist (details '(nil :corrupt (:job) (:job-get :job) (:job-get :job (:id))))
       (let ((entry (conversation-record-entry
@@ -2463,8 +2463,9 @@
                                    "0" (make-string 10000 :initial-element #\])))
          (entry       (conversation-record-entry
                        application (list :tool-result :tool "unknown.run" :status ':error :output output))))
-    (test-assert (< (length (test-terminal-row-text entry)) 100)
-                 "excessively nested JSON uses safe bounded text instead of recursive decoding")))
+    (let ((text (test-terminal-row-text entry)))
+      (test-assert (and (search "[[[[" text) (< (length text) 100))
+                   "JSON-shaped tool text remains literal and bounded"))))
 
 (-> test-lisp-rainbow-parentheses () null)
 (defun test-lisp-rainbow-parentheses ()
