@@ -194,11 +194,11 @@ submit."
                         for relative-name = (and enough
                                                  (not (uiop:absolute-pathname-p enough))
                                                  (terminal-path--unix-namestring enough))
-                        when (and relative-name
-                                  (plusp (length relative-name))
-                                  (terminal-path--safe-relative-p relative-name)
-                                  (not (terminal-path--skip-child-p basename prefix))
-                                  (not (null (sito:score prefix basename))))
+                          when (and relative-name
+                                    (plusp (length relative-name))
+                                    (terminal-path--safe-relative-p relative-name)
+                                    (not (terminal-path--skip-child-p basename prefix))
+                                    (sito:match-p prefix basename))
                           collect
                         (let ((insert
                                 (if (and directory-p

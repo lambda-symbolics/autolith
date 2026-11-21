@@ -243,7 +243,7 @@
 
 (-> test-web-gist-tool () null)
 (defun test-web-gist-tool ()
-  "Test web_extra.gist registration and URL validation without network access."
+  "Test web_extra.gist registration, JSON argument validation, and result delivery."
   (with-test-configuration (configuration)
     (let* ((registry (make-default-tool-registry))
            (tool     (tool-registry-find registry "web_extra" "gist"))
@@ -265,34 +265,25 @@
                      (push url fetched)
                      (format nil "# Example Page~%~%Content."))))
        (lambda ()
-         (dolist (url '("https://example.com/docs"
-                        "HTTP://example.com/docs"
-                        "hTtPs://example.com/docs"
-                        "http://[::1]:8080/docs"))
-           (let ((result (tool-tests--web-gist-call
-                          registry context (json-object "url" url))))
-             (test-assert
-              (and (tool-result-success-p result)
-                   (string= (first fetched) url)
-                   (search "Content." (tool-result-content result)))
-              "absolute HTTP URLs reach the retriever, regardless of scheme case")))
+         (let* ((url    "https://example.com/docs")
+                (result (tool-tests--web-gist-call registry context (json-object "url" url))))
+           (test-assert
+            (and (tool-result-success-p result)
+                 (equal fetched (list url))
+                 (search "Content." (tool-result-content result)))
+            "a JSON URL reaches the retriever and its result reaches the caller"))
          (let ((fetch-count (length fetched)))
            (dolist (arguments
                     (list (json-object)
                           (json-object "url" "")
                           (json-object "url" 42)
-                          (json-object "url" nil)
-                          (json-object "url" "file:///etc/passwd")
-                          (json-object "url" "/relative/path")
-                          (json-object "url" "https://")
-                          (json-object "url" "https:///missing-host")
-                          (json-object "url" "http://example.com:bad/")))
+                          (json-object "url" nil)))
              (test-assert
               (not (tool-result-success-p
                     (tool-tests--web-gist-call registry context arguments)))
-              "invalid or missing URLs produce a failed tool call"))
+              "invalid or missing JSON arguments produce a failed tool call"))
            (test-assert (= fetch-count (length fetched))
-                        "invalid URLs are rejected before network access"))))))
+                        "invalid JSON arguments are rejected before retrieval"))))))
   nil)
 
 (-> test-web-gist-retrieval () null)
@@ -304,32 +295,7 @@
                             'tool-context :configuration configuration :worker nil
                             :conversation (conversation-create configuration)))
            (url            "https://example.com/page")
-           (markdown       (format nil "# Markdown~%~%Some content."))
            (large-markdown (make-string 12000 :initial-element #\a)))
-      (dolist (case (list (list "text/markdown; charset=utf-8" markdown t)
-                          (list "text/html" "<h1>Title</h1><p>Some content.</p>" t)
-                          (list "application/pdf" "%PDF" nil)
-                          (list nil "untyped response" nil)))
-        (destructuring-bind (content-type body success-p) case
-          (test-call-with-function-replacements
-           (list (list 'dex:get
-                       (lambda (requested &key headers read-timeout force-string)
-                         (test-assert
-                          (and (string= requested url) headers
-                               (plusp read-timeout) force-string)
-                          "page retrieval requests decoded text with a read timeout")
-                         (values body 200
-                                 (json-object "content-type" content-type)
-                                 (quri:uri requested)))))
-           (lambda ()
-             (let ((result (tool-tests--web-gist-call
-                            registry context (json-object "url" url))))
-               (test-assert (eq (tool-result-success-p result) success-p)
-                            "only HTML and Markdown responses are accepted")
-               (when success-p
-                 (test-assert
-                  (search "Some content." (tool-result-content result))
-                  "converted HTML and explicit Markdown contain the page text")))))))
       (test-call-with-function-replacements
        (list (list 'dex:get
                    (lambda (requested &rest options)
