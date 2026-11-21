@@ -769,6 +769,7 @@
                 #:render-line-row
                 #:render-source)
   (:import-from #:parenchek
+                #:common-lisp-delimiter-depths
                 #:lisp-paren-check-path
                 #:lisp-source-edit-result-content)
   (:import-from #:colorlisp
