@@ -34,7 +34,7 @@ git cl-termdown https://github.com/lambda-symbolics/cl-termdown.git :ref 20e4001
 git cl-worktree https://github.com/lambda-symbolics/cl-worktree.git :ref 28fd18d9c50faf783390b0c1246f8dc7950a2aea
 git cl-exec-sandbox https://github.com/lambda-symbolics/cl-exec-sandbox.git :ref 5011603d22fc742df0b29aa23d865772803d3d91
 git cl-hashline https://github.com/lambda-symbolics/cl-hashline.git :ref 582986f8ccbd0bd206dde022f9f65837ae82357c
-git clifff https://github.com/lambda-symbolics/clifff.git :ref f6882b8bb7dc2e4b0808c2de0d48d0f87f398996
+git clifff https://github.com/lambda-symbolics/clifff.git :ref 128b6441f04f9eae626ceb4250903388270c24c5
 git colorlisp https://github.com/lambda-symbolics/colorlisp.git :ref c828aeae0f1bacce0ebe920958474a03042007fc
 git colordiff https://github.com/lambda-symbolics/colordiff.git :ref a8d229ae99dcd630bb4b32942e12791a7ea67a4d
 git parenchek https://github.com/lambda-symbolics/parenchek.git :ref 747c3f189bbc9fcaa22ab3f47d9ed5e6880a980b

@@ -3,7 +3,7 @@
 ;;;; -- Search Tool Configuration --
 
 (defparameter *fff-source-commit*
-  "95fd777c2529fc7b4d7572dabff64cc07268f2c5"
+  "9a7b1c8fc1d20236a255bf3ddb24eeb761bd6bd9"
   "The reviewed fff v0.11.0 source revision built by Autolith bootstrap.")
 
 (defparameter *search-default-result-limit* 20
