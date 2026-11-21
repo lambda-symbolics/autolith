@@ -377,25 +377,8 @@ The parent waits only its own cleanup budget; this execution remains running."
     (setf (tool-execution-job-cleanup-condition job) condition
           (tool-execution-job-activity job) "native cleanup"
           (tool-execution-job-activity-at job) (get-internal-real-time)))
-  (let ((owner    (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-thread condition))
-        (retry    (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-retry condition))
-        (readers  (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-readers condition))
-        (reaped-p nil))
-    (loop
-      ;; A failed thread creation transfers the retry closure to this execution.
-      ;; Keep the condition reachable even while no native worker can be started.
-      (unless (or owner reaped-p)
-        (when retry
-          (handler-case (setf owner (funcall retry))
-            (error () nil))))
-      (when (and owner (not (thread-alive-p owner)))
-        ;; A dead cleanup worker is not proof that native reaping succeeded.
-        (setf reaped-p (handler-case (not (null (join-thread owner)))
-                         (error () nil))
-              owner nil))
-      (when (and reaped-p (notany #'thread-alive-p readers))
-        (return))
-      (sleep 0.01)))
+  (cl-exec-sandbox:sandbox-cleanup-wait
+   (cl-exec-sandbox:sandbox-process-cleanup-error-owner condition))
   (with-lock-held ((cl-jobpond::job--lock job))
     (setf (tool-execution-job-cleanup-condition job) nil))
   nil)

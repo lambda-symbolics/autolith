@@ -211,30 +211,14 @@
                                              :source))
                                   source))
                   :condition condition
-                  :thread    (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-thread condition)
-                  :reaped-p
-                  (and (null (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-thread condition))
-                       (not (cl-exec-sandbox:sandbox-process-cleanup-error-alive-p condition))))
+                  :owner     (cl-exec-sandbox:sandbox-process-cleanup-error-owner condition))
             *task-worktree-cleanups*)))
   nil)
 
 (-> task-worktree--cleanup-pending-p (list) boolean)
 (defun task-worktree--cleanup-pending-p (record)
-  "Retry missing native ownership and retire only proven reaping and stopped readers."
-  (let* ((condition (getf record :condition))
-         (retry     (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-retry condition))
-         (owner     (getf record :thread)))
-    (unless (or owner (getf record :reaped-p))
-      (when retry
-        (handler-case (setf owner (funcall retry) (getf record :thread) owner)
-          (error () nil))))
-    (when (and owner (not (thread-alive-p owner)))
-      (setf (getf record :reaped-p)
-            (handler-case (not (null (join-thread owner))) (error () nil))
-            (getf record :thread) nil))
-    (not (and (getf record :reaped-p)
-              (notany #'thread-alive-p
-                      (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-readers condition))))))
+  "Advance the library's cleanup owner once without waiting for native work."
+  (eq ':pending (cl-exec-sandbox:sandbox-cleanup-poll (getf record :owner))))
 
 (-> task-worktree-cleanup-snapshot (&key (:job (option task-job)) (:source t)) list)
 (defun task-worktree-cleanup-snapshot (&key job source)
@@ -254,26 +238,12 @@
                                     (platform-truename *platform* (getf record :source)))
                                  (error () (uiop:ensure-directory-pathname (getf record :source)))))))
             collect
-            (list :source    (namestring (getf record :source))
-                  :condition (princ-to-string condition)
-                  :cleanup-thread
-                  (when (getf record :thread)
-                    (bordeaux-threads:thread-name (getf record :thread)))
-                  :cleanup-thread-alive-p
-                  (not (null (and (getf record :thread) (thread-alive-p (getf record :thread)))))
-                  :cleanup-retry-p
-                  (not (null (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-retry condition)))
-                  :cleanup-readers-alive
-                  (count-if #'thread-alive-p
-                            (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-readers condition))
-                  :cleanup-readers
-                  (loop for reader in
-                        (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-readers condition)
-                        collect (list :name    (bordeaux-threads:thread-name reader)
-                                      :alive-p (not (null (thread-alive-p reader)))))
-                  :cleanup-errors
-                  (mapcar #'princ-to-string
-                          (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-errors condition))))))
+            (append (list :source    (namestring (getf record :source))
+                          :condition (princ-to-string condition))
+                    (cl-exec-sandbox:sandbox-cleanup-status (getf record :owner))
+                    (list :cleanup-errors
+                          (mapcar #'princ-to-string
+                                  (cl-exec-sandbox:sandbox-process-cleanup-error-cleanup-errors condition)))))))
 
 (-> task-worktree--require-settled (t) null)
 (defun task-worktree--require-settled (source)
