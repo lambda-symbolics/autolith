@@ -7,7 +7,7 @@
     :initarg       :details
     :reader        tool-result-details
     :type          list
-    :documentation "Portable execution and retained-log metadata, without log contents."))
+     :documentation "Portable execution metadata and bounded output samples."))
   (:documentation "A bounded shell preview with independently readable retained output."))
 
 (-> shell-command-result
@@ -84,6 +84,37 @@
       (when diagnostic
         (format stream "~%Log metadata diagnostic: ~A~%" diagnostic)))))
 
+(-> shell-output--capture-details
+    ((option cl-exec-sandbox:sandbox-capture) keyword (integer 0)) list)
+(defun shell-output--capture-details (capture stream budget)
+  "Return STREAM's bounded decoded samples and explicit omission state."
+  (if capture
+      (handler-case
+          (multiple-value-bind (head tail omitted)
+              (cl-exec-sandbox:sample-capture
+               capture :head-bytes (floor budget 4) :tail-bytes (- budget (floor budget 4)))
+            (list :stream stream
+                  :head (cl-exec-sandbox:decode-capture-bytes head)
+                  :tail (cl-exec-sandbox:decode-capture-bytes tail)
+                  :omitted-p (plusp omitted)
+                  :complete-p (cl-exec-sandbox:sandbox-capture-complete-p capture)))
+        (file-error ()
+          (list :stream stream :unavailable-p t)))
+      (list :stream stream :unavailable-p t)))
+
+(-> shell-output--stream-details (cl-exec-sandbox:sandbox-result (integer 0)) list)
+(defun shell-output--stream-details (result budget)
+  "Return RESULT's stream previews using the model preview's byte allocation."
+  (let* ((output        (cl-exec-sandbox:sandbox-result-output-capture result))
+         (error-output  (cl-exec-sandbox:sandbox-result-error-capture result))
+         (budget        (min 6000 budget))
+         (stdout-budget (if error-output (floor budget 3) budget)))
+    (append
+     (list (shell-output--capture-details output (if error-output ':stdout ':combined)
+                                         stdout-budget))
+     (when error-output
+       (list (shell-output--capture-details error-output ':stderr (- budget stdout-budget)))))))
+
 (-> workspace-tool-run-shell-command
     (string pathname
      &key (:policy t) (:timeout (integer 1)) (:output-limit (integer 0))
@@ -156,6 +187,9 @@ Keep publication ownership through preview construction and native cleanup."
                (shell-output--render-result result artifact output-limit :diagnostic diagnostic)
                (list :exit-code          (sandbox-result-exit-code result)
                      :execution-status   (cl-exec-sandbox:sandbox-result-status result)
+                      :timed-out-p        (sandbox-result-timed-out-p result)
+                      :cancelled-p        (cl-exec-sandbox:sandbox-result-cancelled-p result)
+                      :output-streams     (shell-output--stream-details result output-limit)
                      :shell-logs         (list (shell-log--public-metadata
                                                 (shell-log-artifact-metadata artifact)))
                      :capture-diagnostic diagnostic)

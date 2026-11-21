@@ -2566,9 +2566,11 @@
                      "Self-identifying code receives syntax token roles in generic results.")
         (test-assert (find-if (lambda (span) (search "│" (terminal-span-text span))) entry)
                      "Formatted tool content retains a left rail.")))
-    (let* ((output (format nil "exit 0~%Execution: exited; timeout no; cancelled no~%combined output: 31 bytes retained, 31 bytes observed; capture-complete yes; status complete~%Log: shell-log:fixture~%~A" json))
-           (entry  (conversation-record-entry
-                    application (list :tool-result :tool "shell.run" :status ':ok :output output))))
+    (let* ((entry (conversation-record-entry
+                   application
+                   (list :tool-result :tool "shell.run" :status ':ok
+                         :details (list :exit-code 0 :output-streams
+                                        (list (list :stream ':combined :head json :complete-p t)))))))
       (test-assert (and (find ':syntax-string entry :key #'terminal-span-style)
                         (find ':syntax-number entry :key #'terminal-span-style))
                    "Complete JSON stdout is highlighted rather than assumed to be shell source."))
@@ -2617,12 +2619,19 @@
                     ("shell.run" "stdout" 6)))
       (destructuring-bind (tool stream limit) case
         (let* ((*application-tool-output-lines* limit)
-               (output                          (if stream
-                                                    (format nil "exit 0~%Execution: exited; timeout no; cancelled no~%~A: ~D bytes retained, ~D bytes observed; capture-complete yes; status complete~%Log: shell-log:fixture~%~A"
-                                                            stream (length diff) (length diff) diff)
-                                                    diff))
                (entry                           (conversation-record-entry
-                                                 application (list :tool-result :tool tool :status ':ok :output output)))
+                                                 application
+                                                 (list :tool-result :tool tool :status ':ok :output diff
+                                                       :details (when stream
+                                                                  (list :exit-code 0 :output-streams
+                                                                        (list (list :stream (cond
+                                                                                              ((string= stream "stderr")
+                                                                                               ':stderr)
+                                                                                              ((string= stream "stdout")
+                                                                                               ':stdout)
+                                                                                              (t
+                                                                                               ':combined))
+                                                                                    :head diff :complete-p t)))))))
                (rendered                        (application--display-lines (test-terminal-row-text entry)))
                (railed                          (remove-if-not (lambda (line) (position #\│ line)) rendered))
                (columns                         (mapcar (lambda (line) (position #\│ line)) railed))
@@ -3171,7 +3180,8 @@
                    application
                    (list :tool-result :seq 3 :time 0 :call-id 2
                          :tool "shell.run" :status ':ok
-                         :output (format nil "exit 3~%command output"))))
+                          :details '(:exit-code 3 :output-streams
+                                     ((:stream :combined :head "command output" :complete-p t))))))
            (text  (test-terminal-row-text entry)))
       (test-assert (and (search "exit 3" text)
                         (search "command output" text))
@@ -3179,33 +3189,24 @@
     (dolist (case
               (list
                (list "a clean run" ':ok
-                     (format nil "exit 0~%Execution: exited; timeout no; cancelled no~%~
-                                  combined output: 12 bytes retained, 12 bytes observed; ~
-                                  capture-complete yes; status complete~%~
-                                  Log: shell-log:a/b/c/output~%hello world~%")
+                     '(:exit-code 0 :output-streams
+                       ((:stream :combined :head "hello world" :complete-p t)))
                      ':success "✓ shell.run exit 0" '("hello world"))
                (list "a failing exit" ':ok
-                     (format nil "exit 2~%Execution: exited; timeout no; cancelled no~%~
-                                  combined output: 4 bytes retained, 4 bytes observed; ~
-                                  capture-complete yes; status complete~%~
-                                  Log: shell-log:a/b/c/output~%oops~%")
+                     '(:exit-code 2 :output-streams
+                       ((:stream :combined :head "oops" :complete-p t)))
                      ':failure "! shell.run exit 2" '("oops"))
                (list "a timeout with truncated separate streams" ':error
-                     (format nil "exit unavailable~%Execution: timed-out; timeout yes; cancelled no~%~
-                                  stdout: 10 bytes retained, 99 bytes observed; ~
-                                  capture-complete no; status truncated~%~
-                                  Log: shell-log:a/b/c/output~%partial~%~%~
-                                  stderr: 5 bytes retained, 5 bytes observed; ~
-                                  capture-complete yes; status complete~%~
-                                  Log: shell-log:a/b/c/error~%boom~%")
+                     '(:execution-status :timed-out :timed-out-p t
+                       :output-streams ((:stream :stdout :head "partial" :complete-p nil)
+                                        (:stream :stderr :head "boom" :complete-p t)))
                      ':failure "! shell.run exit unavailable"
-                     '("timed out" "output truncated: 10 of 99 bytes kept"
-                       "stdout" "partial" "stderr" "boom"))))
-      (destructuring-bind (label status output style header shown) case
+                     '("timed out" "output truncated" "stdout" "partial" "stderr" "boom"))))
+      (destructuring-bind (label status details style header shown) case
         (let* ((entry (conversation-record-entry
                        application
                        (list :tool-result :seq 7 :time 0 :call-id "shell"
-                             :tool "shell.run" :status status :output output)))
+                              :tool "shell.run" :status status :details details)))
                (text  (test-terminal-row-text entry)))
           (test-assert
            (and (equal (first entry) (terminal-span style header))
