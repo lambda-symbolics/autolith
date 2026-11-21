@@ -58,100 +58,22 @@ only to itself.")
 
 ;;;; -- Time Parsing --
 
-(-> knowledge--digits (string integer integer) (option integer))
-(defun knowledge--digits (text start end)
-  "Return the decimal integer in TEXT from START below END, or NIL."
-  (and (<= end (length text))
-       (< start end)
-       (loop for index from start below end
-             always (digit-char-p (char text index)))
-       (parse-integer text :start start :end end)))
-
 (-> knowledge--date-parts (string) (values (option integer) (option integer) (option integer)))
 (defun knowledge--date-parts (text)
   "Return the year, month, and day of TEXT's leading YYYY-MM-DD, or NIL."
-  (let ((year  (knowledge--digits text 0 4))
-        (month (knowledge--digits text 5 7))
-        (day   (knowledge--digits text 8 10)))
-    (if (and year month day
-             (char= (char text 4) #\-)
-             (char= (char text 7) #\-)
-             (<= 1 month 12)
-             (<= 1 day (knowledge--month-days year month)))
-        (values year month day)
-        (values nil nil nil))))
-
-(-> knowledge--month-days (integer integer) integer)
-(defun knowledge--month-days (year month)
-  "Return the number of days in MONTH of YEAR."
-  (case month
-    ((4 6 9 11)
-     30)
-    (2
-     (if (and (zerop (mod year 4))
-              (or (plusp (mod year 100)) (zerop (mod year 400))))
-         29
-         28))
-    (otherwise
-     31)))
+  (timestamp--date-parts text))
 
 (-> knowledge-parse-instant (string) (option integer))
 (defun knowledge-parse-instant (text)
-  "Return the universal time of ISO-8601 TEXT with an explicit zone, or NIL.
+  "Return ISO-8601 TEXT as universal time, or NIL for invalid or unsupported instants.
 
-Accept YYYY-MM-DDTHH:MM, optional :SS and fractional seconds, and a zone of Z
-or an offset such as +02:00 or -0530. Fractional seconds are truncated."
-  (multiple-value-bind (year month day) (knowledge--date-parts text)
-    (block nil
-      (unless (and year
-                   (> (length text) 16)
-                   (member (char text 10) '(#\T #\t #\Space))
-                   (char= (char text 13) #\:))
-        (return nil))
-      (let ((hour     (knowledge--digits text 11 13))
-            (minute   (knowledge--digits text 14 16))
-            (second   0)
-            (position 16))
-        (unless (and hour minute (<= hour 23) (<= minute 59))
-          (return nil))
-        (when (and (< position (length text)) (char= (char text position) #\:))
-          (setf second (knowledge--digits text (1+ position) (+ position 3)))
-          (unless (and second (<= second 59))
-            (return nil))
-          (incf position 3)
-          (when (and (< position (length text)) (char= (char text position) #\.))
-            (incf position)
-            (loop while (and (< position (length text))
-                             (digit-char-p (char text position)))
-                  do (incf position))))
-        (let ((zone   (subseq text position))
-              (offset nil))
-          (cond
-            ((member zone '("Z" "z") :test #'string=)
-             (setf offset 0))
-            ((and (member (length zone) '(5 6))
-                  (find (char zone 0) "+-"))
-             (let* ((colon-p      (= (length zone) 6))
-                    (zone-hours   (knowledge--digits zone 1 3))
-                    (zone-minutes (knowledge--digits zone
-                                                     (if colon-p 4 3)
-                                                     (if colon-p 6 5))))
-               (when (and zone-hours zone-minutes
-                          (or (not colon-p) (char= (char zone 3) #\:))
-                          (<= zone-hours 14) (<= zone-minutes 59))
-                 (setf offset (* (if (char= (char zone 0) #\-) -1 1)
-                                 (+ (* 3600 zone-hours) (* 60 zone-minutes))))))))
-          (when offset
-            (- (encode-universal-time second minute hour day month year 0)
-               offset)))))))
+Accept optional seconds and colonless offsets through 14:59; require a zone."
+  (parse-utc-timestamp text :profile ':knowledge))
 
 (-> knowledge-format-instant (integer) string)
 (defun knowledge-format-instant (universal-time)
   "Return UNIVERSAL-TIME as canonical ISO-8601 UTC text."
-  (multiple-value-bind (second minute hour day month year)
-      (decode-universal-time universal-time 0)
-    (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0D:~2,'0DZ"
-            year month day hour minute second)))
+  (format-utc-timestamp universal-time))
 
 (-> knowledge-parse-date (string) (option string))
 (defun knowledge-parse-date (text)

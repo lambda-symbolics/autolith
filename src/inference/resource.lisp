@@ -247,10 +247,7 @@ requested window rather than the complete trace."
 (defun rlm--index-timestamp (universal)
   "Return UNIVERSAL as a compact UTC timestamp, or unknown when zero."
   (if (plusp universal)
-      (multiple-value-bind (second minute hour day month year)
-          (decode-universal-time universal 0)
-        (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0D:~2,'0DZ"
-                year month day hour minute second))
+      (format-utc-timestamp universal)
       "unknown"))
 
 (-> rlm--trace-index-entries (configuration) list)

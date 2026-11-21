@@ -223,10 +223,7 @@
 (-> run-job--timestamp (integer) string)
 (defun run-job--timestamp (time)
   "Return universal TIME in UTC RFC 3339 form."
-  (multiple-value-bind (second minute hour date month year)
-      (decode-universal-time time 0)
-    (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0D:~2,'0DZ"
-            year month date hour minute second)))
+  (format-utc-timestamp time))
 
 (-> run-job--usage (list) list)
 (defun run-job--usage (result)

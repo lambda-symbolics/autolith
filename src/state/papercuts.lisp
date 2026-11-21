@@ -790,10 +790,7 @@ its first consented telemetry identity without recording another report."
 (-> papercut-timestamp-string (timestamp) string)
 (defun papercut-timestamp-string (timestamp)
   "Return TIMESTAMP as an ISO-8601 UTC string."
-  (multiple-value-bind (second minute hour date month year)
-      (decode-universal-time timestamp 0)
-    (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0D:~2,'0DZ"
-            year month date hour minute second)))
+  (format-utc-timestamp timestamp))
 
 (-> papercut-short-identifier (papercut) string)
 (defun papercut-short-identifier (papercut)
