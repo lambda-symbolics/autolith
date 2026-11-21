@@ -169,20 +169,19 @@ on other global memories, so premises are followed until none are new."
 
 (-> data-transfer--walk-files (pathname &key (:excluded-directory-names list)) list)
 (defun data-transfer--walk-files (root &key excluded-directory-names)
-  "Collect confined regular files, omitting caller-selected asset subtrees."
+  "Collect inspections of confined files, omitting caller-selected asset subtrees."
   (let ((files nil))
     (labels ((walk (directory)
                (data-transfer--check-path root directory)
                (dolist (file (uiop:directory-files directory))
-                 (data-transfer--check-path root file)
-                 (push file files))
+                 (push (data-transfer--check-path root file) files))
                (dolist (child (uiop:subdirectories directory))
                  (unless (member (first (last (pathname-directory child)))
                                  excluded-directory-names :test #'string=)
-                   (data-transfer--check-path root child)
                    (walk child)))))
       (when (uiop:directory-exists-p root) (walk root)))
-    (sort files #'string< :key #'namestring)))
+    (sort files #'string< :key (lambda (inspection)
+                                (namestring (ls-compat.files:confined-path-inspection-pathname inspection))))))
 
 (-> data-transfer--asset-root (configuration keyword string) pathname)
 (defun data-transfer--asset-root (configuration area owner)
@@ -206,14 +205,13 @@ on other global memories, so premises are followed until none are new."
   "Collect session assets independently of retained command-output storage."
   (let ((root (data-transfer--asset-root configuration area owner)))
     (data-transfer--check-path (config :data-root configuration) root)
-    (loop for pathname in (data-transfer--walk-files
-                           root :excluded-directory-names
-                           (when (eq area ':tasks) '("shell-log")))
-          for inspection = (ls-compat.files:confined-path-inspect
-                             pathname root :root-policy ':below-root)
-          collect (list :area area :owner owner
-                        :path  (ls-compat.files:confined-path-inspection-components
-                                inspection)
+    (loop for inspection in (data-transfer--walk-files
+                             root :excluded-directory-names
+                             (when (eq area ':tasks) '("shell-log")))
+          for pathname = (ls-compat.files:confined-path-inspection-pathname inspection)
+          collect (list :area  area
+                        :owner owner
+                        :path  (ls-compat.files:confined-path-inspection-components inspection)
                         :bytes (data-transfer--bytes pathname)))))
 
 (-> data-transfer--map-input-images (t function) t)

@@ -162,9 +162,23 @@ single floats, and every source node needs at least one octet."
       (uiop:parse-native-namestring
        (concatenate 'string (uiop:native-namestring pathname) "/"))))
 
-(-> data-transfer--check-path (pathname pathname) null)
+(-> data-transfer--safe-path-p (t) boolean)
+(defun data-transfer--safe-path-p (path)
+  "Return true for a nonempty proper relative component list."
+  (and (listp path) (integerp (list-length path)) path
+       (every #'data-transfer--native-component-p path) t))
+
+(-> data-transfer--path (pathname list) pathname)
+(defun data-transfer--path (root components)
+  "Construct a confined pathname from validated literal COMPONENTS."
+  (unless (data-transfer--safe-path-p components)
+    (data-transfer--fail root ':invalid "Invalid relative archive path."))
+  (merge-pathnames
+   (uiop:parse-native-namestring (format nil "~{~A~^/~}" components)) root))
+
+(-> data-transfer--check-path (pathname pathname) ls-compat.files:confined-path-inspection)
 (defun data-transfer--check-path (root pathname)
-  "Reject symbolic links and nonregular files below the trusted ROOT."
+  "Inspect PATHNAME below ROOT and reject links, special files and traversal failures."
   (let ((directory (data-transfer--directory-pathname root)))
     (unless (uiop:subpathp pathname directory)
       (data-transfer--fail pathname ':invalid "Path escapes the data root."))
@@ -177,8 +191,8 @@ single floats, and every source node needs at least one octet."
              pathname)
          ':invalid
          (or (ls-compat.files:confined-path-inspection-message inspection)
-             "Symbolic links and special files are not transferable.")))))
-  nil)
+             "Symbolic links and special files are not transferable.")))
+      inspection)))
 
 (-> data-transfer--publish-files (list &key (:roots list)) integer)
 (defun data-transfer--publish-files (writes &key roots)

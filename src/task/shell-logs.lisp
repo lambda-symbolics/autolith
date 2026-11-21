@@ -77,22 +77,19 @@
 (-> shell-log--safe-path (configuration pathname) pathname)
 (defun shell-log--safe-path (configuration path)
   "Reject links and non-directory ancestors under the managed data root."
-    (handler-case
-        (let* ((root (uiop:ensure-directory-pathname (config :data-root configuration))))
-          (unless (uiop:subpathp path root)
-            (shell-log--fail "Shell log path escaped private storage." path))
-          (let* ((inspection (ls-compat.files:confined-path-inspect
-                              path root :root-policy ':root-inclusive))
-                 (status (ls-compat.files:confined-path-inspection-status inspection)))
-            (unless (member status '(:file :directory :missing))
-              (shell-log--fail
-               (or (ls-compat.files:confined-path-inspection-message inspection)
-                   "Shell log storage contains a link or special file.")
-               (or (ls-compat.files:confined-path-inspection-failure-pathname inspection)
-                   path)))))
-      (platform-error (condition)
-        (shell-log--fail (format nil "Cannot inspect shell log storage: ~A" condition) path)))
-    path)
+  (let ((root (uiop:ensure-directory-pathname (config :data-root configuration))))
+    (unless (uiop:subpathp path root)
+      (shell-log--fail "Shell log path escaped private storage." path))
+    (let* ((inspection (ls-compat.files:confined-path-inspect
+                        path root :root-policy ':root-inclusive))
+           (status     (ls-compat.files:confined-path-inspection-status inspection)))
+      (unless (member status '(:file :directory :missing))
+        (shell-log--fail
+         (or (ls-compat.files:confined-path-inspection-message inspection)
+             "Shell log storage contains a link or special file.")
+         (or (ls-compat.files:confined-path-inspection-failure-pathname inspection)
+             path)))))
+  path)
 
 (-> shell-log--manifest-path (pathname) pathname)
 (defun shell-log--manifest-path (directory)
