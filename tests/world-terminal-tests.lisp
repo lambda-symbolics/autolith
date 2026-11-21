@@ -206,7 +206,7 @@ Each transcript event takes a line of its own."
        (with-lock-held ((image-daemon:daemon-runtime-lock session))
          (setf (channel-endpoint-paused-p session) t))
        (test-assert (and (application-input-controller--enqueue controller ':message "accepted before failure")
-                         (application-input-controller--enqueue controller ':command "help"))
+                         (application-input-controller--enqueue controller ':lisp "(help)"))
                     "the paused channel accepts input before its endpoint fails")
        (interrupt-thread (image-daemon:daemon-runtime-server-thread session)
                          (lambda () (error failure)))
@@ -229,7 +229,7 @@ Each transcript event takes a line of its own."
          (application-input-controller--load-pending restored)
          (test-assert
           (equal (application-input-controller--state restored :work-items)
-                 '((:message "accepted before failure") (:command "help")))
+                 '((:message "accepted before failure") (:lisp "(help)")))
           "a fresh controller restores accepted pending input once and in order")))))
   nil)
 
@@ -920,7 +920,7 @@ Each transcript event takes a line of its own."
            (setf live-ports '(1 2))
            (dolist (arguments '(("pause") ("detach")))
              (reject arguments ':discover '("b6uouHJ" "c6uouHJ")))
-           (check-targets "b")
+           (check-targets "b6uou")
            (reject '("pause" "6uouHJ") ':discover '("b6uouHJ" "c6uouHJ" "e6uouHJ"))
            (dolist (selector '("cold-agent" "@cold-agent" "@nobody" "inbox"))
              (reject (list "pause" selector) ':discover nil))
