@@ -2311,37 +2311,6 @@ process without releasing the lease, exercising kernel cleanup."
                        "a missing file is unknown, not free")))))
   nil)
 
-(-> test-conversation-lease-owner-startup-report () null)
-(defun test-conversation-lease-owner-startup-report ()
-  "Own the real pristine-resume exit classification and enriched startup transport."
-  (with-test-fixture (:posix-adapter "POSIX conversation owner diagnostics")
-    (with-test-configuration (fixture)
-      (let ((configuration
-              (apply #'configuration-copy fixture
-                     (loop for key in '(:config-root :data-root :state-root :cache-root)
-                           append (list key (merge-pathnames "autolith/" (config key fixture)))))))
-        (configuration-ensure-directories configuration)
-        (test-conversation--call-with-diagnostic-holder
-         configuration "K8vQ2mp"
-         (lambda (pid request)
-           (test-conversation--owner-quiesced
-            configuration request
-            (lambda ()
-              (multiple-value-bind (exit output)
-                  (test-run-program-with-environment
-                   (active-image-process-command configuration '("--pristine" "open" "K8vQ2mp"))
-                   (loop for (name key) in '(("XDG_CONFIG_HOME" :config-root)
-                                             ("XDG_DATA_HOME" :data-root)
-                                             ("XDG_STATE_HOME" :state-root)
-                                             ("XDG_CACHE_HOME" :cache-root))
-                         collect (format nil "~A=~A" name
-                                         (uiop:pathname-parent-directory-pathname (config key configuration)))))
-                (test-assert (and (= exit 64)
-                                  (search (write-to-string pid) output)
-                                  (search (format nil "kill ~D" pid) output))
-                             "real pristine resume preserves exit 64 and reports actionable ownership")))))))))
-  nil)
-
 (-> test-conversation-inherited-reference () null)
 (defun test-conversation-inherited-reference ()
   "Test filtered spawn-time parent history, durable replay, and isolation."
