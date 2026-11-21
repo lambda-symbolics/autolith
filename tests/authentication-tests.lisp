@@ -437,6 +437,40 @@
      "Fireworks validation failure releases its secret scope"))
   nil)
 
+(-> authentication-tests--test-api-key-store () null)
+(defun authentication-tests--test-api-key-store ()
+  "Check provider isolation and redacted rejection of a damaged private store."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (pathname      (merge-pathnames "api-keys.sexp" root))
+         (first         (make-instance 'api-key-credential-source :pathname pathname :provider-name "First"))
+         (second        (make-instance 'api-key-credential-source :pathname pathname :provider-name "Second"))
+         (credentials   (make-instance 'oauth-credentials :access-token "synthetic-fixture-key"))
+         (damaged       '(:api-keys :version 1 :providers ((:provider :api-key "synthetic-damaged-key")))))
+    (unwind-protect
+         (progn
+           (credential-source-save first credentials)
+           (credential-source-save second
+                                   (make-instance 'oauth-credentials :access-token "synthetic-other-key"))
+           (test-assert (and (equal "synthetic-fixture-key"
+                                    (oauth-credentials-access-token (credential-source-load first)))
+                             (equal "synthetic-other-key"
+                                    (oauth-credentials-access-token (credential-source-load second))))
+                        "saving a second provider preserves both keys")
+           (snapshot-write pathname damaged)
+           (dolist (operation (list (lambda () (credential-source-load first))
+                                    (lambda () (credential-source-save first credentials))))
+             (test-assert (handler-case (progn (funcall operation) nil)
+                            (authentication-error (condition)
+                              (let ((report (princ-to-string condition)))
+                                (not (or (search "synthetic-damaged-key" report)
+                                         (search "synthetic-fixture-key" report))))))
+                          "invalid API-key storage reports no key values"))
+           (test-assert (equal (snapshot-read pathname) damaged)
+                        "a failed save leaves the damaged file available for recovery"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> authentication-tests--test-native-methods () null)
 (defun authentication-tests--test-native-methods ()
   "Test native authentication dispatch and rejection before provider effects."
@@ -570,6 +604,7 @@
   (authentication-tests--test-api-key-prompt)
   (authentication-tests--test-api-key-terminal-mode)
   (authentication-tests--test-provider-api-key-prompts)
+  (authentication-tests--test-api-key-store)
   (authentication-tests--test-main-input-descriptor)
   (authentication-tests--test-main-fullscreen-authentication-boot-policy)
   (authentication-tests--test-native-methods)

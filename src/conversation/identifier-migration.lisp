@@ -133,13 +133,8 @@
   "Return PATHNAME's active leading conversation form, or NIL when absent."
   (let ((source (or (conversation-storage-active-pathname pathname) pathname)))
     (handler-case
-        (with-open-file (stream source :direction ':input :external-format ':utf-8)
-          (let* ((*read-eval* nil)
-                 (end-marker  (cons nil nil))
-                 (form        (read stream nil end-marker)))
-            (and (listp form)
-                 (eq (first form) :conversation)
-                 form)))
+        (let ((form (sexp-store:log-first source :physical-forms-p t)))
+          (and (consp form) (eq (first form) :conversation) form))
       (error ()
         nil))))
 
@@ -251,20 +246,21 @@
    entries
    :initial-value value))
 
-(-> conversation-identifier-migration--rewrite-value (t list) t)
+(-> conversation-identifier-migration--rewrite-value (t list) (values t boolean))
 (defun conversation-identifier-migration--rewrite-value (value entries)
-  "Return portable VALUE with exact legacy identifier strings rewritten."
-  (let ((seen (make-hash-table :test #'eq)))
+  "Rewrite exact legacy identifier strings in VALUE and report whether any changed."
+  (let ((seen      (make-hash-table :test #'eq))
+        (changed-p nil))
     (labels ((rewrite (current)
                "Recursively rewrite CURRENT while preserving shared structure."
                (cond
                  ((stringp current)
-                  (conversation-identifier-migration--rewrite-string
-                   current entries))
+                  (or (gethash current seen)
+                      (let ((result (conversation-identifier-migration--rewrite-string current entries)))
+                        (unless (string= current result) (setf changed-p t))
+                        (setf (gethash current seen) result))))
                  ((pathnamep current)
-                  (pathname
-                   (conversation-identifier-migration--rewrite-string
-                    (namestring current) entries)))
+                  (pathname (rewrite (namestring current))))
                  ((consp current)
                   (multiple-value-bind (copy present-p) (gethash current seen)
                     (if present-p
@@ -289,7 +285,7 @@
                           result))))
                  (t
                   current))))
-      (rewrite value))))
+      (values (rewrite value) changed-p))))
 
 (-> conversation-identifier-migration--write-date (pathname integer) null)
 (defun conversation-identifier-migration--write-date (pathname universal-time)
@@ -303,30 +299,17 @@
 (defun conversation-identifier-migration--write-forms
     (pathname forms &key write-date)
   "Atomically replace PATHNAME with readable top-level FORMS."
-  (publish-file
-   pathname
-   (lambda (stream)
-     (with-standard-io-syntax
-       (let ((*print-readably* t)
-             (*print-pretty*   t)
-             (*print-circle*   t))
-         (dolist (form forms)
-           (prin1 form stream)
-           (terpri stream)))))
-   :prepare-function
+  (sexp-store:log-write
+   pathname forms :prepare-function
    (lambda (temporary)
-     (platform-make-private *platform* temporary)))
-  (when write-date
-    (conversation-identifier-migration--write-date pathname write-date))
-  pathname)
+     (platform-make-private *platform* temporary)
+     (when write-date
+       (conversation-identifier-migration--write-date temporary write-date)))))
 
 (-> conversation-identifier-migration--read-forms (pathname) list)
 (defun conversation-identifier-migration--read-forms (pathname)
   "Return every complete readable form in PATHNAME."
-  (multiple-value-bind (forms incomplete-tail-p)
-      (log-read pathname)
-    (declare (ignore incomplete-tail-p))
-    forms))
+  (values (log-read pathname)))
 
 (-> conversation-identifier-migration--rewrite-text-file
     (pathname pathname list &key (:write-date (option integer)))
@@ -337,36 +320,14 @@
 
 Processing one form at a time bounds stack use and preserves readable arrays
 and shared structure. Ignore an incomplete final form, as LOG-READ does."
-  (let ((changed-p nil))
-    (publish-file
-     target
-     (lambda (output)
-       (with-open-file (input source :direction ':input :external-format ':utf-8)
-         (with-standard-io-syntax
-           (let ((*print-readably* t)
-                 (*print-pretty*   t)
-                 (*print-circle*   t)
-                 (*read-eval*      nil)
-                 (end-marker       (cons nil nil)))
-             (loop for form = (handler-case
-                                  (read input nil end-marker)
-                                (end-of-file () end-marker))
-                   until (eq form end-marker)
-                   do (let ((rewritten
-                              (conversation-identifier-migration--rewrite-value
-                               form entries)))
-                        (unless (equalp form rewritten)
-                          (setf changed-p t))
-                        (prin1 rewritten output)
-                        (terpri output)))))))
-     :publish-function
-     (lambda (temporary final)
-       (when (or changed-p (not (equal source final)))
-         (platform-make-private *platform* temporary)
-         (platform-replace-file *platform* temporary final)
-         (when write-date
-           (conversation-identifier-migration--write-date final write-date)))))
-    changed-p))
+  (sexp-store:log-transform
+   source target
+   (lambda (form) (conversation-identifier-migration--rewrite-value form entries))
+   :prepare-function
+   (lambda (temporary)
+     (platform-make-private *platform* temporary)
+     (when write-date
+       (conversation-identifier-migration--write-date temporary write-date)))))
 
 (-> conversation-identifier-migration--file-needs-rewrite-p (pathname list) boolean)
 (defun conversation-identifier-migration--file-needs-rewrite-p (pathname entries)

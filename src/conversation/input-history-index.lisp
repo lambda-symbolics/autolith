@@ -5,136 +5,70 @@
 (defparameter *conversation-input-history-index-stride* 64
   "Maximum deduplicated inputs between persisted seek points.")
 
-(-> conversation-input-history-index--size (pathname) (integer 0))
-(defun conversation-input-history-index--size (pathname)
-  "Return the byte length of PATHNAME without decoding its contents."
-  (with-open-file (stream pathname :element-type '(unsigned-byte 8))
-    (file-length stream)))
-
-(-> conversation-input-history-index--first (pathname &optional (integer 0)) list)
-(defun conversation-input-history-index--first (pathname &optional (position 0))
-  "Read just one complete log record at POSITION through the storage seek API."
-  (block first-record
-    (log-map (lambda (record) (return-from first-record record)) pathname :start-position position)
-    nil))
-
-(-> conversation-input-history-index--manifest (conversation list) pathname)
-(defun conversation-input-history-index--manifest (conversation metadata)
-  "Publish METADATA after the input log and its sparse leaf are durable."
-  (snapshot-write (conversation-input-history-index-pathname (conversation-pathname conversation)) metadata))
-
-(-> conversation-input-history-index--point
-    (conversation list &key (:index integer) (:position integer)) pathname)
-(defun conversation-input-history-index--point (conversation metadata &key index position)
-  "Maintain one fixed-size leaf of direct deduplicated input offsets."
-  (let* ((block    (floor index *conversation-input-history-index-stride*))
-         (base     (* block *conversation-input-history-index-stride*))
-         (pathname (conversation-input-history-index-pathname (conversation-pathname conversation) block))
-         (point    (if (= index base)
-                       (list :epoch (getf metadata :epoch) :index base :positions nil)
-                       (snapshot-read pathname))))
-    (unless (and (equal (getf point :epoch) (getf metadata :epoch))
-                 (eql (getf point :index) base)
-                 (= (length (getf point :positions)) (- index base)))
-      (error 'conversation-invariant-error :pathname pathname :sequence nil
-             :message "The input offset leaf is stale."))
-    (setf (getf point :positions) (append (getf point :positions) (list position)))
-    (snapshot-write pathname point)))
-
 (-> conversation-input-history-index--read (conversation &optional integer) (option list))
 (defun conversation-input-history-index--read
     (conversation &optional (expected (conversation-input-history-last-sequence conversation)))
-  "Validate a constant-size manifest against source identity, epoch, length and tail."
-  (handler-case
-      (let* ((identity (conversation-pathname conversation))
-             (pathname (conversation-input-history-pathname identity))
-             (metadata (snapshot-read (conversation-input-history-index-pathname identity)))
-             (header   (conversation-input-history-index--first pathname))
-             (tail     (and (plusp (getf metadata :sequence 0))
-                            (conversation-input-history-index--first pathname (getf metadata :tail-position)))))
-        (when (and (equal (getf metadata :id) (conversation-identifier conversation))
-                   (eql (getf metadata :created-at) (conversation-created-at conversation))
-                   (non-empty-string-p (getf metadata :epoch))
-                   (equal (getf metadata :epoch) (getf (rest header) :epoch))
-                   (eql (getf metadata :stride) *conversation-input-history-index-stride*)
-                   (typep (getf metadata :count) '(integer 0))
-                   (eql (getf metadata :sequence) expected)
-                   (eql (getf metadata :bytes) (conversation-input-history-index--size pathname))
-                   (or (zerop expected)
-                       (and (eq (first tail) ':input)
-                            (eql (getf (rest tail) :seq) expected)
-                            (equal (getf (rest tail) :source) (getf metadata :previous)))))
-          metadata))
-    (error () nil)))
+  "Load a current seek manifest and check conversation identity and input sequence."
+  (let ((identity (conversation-pathname conversation)))
+    (sexp-store:log-index-read
+     (conversation-input-history-pathname identity)
+     (conversation-input-history-index-pathname identity)
+     :stride *conversation-input-history-index-stride*
+     :header-epoch (lambda (header) (getf (rest header) :epoch))
+     :validate (lambda (metadata header tail)
+                 (and (conversation-input-history--header-p conversation header)
+                      (equal (getf metadata :id) (conversation-identifier conversation))
+                      (eql (getf metadata :created-at) (conversation-created-at conversation))
+                      (eql (getf metadata :sequence) expected)
+                      (if (zerop expected)
+                          (zerop (getf metadata :tail-position))
+                          (and (eq (first tail) ':input)
+                               (eql (getf (rest tail) :seq) expected)
+                               (equal (getf (rest tail) :source) (getf metadata :previous)))))))))
 
 (-> conversation-input-history-index--build (conversation) null)
 (defun conversation-input-history-index--build (conversation)
-  "Build fixed-size offset leaves during explicit repair, never during page lookup."
-  (let* ((identity  (conversation-pathname conversation))
-         (pathname  (conversation-input-history-pathname identity))
-         (header    (conversation-input-history-index--first pathname))
-         (metadata  (list :id         (conversation-identifier conversation)
-                          :created-at (conversation-created-at conversation)
-                          :epoch      (getf (rest header) :epoch)
-                          :stride     *conversation-input-history-index-stride*
-                          :count 0 :sequence 0 :previous nil :tail-position 0))
-         (base      0)
-         (positions nil))
-    (unless (non-empty-string-p (getf metadata :epoch))
-      (error 'conversation-invariant-error :pathname pathname :sequence nil
-             :message "The input cache predates seekable input pages."))
-    (labels ((flush-leaf ()
-               "Publish at most one fixed-size leaf and release its offset buffer."
-               (when positions
-                 (snapshot-write
-                  (conversation-input-history-index-pathname identity (floor base *conversation-input-history-index-stride*))
-                  (list :epoch (getf metadata :epoch) :index base :positions (reverse positions)))
-                 (incf base (length positions))
-                 (setf positions nil))))
-      (multiple-value-bind (position incomplete count)
-          (log-map
-           (lambda (record start end)
-             (declare (ignore end))
-             (conversation-maintenance-check)
-             (when (eq (first record) ':input)
-               (let ((input (getf (rest record) :source)))
-                 (unless (equal input (getf metadata :previous))
-                   (push start positions)
-                   (incf (getf metadata :count))
-                   (when (= (length positions) *conversation-input-history-index-stride*) (flush-leaf)))
-                 (setf (getf metadata :previous) input
-                       (getf metadata :sequence) (getf (rest record) :seq)
-                       (getf metadata :tail-position) start))))
-           pathname :with-positions-p t)
-        (declare (ignore count))
-        (when incomplete
-          (error 'conversation-invariant-error :pathname pathname :sequence nil
-                 :message "The input cache has an incomplete tail."))
-        (setf (getf metadata :bytes) position))
-      (flush-leaf))
-    (conversation-input-history-index--manifest conversation metadata)
-    (setf (conversation-input-history-index-metadata conversation) metadata))
+  "Build seek offsets for nonduplicate editable inputs."
+  (let* ((identity (conversation-pathname conversation))
+         (metadata (list :id (conversation-identifier conversation)
+                         :created-at (conversation-created-at conversation)
+                         :sequence 0 :previous nil)))
+    (setf (conversation-input-history-index-metadata conversation)
+          (sexp-store:log-index-rebuild
+           (conversation-input-history-pathname identity)
+           (conversation-input-history-index-pathname identity)
+           :stride *conversation-input-history-index-stride*
+           :header-epoch (lambda (header) (getf (rest header) :epoch))
+           :leaf-pathname (lambda (block) (conversation-input-history-index-pathname identity block))
+           :metadata metadata
+           :select (lambda (record)
+                     (conversation-maintenance-check)
+                     (when (eq (first record) ':input)
+                       (let ((input    (getf (rest record) :source))
+                             (previous (getf metadata :previous)))
+                         (setf (getf metadata :previous) input
+                               (getf metadata :sequence) (getf (rest record) :seq))
+                         (not (equal input previous))))))))
   nil)
 
 (-> conversation-input-history-index--note (conversation list integer) null)
 (defun conversation-input-history-index--note (conversation record position)
-  "Maintain a count and at most one sparse point after one durable input append."
-  (let* ((metadata (copy-list (conversation-input-history-index-metadata conversation)))
+  "Index a durable append unless its input repeats the previous one."
+  (let* ((identity (conversation-pathname conversation))
+         (metadata (copy-list (conversation-input-history-index-metadata conversation)))
          (input    (getf (rest record) :source)))
     (unless metadata
-      (error 'conversation-invariant-error :pathname (conversation-pathname conversation) :sequence nil
+      (error 'conversation-invariant-error :pathname identity :sequence nil
              :message "The input seek index needs repair."))
-    (unless (equal input (getf metadata :previous))
-      (conversation-input-history-index--point conversation metadata :index (getf metadata :count) :position position)
-      (incf (getf metadata :count)))
-    (setf (getf metadata :previous) input
-          (getf metadata :sequence) (getf (rest record) :seq)
-          (getf metadata :tail-position) position
-          (getf metadata :bytes)
-          (conversation-input-history-index--size
-           (conversation-input-history-pathname (conversation-pathname conversation))))
-    (conversation-input-history-index--manifest conversation metadata)
-    (setf (conversation-input-history-index-metadata conversation) metadata))
+    (let ((selected-p (not (equal input (getf metadata :previous)))))
+      (setf (getf metadata :previous) input
+            (getf metadata :sequence) (getf (rest record) :seq)
+            (conversation-input-history-index-metadata conversation)
+            (sexp-store:log-index-note
+             (conversation-input-history-pathname identity)
+             (conversation-input-history-index-pathname identity)
+             metadata :position position :selected-p selected-p
+             :leaf-pathname (lambda (block) (conversation-input-history-index-pathname identity block))))))
   nil)
 
 (-> conversation-input-history-index--page
@@ -150,16 +84,14 @@
     (loop for index from begin below end
           for block = (floor index *conversation-input-history-index-stride*)
           do (unless (eql leaf-block block)
-               (setf leaf (snapshot-read (conversation-input-history-index-pathname (conversation-pathname conversation) block))
-                     leaf-block block)
-               (unless (and (equal (getf leaf :epoch) (getf metadata :epoch))
-                            (eql (getf leaf :index) (* block *conversation-input-history-index-stride*)))
-                 (error 'conversation-invariant-error :pathname (conversation-pathname conversation) :sequence nil
-                        :message "The requested input seek leaf is stale.")))
-             (let* ((position (nth (mod index *conversation-input-history-index-stride*) (getf leaf :positions)))
-                    (record   (and (typep position '(integer 0))
-                                   (conversation-input-history-index--first
-                                    (conversation-input-history-pathname (conversation-pathname conversation)) position))))
+                (setf leaf (sexp-store:log-index-leaf
+                            (conversation-input-history-index-pathname (conversation-pathname conversation) block)
+                            metadata block)
+                      leaf-block block))
+              (let* ((position (nth (mod index *conversation-input-history-index-stride*) leaf))
+                     (record   (sexp-store:log-first
+                                (conversation-input-history-pathname (conversation-pathname conversation))
+                                :start-position position :physical-forms-p t)))
                (unless (and (eq (first record) ':input) (non-empty-string-p (getf (rest record) :source)))
                  (error 'conversation-invariant-error :pathname (conversation-pathname conversation) :sequence nil
                         :message "A requested input record is unavailable."))

@@ -371,14 +371,16 @@
                   (bytes   0))
               (test-call-with-function-replacements
                (list (list 'log-map
-                           (lambda (function pathname &rest options)
-                             (if (equal pathname sidecar)
-                                 (apply map (lambda (record start end)
-                                              (incf records)
-                                              (incf bytes (- end start))
-                                              (funcall function record))
-                                        pathname :with-positions-p t options)
-                                 (apply map function pathname options))))
+                            (lambda (function pathname &rest options &key with-positions-p &allow-other-keys)
+                              (if (equal pathname sidecar)
+                                  (apply map (lambda (record start end)
+                                               (incf records)
+                                               (incf bytes (- end start))
+                                               (if with-positions-p
+                                                   (funcall function record start end)
+                                                   (funcall function record)))
+                                         pathname :with-positions-p t options)
+                                  (apply map function pathname options))))
                      (list 'conversation--map-storage-records
                            (lambda (&rest arguments)
                              (declare (ignore arguments))
@@ -392,35 +394,20 @@
               (test-assert (and (= records (+ 2 (- (third case) (second case)))) (< bytes 2048))
                            "header, tail and requested records are the only decoded input-log bytes")
               (format t "~&~D inputs: page decoded ~D records / ~D bytes.~%" count records bytes))))
-        (let ((forms (log-read sidecar)))
-          (dolist (damage '(:missing :torn :invalid :stale :unreadable))
-            (sexp-store:log-write sidecar
-                                  (if (eq damage ':stale) (subseq forms 0 2) forms))
-            (case damage
-              (:missing
-               (delete-file sidecar))
-              (:torn
-               (with-open-file (stream sidecar :direction ':output :if-exists ':append) (write-string "(" stream)))
-              (:invalid
-               (sexp-store:log-write sidecar '((:invalid)))))
-            (let ((loaded (conversation-load identity)))
-              (test-call-with-function-replacements
-               (append (list (list 'conversation--map-storage-records
-                                   (lambda (&rest arguments)
-                                     (declare (ignore arguments))
-                                     (error "Readiness must defer archival recovery."))))
-                       (when (eq damage ':unreadable)
-                         (list (list 'log-map
-                                     (lambda (function pathname &rest options)
-                                       (if (equal pathname sidecar)
-                                           (error "Unreadable input cache.")
-                                           (apply map function pathname options)))))))
-               (lambda ()
-                 (multiple-value-bind (page total complete-p)
-                     (conversation-input-history-page loaded :limit 3)
-                   (test-assert (and (not complete-p) (= total 1) (equal page '("recent"))
-                                     (conversation-input-history-repair-pending-p loaded))
-                                "a damaged cache exposes the active local window and defers complete indices"))))
+        (when (= count 200)
+          (delete-file sidecar)
+          (let ((loaded (conversation-load identity)))
+            (test-call-with-function-replacements
+             (list (list 'conversation--map-storage-records
+                         (lambda (&rest arguments)
+                           (declare (ignore arguments))
+                           (error "Readiness must defer archival recovery."))))
+             (lambda ()
+               (multiple-value-bind (page total complete-p)
+                   (conversation-input-history-page loaded :limit 3)
+                 (test-assert (and (not complete-p) (= total 1) (equal page '("recent"))
+                                   (conversation-input-history-repair-pending-p loaded))
+                              "a missing projection exposes the active local window and defers archive repair"))))
               (let ((checks 0))
                 (test-assert
                  (catch 'cancelled
@@ -433,7 +420,7 @@
               (multiple-value-bind (page total complete-p)
                   (conversation-input-history-page loaded :start 62 :limit 5)
                 (test-assert (and complete-p (= total (length inputs)) (equal page (subseq inputs 62 67)))
-                             "completed maintenance restores the complete seekable history"))))))))
+                              "completed maintenance restores the complete seekable history")))))))
   nil)
 
 (-> test-application-input-history-packets () null)

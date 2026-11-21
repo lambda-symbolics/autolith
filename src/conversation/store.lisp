@@ -3888,14 +3888,10 @@ malformed current evidence returns NIL. Legacy format-one samples are unchanged.
 (defun conversation--peek-segment-header (pathname)
   "Return exact physical PATHNAME's leading conversation header, or NIL."
   (handler-case
-      (with-open-file (stream pathname :direction ':input :external-format ':utf-8)
-        (let* ((*read-eval* nil)
-               (end-marker  (cons nil nil))
-               (form        (read stream nil end-marker)))
-          (if (and (conversation--record-form-p form)
-                   (eq (first form) :conversation))
-              form
-              nil)))
+      (let ((form (sexp-store:log-first pathname :physical-forms-p t)))
+        (and (conversation--record-form-p form)
+             (eq (first form) :conversation)
+             form))
     (error ()
       nil)))
 

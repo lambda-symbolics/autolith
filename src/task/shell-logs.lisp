@@ -388,44 +388,30 @@ Disable measurement until resource resolution has checked ancestor ownership."
 Only immutable historical segments are read. Use the conversation header,
 record and sequence validators used by its streaming reader. Retain only this
 batch's evidence. A single persisted form may exceed the soft byte budget."
-  (let* ((index       (make-hash-table :test #'equal))
-         (*read-eval* nil)
-         (end         (list nil))
-         (position    (getf cursor :position 0))
-         (next        (getf cursor :next-sequence))
-         (complete-p  nil))
-    (with-open-file (stream segment :direction ':input :external-format ':utf-8)
-      (let* ((header (read stream nil end))
-             (source (conversation--from-header identity segment header))
-             (start  (conversation-next-sequence source)))
-        (unless next
-          (setf next start))
-        (if (plusp position)
-            (unless (file-position stream position)
-              (shell-log--fail "Cannot resume shell delivery index." segment))
-            (setf position (file-position stream)))
-        (let ((begin position))
-          (loop for count below *shell-log-delivery-index-record-limit*
-                for record = (handler-case (read stream nil end)
-                               (end-of-file () end))
-                do (when (eq record end)
-                     (when (and (= next start) (/= 1 (getf (rest header) :version)))
-                       (shell-log--fail "Historical conversation segment has no checkpoint." segment))
-                     (setf complete-p t)
-                     (return))
-                   (unless (and (conversation--record-form-p record)
-                                (eql next (getf (rest record) :seq)))
-                     (shell-log--fail "Invalid historical shell delivery sequence." segment))
-                   (when (= next start)
-                     (conversation--validate-segment-first-record segment header record))
-                   (shell-log--note-sync-evidence index record)
-                   (incf next)
-                   (setf position (file-position stream))
-                   (when (or (= (1+ count) *shell-log-delivery-index-record-limit*)
-                             (>= (- position begin) *shell-log-delivery-index-byte-limit*))
-                     (return))))))
-    (values index (list :segment (file-namestring segment) :position position
-                        :next-sequence next :complete-p complete-p))))
+  (let ((index (make-hash-table :test #'equal)))
+    (multiple-value-bind (position next status count offset)
+        (sexp-store:segment-visit
+         (lambda (record) (shell-log--note-sync-evidence index record)) segment
+         :header-function
+         (lambda (pathname header)
+           (let ((source (conversation--from-header identity pathname header)))
+             (values (conversation-next-sequence source) (eql 1 (getf (rest header) :version)))))
+         :record-sequence        (lambda (record) (getf (rest record) :seq))
+         :validate-record        (lambda (pathname record)
+                                   (unless (conversation--record-form-p record)
+                                     (shell-log--fail "Invalid historical shell delivery record." pathname)))
+         :validate-first-record  #'conversation--validate-segment-first-record
+         :start-position         (getf cursor :position 0)
+         :next-sequence           (getf cursor :next-sequence)
+         :batch-offset           (getf cursor :batch-offset 0)
+         :maximum-records        *shell-log-delivery-index-record-limit*
+         :maximum-octets         *shell-log-delivery-index-byte-limit*)
+      (declare (ignore count))
+      (values index (list :segment       (file-namestring segment)
+                          :position      position
+                          :next-sequence next
+                          :batch-offset  offset
+                          :complete-p    (not (eq status ':stopped)))))))
 
 (-> shell-log--backfill-owner-step
     (configuration string string &key (:source-lock-held-p boolean)) boolean)
@@ -454,6 +440,7 @@ owner's source lock, which excludes rotation and actual storage deletion."
                               (equal owner (getf cursor :owner-conversation))
                               (stringp (getf cursor :segment))
                               (typep (getf cursor :position) '(integer 0))
+                               (typep (getf cursor :batch-offset 0) '(integer 0))
                               (typep (getf cursor :next-sequence) '(integer 1)))
                    (shell-log--fail "Invalid shell delivery index cursor." path))
                  (setf history (member (getf cursor :segment) history

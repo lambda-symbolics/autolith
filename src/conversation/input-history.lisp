@@ -94,6 +94,15 @@ part of a long history is needed."
         :created-at                 (conversation-created-at conversation)
         :epoch                      (format nil "~36R-~36R" (get-internal-real-time) (random most-positive-fixnum))))
 
+(-> conversation-input-history--header-p (conversation t) boolean)
+(defun conversation-input-history--header-p (conversation record)
+  "Check the input cache header against its owning conversation."
+  (and (consp record)
+       (eq (first record) ':conversation-input-history)
+       (eql (getf (rest record) :version) 1)
+       (equal (getf (rest record) :id) (conversation-identifier conversation))
+       (eql (getf (rest record) :created-at) (conversation-created-at conversation))))
+
 (-> conversation-input-history--read
     (conversation &key (:input-function (option function))) (values integer boolean))
 (defun conversation-input-history--read (conversation &key input-function)
@@ -110,12 +119,7 @@ each validated input; its caller must discard tentative results if validation fa
              (lambda (record)
                (if header-p
                    (progn
-                     (unless (and (eq (first record) ':conversation-input-history)
-                                  (eql (getf (rest record) :version) 1)
-                                  (equal (getf (rest record) :id)
-                                         (conversation-identifier conversation))
-                                  (eql (getf (rest record) :created-at)
-                                       (conversation-created-at conversation)))
+                     (unless (conversation-input-history--header-p conversation record)
                        (return-from conversation-input-history--read (values 0 nil)))
                      (setf header-p nil))
                    (let ((next  (getf (rest record) :seq))
@@ -156,13 +160,17 @@ each validated input; its caller must discard tentative results if validation fa
               (setf sequence (getf (rest record) :seq))
               (funcall emit (list :input :seq sequence :source input))
               (when input-function (funcall input-function input)))))))
-     :call-with-publication call-with-publication)
-    (setf (conversation-input-history-indexed-sequence conversation) sequence
-          (conversation-input-history-last-sequence conversation)
-          (max sequence (conversation-input-history-last-sequence conversation))
-          (conversation-input-history-loaded-p conversation) t)
-    (conversation-input-history-index--build conversation)
-    (setf (conversation-input-history-repair-pending-p conversation) nil))
+     :call-with-publication
+     (lambda (publish)
+       (funcall (or call-with-publication #'funcall)
+                (lambda ()
+                  (funcall publish)
+                  (setf (conversation-input-history-indexed-sequence conversation) sequence
+                        (conversation-input-history-last-sequence conversation)
+                        (max sequence (conversation-input-history-last-sequence conversation))
+                        (conversation-input-history-loaded-p conversation) t)
+                  (conversation-input-history-index--build conversation)
+                  (setf (conversation-input-history-repair-pending-p conversation) nil))))))
   nil)
 
 (-> conversation-input-history--append
@@ -174,7 +182,7 @@ each validated input; its caller must discard tentative results if validation fa
     (when (and input
                (> sequence (conversation-input-history-indexed-sequence conversation)))
       (let* ((pathname (conversation-input-history-pathname (conversation-pathname conversation)))
-             (position (conversation-input-history-index--size pathname))
+             (position (nth-value 1 (sexp-store:file-revision pathname)))
              (indexed  (list :input :seq sequence :source input)))
         (log-append pathname indexed :repair-tail-p nil)
         (conversation-input-history-index--note conversation indexed position))

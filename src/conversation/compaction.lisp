@@ -295,14 +295,10 @@ A row is a plist of its item's :WIRE-JSON and the metadata the item had where
 it was carried from, named by *CONVERSATION-COMPACTION-ROW-METADATA*."
   (handler-case
       (dolist (row rows)
-        (unless (and (listp row) (list-length row) (evenp (length row))
-                     (stringp (getf row :wire-json))
-                     (let ((keys (plist-keys row)))
-                       (and (= (length keys) (length (remove-duplicates keys)))
-                            (every (lambda (key)
-                                     (member key (cons :wire-json
-                                                       *conversation-compaction-row-metadata*)))
-                                   keys))))
+        (unless (and (sexp-store:plist-schema-p
+                      row :required-keys '(:wire-json)
+                          :allowed-keys (cons :wire-json *conversation-compaction-row-metadata*))
+                     (stringp (getf row :wire-json)))
           (conversation--record-error
            conversation properties "A carried context row is invalid."))
         (let ((item (json-decode (getf row :wire-json))))

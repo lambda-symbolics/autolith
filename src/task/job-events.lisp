@@ -87,12 +87,7 @@
 (-> run-job-event--plist-p (list list) boolean)
 (defun run-job-event--plist-p (data keys)
   "Return whether DATA is a duplicate-free plist using only KEYS."
-  (and (evenp (length data))
-       (loop with seen = nil
-             for (key nil) on data by (partial #'nthcdr 2)
-             always (and (member key keys) (not (member key seen))
-                         (progn (push key seen) t))
-             finally (return t))))
+  (sexp-store:plist-schema-p data :allowed-keys keys))
 
 (-> run-job-event--data-validate (keyword list) list)
 (defun run-job-event--data-validate (kind data)
