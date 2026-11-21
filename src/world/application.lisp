@@ -549,7 +549,7 @@ cannot be read counts as present: the world never blocks a session."
   "Record a hosted agent's observer event and schedule a parent activity refresh."
   (let ((server (application-world-server application)))
     (when (and server (member status '(:provider-request-started :provider-request-completed
-                                      :tool-call-started :tool-call-completed)))
+                                       :tool-call-started :tool-call-completed)))
       (with-lock-held ((application-task-presentation-lock application))
         (let ((progress (application-world-turn-progress application)))
           (when progress
@@ -568,11 +568,11 @@ cannot be read counts as present: the world never blocks a session."
         (with-lock-held ((task-progress-lock progress))
           (let ((now (get-internal-real-time)))
             (list :request-count (task-progress-request-count progress)
-                  :current-tool (task-progress-current-tool progress)
+                  :current-tool  (task-progress-current-tool progress)
                   :current-tool-duration-ms
                   (when (task-progress-current-tool-started-at progress)
                     (task--milliseconds-between (task-progress-current-tool-started-at progress) now))
-                  :recent-tools (coerce (deque->vector (task-progress-recent-tools progress)) 'list)
+                  :recent-tools  (coerce (deque->vector (task-progress-recent-tools progress)) 'list)
                   :duration-ms
                   (when (task-progress-started-at progress)
                     (task--milliseconds-between (task-progress-started-at progress) now)))))))))
