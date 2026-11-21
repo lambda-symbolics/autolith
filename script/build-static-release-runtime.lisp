@@ -60,41 +60,11 @@
 
            (build-color-archive ()
              "Build ColorLisp's native sources into COLOR-ARCHIVE."
-             (let* ((archive-directory
-                      (uiop:pathname-directory-pathname color-archive))
-                    (object-directory
-                      (merge-pathnames "colorlisp-objects/" archive-directory))
-                    (compiler (or (uiop:getenv "CC") "cc"))
-                    (sources
-                      (uiop:symbol-call
-                       :colorlisp :colorlisp--native-source-pathnames))
-                    (includes
-                      (uiop:symbol-call
-                       :colorlisp :colorlisp--native-include-arguments))
-                    (objects
-                      (loop for index below (length sources)
-                            collect (merge-pathnames
-                                     (format nil "source-~D.o" index)
-                                     object-directory))))
-               (uiop:delete-directory-tree object-directory
-                                           :validate          t
-                                           :if-does-not-exist ':ignore)
-               (uiop:ensure-all-directories-exist
-                (list object-directory archive-directory))
-               (loop for source in sources
-                     for object in objects
-                     do (run (append (list compiler "-c" "-O2" "-std=gnu11"
-                                           "-fvisibility=hidden"
-                                           "-o" (namestring object))
-                                     includes
-                                     (list source))))
-               (when (probe-file color-archive)
-                 (delete-file color-archive))
-               (run (append (list "ar" "rcs" (namestring color-archive))
-                            (mapcar #'namestring objects)))
-               (uiop:delete-directory-tree object-directory
-                                           :validate          t
-                                           :if-does-not-exist ':ignore)))
+             (uiop:symbol-call :colorlisp :native-build
+                                :output   color-archive
+                                :kind     ':static
+                                :compiler (or (uiop:getenv "CC") "cc")
+                                :archiver (or (uiop:getenv "AR") "ar")))
 
            (linkage-symbol-name (key)
              "Return the foreign symbol name represented by linkage KEY."
