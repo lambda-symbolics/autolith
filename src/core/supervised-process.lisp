@@ -16,6 +16,23 @@ PATH is required when a saved core reopens native libraries by their basename."
               for value = (uiop:getenv name)
               when value collect (concatenate 'string name "=" value))))
 
+(-> git-process-environment (&key (:overrides list) (:absolute-xdg-p boolean)) list)
+(defun git-process-environment (&key overrides absolute-xdg-p)
+  "Assemble process-local Git bindings, excluding inherited repository selectors.
+OVERRIDES take precedence. ABSOLUTE-XDG-P restricts forwarded XDG_CONFIG_HOME
+when the caller also uses it to grant sandbox read access."
+  (append overrides
+          (loop for name in '("PATH" "HOME" "USERPROFILE" "SYSTEMROOT" "WINDIR"
+                              "TMPDIR" "TMP" "TEMP" "LANG" "LC_ALL" "XDG_CONFIG_HOME")
+                for value = (uiop:getenv name)
+                for prefix = (concatenate 'string name "=")
+                when (and value
+                          (or (not absolute-xdg-p) (not (string= name "XDG_CONFIG_HOME"))
+                              (and (plusp (length value))
+                                   (uiop:absolute-pathname-p (uiop:parse-native-namestring value))))
+                          (notany (lambda (binding) (uiop:string-prefix-p prefix binding)) overrides))
+                  collect (concatenate 'string prefix value))))
+
 (-> supervised-process-exchange (t t) t)
 (defun supervised-process-exchange (process request)
   "Write REQUEST and read one response without reader evaluation."

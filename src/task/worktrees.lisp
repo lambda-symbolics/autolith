@@ -57,23 +57,8 @@
 
 (-> task-worktree--environment (&key (:overrides list)) list)
 (defun task-worktree--environment (&key overrides)
-  "Combine sandbox OVERRIDES with an allowlist excluding Git repository selectors.
-HOME and absolute XDG_CONFIG_HOME supply identity, ignore and attribute configuration;
-cl-worktree disables execution callbacks. Sandbox temporary paths take precedence
-without changing the host environment."
-  (append overrides
-          (loop for name in '("PATH" "HOME" "USERPROFILE" "SYSTEMROOT" "WINDIR"
-                              "TMPDIR" "TMP" "TEMP" "LANG" "LC_ALL" "XDG_CONFIG_HOME")
-                for value = (uiop:getenv name)
-                when (and value
-                          (or (not (string= name "XDG_CONFIG_HOME"))
-                              (and (plusp (length value))
-                                   (uiop:absolute-pathname-p
-                                    (uiop:parse-native-namestring value))))
-                          (not (some (lambda (binding)
-                                       (uiop:string-prefix-p (format nil "~A=" name) binding))
-                                     overrides)))
-                  collect (format nil "~A=~A" name value))))
+  "Forward Git configuration and let sandbox temporary bindings take precedence."
+  (git-process-environment :overrides overrides :absolute-xdg-p t))
 
 (-> task-worktree--git-read-roots () list)
 (defun task-worktree--git-read-roots ()
@@ -155,43 +140,23 @@ without changing the host environment."
    :runner   (task-worktree--runner configuration authorize :writable-roots  writable-roots
                                                             :cancel-function cancel-function)))
 
+(-> task-worktree--admin-path-kind (pathname) (option keyword))
+(defun task-worktree--admin-path-kind (path)
+  "Distinguish absent Git metadata from unsupported or unresolvable entries."
+  (let ((status (or (platform-path-status *platform* path :follow-links-p t)
+                    (platform-path-status *platform* path :follow-links-p nil))))
+    (when status
+      (platform-file-status-kind status))))
+
 (-> task-worktree--git-admin-roots (pathname) list)
 (defun task-worktree--git-admin-roots (source)
-  "Resolve SOURCE's private and shared Git administrative directories."
-  (let* ((source  (uiop:ensure-directory-pathname source))
-         (dot-git (merge-pathnames ".git" source))
-         (status  (platform-path-status *platform* dot-git :follow-links-p t))
-         (git-dir
-           (when status
-             (case (platform-file-status-kind status)
-               (:directory
-                (uiop:ensure-directory-pathname dot-git))
-               (:file
-                (let* ((text (uiop:read-file-string dot-git))
-                       (line (first (uiop:split-string text
-                                                      :separator '(#\Newline #\Return)))))
-                  (unless (and line (uiop:string-prefix-p "gitdir: " line))
-                    (task-worktree--error "Malformed Git administrative pointer."))
-                  (merge-pathnames (uiop:parse-native-namestring (subseq line 8)) source)))
-               (otherwise
-                (task-worktree--error "Git administrative path is not a file or directory."))))))
-    (when git-dir
-      (let* ((git-dir   (uiop:ensure-directory-pathname
-                         (platform-truename *platform* git-dir)))
-             (commondir (merge-pathnames "commondir" git-dir))
-             (common-dir
-               (if (uiop:file-exists-p commondir)
-                   (merge-pathnames
-                    (uiop:ensure-directory-pathname
-                     (uiop:parse-native-namestring
-                      (string-right-trim '(#\Newline #\Return)
-                                         (uiop:read-file-string commondir))))
-                    git-dir)
-                   git-dir)))
-        (remove-duplicates
-         (list git-dir (uiop:ensure-directory-pathname
-                        (platform-truename *platform* common-dir)))
-         :test #'equal)))))
+  "Use the platform filesystem adapter to resolve SOURCE's exact Git layout."
+  (handler-case
+      (cl-worktree:checkout-admin-roots source
+                                       :path-kind    #'task-worktree--admin-path-kind
+                                       :canonicalize (lambda (path) (platform-truename *platform* path)))
+    (cl-worktree:ownership-error (condition)
+      (task-worktree--error (cl-worktree:failure-detail condition)))))
 
 (-> task-worktree-command-writable-roots (tool-context) list)
 (defun task-worktree-command-writable-roots (context)
@@ -359,20 +324,15 @@ The source is never reset or stashed, and child cleanup is always explicit."
 (defun task-worktree--find-handle (manager metadata)
   "Recover a matching owned handle and verify all retained identity fields."
   (task-worktree--require-settled (getf metadata :source))
-  (let ((handles (multiple-value-list
-                  (cl-worktree:discover-worktrees manager :owner (getf metadata :owner)
-                                                 :source         (getf metadata :source)))))
-    (cl-worktree:recover-worktree
-     manager
-     (or (find-if
-          (lambda (handle)
-            (and (equal (cl-worktree:worktree-id handle) (getf metadata :id))
-                 (equal (cl-worktree:worktree-baseline handle) (getf metadata :baseline))
-                 (equal (namestring (cl-worktree:worktree-source handle)) (getf metadata :source))
-                 (equal (namestring (cl-worktree:worktree-path handle)) (getf metadata :path))))
-          (append (first handles) (second handles)))
-         (task-worktree--error "The owned worktree identity is unavailable or changed."))
-     :owner (getf metadata :owner))))
+  (handler-case
+      (cl-worktree:recover-worktree-by-identity manager
+                                               :owner    (getf metadata :owner)
+                                               :source   (getf metadata :source)
+                                               :id       (getf metadata :id)
+                                               :baseline (getf metadata :baseline)
+                                               :path     (getf metadata :path))
+    (cl-worktree:worktree-identity-mismatch (condition)
+      (task-worktree--error (cl-worktree:failure-detail condition)))))
 
 (-> task-worktree--extract (cl-worktree:manager list) cl-worktree:artifact)
 (defun task-worktree--extract (manager metadata)
@@ -466,15 +426,16 @@ waiting for Git or the lifecycle lock during terminal publication."
         (format nil "Task ~A did not run in an isolated worktree, so it has none to inspect." identifier))))
     (getf result :worktree)))
 
-(-> task-worktree--owned-discovery (cl-worktree:manager tool-context pathname) list)
+(-> task-worktree--owned-discovery (cl-worktree:manager tool-context pathname) (values list list))
 (defun task-worktree--owned-discovery (manager context source)
-  "Return current primary conversation handles, including absent owned orphans."
+  "Return present conversation-owned handles and absent orphans as two values."
   (let ((prefix (format nil "~A/" (conversation-identifier (tool-context-conversation context)))))
-    (multiple-value-bind (active absent)
-        (cl-worktree:discover-worktrees manager :source source)
-      (remove-if-not
-       (lambda (handle) (uiop:string-prefix-p prefix (cl-worktree:worktree-owner handle)))
-       (append active absent)))))
+    (flet ((foreign-p (handle)
+             (not (uiop:string-prefix-p prefix (cl-worktree:worktree-owner handle)))))
+      (multiple-value-bind (owned absent)
+          (cl-worktree:discover-worktrees manager :source source)
+        (values (remove-if #'foreign-p (set-difference owned absent :test #'eq))
+                (remove-if #'foreign-p absent))))))
 
 (defmethod tool-execute ((tool task-worktree-tool) (context tool-context) arguments)
   "Inspect or deliberately integrate an isolated child's artifact, or clean its owned checkout."
@@ -495,22 +456,21 @@ waiting for Git or the lifecycle lock during terminal publication."
       (let ((answer
               (cond
                 ((equal action "discover")
-                 (let* ((source (workspace-tool-path context (tool-argument arguments "source")
-                                                     :tool-name "child.worktree"))
-                        (prefix (format nil "~A/" (conversation-identifier (tool-context-conversation context)))))
+                 (let ((source (workspace-tool-path context (tool-argument arguments "source")
+                                                    :tool-name "child.worktree")))
                    (multiple-value-bind (active absent)
-                       (cl-worktree:discover-worktrees manager :source source)
-                     (flet ((owned (handles)
-                              (loop for handle in handles
-                                    when (uiop:string-prefix-p prefix (cl-worktree:worktree-owner handle))
-                                      collect (task-worktree--metadata handle ':patch ""))))
-                       (list :active (owned active) :absent (owned absent))))))
+                       (task-worktree--owned-discovery manager context source)
+                     (flet ((metadata (handles)
+                              (loop for handle in handles collect (task-worktree--metadata handle ':patch ""))))
+                       (list :active (metadata active) :absent (metadata absent))))))
                 ((equal action "cleanup-orphan")
                  (let* ((source (workspace-tool-path context (tool-argument arguments "source" :required t)
                                                      :tool-name "child.worktree"))
                         (id     (tool-argument arguments "id" :required t))
-                        (handle (find id (task-worktree--owned-discovery manager context source)
-                                      :key #'cl-worktree:worktree-id :test #'equal)))
+                        (handle (multiple-value-bind (active absent)
+                                    (task-worktree--owned-discovery manager context source)
+                                  (or (find id active :key #'cl-worktree:worktree-id :test #'equal)
+                                      (find id absent :key #'cl-worktree:worktree-id :test #'equal)))))
                    (unless handle
                      (task-worktree--error "No owned orphan has that worktree ID."))
                    (when (some (lambda (job)

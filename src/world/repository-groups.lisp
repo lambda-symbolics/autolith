@@ -18,14 +18,6 @@
     :documentation "Channels in their supplied presentation order."))
   (:documentation "An ephemeral presentation group, independent of execution directories."))
 
-(-> world-repository--environment () list)
-(defun world-repository--environment ()
-  "Return a process-local environment without inherited Git repository selectors."
-  (loop for name in '("PATH" "HOME" "USERPROFILE" "SYSTEMROOT" "WINDIR"
-                      "TMPDIR" "TMP" "TEMP" "LANG" "LC_ALL" "XDG_CONFIG_HOME")
-        for value = (uiop:getenv name)
-        when value collect (format nil "~A=~A" name value)))
-
 (-> world-repository--git-output (string list) (option string))
 (defun world-repository--git-output (directory arguments)
   "Read bounded Git metadata in DIRECTORY, returning NIL on unavailable metadata.
@@ -33,22 +25,20 @@
 Only fixed metadata queries call this helper. No shell, permission picker, or
 process-global environment change participates in presentation discovery."
   (handler-case
-      (let ((result
-              (run-sandboxed
-               "git" (append '("--no-pager" "--no-optional-locks"
-                               "-c" "core.fsmonitor=false" "-c" "core.hooksPath="
-                               "-c" "gc.auto=0" "-c" "maintenance.auto=false")
-                             arguments)
-               :policy            (external-sandbox-policy)
-               :working-directory (platform-pathname directory)
-               :environment       (world-repository--environment)
-               :clear-environment-p t :timeout 1
-               :output-limit 65536 :error-output-limit 4096)))
-        (when (and (eql 0 (sandbox-result-exit-code result))
-                   (not (sandbox-result-timed-out-p result))
-                   (not (sandbox-result-output-truncated-p result))
-                   (not (cl-exec-sandbox:sandbox-result-error-output-truncated-p result)))
-          (sandbox-result-output result)))
+      (destructuring-bind (program &rest options) (cl-worktree:git-read-argv arguments)
+        (let ((result
+                (run-sandboxed
+                 program options
+                 :policy            (external-sandbox-policy)
+                 :working-directory (platform-pathname directory)
+                 :environment       (git-process-environment)
+                 :clear-environment-p t :timeout 1
+                 :output-limit 65536 :error-output-limit 4096)))
+          (when (and (eql 0 (sandbox-result-exit-code result))
+                     (not (sandbox-result-timed-out-p result))
+                     (not (sandbox-result-output-truncated-p result))
+                     (not (cl-exec-sandbox:sandbox-result-error-output-truncated-p result)))
+            (sandbox-result-output result))))
     (error ()
       nil)))
 
