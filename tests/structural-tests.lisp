@@ -194,9 +194,13 @@
        (dolist (decision '(:deny :sandboxed))
          (let ((denied (make-instance
                         'tool-context :configuration configuration :registry registry :worker nil
-                        :conversation (tool-context-conversation context)
-                        :command-authorization-function
-                        (lambda (command directory) (declare (ignore command directory)) decision))))
+                         :conversation (tool-context-conversation context)
+                         :command-authorization-function
+                         (lambda (command directory)
+                           (declare (ignore directory))
+                           (if (uiop:string-prefix-p "structural -- " command)
+                               ':full-access
+                               decision)))))
             (test-assert (handler-case (progn (tool-execute query denied arguments) nil)
                            (structural-workspace-error (condition)
                              (eq ':authorization (structural-workspace-error-code condition))))

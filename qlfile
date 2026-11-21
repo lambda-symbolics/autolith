@@ -27,7 +27,7 @@ git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref 3785e2583
 git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref f617509db7ec8db68acbc33696aa01b34e4ad74b
 git cl-lsp https://github.com/lambda-symbolics/cl-lsp.git :ref cf57c465dcd0b489f5e91e2bfca8bec545d5ba92
 git cl-resources https://github.com/lambda-symbolics/cl-resources.git :ref d17ecf154443fae229e4218120f995efa78a3c6e
-git clasted https://github.com/lambda-symbolics/clasted.git :ref 669dbf5ef7c9d8b6d31678f7d4b9677f3a2166b7
+git clasted https://github.com/lambda-symbolics/clasted.git :ref 06ef23e675164b14044d5af0802f7f06789dc0be
 git daphne https://github.com/lambda-symbolics/daphne.git :ref 3c043bdb691d1ef5fb0c7d2b72cc5c10a465357c
 git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref 3c064d06d0a13fc58dd5cfd84f79af1eaedca2c4
 git cl-termdown https://github.com/lambda-symbolics/cl-termdown.git :ref 17249edda7cd28cd90ce4c9788f5ede77453fed7
