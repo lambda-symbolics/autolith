@@ -58,5 +58,5 @@ git prezdivka https://github.com/lambda-symbolics/prezdivka.git :ref f85ce29c7f7
 git sito https://github.com/lambda-symbolics/sito.git :ref 2147f6fcaaa470c6631ca9037728d77d16284226
 git setinka https://github.com/lambda-symbolics/setinka.git :ref ce63dce34287b20ad81f08f6d208e6e18bc3163f
 git lambda-debugger https://github.com/lambda-symbolics/lambda-debugger.git :ref 12497fd9be66b4ebfec5a8270302cd8d9d40948e
-git yolokuva https://github.com/lambda-symbolics/yolokuva.git :ref e35d37d21bf07bb99473c0144144fa73c313d898
+git yolokuva https://github.com/lambda-symbolics/yolokuva.git :ref b1d03c9104eacd97caffa513c3e9fdbd277f27bf
 git defingerprinter https://github.com/chakanysystems/defingerprinter.git :ref 20ff2c26a89ce18fad0dc8bb4fdfd97f3d98327d
