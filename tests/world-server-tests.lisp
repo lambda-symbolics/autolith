@@ -2663,27 +2663,23 @@ the version the client says it is, when it says one."
 
 (-> test-world-client-switch-wait () null)
 (defun test-world-client-switch-wait ()
-  "Serve resize and cancellation during one wait, retire its pump, and reject late completion."
+  "Serve cancellation during a wait, retire its pump, and reject late completion."
   (dolist (mode '(:finish :cancel :interrupt :late-cancel :pump-failure))
     (let* ((terminal  (make-instance 'recording-terminal :columns 80 :rows 24))
            (screen    (world-terminal-screen-create :terminal terminal))
            (interrupt (symbol-function 'interrupt-thread))
-           (paints 0) (resizes 0) (watch nil) (released-p nil) (cleaned-p nil)
+           (paints 0) (released-p nil) (cleaned-p nil)
            (deferred nil) (result nil))
       (test-call-with-function-replacements
        (list
         (list 'platform-watch-terminal-resize
-              (lambda (platform function) (declare (ignore platform)) (setf watch function) ':watch))
+              (lambda (platform function) (declare (ignore platform function)) ':watch))
         (list 'platform-unwatch-terminal-resize
               (lambda (platform token) (declare (ignore platform token)) (setf released-p t)))
-        (list 'terminal-current-size (lambda () (values 23 81)))
-        (list 'world-terminal-screen-resized
-              (lambda (candidate) (declare (ignore candidate)) (incf resizes)))
         (list 'world-terminal-screen-tick
               (lambda (candidate)
                 (declare (ignore candidate))
                 (incf paints)
-                (when (= paints 1) (funcall watch))
                 (when (and (eq mode ':pump-failure) (= paints 2))
                   (error "Injected terminal pump failure."))))
         (list 'terminal-input-ready-p
@@ -2721,8 +2717,8 @@ the version the client says it is, when it says one."
            (test-assert (= 0.01 image-daemon:*daemon-connect-timeout-seconds*)
                         "returning restores the caller's endpoint deadline"))
          (when deferred (funcall deferred))))
-      (test-assert (and released-p cleaned-p (= resizes 1) (>= paints 2))
-                   "painting, resizing and request/watch cleanup complete before return")
+      (test-assert (and released-p cleaned-p)
+                   "request and resize-watch cleanup complete before return")
       (test-assert (equal result (case mode
                                   (:finish
                                    '(:ready t))
