@@ -188,17 +188,15 @@ Every role talks through channels, so any child can answer its parent."
       (mcp-tool-registry-activate-discovered-tools registry))
     registry))
 
-(-> task--model-alias (string (option string)) (option string))
-(defun task--model-alias (alias parent-model)
-  "Resolve one child model ALIAS relative to PARENT-MODEL."
+(-> task--model-alias (string configuration (option string)) (option string))
+(defun task--model-alias (alias configuration parent-model)
+  "Resolve one child model ALIAS relative to PARENT-MODEL and CONFIGURATION.
+  The configured table is the only source of tier models."
   (let ((value (string-downcase alias)))
     (cond
       ((member value '("@task" "@parent" "@auto") :test #'string=)
        parent-model)
-      ((string= value "@smol")
-       "gpt-5.6-luna")
-      ((member value '("@slow" "@designer") :test #'string=)
-       "gpt-6.1-terra")
+      ((second (assoc value (config :child-model-aliases configuration) :test #'string=)))
       ((member alias *supported-models* :test #'string=)
        alias)
       (t
@@ -231,7 +229,7 @@ choice for the primary agent rather than a silent property of every task."
          (model
           (or
            (loop for candidate in (task-agent-definition-models definition)
-                 for resolved = (task--model-alias candidate parent-model)
+                 for resolved = (task--model-alias candidate parent-configuration parent-model)
                  when resolved return resolved)
            parent-model))
          (effort

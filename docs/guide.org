@@ -826,9 +826,9 @@ You can use the same command without the picker:
 
 Settings have four scopes:
 
-- *Durable.* Your model, reasoning effort, reasoning traces, timestamps and
-  saved permission mode belong to this scope. Changes are saved immediately
-  in =preferences.sexp= under the configuration directory.
+- *Durable.* Your model, child model aliases, reasoning effort, reasoning
+  traces, timestamps and saved permission mode belong to this scope. Changes
+  are saved immediately in =preferences.sexp= under the configuration directory.
 - *Session.* Settings such as hurry-up mode last until exit.
 - *Process.* Startup sets the configuration roots and management endpoint.
 - *Derived.* The provider endpoint and context window depend on the model.
@@ -1853,6 +1853,35 @@ property list:
   limit still applies.
 - Set =:reasoning-effort= to a supported effort. Omit it or use =:auto= for
   =medium=. Codex Fast mode is not inherited.
+
+*** Child model aliases
+
+The =:models= field accepts tier aliases and model identifiers. The aliases
+=@task=, =@parent=, and =@auto= use the parent model. The aliases =@smol=,
+=@slow=, and =@designer= resolve through the durable =child-model-aliases=
+setting.
+
+The setting stores one two-item row per tier alias. The first item is the tier
+alias. The second item is the model identifier. A provider prefix selects its
+registered provider. A bare identifier uses the normal registration precedence.
+
+The default table uses =gpt-5.6-luna= for =@smol= and =gpt-6.1-terra= for
+=@slow= and =@designer=. Those identifiers route to the Codex subscription
+provider. The bundled defaults are:
+
+#+BEGIN_SRC lisp
+(settings :child-model-aliases
+          '(("@smol" "gpt-5.6-luna")
+            ("@slow" "gpt-6.1-terra")
+            ("@designer" "gpt-6.1-terra")))
+#+END_SRC
+
+Replacing the setting replaces the whole table. Unknown aliases and mis-cased
+aliases are rejected. A tier without a table entry does not fall back to a
+built-in model. When no candidate resolves, the child uses the parent model.
+
+The same table appears in =preferences.sexp= under =:child-model-aliases=. ACP
+clients set it as an array of two-item arrays.
 
 Use =child.roles= to see effective roles and =child.spawn= to start a task.
 Reuse a child by sending work to its channel. An agent can have up to 32

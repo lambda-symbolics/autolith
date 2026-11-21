@@ -11,6 +11,12 @@
 (defparameter *default-reasoning-effort* "high"
   "The user-visible default reasoning effort.")
 
+(defparameter *default-child-model-alias-table*
+  '(("@smol" "gpt-5.6-luna")
+    ("@slow" "gpt-6.1-terra")
+    ("@designer" "gpt-6.1-terra"))
+  "The built-in tier models for child roles, overridden per alias by a setting.")
+
 (defparameter *codex-responses-endpoint*
   "https://chatgpt.com/backend-api/codex/responses"
   "The current ChatGPT Codex Responses endpoint.")

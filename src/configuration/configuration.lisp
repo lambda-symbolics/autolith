@@ -45,6 +45,11 @@
    :aliases '(("" . nil) ("none" . nil) ("off" . nil) ("unset" . nil)))
   (:documentation "An optional positive integer; empty or textual off values mean none."))
 
+(defclass child-model-alias-table-setting (setting)
+  ()
+  (:default-initargs :type '(satisfies child-model-alias-table-p))
+  (:documentation "A child tier alias table stored as a proper list of two-item rows."))
+
 (defmethod setting-coerce ((setting directory-setting) value configuration)
   "Store directory designators in directory form."
   (declare (ignore setting configuration))
@@ -105,6 +110,47 @@ exist yet, and is only put in directory form."
   "Return whether VALUE is a proper list of nonempty strings or pathnames."
   (and (proper-list-p value)
        (every (lambda (root) (typep root '(or non-empty-string pathname))) value)))
+
+(-> child-model-alias-table-p (t) boolean)
+(defun child-model-alias-table-p (value)
+  "Return whether VALUE is a proper table of two-item alias and model rows."
+  (and (proper-list-p value)
+       (every (lambda (row)
+                (and (proper-list-p row)
+                     (= (length row) 2)
+                     (typep (first row) 'non-empty-string)
+                     (typep (second row) 'non-empty-string)))
+              value)))
+
+(defmethod setting-coerce ((setting child-model-alias-table-setting) value configuration)
+  "Convert an ACP alias array into the setting's canonical table."
+  (declare (ignore setting configuration))
+  (cond
+    ((and (vectorp value) (not (stringp value)))
+     (map 'list (lambda (row)
+                  (if (and (vectorp row) (not (stringp row)))
+                      (coerce row 'list)
+                      row))
+          value))
+    ((child-model-alias-table-p value)
+     (copy-tree value))
+    (t
+     value)))
+
+(defmethod setting-validate ((setting child-model-alias-table-setting) value configuration)
+  "Validate a boundary alias table after coercion to the stored representation."
+  (call-next-method setting (setting-coerce setting value configuration) configuration))
+
+(-> configuration--child-model-aliases-problem (t t) (option string))
+(defun configuration--child-model-aliases-problem (value configuration)
+  "Return why VALUE names a child tier alias outside the built-in table."
+  (declare (ignore configuration))
+  (let ((known (mapcar #'first *default-child-model-alias-table*)))
+    (loop for entry in value
+          for alias = (first entry)
+          thereis (unless (member alias known :test #'string=)
+                    (format nil "Unknown child tier alias ~S; expected ~{~A~^, ~}."
+                            alias known)))))
 
 
 ;;;; -- Settings --
@@ -253,6 +299,16 @@ exist yet, and is only put in directory form."
   :default             (lambda (configuration)
                          (declare (ignore configuration))
                          *default-model*))
+
+(define-setting :child-model-aliases (child-model-alias-table-setting)
+    :label                           "Child model aliases"
+    :group                           :model
+    :documentation                   "The child tier models as a table of @smol, @slow, and @designer aliases to model identifiers. Replacing the value replaces the whole table."
+    :scope                           :durable
+    :validator                       'configuration--child-model-aliases-problem
+    :default                         (lambda (configuration)
+                                       (declare (ignore configuration))
+                                       (copy-tree *default-child-model-alias-table*)))
 
 (define-setting :reasoning-effort (choice-setting)
   :label                          "Reasoning effort"
